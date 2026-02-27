@@ -21,8 +21,11 @@ pub enum NetError {
 
     /// Error related to CBOR (Concise Binary Object Representation) serialization or deserialization.
     ///
-    /// This variant wraps a [`serde_cbor::Error`] to provide details about the issue.
-    Cbor(serde_cbor::Error),
+    /// This variant wraps a [`minicbor::decode::Error`] to provide details about the issue.
+    Cbor(minicbor::decode::Error),
+
+    /// Error related to CBOR serialization.
+    Encode(String),
 
     /// Error indicating an invalid CLI application network.
     InvalidAppNetwork,
@@ -46,8 +49,8 @@ impl From<std::io::Error> for NetError {
     }
 }
 
-impl From<serde_cbor::Error> for NetError {
-    fn from(value: serde_cbor::Error) -> Self {
+impl From<minicbor::decode::Error> for NetError {
+    fn from(value: minicbor::decode::Error) -> Self {
         Self::Cbor(value)
     }
 }
@@ -78,5 +81,11 @@ impl From<bitcoind::bitcoincore_rpc::Error> for FeeEstimatorError {
 impl From<minreq::Error> for FeeEstimatorError {
     fn from(err: minreq::Error) -> Self {
         FeeEstimatorError::HttpError(err)
+    }
+}
+
+impl<W: core::fmt::Debug> From<minicbor::encode::Error<W>> for NetError {
+    fn from(err: minicbor::encode::Error<W>) -> Self {
+        NetError::Encode(format!("Encode error: {:?}", err))
     }
 }

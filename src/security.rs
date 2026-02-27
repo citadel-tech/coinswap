@@ -25,7 +25,7 @@ use std::{fs, path::Path};
 #[derive(Debug)]
 pub enum EncryptError {
     /// Error occurred during CBOR serialization of the input struct.
-    Serialization(serde_cbor::Error),
+    Serialization(String),
     /// Error occurred during AES-GCM encryption.
     ///
     /// Note: This error type carries no additional information because
@@ -33,9 +33,15 @@ pub enum EncryptError {
     Encryption,
 }
 
-impl From<serde_cbor::Error> for EncryptError {
-    fn from(err: serde_cbor::Error) -> Self {
-        EncryptError::Serialization(err)
+impl From<minicbor::decode::Error> for EncryptError {
+    fn from(err: minicbor::decode::Error) -> Self {
+        EncryptError::Serialization(err.to_string())
+    }
+}
+
+impl<W: core::fmt::Debug> From<minicbor::encode::Error<W>> for EncryptError {
+    fn from(err: minicbor::encode::Error<W>) -> Self {
+        EncryptError::Serialization(format!("{:?}", err))
     }
 }
 
@@ -54,7 +60,7 @@ impl From<aes_gcm::Error> for EncryptError {
 /// the file in both formats.
 ///
 /// **Note on CBOR:**  
-/// Due to potential trailing bytes left by `serde_cbor`, the CBOR variant delegates
+/// Due to potential trailing bytes left by `crate::utill::cbor`, the CBOR variant delegates
 /// parsing to [`utill::deserialize_from_cbor`] that strips extra data before deserialization.
 ///
 /// This trait is **not** intended for general-purpose serialization or format negotiation.
@@ -67,7 +73,9 @@ pub trait SerdeFormat {
     type Error: std::error::Error + Send + Sync + 'static;
 
     #[allow(missing_docs)]
-    fn from_slice<T: DeserializeOwned>(input: &[u8]) -> Result<T, Self::Error>;
+    fn from_slice<T: DeserializeOwned + for<'a> minicbor::Decode<'a, ()>>(
+        input: &[u8],
+    ) -> Result<T, Self::Error>;
 }
 /// JSON implementation of `SerdeFormat`, using `serde_json`.
 ///
@@ -76,21 +84,25 @@ pub struct SerdeJson;
 
 impl SerdeFormat for SerdeJson {
     type Error = serde_json::Error;
-    fn from_slice<T: DeserializeOwned>(input: &[u8]) -> Result<T, Self::Error> {
+    fn from_slice<T: DeserializeOwned + for<'a> minicbor::Decode<'a, ()>>(
+        input: &[u8],
+    ) -> Result<T, Self::Error> {
         serde_json::from_slice(input)
     }
 }
 /// CBOR implementation of `SerdeFormat`, using a utility wrapper
 /// that handles CBOR trailing data properly.
 ///
-/// `serde_cbor` may leave trailing data behind, which can cause
+/// `crate::utill::cbor` may leave trailing data behind, which can cause
 /// parsing errors.
 /// This wrapper [`utill::deserialize_from_cbor`] utility method to cleanly deserialize.
 pub struct SerdeCbor;
 
 impl SerdeFormat for SerdeCbor {
-    type Error = serde_cbor::Error;
-    fn from_slice<T: DeserializeOwned>(input: &[u8]) -> Result<T, Self::Error> {
+    type Error = minicbor::decode::Error;
+    fn from_slice<T: DeserializeOwned + for<'a> minicbor::Decode<'a, ()>>(
+        input: &[u8],
+    ) -> Result<T, Self::Error> {
         utill::deserialize_from_cbor::<T>(input.to_vec())
     }
 }
@@ -208,20 +220,23 @@ impl KeyMaterial {
 /// refers to the same value as the nonce. They are conceptually the same in this context.
 ///
 /// This wrapper itself is then serialized to CBOR and written to disk.
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(minicbor::Encode, minicbor::Decode, Serialize, Deserialize, Debug)]
 pub struct EncryptedData {
     /// Nonce used for AES-GCM encryption (must match during decryption).
+    #[n(0)]
     nonce: EncryptionNonce,
     /// AES-GCM-encrypted CBOR-serialized plaintext struct data.
+    #[n(1)]
     encrypted_payload: Vec<u8>,
     /// Salt for the PBKDF2 key generation
+    #[n(2)]
     pbkdf2_salt: PBKDF2Salt,
 }
 
 /// Encrypts a serializable struct using AES-256-GCM encryption and CBOR serialization.
 ///
 /// This function applies the following transformation pipeline:
-/// `Struct -> serde_cbor::ser::to_vec(Struct) -> AES-GCM(encrypted_bytes) = encrypted_payload -> EncryptedData { encrypted_payload, nonce }`
+/// `Struct -> minicbor::to_vec(Struct) -> AES-GCM(encrypted_bytes) = encrypted_payload -> EncryptedData { encrypted_payload, nonce }`
 ///
 ///
 /// The struct is first serialized into CBOR bytes, then encrypted using AES-GCM
@@ -230,12 +245,12 @@ pub struct EncryptedData {
 ///
 /// The resulting `EncryptedData` can be serialized and stored to disk. To decrypt it later,
 /// use [`decrypt_struct`].
-pub fn encrypt_struct<T: Serialize>(
+pub fn encrypt_struct<T: Serialize + minicbor::Encode<()>>(
     plain_struct: T,
     enc_material: &KeyMaterial,
 ) -> Result<EncryptedData, EncryptError> {
     // Serialize wallet data to bytes.
-    let packed_store = serde_cbor::ser::to_vec(&plain_struct)?;
+    let packed_store = minicbor::to_vec(&plain_struct)?;
 
     // Extract nonce and key for AES-GCM.
     let material_nonce = enc_material.nonce;
@@ -264,10 +279,10 @@ pub fn encrypt_struct<T: Serialize>(
 ///
 /// It uses the AES-256-GCM key and nonce in [`KeyMaterial`] to decrypt the
 /// encrypted CBOR payload, then deserializes it into the original struct.
-pub fn decrypt_struct<T: DeserializeOwned>(
+pub fn decrypt_struct<T: DeserializeOwned + for<'a> minicbor::Decode<'a, ()>>(
     encrypted_struct: EncryptedData,
     enc_material: &KeyMaterial,
-) -> Result<T, serde_cbor::Error> {
+) -> Result<T, minicbor::decode::Error> {
     // Deserialize the outer EncryptedWalletStore wrapper.
 
     let nonce_vec = encrypted_struct.nonce;
@@ -299,7 +314,10 @@ pub fn decrypt_struct<T: DeserializeOwned>(
 /// # Type Parameters
 /// - `T`: The struct type to load.
 /// - `F`: A type implementing [`SerdeFormat`] (`SerdeCbor` or `SerdeJson`).
-pub fn load_sensitive_struct<T: DeserializeOwned, F: SerdeFormat>(
+pub fn load_sensitive_struct<
+    T: DeserializeOwned + for<'a> minicbor::Decode<'a, ()>,
+    F: SerdeFormat,
+>(
     file: &Path,
     password: Option<String>,
 ) -> (T, Option<KeyMaterial>) {

@@ -14,7 +14,6 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
     fs::{self, File},
-    io::BufWriter,
     path::Path,
 };
 
@@ -36,38 +35,93 @@ pub enum AddressType {
 }
 
 /// Represents the internal data store for a Bitcoin wallet.
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(minicbor::Encode, minicbor::Decode, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct WalletStore {
     /// The file name associated with the wallet store.
+    #[n(0)]
     pub(crate) file_name: String,
     /// Network the wallet operates on.
+    #[cbor(
+        n(1),
+        encode_with = "crate::wallet::backup::encode_network",
+        decode_with = "crate::wallet::backup::decode_network"
+    )]
     pub(crate) network: Network,
     /// The master key for the wallet.
+    #[cbor(
+        n(2),
+        encode_with = "crate::wallet::backup::encode_xpriv",
+        decode_with = "crate::wallet::backup::decode_xpriv"
+    )]
     pub(super) master_key: Xpriv,
     /// The external index for the wallet.
+    #[n(3)]
     pub(super) external_index: u32,
     /// The maximum size for an offer in the wallet.
+    #[n(4)]
     pub(crate) offer_maxsize: u64,
     /// Map of multisig redeemscript to incoming swapcoins.
+    #[cbor(
+        n(5),
+        encode_with = "encode_json_bytes",
+        decode_with = "decode_json_bytes"
+    )]
     pub(super) incoming_swapcoins: HashMap<ScriptBuf, IncomingSwapCoin>,
     /// Map of multisig redeemscript to outgoing swapcoins.
+    #[cbor(
+        n(6),
+        encode_with = "encode_json_bytes",
+        decode_with = "decode_json_bytes"
+    )]
     pub(super) outgoing_swapcoins: HashMap<ScriptBuf, OutgoingSwapCoin>,
     /// Map of taproot contract txid to incoming taproot swapcoins.
+    #[cbor(
+        n(7),
+        encode_with = "encode_json_bytes",
+        decode_with = "decode_json_bytes"
+    )]
     pub(super) incoming_swapcoins_v2: HashMap<bitcoin::Txid, IncomingSwapCoinV2>,
     /// Map of taproot contract txid to outgoing taproot swapcoins.
+    #[cbor(
+        n(8),
+        encode_with = "encode_json_bytes",
+        decode_with = "decode_json_bytes"
+    )]
     pub(super) outgoing_swapcoins_v2: HashMap<bitcoin::Txid, OutgoingSwapCoinV2>,
     /// Map of prevout to contract redeemscript.
+    #[cbor(
+        n(9),
+        encode_with = "encode_json_bytes",
+        decode_with = "decode_json_bytes"
+    )]
     pub(super) prevout_to_contract_map: HashMap<OutPoint, ScriptBuf>,
     /// Set of swept incoming swap coin scriptpubkeys to prevent mixing with regular UTXOs
+    #[cbor(
+        n(10),
+        encode_with = "encode_json_bytes",
+        decode_with = "decode_json_bytes"
+    )]
     pub(crate) swept_incoming_swapcoins: HashSet<ScriptBuf>,
     /// Map for all the fidelity bond information.
+    #[cbor(
+        n(11),
+        encode_with = "encode_json_bytes",
+        decode_with = "decode_json_bytes"
+    )]
     pub(crate) fidelity_bond: HashMap<u32, FidelityBond>,
+    #[n(12)]
     pub(super) last_synced_height: Option<u64>,
 
+    #[n(13)]
     pub(super) wallet_birthday: Option<u64>,
 
     /// Maps transaction outpoints to their associated UTXO and spend information.
     #[serde(default)] // Ensures deserialization works if `utxo_cache` is missing
+    #[cbor(
+        n(14),
+        encode_with = "encode_json_bytes",
+        decode_with = "decode_json_bytes"
+    )]
     pub(super) utxo_cache: HashMap<OutPoint, (ListUnspentResultEntry, UTXOSpendInfo)>,
 }
 
@@ -115,12 +169,6 @@ impl WalletStore {
         path: &Path,
         store_enc_material: &Option<KeyMaterial>,
     ) -> Result<(), WalletError> {
-        let wallet_file = fs::OpenOptions::new()
-            .write(true)
-            .truncate(true)
-            .open(path)?;
-        let writer = BufWriter::new(wallet_file);
-
         match store_enc_material {
             Some(material) => {
                 // Encryption branch: encrypt the serialized wallet before writing.
@@ -128,11 +176,18 @@ impl WalletStore {
                 let encrypted = encrypt_struct(self, material).unwrap();
 
                 // Write encrypted wallet data to disk.
-                serde_cbor::to_writer(writer, &encrypted)?;
+                fs::write(
+                    path,
+                    minicbor::to_vec(&encrypted)
+                        .map_err(|e| WalletError::General(e.to_string()))?,
+                )?;
             }
             None => {
                 // No encryption: serialize and write the wallet directly.
-                serde_cbor::to_writer(writer, &self)?;
+                fs::write(
+                    path,
+                    minicbor::to_vec(self).map_err(|e| WalletError::General(e.to_string()))?,
+                )?;
             }
         }
         Ok(())
@@ -150,6 +205,25 @@ impl WalletStore {
 
         Ok((wallet_store, store_enc_material))
     }
+}
+
+// Inline minicbor helpers
+#[allow(dead_code)]
+fn encode_json_bytes<T: serde::Serialize, W: minicbor::encode::Write, C>(
+    x: &T,
+    e: &mut minicbor::Encoder<W>,
+    _ctx: &mut C,
+) -> Result<(), minicbor::encode::Error<W::Error>> {
+    e.bytes(&serde_json::to_vec(x).map_err(|_| minicbor::encode::Error::message("json error"))?)?;
+    Ok(())
+}
+#[allow(dead_code)]
+fn decode_json_bytes<T: serde::de::DeserializeOwned, C>(
+    d: &mut minicbor::Decoder<'_>,
+    _ctx: &mut C,
+) -> Result<T, minicbor::decode::Error> {
+    serde_json::from_slice(d.bytes()?)
+        .map_err(|_| minicbor::decode::Error::message("json decode error"))
 }
 
 #[cfg(test)]

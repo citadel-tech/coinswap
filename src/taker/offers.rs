@@ -64,15 +64,19 @@ const UNRESPONSIVE_MAKER_BACKOFF_STEP: Duration = Duration::from_secs(30 * 60);
 const UNRESPONSIVE_MAKER_BACKOFF_STEP: Duration = Duration::from_secs(10);
 
 /// Represents an offer along with the corresponding maker address.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(minicbor::Encode, minicbor::Decode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OfferAndAddress {
     /// Details for Maker Offer
+    #[n(0)]
     pub offer: Offer,
     /// Maker Address: onion_addr:port
+    #[n(1)]
     pub address: MakerAddress,
     /// Current state of maker
+    #[n(2)]
     pub state: MakerState,
     /// Supporting protocol (Legacy or Taproot)
+    #[n(3)]
     pub protocol: MakerProtocol,
 }
 
@@ -139,27 +143,35 @@ impl MakerOfferCandidate {
 }
 
 /// Represents the Maker connection state
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(
+    minicbor::Encode, minicbor::Decode, Debug, Clone, Serialize, Deserialize, PartialEq, Eq,
+)]
 pub enum MakerState {
     /// Maker is responding to offer calls.
+    #[n(0)]
     Good,
     /// Maker is not responding to offer calls.
+    #[n(1)]
     Unresponsive {
         /// We allow only 10 retries before marking
         /// a maker as bad.
+        #[n(0)]
         retries: u8,
     },
     /// Maker either explicitly or because not responding
     /// is marked bad.
+    #[n(2)]
     Bad,
 }
 
 /// Protocol which maker follows
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(minicbor::Encode, minicbor::Decode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum MakerProtocol {
     /// Legacy
+    #[n(0)]
     Legacy,
     /// Taproot
+    #[n(1)]
     Taproot,
 }
 
@@ -172,15 +184,42 @@ impl fmt::Display for MakerProtocol {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    minicbor::Encode,
+    minicbor::Decode,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+)]
 struct OnionAddress {
+    #[n(0)]
     port: String,
+    #[n(1)]
     onion_addr: String,
 }
 
 /// Enum representing maker addresses.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Hash)]
-pub struct MakerAddress(OnionAddress);
+#[derive(
+    minicbor::Encode,
+    minicbor::Decode,
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    Hash,
+)]
+#[cbor(transparent)]
+pub struct MakerAddress(#[n(0)] OnionAddress);
 
 impl fmt::Display for MakerAddress {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -788,7 +827,7 @@ impl MakerAddress {
         send_message(&mut socket, &TakerToMakerMessage::ReqGiveOffer(GiveOffer))?;
 
         let msg_bytes = read_message(&mut socket)?;
-        let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
+        let msg: MakerToTakerMessage = minicbor::decode(&msg_bytes)?;
         let offer = match msg {
             MakerToTakerMessage::RespOffer(offer) => offer,
             msg => {
@@ -823,7 +862,7 @@ impl MakerAddress {
 
         let response_bytes = read_message(&mut socket)?;
 
-        let response: messages2::MakerToTakerMessage = serde_cbor::from_slice(&response_bytes)?;
+        let response: messages2::MakerToTakerMessage = minicbor::decode(&response_bytes)?;
 
         let taproot_offer = match response {
             messages2::MakerToTakerMessage::RespOffer(offer) => *offer,

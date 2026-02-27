@@ -41,16 +41,48 @@ use crate::protocol::{
 /// The coin that Bob receives from Alice is referred to as `Incoming` from Bob's perspective.
 /// This designation applies regardless of the swap's status—whether
 /// it is still in progress or has been finalized.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(
+    minicbor::Encode,
+    minicbor::Decode,
+    serde::Serialize,
+    serde::Deserialize,
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+)]
 pub(crate) struct IncomingSwapCoin {
+    #[n(0)]
+    #[cbor(encode_with = "encode_secret_key", decode_with = "decode_secret_key")]
     pub(crate) my_privkey: SecretKey,
+    #[n(1)]
+    #[cbor(encode_with = "encode_public_key", decode_with = "decode_public_key")]
     pub(crate) other_pubkey: PublicKey,
+    #[n(2)]
+    #[cbor(
+        encode_with = "encode_opt_secret_key",
+        decode_with = "decode_opt_secret_key"
+    )]
     pub(crate) other_privkey: Option<SecretKey>,
+    #[n(3)]
+    #[cbor(encode_with = "encode_transaction", decode_with = "decode_transaction")]
     pub(crate) contract_tx: Transaction,
+    #[n(4)]
+    #[cbor(encode_with = "encode_script_buf", decode_with = "decode_script_buf")]
     pub(crate) contract_redeemscript: ScriptBuf,
+    #[n(5)]
+    #[cbor(encode_with = "encode_secret_key", decode_with = "decode_secret_key")]
     pub(crate) hashlock_privkey: SecretKey,
+    #[n(6)]
+    #[cbor(encode_with = "encode_amount", decode_with = "decode_amount")]
     pub(crate) funding_amount: Amount,
+    #[n(7)]
+    #[cbor(
+        encode_with = "encode_opt_signature",
+        decode_with = "decode_opt_signature"
+    )]
     pub(crate) others_contract_sig: Option<Signature>,
+    #[n(8)]
     pub(crate) hash_preimage: Option<Preimage>,
 }
 
@@ -67,15 +99,42 @@ pub(crate) struct IncomingSwapCoin {
 /// the coin that Alice sends to Bob is referred to as `Outgoing` from Alice's perspective.
 /// This terminology reflects the direction of the asset transfer,
 /// regardless of whether the swap is still ongoing or has been completed.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(
+    minicbor::Encode,
+    minicbor::Decode,
+    serde::Serialize,
+    serde::Deserialize,
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+)]
 pub(crate) struct OutgoingSwapCoin {
+    #[n(0)]
+    #[cbor(encode_with = "encode_secret_key", decode_with = "decode_secret_key")]
     pub(crate) my_privkey: SecretKey,
+    #[n(1)]
+    #[cbor(encode_with = "encode_public_key", decode_with = "decode_public_key")]
     pub(crate) other_pubkey: PublicKey,
+    #[n(2)]
+    #[cbor(encode_with = "encode_transaction", decode_with = "decode_transaction")]
     pub(crate) contract_tx: Transaction,
+    #[n(3)]
+    #[cbor(encode_with = "encode_script_buf", decode_with = "decode_script_buf")]
     pub(crate) contract_redeemscript: ScriptBuf,
+    #[n(4)]
+    #[cbor(encode_with = "encode_secret_key", decode_with = "decode_secret_key")]
     pub(crate) timelock_privkey: SecretKey,
+    #[n(5)]
+    #[cbor(encode_with = "encode_amount", decode_with = "decode_amount")]
     pub(crate) funding_amount: Amount,
+    #[n(6)]
+    #[cbor(
+        encode_with = "encode_opt_signature",
+        decode_with = "decode_opt_signature"
+    )]
     pub(crate) others_contract_sig: Option<Signature>,
+    #[n(7)]
     pub(crate) hash_preimage: Option<Preimage>,
 }
 
@@ -1004,5 +1063,141 @@ mod tests {
             input_value,
         );
         assert!(final_return.is_ok());
+    }
+}
+
+// Inline minicbor helpers
+#[allow(dead_code)]
+fn encode_transaction<W: minicbor::encode::Write, C>(
+    x: &bitcoin::Transaction,
+    e: &mut minicbor::Encoder<W>,
+    _ctx: &mut C,
+) -> Result<(), minicbor::encode::Error<W::Error>> {
+    e.bytes(&bitcoin::consensus::serialize(x))?;
+    Ok(())
+}
+fn decode_transaction<C>(
+    d: &mut minicbor::Decoder<'_>,
+    _ctx: &mut C,
+) -> Result<bitcoin::Transaction, minicbor::decode::Error> {
+    bitcoin::consensus::deserialize(d.bytes()?)
+        .map_err(|_| minicbor::decode::Error::message("invalid transaction"))
+}
+
+fn encode_amount<W: minicbor::encode::Write, C>(
+    x: &bitcoin::Amount,
+    e: &mut minicbor::Encoder<W>,
+    _ctx: &mut C,
+) -> Result<(), minicbor::encode::Error<W::Error>> {
+    e.u64(x.to_sat())?;
+    Ok(())
+}
+fn decode_amount<C>(
+    d: &mut minicbor::Decoder<'_>,
+    _ctx: &mut C,
+) -> Result<bitcoin::Amount, minicbor::decode::Error> {
+    Ok(bitcoin::Amount::from_sat(d.u64()?))
+}
+
+fn encode_public_key<W: minicbor::encode::Write, C>(
+    x: &bitcoin::PublicKey,
+    e: &mut minicbor::Encoder<W>,
+    _ctx: &mut C,
+) -> Result<(), minicbor::encode::Error<W::Error>> {
+    e.encode(x.to_string())?;
+    Ok(())
+}
+fn decode_public_key<C>(
+    d: &mut minicbor::Decoder<'_>,
+    _ctx: &mut C,
+) -> Result<bitcoin::PublicKey, minicbor::decode::Error> {
+    let s = d.decode::<String>()?;
+    std::str::FromStr::from_str(&s)
+        .map_err(|_| minicbor::decode::Error::message("invalid public key"))
+}
+
+fn encode_secret_key<W: minicbor::encode::Write, C>(
+    x: &bitcoin::secp256k1::SecretKey,
+    e: &mut minicbor::Encoder<W>,
+    _ctx: &mut C,
+) -> Result<(), minicbor::encode::Error<W::Error>> {
+    e.bytes(&x.secret_bytes())?;
+    Ok(())
+}
+fn decode_secret_key<C>(
+    d: &mut minicbor::Decoder<'_>,
+    _ctx: &mut C,
+) -> Result<bitcoin::secp256k1::SecretKey, minicbor::decode::Error> {
+    bitcoin::secp256k1::SecretKey::from_slice(d.bytes()?)
+        .map_err(|_| minicbor::decode::Error::message("invalid secret key"))
+}
+
+fn encode_script_buf<W: minicbor::encode::Write, C>(
+    x: &bitcoin::ScriptBuf,
+    e: &mut minicbor::Encoder<W>,
+    _ctx: &mut C,
+) -> Result<(), minicbor::encode::Error<W::Error>> {
+    e.bytes(x.as_bytes())?;
+    Ok(())
+}
+fn decode_script_buf<C>(
+    d: &mut minicbor::Decoder<'_>,
+    _ctx: &mut C,
+) -> Result<bitcoin::ScriptBuf, minicbor::decode::Error> {
+    Ok(bitcoin::ScriptBuf::from(d.bytes()?.to_vec()))
+}
+
+#[allow(dead_code)]
+fn encode_opt_secret_key<W: minicbor::encode::Write, C>(
+    x: &Option<SecretKey>,
+    e: &mut minicbor::Encoder<W>,
+    _ctx: &mut C,
+) -> Result<(), minicbor::encode::Error<W::Error>> {
+    if let Some(sk) = x {
+        e.bytes(&sk.secret_bytes())?;
+    } else {
+        e.null()?;
+    }
+    Ok(())
+}
+#[allow(dead_code)]
+fn decode_opt_secret_key<C>(
+    d: &mut minicbor::Decoder<'_>,
+    _ctx: &mut C,
+) -> Result<Option<SecretKey>, minicbor::decode::Error> {
+    if d.datatype()? == minicbor::data::Type::Null {
+        d.null()?;
+        Ok(None)
+    } else {
+        SecretKey::from_slice(d.bytes()?)
+            .map(Some)
+            .map_err(|_| minicbor::decode::Error::message("invalid secret key"))
+    }
+}
+#[allow(dead_code)]
+fn encode_opt_signature<W: minicbor::encode::Write, C>(
+    x: &Option<Signature>,
+    e: &mut minicbor::Encoder<W>,
+    _ctx: &mut C,
+) -> Result<(), minicbor::encode::Error<W::Error>> {
+    if let Some(sig) = x {
+        e.bytes(&sig.serialize())?;
+    } else {
+        e.null()?;
+    }
+    Ok(())
+}
+#[allow(dead_code)]
+fn decode_opt_signature<C>(
+    d: &mut minicbor::Decoder<'_>,
+    _ctx: &mut C,
+) -> Result<Option<Signature>, minicbor::decode::Error> {
+    if d.datatype()? == minicbor::data::Type::Null {
+        d.null()?;
+        Ok(None)
+    } else {
+        Signature::from_slice(d.bytes()?)
+            .map(Some)
+            .map_err(|_| minicbor::decode::Error::message("invalid signature"))
     }
 }

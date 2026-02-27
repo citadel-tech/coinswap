@@ -17,15 +17,19 @@ use std::path::Path;
 /// This struct captures the essential elements of a wallet's state, including
 /// its network, master key, creation time, and file name. It is serializable
 /// and can be persisted to disk or transferred for backup purposes.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(minicbor::Encode, minicbor::Decode, Debug, Clone, Serialize, Deserialize)]
 pub struct WalletBackup {
     /// Network the wallet operates on.
+    #[cbor(n(0), encode_with = "encode_network", decode_with = "decode_network")]
     pub(crate) network: Network, //Can be asked to the user, but is nice to save
     /// The master key for the wallet.
+    #[cbor(n(1), encode_with = "encode_xpriv", decode_with = "decode_xpriv")]
     pub(super) master_key: Xpriv,
 
+    #[n(2)]
     pub(super) wallet_birthday: Option<u64>, //Avoid scanning from genesis block
     /// The file name associated with the wallet store.
+    #[n(3)]
     pub file_name: String, //Can be asked to user, or stored for convenience
 }
 impl From<&Wallet> for WalletBackup {
@@ -207,4 +211,36 @@ impl Wallet {
             log::info!("Wallet backup succeeded: {backup_path:?}");
         }
     }
+}
+
+// Inline minicbor helpers
+pub(crate) fn encode_network<W: minicbor::encode::Write, C>(
+    x: &Network,
+    e: &mut minicbor::Encoder<W>,
+    _ctx: &mut C,
+) -> Result<(), minicbor::encode::Error<W::Error>> {
+    e.encode(x.to_string())?;
+    Ok(())
+}
+pub(crate) fn decode_network<C>(
+    d: &mut minicbor::Decoder<'_>,
+    _ctx: &mut C,
+) -> Result<Network, minicbor::decode::Error> {
+    let s = d.decode::<String>()?;
+    std::str::FromStr::from_str(&s).map_err(|_| minicbor::decode::Error::message("invalid network"))
+}
+pub(crate) fn encode_xpriv<W: minicbor::encode::Write, C>(
+    x: &Xpriv,
+    e: &mut minicbor::Encoder<W>,
+    _ctx: &mut C,
+) -> Result<(), minicbor::encode::Error<W::Error>> {
+    e.encode(x.to_string())?;
+    Ok(())
+}
+pub(crate) fn decode_xpriv<C>(
+    d: &mut minicbor::Decoder<'_>,
+    _ctx: &mut C,
+) -> Result<Xpriv, minicbor::decode::Error> {
+    let s = d.decode::<String>()?;
+    std::str::FromStr::from_str(&s).map_err(|_| minicbor::decode::Error::message("invalid xpriv"))
 }

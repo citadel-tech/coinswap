@@ -33,7 +33,7 @@ pub enum WatcherError {
     /// Bitcoin consensus encoding/decoding error.
     BitcoinEncodingError(bitcoin::consensus::encode::Error),
     /// Serialization/deserialization error for CBOR.
-    SerdeCbor(serde_cbor::Error),
+    CborError(minicbor::decode::Error),
     /// WebSocket error from tungstenite
     WebSocket(tungstenite::Error),
     /// Nostr message parsing error
@@ -80,9 +80,9 @@ impl std::fmt::Display for WatcherError {
     }
 }
 
-impl From<serde_cbor::Error> for WatcherError {
-    fn from(value: serde_cbor::Error) -> Self {
-        Self::SerdeCbor(value)
+impl From<minicbor::decode::Error> for WatcherError {
+    fn from(value: minicbor::decode::Error) -> Self {
+        Self::CborError(value)
     }
 }
 
@@ -133,7 +133,7 @@ impl WatcherError {
             WatcherError::HttpStatus { .. } => "HttpStatus",
             WatcherError::JsonError(_) => "JsonError",
             WatcherError::BitcoinEncodingError(_) => "BitcoinEncodingError",
-            WatcherError::SerdeCbor(_) => "SerdeCbor",
+            WatcherError::CborError(_) => "CborError",
             WatcherError::WebSocket(_) => "WebSocket",
             WatcherError::NostrParsingError(_) => "NostrParsingError",
             WatcherError::MutexPoison => "MutexPoison",

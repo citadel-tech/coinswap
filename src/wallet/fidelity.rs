@@ -206,19 +206,41 @@ fn calculate_fidelity_value(
 
 /// Structure describing a Fidelity Bond.
 /// Fidelity Bonds are described here : <https://github.com/JoinMarket-Org/joinmarket-clientserver/blob/master/docs/fidelity-bonds.md>
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Hash)]
+#[derive(
+    minicbor::Encode,
+    minicbor::Decode,
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    PartialOrd,
+    Hash,
+)]
 pub struct FidelityBond {
+    #[n(0)]
+    #[cbor(encode_with = "encode_outpoint", decode_with = "decode_outpoint")]
     pub(crate) outpoint: OutPoint,
     /// Fidelity Amount
+    #[n(1)]
+    #[cbor(encode_with = "encode_amount", decode_with = "decode_amount")]
     pub amount: Amount,
     /// Fidelity Locktime
+    #[n(2)]
+    #[cbor(encode_with = "encode_lock_time", decode_with = "decode_lock_time")]
     pub lock_time: LockTime,
+    #[n(3)]
+    #[cbor(encode_with = "encode_public_key", decode_with = "decode_public_key")]
     pub(crate) pubkey: PublicKey,
     // Height at which the bond was confirmed.
+    #[n(4)]
     pub(crate) conf_height: Option<u32>,
     // Cert expiry denoted in multiple of difficulty adjustment period (2016 blocks)
+    #[n(5)]
     pub(crate) cert_expiry: Option<u32>,
     /// Whether this bond is spent or not.
+    #[n(6)]
     pub(crate) is_spent: bool,
 }
 
@@ -748,4 +770,69 @@ fn test_fidleity_redeemscripts() {
         assert_eq!(pk, read_pubkey_from_fidelity_script(&script).unwrap());
         assert_eq!(lt, read_locktime_from_fidelity_script(&script).unwrap());
     }
+}
+
+// Inline minicbor helpers
+#[allow(dead_code)]
+fn encode_outpoint<W: minicbor::encode::Write, C>(
+    x: &bitcoin::OutPoint,
+    e: &mut minicbor::Encoder<W>,
+    _ctx: &mut C,
+) -> Result<(), minicbor::encode::Error<W::Error>> {
+    e.encode(x.to_string())?;
+    Ok(())
+}
+fn decode_outpoint<C>(
+    d: &mut minicbor::Decoder<'_>,
+    _ctx: &mut C,
+) -> Result<bitcoin::OutPoint, minicbor::decode::Error> {
+    std::str::FromStr::from_str(&d.decode::<String>()?)
+        .map_err(|_| minicbor::decode::Error::message("invalid outpoint"))
+}
+
+fn encode_amount<W: minicbor::encode::Write, C>(
+    x: &bitcoin::Amount,
+    e: &mut minicbor::Encoder<W>,
+    _ctx: &mut C,
+) -> Result<(), minicbor::encode::Error<W::Error>> {
+    e.u64(x.to_sat())?;
+    Ok(())
+}
+fn decode_amount<C>(
+    d: &mut minicbor::Decoder<'_>,
+    _ctx: &mut C,
+) -> Result<bitcoin::Amount, minicbor::decode::Error> {
+    Ok(bitcoin::Amount::from_sat(d.u64()?))
+}
+
+fn encode_public_key<W: minicbor::encode::Write, C>(
+    x: &bitcoin::PublicKey,
+    e: &mut minicbor::Encoder<W>,
+    _ctx: &mut C,
+) -> Result<(), minicbor::encode::Error<W::Error>> {
+    e.encode(x.to_string())?;
+    Ok(())
+}
+fn decode_public_key<C>(
+    d: &mut minicbor::Decoder<'_>,
+    _ctx: &mut C,
+) -> Result<bitcoin::PublicKey, minicbor::decode::Error> {
+    let s = d.decode::<String>()?;
+    std::str::FromStr::from_str(&s)
+        .map_err(|_| minicbor::decode::Error::message("invalid public key"))
+}
+
+fn encode_lock_time<W: minicbor::encode::Write, C>(
+    x: &bitcoin::absolute::LockTime,
+    e: &mut minicbor::Encoder<W>,
+    _ctx: &mut C,
+) -> Result<(), minicbor::encode::Error<W::Error>> {
+    e.u32(x.to_consensus_u32())?;
+    Ok(())
+}
+fn decode_lock_time<C>(
+    d: &mut minicbor::Decoder<'_>,
+    _ctx: &mut C,
+) -> Result<bitcoin::absolute::LockTime, minicbor::decode::Error> {
+    Ok(bitcoin::absolute::LockTime::from_consensus(d.u32()?))
 }

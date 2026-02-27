@@ -42,11 +42,80 @@ pub struct Checkpoint {
     pub hash: BlockHash,
 }
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Default)]
 struct RegistryData {
     watches: HashMap<OutPoint, WatchRequest>,
     fidelity: HashSet<Fidelity>,
     checkpoint: Option<Checkpoint>,
+}
+
+impl minicbor::Encode<()> for RegistryData {
+    fn encode<W: minicbor::encode::Write>(
+        &self,
+        e: &mut minicbor::Encoder<W>,
+        _ctx: &mut (),
+    ) -> Result<(), minicbor::encode::Error<W::Error>> {
+        e.map(self.watches.len() as u64)?;
+        for (k, v) in &self.watches {
+            encode_outpoint(k, e, &mut ())?;
+            let v_bytes = serde_json::to_vec(v)
+                .map_err(|_| minicbor::encode::Error::message("failed to encode watch request"))?;
+            e.bytes(&v_bytes)?;
+        }
+        e.array(self.fidelity.len() as u64)?;
+        for f in &self.fidelity {
+            let f_bytes = serde_json::to_vec(f)
+                .map_err(|_| minicbor::encode::Error::message("failed to encode watch fidelity"))?;
+            e.bytes(&f_bytes)?;
+        }
+        if let Some(cp) = &self.checkpoint {
+            e.array(2)?;
+            e.u64(cp.height)?;
+            encode_sha256d_hash(cp.hash.as_raw_hash(), e, &mut ())?;
+        } else {
+            e.null()?;
+        }
+        Ok(())
+    }
+}
+
+impl<'b> minicbor::Decode<'b, ()> for RegistryData {
+    fn decode(d: &mut minicbor::Decoder<'b>, _: &mut ()) -> Result<Self, minicbor::decode::Error> {
+        let mut watches = HashMap::new();
+        if let Ok(Some(n)) = d.map() {
+            for _ in 0..n {
+                let k = decode_outpoint(d, &mut ())?;
+                let v: WatchRequest = serde_json::from_slice(d.bytes()?)
+                    .map_err(|_| minicbor::decode::Error::message("invalid wrap"))?;
+                watches.insert(k, v);
+            }
+        }
+        let mut fidelity = HashSet::new();
+        if let Ok(Some(n)) = d.array() {
+            for _ in 0..n {
+                let f: Fidelity = serde_json::from_slice(d.bytes()?)
+                    .map_err(|_| minicbor::decode::Error::message("invalid wrap"))?;
+                fidelity.insert(f);
+            }
+        }
+        let checkpoint = if d.datatype()? == minicbor::data::Type::Null {
+            d.null()?;
+            None
+        } else {
+            d.array()?;
+            let height = d.u64()?;
+            let hash = decode_sha256d_hash(d, &mut ())?;
+            Some(Checkpoint {
+                height,
+                hash: hash.into(),
+            })
+        };
+        Ok(RegistryData {
+            watches,
+            fidelity,
+            checkpoint,
+        })
+    }
 }
 
 /// Registry used by the watcher.
@@ -62,9 +131,13 @@ impl FileRegistry {
         let path = path.into();
         let data = if path.exists() {
             match std::fs::read(&path) {
-                Ok(bytes) => Arc::new(Mutex::new(
-                    serde_cbor::from_slice(&bytes).unwrap_or_default(),
-                )),
+                Ok(bytes) => match minicbor::decode(&bytes) {
+                    Ok(decoded) => Arc::new(Mutex::new(decoded)),
+                    Err(e) => {
+                        log::error!("Failed to deserialize registry file {:?}: {}", path, e);
+                        Arc::new(Mutex::new(RegistryData::default()))
+                    }
+                },
                 Err(e) => {
                     log::error!("Failed to read registry file {:?}: {}", path, e);
                     Arc::new(Mutex::new(RegistryData::default()))
@@ -79,7 +152,7 @@ impl FileRegistry {
                 }
             }
 
-            match serde_cbor::to_vec(&RegistryData::default()) {
+            match minicbor::to_vec(RegistryData::default()) {
                 Ok(bytes) => {
                     if let Err(e) = std::fs::write(&path, bytes) {
                         log::error!("Failed to write initial registry file {:?}: {}", path, e);
@@ -112,7 +185,7 @@ impl FileRegistry {
             Err(_) => return,
         };
 
-        let bytes = match serde_cbor::to_vec(&*data) {
+        let bytes = match minicbor::to_vec(&*data) {
             Ok(bytes) => bytes,
             Err(e) => {
                 log::error!("Failed to serialize registry data: {}", e);
@@ -322,4 +395,39 @@ mod tests {
 
         assert_eq!(reg2.load_checkpoint().unwrap(), cp);
     }
+}
+
+// Inline minicbor helpers
+#[allow(dead_code)]
+fn encode_outpoint<W: minicbor::encode::Write, C>(
+    x: &bitcoin::OutPoint,
+    e: &mut minicbor::Encoder<W>,
+    _ctx: &mut C,
+) -> Result<(), minicbor::encode::Error<W::Error>> {
+    e.encode(x.to_string())?;
+    Ok(())
+}
+fn decode_outpoint<C>(
+    d: &mut minicbor::Decoder<'_>,
+    _ctx: &mut C,
+) -> Result<bitcoin::OutPoint, minicbor::decode::Error> {
+    std::str::FromStr::from_str(&d.decode::<String>()?)
+        .map_err(|_| minicbor::decode::Error::message("invalid outpoint"))
+}
+
+fn encode_sha256d_hash<W: minicbor::encode::Write, C>(
+    x: &bitcoin::hashes::sha256d::Hash,
+    e: &mut minicbor::Encoder<W>,
+    _ctx: &mut C,
+) -> Result<(), minicbor::encode::Error<W::Error>> {
+    e.bytes(&x[..])?;
+    Ok(())
+}
+fn decode_sha256d_hash<C>(
+    d: &mut minicbor::Decoder<'_>,
+    _ctx: &mut C,
+) -> Result<bitcoin::hashes::sha256d::Hash, minicbor::decode::Error> {
+    use bitcoin::hashes::Hash;
+    bitcoin::hashes::sha256d::Hash::from_slice(d.bytes()?)
+        .map_err(|_| minicbor::decode::Error::message("invalid hash"))
 }

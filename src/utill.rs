@@ -204,10 +204,10 @@ pub fn setup_logger(filter: LevelFilter, data_dir: Option<PathBuf>) {
 /// The first byte sent is the length of the actual message.
 pub fn send_message(
     socket_writer: &mut TcpStream,
-    message: &impl serde::Serialize,
+    message: &(impl serde::Serialize + minicbor::Encode<()>),
 ) -> Result<(), NetError> {
     let mut writer = BufWriter::new(socket_writer);
-    let msg_bytes = serde_cbor::ser::to_vec(message)?;
+    let msg_bytes = minicbor::to_vec(message)?;
     let msg_len = (msg_bytes.len() as u32).to_be_bytes();
     let mut to_send = Vec::with_capacity(msg_bytes.len() + msg_len.len());
     to_send.extend(msg_len);
@@ -482,7 +482,9 @@ pub enum TorError {
     /// Generic error
     General(String),
     /// Cbor error
-    Serde(serde_cbor::Error),
+    Serde(minicbor::decode::Error),
+    /// Metadata mismatch between actual value and expected value
+    MetadataMismatch(String),
 }
 
 impl From<std::io::Error> for TorError {
@@ -491,8 +493,14 @@ impl From<std::io::Error> for TorError {
     }
 }
 
-impl From<serde_cbor::Error> for TorError {
-    fn from(value: serde_cbor::Error) -> Self {
+impl<W: core::fmt::Debug> From<minicbor::encode::Error<W>> for TorError {
+    fn from(err: minicbor::encode::Error<W>) -> Self {
+        TorError::General(format!("Encode error: {:?}", err))
+    }
+}
+
+impl From<minicbor::decode::Error> for TorError {
+    fn from(value: minicbor::decode::Error) -> Self {
         TorError::Serde(value)
     }
 }
@@ -681,10 +689,10 @@ pub(crate) fn get_tor_hostname(
 
     if tor_config_path.exists() {
         if let Ok(tor_metadata) = fs::read(&tor_config_path) {
-            let data: [&str; 2] = serde_cbor::de::from_slice(&tor_metadata)?;
+            let data: [String; 2] = minicbor::decode(&tor_metadata)?;
 
-            let hostname_data = data[1];
-            let private_key_data = data[0];
+            let hostname_data = &data[1];
+            let private_key_data = &data[0];
 
             let (hostname, private_key) = get_emphemeral_address(
                 control_port,
@@ -694,8 +702,19 @@ pub(crate) fn get_tor_hostname(
                 Some(hostname_data.replace(".onion", "").as_str()),
             )?;
 
-            assert_eq!(hostname, hostname_data);
-            assert_eq!(private_key, private_key_data);
+            if hostname != *hostname_data {
+                return Err(TorError::MetadataMismatch(format!(
+                    "Hostname mismatch: expected {}, got {}",
+                    hostname_data, hostname
+                )));
+            }
+
+            if private_key != *private_key_data {
+                return Err(TorError::MetadataMismatch(format!(
+                    "Private key mismatch: expected {}, got {}",
+                    private_key_data, private_key
+                )));
+            }
 
             log::info!("Generated existing Tor Hidden Service Hostname: {hostname}");
 
@@ -712,7 +731,7 @@ pub(crate) fn get_tor_hostname(
 
     fs::write(
         &tor_config_path,
-        serde_cbor::ser::to_vec(&[private_key, hostname.clone()])?,
+        minicbor::to_vec(&[private_key, hostname.clone()])?,
     )?;
 
     log::info!("Generated new Tor Hidden Service Hostname: {hostname}");
@@ -721,11 +740,11 @@ pub(crate) fn get_tor_hostname(
 }
 
 /// Deserialize any generic type from a CBOR file. The type should impl [serde::de::Deserialize].
-pub fn deserialize_from_cbor<T>(mut reader: Vec<u8>) -> Result<T, serde_cbor::Error>
+pub fn deserialize_from_cbor<T>(mut reader: Vec<u8>) -> Result<T, minicbor::decode::Error>
 where
-    T: serde::de::DeserializeOwned,
+    T: serde::de::DeserializeOwned + for<'a> minicbor::Decode<'a, ()>,
 {
-    match serde_cbor::from_slice::<T>(&reader) {
+    match minicbor::decode::<T>(&reader) {
         Ok(store) => Ok(store),
         Err(e) => {
             let err_string = format!("{e:?}");
@@ -734,7 +753,7 @@ where
                 log::info!("Wallet file has trailing data, trying to restore");
                 loop {
                     reader.pop();
-                    match serde_cbor::from_slice::<T>(&reader) {
+                    match minicbor::decode::<T>(&reader) {
                         Ok(store) => break Ok(store),
                         Err(_) => continue,
                     }
@@ -1000,7 +1019,7 @@ mod tests {
         thread::spawn(move || {
             let (mut socket, _) = listener.accept().unwrap();
             let msg_bytes = read_message(&mut socket).unwrap();
-            let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes).unwrap();
+            let msg: MakerToTakerMessage = minicbor::decode(&msg_bytes).unwrap();
 
             if let MakerToTakerMessage::MakerHello(hello) = msg {
                 assert!(hello.protocol_version_min == 1 && hello.protocol_version_max == 100);
