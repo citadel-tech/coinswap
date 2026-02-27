@@ -25,7 +25,7 @@ use std::{fs, path::Path};
 #[derive(Debug)]
 pub enum EncryptError {
     /// Error occurred during CBOR serialization of the input struct.
-    Serialization(serde_cbor::Error),
+    Serialization(crate::utill::cbor::Error),
     /// Error occurred during AES-GCM encryption.
     ///
     /// Note: This error type carries no additional information because
@@ -33,8 +33,8 @@ pub enum EncryptError {
     Encryption,
 }
 
-impl From<serde_cbor::Error> for EncryptError {
-    fn from(err: serde_cbor::Error) -> Self {
+impl From<crate::utill::cbor::Error> for EncryptError {
+    fn from(err: crate::utill::cbor::Error) -> Self {
         EncryptError::Serialization(err)
     }
 }
@@ -54,7 +54,7 @@ impl From<aes_gcm::Error> for EncryptError {
 /// the file in both formats.
 ///
 /// **Note on CBOR:**  
-/// Due to potential trailing bytes left by `serde_cbor`, the CBOR variant delegates
+/// Due to potential trailing bytes left by `crate::utill::cbor`, the CBOR variant delegates
 /// parsing to [`utill::deserialize_from_cbor`] that strips extra data before deserialization.
 ///
 /// This trait is **not** intended for general-purpose serialization or format negotiation.
@@ -83,13 +83,13 @@ impl SerdeFormat for SerdeJson {
 /// CBOR implementation of `SerdeFormat`, using a utility wrapper
 /// that handles CBOR trailing data properly.
 ///
-/// `serde_cbor` may leave trailing data behind, which can cause
+/// `crate::utill::cbor` may leave trailing data behind, which can cause
 /// parsing errors.
 /// This wrapper [`utill::deserialize_from_cbor`] utility method to cleanly deserialize.
 pub struct SerdeCbor;
 
 impl SerdeFormat for SerdeCbor {
-    type Error = serde_cbor::Error;
+    type Error = crate::utill::cbor::Error;
     fn from_slice<T: DeserializeOwned>(input: &[u8]) -> Result<T, Self::Error> {
         utill::deserialize_from_cbor::<T>(input.to_vec())
     }
@@ -221,7 +221,7 @@ pub struct EncryptedData {
 /// Encrypts a serializable struct using AES-256-GCM encryption and CBOR serialization.
 ///
 /// This function applies the following transformation pipeline:
-/// `Struct -> serde_cbor::ser::to_vec(Struct) -> AES-GCM(encrypted_bytes) = encrypted_payload -> EncryptedData { encrypted_payload, nonce }`
+/// `Struct -> crate::utill::cbor::to_vec(Struct) -> AES-GCM(encrypted_bytes) = encrypted_payload -> EncryptedData { encrypted_payload, nonce }`
 ///
 ///
 /// The struct is first serialized into CBOR bytes, then encrypted using AES-GCM
@@ -235,7 +235,7 @@ pub fn encrypt_struct<T: Serialize>(
     enc_material: &KeyMaterial,
 ) -> Result<EncryptedData, EncryptError> {
     // Serialize wallet data to bytes.
-    let packed_store = serde_cbor::ser::to_vec(&plain_struct)?;
+    let packed_store = crate::utill::cbor::to_vec(&plain_struct)?;
 
     // Extract nonce and key for AES-GCM.
     let material_nonce = enc_material.nonce;
@@ -267,7 +267,7 @@ pub fn encrypt_struct<T: Serialize>(
 pub fn decrypt_struct<T: DeserializeOwned>(
     encrypted_struct: EncryptedData,
     enc_material: &KeyMaterial,
-) -> Result<T, serde_cbor::Error> {
+) -> Result<T, crate::utill::cbor::Error> {
     // Deserialize the outer EncryptedWalletStore wrapper.
 
     let nonce_vec = encrypted_struct.nonce;

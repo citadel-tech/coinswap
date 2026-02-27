@@ -18,7 +18,7 @@ pub enum WalletError {
     /// Represents an error during CBOR (Concise Binary Object Representation) serialization or deserialization.
     ///
     /// This is used for encoding/decoding data structures.
-    Cbor(serde_cbor::Error),
+    Cbor(crate::utill::cbor::Error),
 
     /// Represents an error during JSON serialization or deserialization.
     ///
@@ -114,8 +114,8 @@ impl From<ProtocolError> for WalletError {
         Self::Protocol(value)
     }
 }
-impl From<serde_cbor::Error> for WalletError {
-    fn from(value: serde_cbor::Error) -> Self {
+impl From<crate::utill::cbor::Error> for WalletError {
+    fn from(value: crate::utill::cbor::Error) -> Self {
         Self::Cbor(value)
     }
 }

@@ -62,9 +62,13 @@ impl FileRegistry {
         let path = path.into();
         let data = if path.exists() {
             match std::fs::read(&path) {
-                Ok(bytes) => Arc::new(Mutex::new(
-                    serde_cbor::from_slice(&bytes).unwrap_or_default(),
-                )),
+                Ok(bytes) => match crate::utill::cbor::from_slice(&bytes) {
+                    Ok(decoded) => Arc::new(Mutex::new(decoded)),
+                    Err(e) => {
+                        log::error!("Failed to deserialize registry file {:?}: {}", path, e);
+                        Arc::new(Mutex::new(RegistryData::default()))
+                    }
+                },
                 Err(e) => {
                     log::error!("Failed to read registry file {:?}: {}", path, e);
                     Arc::new(Mutex::new(RegistryData::default()))
@@ -79,7 +83,7 @@ impl FileRegistry {
                 }
             }
 
-            match serde_cbor::to_vec(&RegistryData::default()) {
+            match crate::utill::cbor::to_vec(&RegistryData::default()) {
                 Ok(bytes) => {
                     if let Err(e) = std::fs::write(&path, bytes) {
                         log::error!("Failed to write initial registry file {:?}: {}", path, e);
@@ -112,7 +116,7 @@ impl FileRegistry {
             Err(_) => return,
         };
 
-        let bytes = match serde_cbor::to_vec(&*data) {
+        let bytes = match crate::utill::cbor::to_vec(&*data) {
             Ok(bytes) => bytes,
             Err(e) => {
                 log::error!("Failed to serialize registry data: {}", e);

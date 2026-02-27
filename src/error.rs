@@ -21,8 +21,8 @@ pub enum NetError {
 
     /// Error related to CBOR (Concise Binary Object Representation) serialization or deserialization.
     ///
-    /// This variant wraps a [`serde_cbor::Error`] to provide details about the issue.
-    Cbor(serde_cbor::Error),
+    /// This variant wraps a [`crate::utill::cbor::Error`] to provide details about the issue.
+    Cbor(crate::utill::cbor::Error),
 
     /// Error indicating an invalid CLI application network.
     InvalidAppNetwork,
@@ -46,8 +46,8 @@ impl From<std::io::Error> for NetError {
     }
 }
 
-impl From<serde_cbor::Error> for NetError {
-    fn from(value: serde_cbor::Error) -> Self {
+impl From<crate::utill::cbor::Error> for NetError {
+    fn from(value: crate::utill::cbor::Error) -> Self {
         Self::Cbor(value)
     }
 }

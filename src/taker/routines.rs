@@ -44,7 +44,7 @@ pub(crate) fn handshake_maker(socket: &mut TcpStream) -> Result<(), TakerError> 
         }),
     )?;
     let msg_bytes = read_message(socket)?;
-    let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
+    let msg: MakerToTakerMessage = crate::utill::cbor::from_slice(&msg_bytes)?;
 
     // Check that protocol version is always 1.
     match msg {
@@ -107,7 +107,7 @@ pub(crate) fn req_sigs_for_sender_once<S: SwapCoin>(
     )?;
 
     let msg_bytes = read_message(socket)?;
-    let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
+    let msg: MakerToTakerMessage = crate::utill::cbor::from_slice(&msg_bytes)?;
     let contract_sigs_for_sender = match msg {
         MakerToTakerMessage::RespContractSigsForSender(m) => {
             if m.sigs.len() != outgoing_swapcoins.len() {
@@ -162,7 +162,7 @@ pub(crate) fn req_sigs_for_recvr_once<S: SwapCoin>(
     )?;
 
     let msg_bytes = read_message(socket)?;
-    let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
+    let msg: MakerToTakerMessage = crate::utill::cbor::from_slice(&msg_bytes)?;
     let contract_sigs_for_recvr = match msg {
         MakerToTakerMessage::RespContractSigsForRecvr(m) => {
             if m.sigs.len() != incoming_swapcoins.len() {
@@ -244,7 +244,7 @@ pub(crate) fn send_proof_of_funding_and_init_next_hop(
 
     // Recv ContractSigsAsRecvrAndSender.
     let msg_bytes = read_message(socket)?;
-    let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
+    let msg: MakerToTakerMessage = crate::utill::cbor::from_slice(&msg_bytes)?;
     let contract_sigs_as_recvr_and_sender = match msg {
         MakerToTakerMessage::ReqContractSigsAsRecvrAndSender(m) => {
             if m.receivers_contract_txs.len() != tmi.funding_tx_infos.len() {
@@ -382,7 +382,7 @@ pub(crate) fn send_hash_preimage_and_get_private_keys(
     send_message(socket, &hash_preimage_msg)?;
 
     let msg_bytes = read_message(socket)?;
-    let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
+    let msg: MakerToTakerMessage = crate::utill::cbor::from_slice(&msg_bytes)?;
     let privkey_handover = match msg {
         MakerToTakerMessage::RespPrivKeyHandover(m) => {
             if m.multisig_privkeys.len() != receivers_multisig_redeemscripts.len() {
