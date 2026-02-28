@@ -32,7 +32,7 @@ fn test_taproot_maker_abort3() {
     let taker_behavior = vec![TakerBehavior::Normal];
 
     // Initialize test framework
-    let (test_framework, mut taproot_taker, taproot_makers, block_generation_handle) =
+    let (test_framework, mut taproot_taker, taproot_makers) =
         TestFramework::init_taproot(makers_config_map, taker_behavior);
 
     let bitcoind = &test_framework.bitcoind;
@@ -64,6 +64,8 @@ fn test_taproot_maker_abort3() {
             })
         })
         .collect::<Vec<_>>();
+
+    test_framework.register_maker_threads(taproot_maker_threads);
 
     // Wait for taproot maker to complete setup
     for maker in &taproot_makers {
@@ -190,15 +192,4 @@ fn test_taproot_maker_abort3() {
         );
     }
     info!("✅ Taproot maker abort 3 recovery test passed!");
-    // Shutdown maker
-    taproot_makers
-        .iter()
-        .for_each(|maker| maker.shutdown.store(true, Relaxed));
-
-    taproot_maker_threads
-        .into_iter()
-        .for_each(|thread| thread.join().unwrap());
-
-    test_framework.stop();
-    block_generation_handle.join().unwrap();
 }

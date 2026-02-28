@@ -38,7 +38,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering::Relaxed},
-        mpsc, Arc,
+        mpsc, Arc, Mutex,
     },
     thread::{self, JoinHandle},
     time::{Duration, Instant},
@@ -536,6 +536,10 @@ pub struct TestFramework {
     shutdown: AtomicBool,
     nostr_relay_shutdown: mpsc::Sender<()>,
     nostr_relay_handle: Option<JoinHandle<()>>,
+    block_generation_handle: Mutex<Option<JoinHandle<()>>>,
+    makers: Mutex<Option<Vec<Arc<Maker>>>>,
+    taproot_makers: Mutex<Option<Vec<Arc<TaprootMaker>>>>, // Added
+    maker_threads: Mutex<Option<Vec<JoinHandle<()>>>>,
 }
 
 impl TestFramework {
@@ -554,7 +558,7 @@ impl TestFramework {
     pub fn init(
         makers_config_map: Vec<((u16, Option<u16>), MakerBehavior)>,
         taker_behavior: Vec<TakerBehavior>,
-    ) -> (Arc<Self>, Vec<Taker>, Vec<Arc<Maker>>, JoinHandle<()>) {
+    ) -> (Arc<Self>, Vec<Taker>, Vec<Arc<Maker>>) {
         // Setup directory
         let temp_dir = env::temp_dir().join("coinswap");
         // Remove if previously existing
@@ -572,7 +576,6 @@ impl TestFramework {
 
         log::info!("🌐 Spawning local nostr relay for tests");
         let (nostr_relay_shutdown, nostr_relay_handle) = spawn_nostr_relay(&temp_dir);
-
         _ = wait_for_relay_healthy();
 
         let shutdown = AtomicBool::new(false);
@@ -582,6 +585,10 @@ impl TestFramework {
             shutdown,
             nostr_relay_shutdown,
             nostr_relay_handle: Some(nostr_relay_handle),
+            block_generation_handle: Mutex::new(None),
+            makers: Mutex::new(None),
+            taproot_makers: Mutex::new(None),
+            maker_threads: Mutex::new(None),
         });
 
         // Translate a RpcConfig from the test framework.
@@ -651,7 +658,10 @@ impl TestFramework {
 
         log::info!("✅ Test Framework initialization complete");
 
-        (test_framework, takers, makers, generate_blocks_handle)
+        *test_framework.makers.lock().unwrap() = Some(makers.clone());
+        *test_framework.block_generation_handle.lock().unwrap() = Some(generate_blocks_handle);
+
+        (test_framework, takers, makers)
     }
 
     /// Assert that a log message exists in the debug.log file
@@ -686,12 +696,7 @@ impl TestFramework {
     pub fn init_taproot(
         makers_config_map: Vec<(u16, Option<u16>, TaprootMakerBehavior)>,
         taker_behavior: Vec<TaprootTakerBehavior>,
-    ) -> (
-        Arc<Self>,
-        Vec<TaprootTaker>,
-        Vec<Arc<TaprootMaker>>,
-        JoinHandle<()>,
-    ) {
+    ) -> (Arc<Self>, Vec<TaprootTaker>, Vec<Arc<TaprootMaker>>) {
         // Setup directory
         let temp_dir = env::temp_dir().join("coinswap");
         // Remove if previously existing
@@ -717,6 +722,10 @@ impl TestFramework {
             shutdown,
             nostr_relay_shutdown,
             nostr_relay_handle: Some(nostr_relay_handle),
+            block_generation_handle: Mutex::new(None),
+            makers: Mutex::new(None),
+            taproot_makers: Mutex::new(None),
+            maker_threads: Mutex::new(None),
         });
 
         // Translate a RpcConfig from the test framework.
@@ -783,29 +792,70 @@ impl TestFramework {
             // tf_clone.generate_blocks(10);
             generate_blocks(&tf_clone.bitcoind, 10);
         });
-
         log::info!("✅ Test Framework initialization complete");
 
-        (test_framework, takers, makers, generate_blocks_handle)
+        *test_framework.taproot_makers.lock().unwrap() = Some(makers.clone());
+        *test_framework.block_generation_handle.lock().unwrap() = Some(generate_blocks_handle);
+
+        (test_framework, takers, makers)
     }
 
-    /// Stop bitcoind and clean up all test data.
-    pub fn stop(&self) {
-        log::info!("🛑 Stopping Test Framework");
-        // stop all framework threads.
-        self.shutdown.store(true, Relaxed);
-        _ = self.nostr_relay_shutdown.send(());
-        // stop bitcoind
-        let _ = self.bitcoind.client.stop().unwrap();
+    pub fn register_maker_threads(&self, handles: Vec<JoinHandle<()>>) {
+        let mut guard = self.maker_threads.lock().unwrap();
+        if guard.is_some() {
+            log::warn!("register_maker_threads called twice; previous handles will be dropped");
+        }
+        *guard = Some(handles);
     }
 }
 
 impl Drop for TestFramework {
     fn drop(&mut self) {
-        let handle = self.nostr_relay_handle.take();
-        if let Some(handle) = handle {
-            _ = handle.join();
+        log::info!("Stopping Test Framework...");
+        self.shutdown.store(true, Relaxed);
+
+        if let Some(makers) = self.makers.lock().unwrap().as_ref() {
+            log::info!("Shutting down makers...");
+            makers
+                .iter()
+                .for_each(|maker| maker.shutdown.store(true, Relaxed));
         }
+        if let Some(makers) = self.taproot_makers.lock().unwrap().as_ref() {
+            log::info!("Shutting down taproot makers...");
+            makers
+                .iter()
+                .for_each(|maker| maker.shutdown.store(true, Relaxed));
+        }
+
+        if let Some(threads) = self.maker_threads.lock().unwrap().take() {
+            log::info!("Joining maker threads...");
+            threads.into_iter().for_each(|t| {
+                if let Err(e) = t.join() {
+                    log::error!("Error joining maker thread: {:?}", e);
+                }
+            });
+        }
+
+        if let Some(handle) = self.block_generation_handle.lock().unwrap().take() {
+            log::info!("Joining block generation thread...");
+            if let Err(e) = handle.join() {
+                log::error!("Block generation thread join failed: {:?}", e);
+            }
+        }
+
+        log::info!("Shutting down bitcoind...");
+        let _ = self.bitcoind.client.stop().unwrap();
+
+        log::info!("Shutting down nostr relay...");
+        _ = self.nostr_relay_shutdown.send(());
+
+        if let Some(handle) = self.nostr_relay_handle.take() {
+            if let Err(e) = handle.join() {
+                log::error!("Nostr relay thread join failed: {:?}", e);
+            }
+        }
+
+        log::info!("Test Framework cleanup complete.");
     }
 }
 

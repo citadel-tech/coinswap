@@ -31,7 +31,7 @@ fn test_taproot_coinswap() {
     let taker_behavior = vec![TakerBehavior::Normal];
 
     // Initialize test framework (without regular takers, we'll create taproot taker manually)
-    let (test_framework, mut taproot_taker, taproot_makers, block_generation_handle) =
+    let (test_framework, mut taproot_taker, taproot_makers) =
         TestFramework::init_taproot(taproot_makers_config_map, taker_behavior);
 
     let bitcoind = &test_framework.bitcoind;
@@ -198,7 +198,4 @@ fn test_taproot_coinswap() {
     }
 
     info!("All taproot swap tests completed successfully!");
-
-    test_framework.stop();
-    block_generation_handle.join().unwrap();
 }
