@@ -25,7 +25,7 @@ use crate::{
     utill::{check_tor_status, get_taker_dir, read_message, send_message},
     wallet::{
         ffi::MakerFeeInfo, AddressType, IncomingSwapCoinV2, OutgoingSwapCoinV2, RPCConfig,
-        SwapReport, Wallet, WalletError,
+        SwapReport, SwapStatus, Wallet, WalletError,
     },
     watch_tower::{
         registry_storage::FileRegistry,
@@ -426,7 +426,9 @@ impl Taker {
                 let swap_report = self.generate_swap_report(
                     &prereset_swapstate,
                     swap_start_time,
-                    initial_utxoset,
+                    &initial_utxoset,
+                    SwapStatus::Success,
+                    None,
                 )?;
 
                 log::info!("Successfully Completed Taproot Coinswap.");
@@ -435,18 +437,29 @@ impl Taker {
             Err(e) => {
                 log::error!("Swap Settlement Failed: {:?}", e);
                 log::warn!("Starting recovery from existing swap");
+                self.generate_swap_report(
+                    &self.ongoing_swap_state.clone(),
+                    swap_start_time,
+                    &initial_utxoset,
+                    SwapStatus::Failed,
+                    Some(format!("{e:?}")),
+                )?;
                 self.recover_from_swap()?;
                 Ok(None)
             }
         }
     }
 
-    /// Generate a swap report after successful completion of a taproot coinswap
+    /// Build a swap report from current state. Handles all four statuses:
+    /// `Success`, `Failed`, `RecoveryHashlock`, `RecoveryTimelock`.
+    #[allow(clippy::too_many_arguments)]
     fn generate_swap_report(
         &self,
         prereset_swapstate: &OngoingSwapState,
         start_time: std::time::Instant,
-        initial_utxos: Vec<ListUnspentResultEntry>,
+        initial_utxos: &[ListUnspentResultEntry],
+        status: SwapStatus,
+        error_message: Option<String>,
     ) -> Result<SwapReport, TakerError> {
         let swap_state = prereset_swapstate;
         let swap_duration = start_time.elapsed();
@@ -606,15 +619,33 @@ impl Taker {
         let fee_percentage =
             (total_fee as f64 / swap_state.swap_params.send_amount.to_sat() as f64) * 100.0;
 
-        let report = SwapReport::taker_success(
-            swap_state.id.clone(),
-            swap_duration.as_secs_f64(),
-            swap_state.swap_params.send_amount.to_sat(),
-            total_output_amount,
-            swap_state.swap_params.maker_count,
+        let outgoing_contract_txid = if !swap_state.outgoing_contract.contract_tx.input.is_empty() {
+            Some(
+                swap_state
+                    .outgoing_contract
+                    .contract_tx
+                    .compute_txid()
+                    .to_string(),
+            )
+        } else {
+            None
+        };
+
+        let incoming_contract_txid = swap_state
+            .incoming_contract
+            .contract_txid
+            .map(|txid| txid.to_string());
+
+        let report = SwapReport::taker_report(SwapReport {
+            status,
+            swap_id: swap_state.id.clone(),
+            swap_duration_seconds: swap_duration.as_secs_f64(),
+            outgoing_amount: swap_state.swap_params.send_amount.to_sat(),
+            incoming_amount: total_output_amount,
+            fee_paid_or_earned: -(total_fee as i64),
+            makers_count: Some(swap_state.swap_params.maker_count),
             maker_addresses,
             funding_txids,
-            total_fee,
             total_maker_fees,
             mining_fee,
             fee_percentage,
@@ -624,8 +655,12 @@ impl Taker {
             output_swap_amounts,
             output_change_utxos,
             output_swap_utxos,
-            network.to_string(),
-        );
+            network: network.to_string(),
+            error_message,
+            incoming_contract_txid,
+            outgoing_contract_txid,
+            ..Default::default()
+        });
 
         report.print();
         let _ = report.save_to_disk(&get_taker_dir()).map_err(|e| {
@@ -1619,7 +1654,10 @@ impl Taker {
     /// 1. For incoming contracts: Try hashlock spend using stored preimage, fallback to timelock
     /// 2. For outgoing contracts: Wait for timelock maturity, then spend via timelock
     /// 3. Skip contracts that were already spent (via keypath, hashlock, or timelock)
+    ///
+    /// Emits a recovery report on completion and saves it to disk.
     pub fn recover_from_swap(&mut self) -> Result<(), TakerError> {
+        let recovery_start = std::time::Instant::now();
         log::info!("Starting taproot swap recovery");
 
         // Find unfinished swapcoins (contracts that weren't cooperatively swept)
@@ -1629,6 +1667,10 @@ impl Taker {
             log::info!("No unfinished swapcoins found - nothing to recover");
             return Ok(());
         }
+
+        // Track recovery txids for reporting
+        let mut hashlock_recovery_txids: Vec<String> = Vec::new();
+        let mut timelock_recovery_txids: Vec<String> = Vec::new();
 
         log::info!(
             "Found {} incoming and {} outgoing unfinished swapcoins",
@@ -1713,6 +1755,7 @@ impl Taker {
                                         "Taker Successfully recovered incoming contract via hashlock: {}",
                                         txid
                                     );
+                                    hashlock_recovery_txids.push(txid.to_string());
                                 }
                                 Err(e) => {
                                     log::warn!("Failed to spend via hashlock: {:?}, will retry with timelock after maturity", e);
@@ -1812,6 +1855,7 @@ impl Taker {
                                     {
                                         Ok(txid) => {
                                             log::info!("Taker Successfully recovered outgoing contract via timelock: {}", txid);
+                                            timelock_recovery_txids.push(txid.to_string());
                                             recovered_indices.push(idx);
                                         }
                                         Err(e) => {
@@ -1854,6 +1898,32 @@ impl Taker {
             }
         }
 
+        let duration = recovery_start.elapsed().as_secs_f64();
+
+        if !hashlock_recovery_txids.is_empty() {
+            let data_dir = get_taker_dir();
+            SwapReport::emit_taker_recovery_report(
+                &data_dir,
+                self.ongoing_swap_state.id.clone(),
+                self.wallet.store.network.to_string(),
+                self.ongoing_swap_state.swap_params.send_amount.to_sat(),
+                SwapStatus::RecoveryHashlock,
+                &hashlock_recovery_txids,
+                duration,
+            );
+        }
+        if !timelock_recovery_txids.is_empty() {
+            let data_dir = get_taker_dir();
+            SwapReport::emit_taker_recovery_report(
+                &data_dir,
+                self.ongoing_swap_state.id.clone(),
+                self.wallet.store.network.to_string(),
+                self.ongoing_swap_state.swap_params.send_amount.to_sat(),
+                SwapStatus::RecoveryTimelock,
+                &timelock_recovery_txids,
+                duration,
+            );
+        }
         log::info!("Taproot swap recovery completed");
         Ok(())
     }

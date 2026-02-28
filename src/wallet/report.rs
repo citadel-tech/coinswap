@@ -8,6 +8,32 @@
 use serde::{Deserialize, Serialize};
 use std::{path::Path, str::FromStr, time::Instant};
 
+fn format_unix_timestamp_utc(millis: u32) -> String {
+    let secs = millis / 1000;
+    let days = (secs / 86_400) as i64;
+    let sod = secs % 86_400;
+
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = mp + if mp < 10 { 3 } else { -9 };
+    let year = y + if m <= 2 { 1 } else { 0 };
+
+    let hour = sod / 3_600;
+    let minute = (sod % 3_600) / 60;
+    let second = sod % 60;
+
+    format!(
+        "{:04}-{:02}-{:02}T{:02}-{:02}-{:02}.{:03}Z",
+        year, m, d, hour, minute, second, millis
+    )
+}
+
 /// Role of the participant in the swap.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum SwapRole {
@@ -94,13 +120,15 @@ pub struct SwapReport {
     pub status: SwapStatus,
     /// Total duration of the swap in seconds.
     pub swap_duration_seconds: f64,
+    /// Duration of the recovery phase in seconds (0 if no recovery).
+    pub recovery_duration_seconds: f64,
     /// Unix timestamp when the swap started.
     pub start_timestamp: u64,
     /// Unix timestamp when the swap completed.
     pub end_timestamp: u64,
     /// Bitcoin network used (mainnet, testnet, signet, regtest).
     pub network: String,
-    /// Error message if the swap failed.
+    /// Error message if the swap failed or triggered recovery.
     pub error_message: Option<String>,
 
     /// Amount received in the incoming contract (satoshis).
@@ -116,15 +144,15 @@ pub struct SwapReport {
     /// Negative for takers (fee paid).
     pub fee_paid_or_earned: i64,
 
-    /// Transaction ID of the incoming contract (maker only).
+    /// Transaction IDs of the incoming contracts.
     pub incoming_contract_txid: Option<String>,
-    /// Transaction ID of the outgoing contract (maker only).
+    /// Transaction IDs of the outgoing contracts.
     pub outgoing_contract_txid: Option<String>,
     /// Funding transaction IDs organized by hop (taker only).
     /// Each inner vector contains txids for one hop in the swap route.
     pub funding_txids: Vec<Vec<String>>,
-    /// Transaction ID of the recovery transaction (hashlock/timelock).
-    pub recovery_txid: Option<String>,
+    /// Transaction IDs of recovery transactions (hashlock/timelock).
+    pub recovery_txids: Option<Vec<String>>,
 
     /// Timelock value in blocks for the contract.
     pub timelock: u16,
@@ -154,41 +182,26 @@ pub struct SwapReport {
     pub output_swap_utxos: Vec<(u64, String)>,
 }
 
-impl SwapReport {
-    /// Create a successful maker swap report.
-    pub fn maker_success(
-        swap_id: String,
-        start_time: Instant,
-        incoming_amount: u64,
-        outgoing_amount: u64,
-        incoming_contract_txid: String,
-        outgoing_contract_txid: String,
-        timelock: u16,
-        network: String,
-    ) -> Self {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default();
-        let end_timestamp = now.as_secs();
-        let swap_duration = start_time.elapsed();
-
+impl Default for SwapReport {
+    fn default() -> Self {
         Self {
-            swap_id,
-            role: SwapRole::Maker,
-            status: SwapStatus::Success,
-            swap_duration_seconds: swap_duration.as_secs_f64(),
-            start_timestamp: end_timestamp.saturating_sub(swap_duration.as_secs()),
-            end_timestamp,
-            network,
+            swap_id: String::new(),
+            role: SwapRole::Taker,
+            status: SwapStatus::Failed,
+            swap_duration_seconds: 0.0,
+            recovery_duration_seconds: 0.0,
+            start_timestamp: 0,
+            end_timestamp: 0,
+            network: String::new(),
             error_message: None,
-            incoming_amount,
-            outgoing_amount,
-            fee_paid_or_earned: (incoming_amount as i64) - (outgoing_amount as i64),
-            incoming_contract_txid: Some(incoming_contract_txid),
-            outgoing_contract_txid: Some(outgoing_contract_txid),
+            incoming_amount: 0,
+            outgoing_amount: 0,
+            fee_paid_or_earned: 0,
+            incoming_contract_txid: None,
+            outgoing_contract_txid: None,
             funding_txids: vec![],
-            recovery_txid: None,
-            timelock,
+            recovery_txids: None,
+            timelock: 0,
             makers_count: None,
             maker_addresses: vec![],
             maker_fee_info: vec![],
@@ -201,6 +214,51 @@ impl SwapReport {
             output_change_utxos: vec![],
             output_swap_utxos: vec![],
         }
+    }
+}
+
+impl SwapReport {
+    fn maker_report(mut report: Self, swap_duration_seconds: f64) -> Self {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        let end_timestamp = now.as_secs();
+
+        report.role = SwapRole::Maker;
+        report.swap_duration_seconds = swap_duration_seconds;
+        report.start_timestamp = end_timestamp.saturating_sub(swap_duration_seconds as u64);
+        report.end_timestamp = end_timestamp;
+        report
+    }
+
+    /// Create a successful maker swap report.
+    pub fn maker_success(
+        swap_id: String,
+        start_time: Instant,
+        incoming_amount: u64,
+        outgoing_amount: u64,
+        incoming_contract_txid: String,
+        outgoing_contract_txid: String,
+        timelock: u16,
+        network: String,
+    ) -> Self {
+        let swap_duration = start_time.elapsed();
+
+        Self::maker_report(
+            Self {
+                swap_id,
+                status: SwapStatus::Success,
+                network,
+                incoming_amount,
+                outgoing_amount,
+                fee_paid_or_earned: (incoming_amount as i64) - (outgoing_amount as i64),
+                incoming_contract_txid: Some(incoming_contract_txid),
+                outgoing_contract_txid: Some(outgoing_contract_txid),
+                timelock,
+                ..Default::default()
+            },
+            swap_duration.as_secs_f64(),
+        )
     }
 
     /// Create a maker recovery report (hashlock or timelock).
@@ -215,46 +273,27 @@ impl SwapReport {
         timelock: u16,
         network: String,
     ) -> Self {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default();
-        let end_timestamp = now.as_secs();
-
         let status = match recovery_type {
             "hashlock" => SwapStatus::RecoveryHashlock,
             "timelock" => SwapStatus::RecoveryTimelock,
             _ => SwapStatus::Failed,
         };
 
-        Self {
-            swap_id,
-            role: SwapRole::Maker,
-            status,
-            swap_duration_seconds: 0.0,
-            start_timestamp: end_timestamp,
-            end_timestamp,
-            network,
-            error_message: None,
-            incoming_amount,
-            outgoing_amount,
-            fee_paid_or_earned: 0,
-            incoming_contract_txid: Some(incoming_contract_txid),
-            outgoing_contract_txid: Some(outgoing_contract_txid),
-            funding_txids: vec![],
-            recovery_txid: Some(recovery_txid),
-            timelock,
-            makers_count: None,
-            maker_addresses: vec![],
-            maker_fee_info: vec![],
-            total_maker_fees: 0,
-            mining_fee: 0,
-            fee_percentage: 0.0,
-            input_utxos: vec![],
-            output_change_amounts: vec![],
-            output_swap_amounts: vec![],
-            output_change_utxos: vec![],
-            output_swap_utxos: vec![],
-        }
+        Self::maker_report(
+            Self {
+                swap_id,
+                status,
+                network,
+                incoming_amount,
+                outgoing_amount,
+                incoming_contract_txid: Some(incoming_contract_txid),
+                outgoing_contract_txid: Some(outgoing_contract_txid),
+                recovery_txids: Some(vec![recovery_txid]),
+                timelock,
+                ..Default::default()
+            },
+            0.0,
+        )
     }
 
     /// Create a failed maker swap report.
@@ -268,104 +307,68 @@ impl SwapReport {
         network: String,
         error_message: String,
     ) -> Self {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default();
-        let end_timestamp = now.as_secs();
-
-        Self {
-            swap_id,
-            role: SwapRole::Maker,
-            status: SwapStatus::Failed,
-            swap_duration_seconds: 0.0,
-            start_timestamp: end_timestamp,
-            end_timestamp,
-            network,
-            error_message: Some(error_message),
-            incoming_amount,
-            outgoing_amount,
-            fee_paid_or_earned: 0,
-            incoming_contract_txid: Some(incoming_contract_txid),
-            outgoing_contract_txid: Some(outgoing_contract_txid),
-            funding_txids: vec![],
-            recovery_txid: None,
-            timelock,
-            makers_count: None,
-            maker_addresses: vec![],
-            maker_fee_info: vec![],
-            total_maker_fees: 0,
-            mining_fee: 0,
-            fee_percentage: 0.0,
-            input_utxos: vec![],
-            output_change_amounts: vec![],
-            output_swap_amounts: vec![],
-            output_change_utxos: vec![],
-            output_swap_utxos: vec![],
-        }
+        Self::maker_report(
+            Self {
+                swap_id,
+                status: SwapStatus::Failed,
+                network,
+                error_message: Some(error_message),
+                incoming_amount,
+                outgoing_amount,
+                incoming_contract_txid: Some(incoming_contract_txid),
+                outgoing_contract_txid: Some(outgoing_contract_txid),
+                timelock,
+                ..Default::default()
+            },
+            0.0,
+        )
     }
 
-    /// Create a successful taker swap report.
-    #[allow(clippy::too_many_arguments)]
-    pub fn taker_success(
-        swap_id: String,
-        swap_duration_seconds: f64,
-        target_amount: u64,
-        total_output: u64,
-        makers_count: usize,
-        maker_addresses: Vec<String>,
-        funding_txids: Vec<Vec<String>>,
-        total_fee: u64,
-        total_maker_fees: u64,
-        mining_fee: u64,
-        fee_percentage: f64,
-        maker_fee_info: Vec<MakerFeeInfo>,
-        input_utxos: Vec<u64>,
-        output_change_amounts: Vec<u64>,
-        output_swap_amounts: Vec<u64>,
-        output_change_utxos: Vec<(u64, String)>,
-        output_swap_utxos: Vec<(u64, String)>,
-        network: String,
-    ) -> Self {
+    /// Create a taker swap report for any status (success, failed, or recovery).
+    pub fn taker_report(mut report: Self) -> Self {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default();
         let end_timestamp = now.as_secs();
-        let start_timestamp = end_timestamp - (swap_duration_seconds as u64);
+        report.role = SwapRole::Taker;
+        report.start_timestamp = end_timestamp.saturating_sub(report.swap_duration_seconds as u64);
+        report.end_timestamp = end_timestamp;
+        report
+    }
 
-        Self {
+    /// Emit a minimal taker recovery report to disk and console.
+    pub fn emit_taker_recovery_report(
+        data_dir: &Path,
+        swap_id: String,
+        network: String,
+        outgoing_amount: u64,
+        status: SwapStatus,
+        recovery_txids: &[String],
+        recovery_duration: f64,
+    ) {
+        let report = Self::taker_report(SwapReport {
+            status,
             swap_id,
-            role: SwapRole::Taker,
-            status: SwapStatus::Success,
-            swap_duration_seconds,
-            start_timestamp,
-            end_timestamp,
+            outgoing_amount,
             network,
-            error_message: None,
-            incoming_amount: total_output,
-            outgoing_amount: target_amount,
-            fee_paid_or_earned: -(total_fee as i64),
-            incoming_contract_txid: None,
-            outgoing_contract_txid: None,
-            funding_txids,
-            recovery_txid: None,
-            timelock: 0,
-            makers_count: Some(makers_count),
-            maker_addresses,
-            maker_fee_info,
-            total_maker_fees,
-            mining_fee,
-            fee_percentage,
-            input_utxos,
-            output_change_amounts,
-            output_swap_amounts,
-            output_change_utxos,
-            output_swap_utxos,
+            recovery_txids: Some(recovery_txids.to_vec()),
+            recovery_duration_seconds: recovery_duration,
+            ..Default::default()
+        });
+
+        report.print();
+        if let Err(e) = report.save_to_disk(data_dir) {
+            log::warn!("Failed to save taker recovery report: {:?}", e);
         }
+        log::info!(
+            "For full details of the failed swap, see the accompanying report in: {}/swap_reports/",
+            data_dir.display()
+        );
     }
 
     /// Save the report to disk as a JSON file.
     ///
-    /// The report is saved to `{data_dir}/swap_reports/{role}_{timestamp}_{swap_id}.json`.
+    /// The report is saved to `{data_dir}/swap_reports/{role}_{status}_{timestamp}_{swap_id}.json`.
     pub fn save_to_disk(&self, data_dir: &Path) -> std::io::Result<()> {
         let reports_dir = data_dir.join("swap_reports");
         std::fs::create_dir_all(&reports_dir)?;
@@ -373,6 +376,13 @@ impl SwapReport {
         let role_prefix = match self.role {
             SwapRole::Taker => "taker",
             SwapRole::Maker => "maker",
+        };
+
+        let status_prefix = match self.status {
+            SwapStatus::Success => "success",
+            SwapStatus::Failed => "failed",
+            SwapStatus::RecoveryHashlock => "recoveryhashlock",
+            SwapStatus::RecoveryTimelock => "recoverytimelock",
         };
 
         let sanitized_swap_id: String = self
@@ -391,11 +401,11 @@ impl SwapReport {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default();
-        let timestamp_ms = now.as_millis();
+        let timestamp = format_unix_timestamp_utc(now.subsec_millis());
 
         let filename = format!(
             "{}_{}_{}_{}.json",
-            role_prefix, self.end_timestamp, timestamp_ms, safe_swap_id
+            role_prefix, status_prefix, timestamp, safe_swap_id
         );
         let filepath = reports_dir.join(filename);
 
@@ -424,6 +434,13 @@ impl SwapReport {
             println!(
                 "\x1b[1;37mDuration          :\x1b[0m {:.2} seconds",
                 self.swap_duration_seconds
+            );
+        }
+
+        if self.recovery_duration_seconds > 0.0 {
+            println!(
+                "\x1b[1;37mRecovery Duration :\x1b[0m {:.2} seconds",
+                self.recovery_duration_seconds
             );
         }
 
@@ -502,8 +519,8 @@ impl SwapReport {
                 }
             }
         }
-        if let Some(ref txid) = self.recovery_txid {
-            println!("\x1b[1;37mRecovery Tx       :\x1b[0m {}", txid);
+        if let Some(ref txids) = self.recovery_txids {
+            println!("\x1b[1;37mRecovery Tx       :\x1b[0m {:?}", txids);
         }
 
         if !self.maker_fee_info.is_empty() {
