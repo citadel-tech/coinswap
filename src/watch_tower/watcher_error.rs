@@ -20,7 +20,7 @@ pub enum WatcherError {
     /// RPC error from bitcoind.
     RPCError(bitcoind::bitcoincore_rpc::Error),
     /// Serialization/deserialization error for CBOR.
-    SerdeCbor(serde_cbor::Error),
+    CborError(crate::utill::cbor::Error),
     /// WebSocket error from tungstenite
     WebSocket(tungstenite::Error),
     /// Nostr message parsing error
@@ -49,9 +49,9 @@ impl std::fmt::Display for WatcherError {
     }
 }
 
-impl From<serde_cbor::Error> for WatcherError {
-    fn from(value: serde_cbor::Error) -> Self {
-        Self::SerdeCbor(value)
+impl From<crate::utill::cbor::Error> for WatcherError {
+    fn from(value: crate::utill::cbor::Error) -> Self {
+        Self::CborError(value)
     }
 }
 
@@ -98,7 +98,7 @@ impl WatcherError {
             WatcherError::SendError => "SendError",
             WatcherError::IOError(_) => "IOError",
             WatcherError::RPCError(_) => "RPCError",
-            WatcherError::SerdeCbor(_) => "SerdeCbor",
+            WatcherError::CborError(_) => "CborError",
             WatcherError::WebSocket(_) => "WebSocket",
             WatcherError::NostrParsingError(_) => "NostrParsingError",
             WatcherError::MutexPoison => "MutexPoison",

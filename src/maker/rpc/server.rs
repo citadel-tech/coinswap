@@ -28,7 +28,7 @@ pub trait MakerRpc {
 
 fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result<(), MakerError> {
     let msg_bytes = read_message(socket)?;
-    let rpc_request: RpcMsgReq = serde_cbor::from_slice(&msg_bytes)?;
+    let rpc_request: RpcMsgReq = crate::utill::cbor::from_slice(&msg_bytes)?;
     log::info!("RPC request received: {rpc_request:?}");
 
     let resp = match rpc_request {

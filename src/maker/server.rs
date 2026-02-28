@@ -372,7 +372,7 @@ fn handle_client(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(), Maker
                 }
             }
         }
-        let taker_msg = serde_cbor::from_slice::<TakerToMakerMessage>(&bytes)?;
+        let taker_msg = crate::utill::cbor::from_slice::<TakerToMakerMessage>(&bytes)?;
 
         log::info!("[{}] <=== {}", maker.config.network_port, taker_msg);
 

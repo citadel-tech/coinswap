@@ -207,7 +207,7 @@ pub fn send_message(
     message: &impl serde::Serialize,
 ) -> Result<(), NetError> {
     let mut writer = BufWriter::new(socket_writer);
-    let msg_bytes = serde_cbor::ser::to_vec(message)?;
+    let msg_bytes = crate::utill::cbor::to_vec(message)?;
     let msg_len = (msg_bytes.len() as u32).to_be_bytes();
     let mut to_send = Vec::with_capacity(msg_bytes.len() + msg_len.len());
     to_send.extend(msg_len);
@@ -482,7 +482,9 @@ pub enum TorError {
     /// Generic error
     General(String),
     /// Cbor error
-    Serde(serde_cbor::Error),
+    Serde(crate::utill::cbor::Error),
+    /// Metadata mismatch between actual value and expected value
+    MetadataMismatch(String),
 }
 
 impl From<std::io::Error> for TorError {
@@ -491,8 +493,8 @@ impl From<std::io::Error> for TorError {
     }
 }
 
-impl From<serde_cbor::Error> for TorError {
-    fn from(value: serde_cbor::Error) -> Self {
+impl From<crate::utill::cbor::Error> for TorError {
+    fn from(value: crate::utill::cbor::Error) -> Self {
         TorError::Serde(value)
     }
 }
@@ -681,10 +683,10 @@ pub(crate) fn get_tor_hostname(
 
     if tor_config_path.exists() {
         if let Ok(tor_metadata) = fs::read(&tor_config_path) {
-            let data: [&str; 2] = serde_cbor::de::from_slice(&tor_metadata)?;
+            let data: [String; 2] = crate::utill::cbor::from_slice(&tor_metadata)?;
 
-            let hostname_data = data[1];
-            let private_key_data = data[0];
+            let hostname_data = &data[1];
+            let private_key_data = &data[0];
 
             let (hostname, private_key) = get_emphemeral_address(
                 control_port,
@@ -694,8 +696,19 @@ pub(crate) fn get_tor_hostname(
                 Some(hostname_data.replace(".onion", "").as_str()),
             )?;
 
-            assert_eq!(hostname, hostname_data);
-            assert_eq!(private_key, private_key_data);
+            if hostname != *hostname_data {
+                return Err(TorError::MetadataMismatch(format!(
+                    "Hostname mismatch: expected {}, got {}",
+                    hostname_data, hostname
+                )));
+            }
+
+            if private_key != *private_key_data {
+                return Err(TorError::MetadataMismatch(format!(
+                    "Private key mismatch: expected {}, got {}",
+                    private_key_data, private_key
+                )));
+            }
 
             log::info!("Generated existing Tor Hidden Service Hostname: {hostname}");
 
@@ -712,7 +725,7 @@ pub(crate) fn get_tor_hostname(
 
     fs::write(
         &tor_config_path,
-        serde_cbor::ser::to_vec(&[private_key, hostname.clone()])?,
+        crate::utill::cbor::to_vec(&[private_key, hostname.clone()])?,
     )?;
 
     log::info!("Generated new Tor Hidden Service Hostname: {hostname}");
@@ -721,11 +734,11 @@ pub(crate) fn get_tor_hostname(
 }
 
 /// Deserialize any generic type from a CBOR file. The type should impl [serde::de::Deserialize].
-pub fn deserialize_from_cbor<T>(mut reader: Vec<u8>) -> Result<T, serde_cbor::Error>
+pub fn deserialize_from_cbor<T>(mut reader: Vec<u8>) -> Result<T, crate::utill::cbor::Error>
 where
     T: serde::de::DeserializeOwned,
 {
-    match serde_cbor::from_slice::<T>(&reader) {
+    match crate::utill::cbor::from_slice::<T>(&reader) {
         Ok(store) => Ok(store),
         Err(e) => {
             let err_string = format!("{e:?}");
@@ -734,7 +747,7 @@ where
                 log::info!("Wallet file has trailing data, trying to restore");
                 loop {
                     reader.pop();
-                    match serde_cbor::from_slice::<T>(&reader) {
+                    match crate::utill::cbor::from_slice::<T>(&reader) {
                         Ok(store) => break Ok(store),
                         Err(_) => continue,
                     }
@@ -1000,7 +1013,7 @@ mod tests {
         thread::spawn(move || {
             let (mut socket, _) = listener.accept().unwrap();
             let msg_bytes = read_message(&mut socket).unwrap();
-            let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes).unwrap();
+            let msg: MakerToTakerMessage = crate::utill::cbor::from_slice(&msg_bytes).unwrap();
 
             if let MakerToTakerMessage::MakerHello(hello) = msg {
                 assert!(hello.protocol_version_min == 1 && hello.protocol_version_max == 100);
@@ -1148,5 +1161,64 @@ mod tests {
             .add_exp_tweak(&secp, &scalar_from_nonce)
             .unwrap();
         assert_eq!(returned_pubkey.to_string(), tweaked_pubkey.to_string());
+    }
+}
+pub mod cbor {
+    //! CBOR utility module.
+    //!
+    //! We use `minicbor_serde` as a serde-compatible CBOR backend to avoid refactoring existing `Serialize` / `Deserialize` derives across the project.
+    //! Since `minicbor_serde` internally relies on `minicbor`, we also use `minicbor::encode::Write` for writer-based serialization.
+    //! This module isolates all CBOR-related logic and error handling so that the rest of the codebase remains backend-agnostic.
+    use minicbor_serde::error::{DecodeError, EncodeError};
+    use std::io::Write;
+
+    /// Represents CBOR errors mapping minicbor-serde variants.
+    #[derive(Debug)]
+    pub enum Error {
+        /// Type wrapping serialization errors.
+        Encode(EncodeError<std::convert::Infallible>),
+        /// Type wrapping deserialization errors.
+        Decode(DecodeError),
+        /// Type wrapping serialization errors related to I/O Write adapters.
+        Write(EncodeError<std::io::Error>),
+        /// Type wrapping a custom string for I/O errors.
+        Custom(String),
+    }
+
+    impl std::fmt::Display for Error {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                Self::Encode(ref e) => e.fmt(f),
+                Self::Decode(ref e) => e.fmt(f),
+                Self::Write(ref e) => e.fmt(f),
+                Self::Custom(ref s) => write!(f, "{}", s),
+            }
+        }
+    }
+
+    impl std::error::Error for Error {}
+
+    /// Serializes a value to a CBOR byte vector.
+    pub fn to_vec<T: serde::Serialize>(val: &T) -> Result<Vec<u8>, Error> {
+        minicbor_serde::to_vec(val).map_err(Error::Encode)
+    }
+
+    /// Deserializes a value from a CBOR byte slice.
+    pub fn from_slice<T: serde::de::DeserializeOwned>(slice: &[u8]) -> Result<T, Error> {
+        minicbor_serde::from_slice(slice).map_err(Error::Decode)
+    }
+
+    /// Serializes a value directly into a `std::io::Write` sink.
+    pub fn to_writer<W: Write, T: serde::Serialize>(w: W, val: &T) -> Result<(), Error> {
+        struct WriteWrapper<W: Write>(W);
+        impl<W: Write> minicbor::encode::Write for WriteWrapper<W> {
+            type Error = std::io::Error;
+            fn write_all(&mut self, buf: &[u8]) -> Result<(), std::io::Error> {
+                self.0.write_all(buf)
+            }
+        }
+        let mut wrapped = WriteWrapper(w);
+        let mut ser = minicbor_serde::Serializer::new(&mut wrapped);
+        val.serialize(&mut ser).map_err(Error::Write)
     }
 }

@@ -59,8 +59,8 @@ impl From<std::io::Error> for MakerError {
     }
 }
 
-impl From<serde_cbor::Error> for MakerError {
-    fn from(value: serde_cbor::Error) -> Self {
+impl From<crate::utill::cbor::Error> for MakerError {
+    fn from(value: crate::utill::cbor::Error) -> Self {
         Self::Net(NetError::Cbor(value))
     }
 }

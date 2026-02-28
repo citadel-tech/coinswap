@@ -828,7 +828,7 @@ impl Taker {
 
         // Read response
         let response_bytes = read_message(&mut socket)?;
-        let response: MakerToTakerMessage = serde_cbor::from_slice(&response_bytes)?;
+        let response: MakerToTakerMessage = crate::utill::cbor::from_slice(&response_bytes)?;
         log::info!("<=== {} | {maker_addr}", response);
 
         Ok(response)

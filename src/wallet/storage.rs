@@ -128,11 +128,11 @@ impl WalletStore {
                 let encrypted = encrypt_struct(self, material).unwrap();
 
                 // Write encrypted wallet data to disk.
-                serde_cbor::to_writer(writer, &encrypted)?;
+                crate::utill::cbor::to_writer(writer, &encrypted)?;
             }
             None => {
                 // No encryption: serialize and write the wallet directly.
-                serde_cbor::to_writer(writer, &self)?;
+                crate::utill::cbor::to_writer(writer, &self)?;
             }
         }
         Ok(())

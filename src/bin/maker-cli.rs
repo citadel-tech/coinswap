@@ -138,7 +138,7 @@ fn send_rpc_req(mut stream: TcpStream, req: RpcMsgReq) -> Result<(), MakerError>
     send_message(&mut stream, &req)?;
 
     let response_bytes = read_message(&mut stream)?;
-    let response: RpcMsgResp = serde_cbor::from_slice(&response_bytes)?;
+    let response: RpcMsgResp = coinswap::utill::cbor::from_slice(&response_bytes)?;
 
     if matches!(response, RpcMsgResp::Pong) {
         println!("success");

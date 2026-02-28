@@ -435,7 +435,7 @@ fn handle_client_taproot(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(
             message_bytes.len(),
             ip
         );
-        let message = match serde_cbor::from_slice::<TakerToMakerMessage>(&message_bytes) {
+        let message = match crate::utill::cbor::from_slice::<TakerToMakerMessage>(&message_bytes) {
             Ok(msg) => {
                 log::info!("[{}] <=== {}", maker.config.network_port, msg);
                 msg

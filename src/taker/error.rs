@@ -48,8 +48,8 @@ impl From<TorError> for TakerError {
     }
 }
 
-impl From<serde_cbor::Error> for TakerError {
-    fn from(value: serde_cbor::Error) -> Self {
+impl From<crate::utill::cbor::Error> for TakerError {
+    fn from(value: crate::utill::cbor::Error) -> Self {
         Self::Deserialize(value.to_string())
     }
 }

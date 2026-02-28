@@ -741,7 +741,7 @@ impl MakerAddress {
         send_message(&mut socket, &TakerToMakerMessage::ReqGiveOffer(GiveOffer))?;
 
         let msg_bytes = read_message(&mut socket)?;
-        let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
+        let msg: MakerToTakerMessage = crate::utill::cbor::from_slice(&msg_bytes)?;
         let offer = match msg {
             MakerToTakerMessage::RespOffer(offer) => offer,
             msg => {
@@ -775,7 +775,8 @@ impl MakerAddress {
 
         let response_bytes = read_message(&mut socket)?;
 
-        let response: messages2::MakerToTakerMessage = serde_cbor::from_slice(&response_bytes)?;
+        let response: messages2::MakerToTakerMessage =
+            crate::utill::cbor::from_slice(&response_bytes)?;
 
         let taproot_offer = match response {
             messages2::MakerToTakerMessage::RespOffer(offer) => *offer,
