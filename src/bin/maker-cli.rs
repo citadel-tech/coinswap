@@ -14,14 +14,14 @@ use coinswap::{
 ///
 /// This is early beta, and there are known and unknown bugs. Please report issues at: <https://github.com/citadel-tech/coinswap/issues>
 #[derive(Parser, Debug)]
-#[clap(version = option_env ! ("CARGO_PKG_VERSION").unwrap_or("unknown"),
+#[command(version = option_env ! ("CARGO_PKG_VERSION").unwrap_or("unknown"),
 author = option_env ! ("CARGO_PKG_AUTHORS").unwrap_or(""))]
 struct App {
     /// Sets the rpc-port of Makerd
-    #[clap(long, short = 'p', default_value = "127.0.0.1:6103")]
+    #[arg(long, short = 'p', default_value = "127.0.0.1:6103")]
     rpc_port: String,
     /// The command to execute
-    #[clap(subcommand)]
+    #[command(subcommand)]
     command: Commands,
 }
 
@@ -49,13 +49,13 @@ enum Commands {
     /// Send Bitcoin to an external address and return the txid.
     SendToAddress {
         /// Recipient's address.
-        #[clap(long, short = 't')]
+        #[arg(long, short = 't')]
         address: String,
         /// Amount to send in sats
-        #[clap(long, short = 'a')]
+        #[arg(long, short = 'a')]
         amount: u64,
         /// Feerate in sats/vByte. Defaults to 2 sats/vByte
-        #[clap(long, short = 'f')]
+        #[arg(long, short = 'f')]
         feerate: Option<f64>,
     },
     /// Show the server tor address

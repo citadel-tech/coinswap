@@ -540,7 +540,6 @@ impl Taker {
                 }
 
                 // Generate post-swap report
-                self.wallet.sync_and_save()?;
                 let swap_report = Some(self.generate_swap_report(
                     prereset_swapstate,
                     swap_start_time,

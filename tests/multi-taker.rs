@@ -53,7 +53,7 @@ fn multi_taker_single_maker_swap() {
         );
     }
 
-    // Fund the Maker with 4 utxos of 0.05 btc each and do basic checks on the balance.
+    // Fund the Maker with 6 utxos of 0.05 btc each and do basic checks on the balance.
     let makers_ref = makers.iter().map(Arc::as_ref).collect::<Vec<_>>();
     fund_and_verify_maker(
         makers_ref,
@@ -96,6 +96,15 @@ fn multi_taker_single_maker_swap() {
         })
         .collect::<Vec<_>>();
 
+    // Capture original taker spendable balances before swap for verification later
+    let org_taker_spend_balances: Vec<Amount> = takers
+        .iter()
+        .map(|taker| {
+            let wallet = taker.get_wallet();
+            wallet.get_balances().unwrap().spendable
+        })
+        .collect();
+
     // Initiate Coinswap for both Takers concurrently
     info!("🔄 Initiating coinswap protocol for multiple takers");
 
@@ -114,37 +123,90 @@ fn multi_taker_single_maker_swap() {
         }
     });
 
-    maker_threads
-        .into_iter()
-        .for_each(|thread| thread.join().unwrap());
-
     info!("🎯 All coinswaps processed. Transactions complete.");
+
+    info!("📊 Verifying Taker balances");
+    for (taker_index, taker) in takers.iter().enumerate() {
+        let wallet = taker.get_wallet();
+        let balances = wallet.get_balances().unwrap();
+
+        // Debug logging
+        info!(
+            "🔍Taker {} - Regular: {} Swap: {} Contract: {} Spendable: {}",
+            taker_index, balances.regular, balances.swap, balances.contract, balances.spendable
+        );
+
+        assert_in_range!(
+            balances.regular.to_sat(),
+            [14499696],
+            "Taker regular balance mismatch"
+        );
+        assert_in_range!(
+            balances.swap.to_sat(),
+            [443633],
+            "Taker swap balance mismatch"
+        );
+        assert_eq!(balances.contract, Amount::ZERO, "Taker contract mismatch");
+        assert_eq!(balances.fidelity, Amount::ZERO, "Taker fidelity mismatch");
+
+        // Check balance_diff (fees paid) is in expected range
+        let balance_diff = org_taker_spend_balances[taker_index]
+            .checked_sub(balances.spendable)
+            .unwrap();
+        assert_in_range!(
+            balance_diff.to_sat(),
+            [
+                56671  // Fee spent on successful coinswap
+            ],
+            "Taker spendable balance change mismatch"
+        );
+    }
 
     info!("📊 Verifying Maker balances");
     // Verify spendable balances for makers.
-    // TODO - Add more assertions / checks for balances.
-    for _ in takers.iter() {
-        makers.iter().zip(org_maker_spend_balances.iter()).for_each(
-            |(maker, org_spend_balance)| {
-                let wallet = maker.get_wallet().read().unwrap();
-                let balances = wallet.get_balances().unwrap();
-                assert!(
-                    balances.spendable == balances.regular + balances.swap,
-                    "Maker balances mismatch"
-                );
-                let balance_diff = balances
-                    .spendable
-                    .to_sat()
-                    .saturating_sub(org_spend_balance.to_sat());
-                println!("🔍 DEBUG: Multi-taker balance diff: {balance_diff} sats");
-                assert!(
-                    (0..=70000).contains(&balance_diff),
-                    "Expected balance diff between 40000-70000 sats, got {}",
-                    balance_diff
-                );
-            },
-        );
-    }
+    makers
+        .iter()
+        .zip(org_maker_spend_balances.iter())
+        .enumerate()
+        .for_each(|(maker_idx, (maker, org_spend_balance))| {
+            let wallet = maker.get_wallet().read().unwrap();
+            let balances = wallet.get_balances().unwrap();
+            log::info!(
+                "🔍 Maker {} - Regular: {}, Swap: {}, Contract: {}, Spendable: {}",
+                maker_idx,
+                balances.regular.to_btc(),
+                balances.swap.to_btc(),
+                balances.contract.to_btc(),
+                balances.spendable.to_btc()
+            );
+            assert_eq!(
+                balances.contract,
+                Amount::ZERO,
+                "Maker {}: Contract balance should be zero after successful swaps",
+                maker_idx
+            );
+
+            assert_eq!(
+                balances.fidelity,
+                Amount::from_btc(0.05).unwrap(),
+                "Maker {}: Fidelity bond should remain at 0.05 BTC",
+                maker_idx
+            );
+            assert!(
+                balances.spendable == balances.regular + balances.swap,
+                "Maker balances mismatch"
+            );
+            let balance_diff = balances
+                .spendable
+                .to_sat()
+                .saturating_sub(org_spend_balance.to_sat());
+            log::info!("🔍 DEBUG: Multi-taker balance diff: {balance_diff} sats");
+            assert_in_range!(
+                balance_diff,
+                [66452, 43410],
+                "Expected balance diff between 40000-70000 sats"
+            );
+        });
 
     info!("🎉 All checks successful. Terminating integration test case");
 }

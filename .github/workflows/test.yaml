@@ -53,7 +53,7 @@ jobs:
       - name: Run cargo-llvm-cov
         run: |
           mkdir -p ./coverage/reports/
-          cargo llvm-cov nextest --lib --bins --tests --retries 1 --max-fail 2:immediate --partition hash:${{ matrix.partition }}/${{strategy.job-total}} --features integration-test --no-capture
+          cargo llvm-cov nextest --lib --bins --tests --retries 1 --max-fail 2:immediate --partition slice:${{ matrix.partition }}/${{strategy.job-total}} --features integration-test --no-capture
           cargo llvm-cov report --cobertura --output-path ./coverage/reports/cobertura-${{ strategy.job-index }}.xml
 
       - name: Upload coverage to Codecov

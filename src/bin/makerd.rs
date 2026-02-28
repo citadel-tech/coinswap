@@ -23,47 +23,49 @@ use std::{path::PathBuf, sync::Arc};
 ///
 /// This is early beta, and there are known and unknown bugs. Please report issues in the [Project Issue Board]<https://github.com/citadel-tech/coinswap/issues>
 #[derive(Parser, Debug)]
-#[clap(version = option_env ! ("CARGO_PKG_VERSION").unwrap_or("unknown"),
-author = option_env ! ("CARGO_PKG_AUTHORS").unwrap_or(""))]
+#[command(
+    version = option_env!("CARGO_PKG_VERSION").unwrap_or("unknown"),
+    author = option_env!("CARGO_PKG_AUTHORS").unwrap_or("")
+)]
 struct Cli {
     /// Optional DNS data directory. Default value: "~/.coinswap/maker"
-    #[clap(long, short = 'd')]
+    #[arg(long, short = 'd')]
     data_directory: Option<PathBuf>,
     /// Bitcoin Core RPC network address.
-    #[clap(
-        name = "ADDRESS:PORT",
-        long,
+    #[arg(
+        value_name = "ADDRESS:PORT",
+        long = "ADDRESS:PORT",
         short = 'r',
         default_value = "127.0.0.1:38332"
     )]
     pub rpc: String,
     /// Bitcoin Core ZMQ address:port value
-    #[clap(
-        name = "ZMQ",
-        long,
+    #[arg(
+        value_name = "ZMQ",
+        long = "ZMQ",
         short = 'z',
         default_value = "tcp://127.0.0.1:28332"
     )]
     pub zmq: String,
     /// Bitcoin Core RPC authentication string (username, password).
-    #[clap(
-        name = "USER:PASSWORD",
+    #[arg(
+        value_name = "USER:PASSWORD",
         short = 'a',
-        long,
+        long = "USER:PASSWORD",
         value_parser = parse_proxy_auth,
         default_value = "user:password",
     )]
     pub auth: (String, String),
-    #[clap(long, short = 't')]
+    #[arg(long, short = 't')]
     pub tor_auth: Option<String>,
     /// Optional wallet name. If the wallet exists, load the wallet, else create a new wallet with the given name. Default: maker-wallet
-    #[clap(name = "WALLET", long, short = 'w')]
+    #[arg(value_name = "WALLET", long = "WALLET", short = 'w')]
     pub(crate) wallet_name: Option<String>,
     /// Use experimental Taproot-based coinswap protocol
-    #[clap(long)]
+    #[arg(long)]
     pub taproot: bool,
     /// Optional Password for the encryption of the wallet.
-    #[clap(name = "PASSWORD", long, short = 'p')]
+    #[arg(value_name = "PASSWORD", long = "PASSWORD", short = 'p')]
     pub password: Option<String>,
 }
 

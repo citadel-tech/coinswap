@@ -139,7 +139,7 @@ fn test_taproot_multi_maker() {
     let taker_total_after = taker_balances.spendable;
     assert_in_range!(
         taker_total_after.to_sat(),
-        [14860645, 14860649], // Multi maker case (less spendable balance due to higher no. of makers,more fee paid) with variance
+        [14860645], // Multi maker case (less spendable balance due to higher no. of makers,more fee paid)
         "Taproot Taker spendable balance check."
     );
 
@@ -147,7 +147,7 @@ fn test_taproot_multi_maker() {
     assert_in_range!(
         // This balance diff(fee paid) consist of Maker fee's paid + mining fees.
         balance_diff.to_sat(),
-        [139351, 139355], // amount spended as fee (multi maker case,more no. of maker so more fee) with variance
+        [139355], // amount spended as fee (multi maker case,more no. of maker so more fee)
         "Taproot taker spent on fees check."
     );
 
@@ -176,7 +176,7 @@ fn test_taproot_multi_maker() {
             balances.spendable.to_sat(),
             [
                 // Here it's arranged in the increasing order of maker's spendable balance, as maker's order is random during swap.
-                15016299, 15016313, 15025685, 15025699, 15037147, 15037161, 15051694, 15051708,
+                15016313, 15025699, 15037161, 15051708,
             ],
             "Taproot Maker spendable balance check for multi maker test case"
         );
@@ -185,10 +185,7 @@ fn test_taproot_multi_maker() {
         assert_in_range!(
             balance_diff,
             // These maker gained fee are arranged as per the corresponding spendable balance in the above assertion list.
-            [
-                16795, 16799, 16813, 26181, 26183, 26187, 37643, 37645, 37649, 37663, 52190, 52192,
-                52196, 52210
-            ],
+            [16795, 26183, 37645, 52192,],
             "Taproot Maker fee gained check"
         );
         info!(

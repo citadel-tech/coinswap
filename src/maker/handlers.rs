@@ -776,11 +776,6 @@ impl Maker {
             );
         }
         log::info!("Sync at:----sweep_after_successful_coinswap----");
-        self.wallet.write()?.sync_and_save()?;
-        // For tests, terminate the maker at this stage.
-        #[cfg(feature = "integration-test")]
-        self.shutdown
-            .store(true, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 }

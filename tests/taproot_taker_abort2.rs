@@ -154,7 +154,7 @@ fn test_taproot_taker_abort2() {
     let taker_total_after = taker_balances.spendable;
     assert_in_range!(
         taker_total_after.to_sat(),
-        [14999492, 14999496], // swap never happened, funds recovered via timelock (with slight fee variance)
+        [14999492], // swap never happened, funds recovered via timelock (with slight fee variance)
         "Taproot Taker Balance should decrease a little."
     );
 
@@ -162,7 +162,7 @@ fn test_taproot_taker_abort2() {
     let balance_diff = taproot_taker_original_balance - taker_total_after;
     assert_in_range!(
         balance_diff.to_sat(),
-        [504, 508], // here a little fund loss because of outgoing contract creation, timelock recovery transaction.
+        [508], // here a little fund loss because of outgoing contract creation, timelock recovery transaction.
         "Taproot Taker should have paid a little fees."
     );
     info!(
@@ -189,7 +189,7 @@ fn test_taproot_taker_abort2() {
         // Use spendable (regular + swap) for comparison
         assert_in_range!(
             balances.spendable.to_sat(),
-            [14999500, 14999518], // here no fund loss because no contract were created by makers (with slight fee variance)
+            [14999518], // here no fund loss because no contract were created by makers
             "Taproot Maker after balance check."
         );
 
