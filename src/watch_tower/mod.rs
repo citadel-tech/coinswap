@@ -2,7 +2,7 @@
 
 pub mod nostr_discovery;
 pub mod registry_storage;
-pub mod rpc_backend;
+pub mod rest_backend;
 pub mod service;
 pub mod utils;
 pub mod watcher;

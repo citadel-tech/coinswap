@@ -40,7 +40,7 @@ use crate::{
     },
     utill::{read_message, send_message},
     wallet::verify_fidelity_checks,
-    watch_tower::{rpc_backend::BitcoinRpc, service::WatchService, watcher::WatcherEvent},
+    watch_tower::{rest_backend::BitcoinRest, service::WatchService, watcher::WatcherEvent},
 };
 
 use super::error::TakerError;
@@ -324,7 +324,7 @@ pub struct OfferSyncService {
     offerbook: OfferBookHandle,
     watch_service: WatchService,
     socks_port: u16,
-    rpc_backend: BitcoinRpc,
+    rest_backend: BitcoinRest,
     is_syncing: Arc<AtomicBool>,
     run_now: Arc<AtomicBool>,
 }
@@ -364,13 +364,13 @@ impl OfferSyncService {
         offerbook: OfferBookHandle,
         watch_service: WatchService,
         socks_port: u16,
-        rpc_backend: BitcoinRpc,
+        rest_backend: BitcoinRest,
     ) -> Self {
         Self {
             offerbook,
             watch_service,
             socks_port,
-            rpc_backend,
+            rest_backend,
             is_syncing: Arc::new(AtomicBool::new(false)),
             run_now: Arc::new(AtomicBool::new(false)),
         }
@@ -482,8 +482,8 @@ impl OfferSyncService {
         onion_addr: &str,
     ) -> Result<(), TakerError> {
         let txid = proof.bond.outpoint.txid;
-        let transaction = self.rpc_backend.get_raw_tx(&txid)?;
-        let current_height = self.rpc_backend.get_block_count()?;
+        let transaction = self.rest_backend.get_raw_tx(&txid)?;
+        let current_height = self.rest_backend.get_block_count()?;
 
         verify_fidelity_checks(proof, onion_addr, transaction, current_height)
             .map_err(TakerError::Wallet)

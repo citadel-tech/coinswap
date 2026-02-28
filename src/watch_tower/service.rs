@@ -13,7 +13,7 @@ use crate::{
     wallet::RPCConfig,
     watch_tower::{
         registry_storage::FileRegistry,
-        rpc_backend::BitcoinRpc,
+        rest_backend::BitcoinRest,
         watcher::{Watcher, WatcherCommand, WatcherEvent},
         watcher_error::WatcherError,
         zmq_backend::ZmqBackend,
@@ -81,8 +81,8 @@ pub fn start_maker_watch_service(
 ) -> Result<WatchService, WatcherError> {
     // Backends
     let backend = ZmqBackend::new(zmq_addr);
-    let rpc_backend = BitcoinRpc::new(rpc_config.clone())?;
-    let blockchain_info = rpc_backend.get_blockchain_info()?;
+    let rest_backend = BitcoinRest::new(rpc_config.clone())?;
+    let blockchain_info = rest_backend.get_blockchain_info()?;
 
     // Registry
     let file_registry = data_dir

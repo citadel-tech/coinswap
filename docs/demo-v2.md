@@ -48,7 +48,7 @@ coinswap-makerd  | 2025-12-01T14:30:26.655863622+00:00 INFO coinswap::wallet::ap
 coinswap-makerd  | 2025-12-01T14:30:26.656215409+00:00 INFO coinswap::wallet::rpc - Completed wallet sync and save for "maker-wallet-1764598870"
 coinswap-makerd  | 2025-12-01T14:30:27.171543413+00:00 ERROR coinswap::wallet::api - No spendable UTXOs available
 coinswap-makerd  | 2025-12-01T14:30:27.172360695+00:00 WARN coinswap::maker::server2 - [6012] Insufficient funds to create fidelity bond.
-coinswap-makerd  | 2025-12-01T14:30:27.213539195+00:00 INFO coinswap::watch_tower::rpc_backend - Discovery progress: 684/817 blocks scanned (83.7%)
+coinswap-makerd  | 2025-12-01T14:30:27.213539195+00:00 INFO coinswap::watch_tower::rest_backend - Discovery progress: 684/817 blocks scanned (83.7%)
 coinswap-makerd  | 2025-12-01T14:30:27.617607128+00:00 INFO coinswap::wallet::api - Saving wallet to disk: 0 incoming_v2, 0 outgoing_v2 swapcoins
 coinswap-makerd  | 2025-12-01T14:30:27.617987039+00:00 INFO coinswap::maker::server2 - [6012] Send at least 0.00050324 BTC to tb1qty2ypwf9mllzvsjvwuag3zx3syss2sra82zz9w | If you send extra, that will be added to your wallet balance
 ```

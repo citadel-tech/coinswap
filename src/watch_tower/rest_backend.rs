@@ -16,13 +16,13 @@ use crate::{
 const DEFAULT_HTTP_TIMEOUT_SECS: u64 = 30;
 
 /// Lightweight wrapper around bitcoind REST endpoints used by the watchtower (no longer uses JSON-RPC).
-pub struct BitcoinRpc {
+pub struct BitcoinRest {
     base_url: String,
     auth_header: Option<String>,
     timeout_secs: u64,
 }
 
-impl BitcoinRpc {
+impl BitcoinRest {
     /// Constructs a new REST wrapper using the provided configuration.
     pub fn new(rpc_config: RPCConfig) -> Result<Self, WatcherError> {
         let base_url = normalize_rest_base_url(&rpc_config.url);
