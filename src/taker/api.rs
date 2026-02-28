@@ -54,7 +54,7 @@ use crate::{
     utill::*,
     wallet::{
         ffi::MakerFeeInfo, IncomingSwapCoin, OutgoingSwapCoin, RPCConfig, SwapCoin, SwapReport,
-        Wallet, WalletError, WatchOnlySwapCoin,
+        SwapStatus, Wallet, WalletError, WatchOnlySwapCoin,
     },
     watch_tower::{
         registry_storage::FileRegistry,
@@ -416,6 +416,13 @@ impl Taker {
         // Try first hop. Abort if error happens.
         if let Err(e) = self.init_first_hop() {
             log::error!("Could not initiate first hop: {e:?}");
+            self.generate_swap_report(
+                &self.ongoing_swap_state.clone(),
+                swap_start_time,
+                &initial_utxoset,
+                SwapStatus::Failed,
+                Some(format!("{e:?}")),
+            )?;
             self.recover_from_swap()?;
             return Err(e);
         }
@@ -464,6 +471,13 @@ impl Taker {
                     Err(e) => {
                         log::error!("Could not initiate next hop. Error : {e:?}");
                         log::warn!("Starting recovery from existing swap");
+                        self.generate_swap_report(
+                            &self.ongoing_swap_state.clone(),
+                            swap_start_time,
+                            &initial_utxoset,
+                            SwapStatus::Failed,
+                            Some(format!("{e:?}")),
+                        )?;
                         self.recover_from_swap()?;
                         return Ok(None);
                     }
@@ -484,6 +498,13 @@ impl Taker {
                         let bad_maker = &self.ongoing_swap_state.peer_infos[maker_index].peer;
                         self.offerbook.add_bad_maker(bad_maker);
                     }
+                    self.generate_swap_report(
+                        &self.ongoing_swap_state.clone(),
+                        swap_start_time,
+                        &initial_utxoset,
+                        SwapStatus::Failed,
+                        Some(format!("{e:?}")),
+                    )?;
                     self.recover_from_swap()?;
                     return Ok(None);
                 }
@@ -500,6 +521,13 @@ impl Taker {
                     Err(e) => {
                         log::error!("Incoming SwapCoin Generation failed : {e:?}");
                         log::warn!("Starting recovery from existing swap");
+                        self.generate_swap_report(
+                            &self.ongoing_swap_state.clone(),
+                            swap_start_time,
+                            &initial_utxoset,
+                            SwapStatus::Failed,
+                            Some(format!("{e:?}")),
+                        )?;
                         self.recover_from_swap()?;
                         return Ok(None);
                     }
@@ -544,7 +572,9 @@ impl Taker {
                 let swap_report = Some(self.generate_swap_report(
                     prereset_swapstate,
                     swap_start_time,
-                    initial_utxoset,
+                    &initial_utxoset,
+                    SwapStatus::Success,
+                    None,
                 )?);
                 log::info!("Successfully Completed Coinswap.");
                 Ok(swap_report)
@@ -552,6 +582,13 @@ impl Taker {
             Err(e) => {
                 log::error!("Swap Settlement Failed : {e:?}");
                 log::warn!("Starting recovery from existing swap");
+                self.generate_swap_report(
+                    &self.ongoing_swap_state.clone(),
+                    swap_start_time,
+                    &initial_utxoset,
+                    SwapStatus::Failed,
+                    Some(format!("{e:?}")),
+                )?;
                 self.recover_from_swap()?;
                 Ok(None)
             }
@@ -562,7 +599,9 @@ impl Taker {
         &self,
         prereset_swapstate: &OngoingSwapState,
         start_time: std::time::Instant,
-        initial_utxos: Vec<ListUnspentResultEntry>,
+        initial_utxos: &[ListUnspentResultEntry],
+        status: SwapStatus,
+        error_message: Option<String>,
     ) -> Result<SwapReport, TakerError> {
         let swap_state = &prereset_swapstate;
 
@@ -678,11 +717,21 @@ impl Taker {
             })
             .collect::<Vec<_>>();
 
-        // Collect maker fee information
+        // Peer_infos is maker_count (only makers participated in swap) + 1 (the last is the taker's info),
+        // so cap at maker_count to avoid double-counting, or else
+        // it will give an underflow error when the last entry is included.
         let mut maker_fee_info = Vec::new();
         let mut temp_target_amount = swap_state.swap_params.send_amount.to_sat();
-
-        let total_maker_fees = (0..swap_state.swap_params.maker_count)
+        let completed_hops = swap_state
+            .peer_infos
+            .len()
+            .min(swap_state.swap_params.maker_count);
+        log::info!(
+            "Calculating fees for peer info : {} and maker count: {}",
+            swap_state.peer_infos.len(),
+            swap_state.swap_params.maker_count
+        );
+        let total_maker_fees = (0..completed_hops)
             .map(|maker_index| {
                 let maker_refund_locktime = REFUND_LOCKTIME
                     + REFUND_LOCKTIME_STEP
@@ -724,15 +773,42 @@ impl Taker {
         let fee_percentage =
             (total_fee as f64 / swap_state.swap_params.send_amount.to_sat() as f64) * 100.0;
 
-        let report = SwapReport::taker_success(
-            swap_state.id.clone(),
-            swap_duration.as_secs_f64(),
-            swap_state.swap_params.send_amount.to_sat(),
-            total_output_amount,
-            swap_state.swap_params.maker_count,
+        let outgoing_contract_txid = if !swap_state.outgoing_swapcoins.is_empty() {
+            Some(
+                swap_state
+                    .outgoing_swapcoins
+                    .iter()
+                    .map(|sc| sc.contract_tx.compute_txid().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            )
+        } else {
+            None
+        };
+
+        let incoming_contract_txid = if !swap_state.incoming_swapcoins.is_empty() {
+            Some(
+                swap_state
+                    .incoming_swapcoins
+                    .iter()
+                    .map(|sc| sc.contract_tx.compute_txid().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            )
+        } else {
+            None
+        };
+
+        let report = SwapReport::taker_report(SwapReport {
+            status,
+            swap_id: swap_state.id.clone(),
+            swap_duration_seconds: swap_duration.as_secs_f64(),
+            outgoing_amount: swap_state.swap_params.send_amount.to_sat(),
+            incoming_amount: total_output_amount,
+            fee_paid_or_earned: -(total_fee as i64),
+            makers_count: Some(swap_state.swap_params.maker_count),
             maker_addresses,
             funding_txids,
-            total_fee,
             total_maker_fees,
             mining_fee,
             fee_percentage,
@@ -742,8 +818,12 @@ impl Taker {
             output_swap_amounts,
             output_change_utxos,
             output_swap_utxos,
-            network.to_string(),
-        );
+            network: network.to_string(),
+            error_message,
+            incoming_contract_txid,
+            outgoing_contract_txid,
+            ..Default::default()
+        });
 
         report.print();
         let _ = report.save_to_disk(&get_taker_dir()).map_err(|e| {
@@ -2108,7 +2188,10 @@ impl Taker {
 
     /// Recover from a bad swap
     pub fn recover_from_swap(&mut self) -> Result<(), TakerError> {
+        let recovery_start = std::time::Instant::now();
         let (incomings, outgoings) = self.wallet.find_unfinished_swapcoins();
+        let mut hashlock_recovery_txids: Vec<String> = Vec::new();
+        let mut timelock_recovery_txids: Vec<String> = Vec::new();
 
         // First try to spend the hashlock contracts.
         // If fails, then try to spend the timelock contracts.
@@ -2134,6 +2217,10 @@ impl Taker {
                 );
                 if hashlock_broadcasted.len() == incoming_infos.len() {
                     log::info!("All incoming contracts redeemed. Cleared ongoing swap state");
+                    hashlock_recovery_txids = hashlock_broadcasted
+                        .into_iter()
+                        .map(|tx| tx.compute_txid().to_string())
+                        .collect();
                     self.clear_ongoing_swaps();
                     break;
                 }
@@ -2166,6 +2253,10 @@ impl Taker {
                 );
                 if timelock_broadcasted.len() == outgoing_infos.len() {
                     log::info!("All outgoing contracts redeemed. Cleared ongoing swap state");
+                    timelock_recovery_txids = timelock_broadcasted
+                        .into_iter()
+                        .map(|tx| tx.compute_txid().to_string())
+                        .collect();
                     self.clear_ongoing_swaps();
                     break;
                 }
@@ -2178,6 +2269,25 @@ impl Taker {
                 };
                 std::thread::sleep(block_wait_time);
             }
+        }
+
+        let duration = recovery_start.elapsed().as_secs_f64();
+        if !hashlock_recovery_txids.is_empty() || !timelock_recovery_txids.is_empty() {
+            let (status, txids) = if !hashlock_recovery_txids.is_empty() {
+                (SwapStatus::RecoveryHashlock, &hashlock_recovery_txids)
+            } else {
+                (SwapStatus::RecoveryTimelock, &timelock_recovery_txids)
+            };
+            let data_dir = get_taker_dir();
+            SwapReport::emit_taker_recovery_report(
+                &data_dir,
+                self.ongoing_swap_state.id.clone(),
+                self.wallet.store.network.to_string(),
+                self.ongoing_swap_state.swap_params.send_amount.to_sat(),
+                status,
+                txids,
+                duration,
+            );
         }
         log::info!("Recovery completed.");
         Ok(())
