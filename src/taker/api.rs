@@ -58,7 +58,7 @@ use crate::{
     },
     watch_tower::{
         registry_storage::FileRegistry,
-        rpc_backend::BitcoinRpc,
+        rest_backend::BitcoinRest,
         service::WatchService,
         watcher::{Role, Watcher},
         zmq_backend::ZmqBackend,
@@ -229,8 +229,8 @@ impl Taker {
         rpc_config.wallet_name = wallet_file_name;
 
         let backend = ZmqBackend::new(&zmq_addr);
-        let rpc_backend = BitcoinRpc::new(rpc_config.clone())?;
-        let blockchain_info = rpc_backend.get_blockchain_info()?;
+        let rest_backend = BitcoinRest::new(rpc_config.clone())?;
+        let blockchain_info = rest_backend.get_blockchain_info()?;
         let file_registry = data_dir
             .join(".taker_watcher")
             .join(blockchain_info.chain.to_string());
@@ -271,7 +271,7 @@ impl Taker {
             offerbook.clone(),
             watch_service.clone(),
             config.socks_port,
-            rpc_backend,
+            rest_backend,
         )
         .start();
 

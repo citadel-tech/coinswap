@@ -24,7 +24,7 @@ use crate::{
     nostr_coinswap::{COINSWAP_KIND, NOSTR_RELAYS},
     watch_tower::{
         registry_storage::FileRegistry,
-        rpc_backend::BitcoinRpc,
+        rest_backend::BitcoinRest,
         utils::{parse_fidelity_event, process_fidelity, SeenTxids},
         watcher_error::WatcherError,
     },
@@ -33,7 +33,7 @@ use crate::{
 // ## TODO: Instead of looping over relay's have a connection Pool.
 /// Runs the main discovery routine for maker's fidelity bonds by subscribing to Nostr events (kind 37777).
 pub fn run_discovery(
-    bitcoin_rpc: BitcoinRpc,
+    bitcoin_rpc: BitcoinRest,
     registry: FileRegistry,
     shutdown: Arc<AtomicBool>,
 ) -> Result<(), WatcherError> {
@@ -72,7 +72,7 @@ fn run_nostr_session_for_relay(
     relay_url: &str,
     registry: Arc<FileRegistry>,
     shutdown: Arc<AtomicBool>,
-    bitcoin_rpc: Arc<BitcoinRpc>,
+    bitcoin_rpc: Arc<BitcoinRest>,
     seen_txid: &Arc<Mutex<SeenTxids>>,
 ) {
     log::info!("Starting Nostr session for relay {}", relay_url);
@@ -109,7 +109,7 @@ fn connect_and_run_once(
     relay_url: &str,
     registry: Arc<FileRegistry>,
     shutdown: Arc<AtomicBool>,
-    bitcoin_rpc: Arc<BitcoinRpc>,
+    bitcoin_rpc: Arc<BitcoinRest>,
     seen_txid: &Arc<Mutex<SeenTxids>>,
 ) -> Result<(), WatcherError> {
     let (mut socket, _) = tungstenite::connect(relay_url)?;
@@ -148,7 +148,7 @@ fn read_event_loop(
     registry: Arc<FileRegistry>,
     mut socket: tungstenite::WebSocket<MaybeTlsStream<std::net::TcpStream>>,
     shutdown: Arc<AtomicBool>,
-    bitcoin_rpc: Arc<BitcoinRpc>,
+    bitcoin_rpc: Arc<BitcoinRest>,
     relay_url: &str,
     seen_txid: &Arc<Mutex<SeenTxids>>,
 ) -> Result<(), WatcherError> {
@@ -181,7 +181,7 @@ fn read_event_loop(
 fn handle_relay_message(
     registry: Arc<FileRegistry>,
     msg: RelayMessage,
-    bitcoin_rpc: Arc<BitcoinRpc>,
+    bitcoin_rpc: Arc<BitcoinRest>,
     relay_url: &str,
     seen_txid: &Arc<Mutex<SeenTxids>>,
 ) -> Result<(), WatcherError> {

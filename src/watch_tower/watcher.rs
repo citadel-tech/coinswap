@@ -20,7 +20,7 @@ use crate::{
     watch_tower::{
         nostr_discovery,
         registry_storage::{Checkpoint, FileRegistry, WatchRequest},
-        rpc_backend::BitcoinRpc,
+        rest_backend::BitcoinRest,
         utils::{process_block, process_transaction},
         watcher_error::WatcherError,
         zmq_backend::{BackendEvent, ZmqBackend},
@@ -105,10 +105,10 @@ impl<R: Role> Watcher<R> {
     /// Runs the watcher loop: handles ZMQ events and commands, optionally spawning discovery.
     pub fn run(&mut self, rpc_config: RPCConfig) -> Result<(), WatcherError> {
         log::info!("Watcher initiated");
-        let rpc_backend_1 = BitcoinRpc::new(rpc_config.clone())?;
-        let rpc_backend_2 = BitcoinRpc::new(rpc_config)?;
+        let rest_backend_1 = BitcoinRest::new(rpc_config.clone())?;
+        let rest_backend_2 = BitcoinRest::new(rpc_config)?;
 
-        if let Err(e) = rpc_backend_1.process_mempool(&mut self.registry) {
+        if let Err(e) = rest_backend_1.process_mempool(&mut self.registry) {
             log::warn!("Failed to process mempool on startup: {}", e);
         }
 
@@ -119,7 +119,7 @@ impl<R: Role> Watcher<R> {
             if R::RUN_DISCOVERY {
                 s.spawn(move || {
                     if let Err(e) = nostr_discovery::run_discovery(
-                        rpc_backend_1,
+                        rest_backend_1,
                         registry,
                         discovery_shutdown.clone(),
                     ) {
@@ -130,7 +130,7 @@ impl<R: Role> Watcher<R> {
             loop {
                 match self.rx_requests.try_recv() {
                     Ok(cmd) => {
-                        if !self.handle_command(cmd, &rpc_backend_2) {
+                        if !self.handle_command(cmd, &rest_backend_2) {
                             discovery_clone.store(true, Ordering::SeqCst);
                             break;
                         }
@@ -147,7 +147,7 @@ impl<R: Role> Watcher<R> {
         Ok(())
     }
 
-    fn handle_command(&mut self, cmd: WatcherCommand, rpc_backend: &BitcoinRpc) -> bool {
+    fn handle_command(&mut self, cmd: WatcherCommand, rest_backend: &BitcoinRest) -> bool {
         match cmd {
             WatcherCommand::RegisterWatchRequest { outpoint } => {
                 log::info!("Intercepted register watch request: {outpoint}");
@@ -181,7 +181,7 @@ impl<R: Role> Watcher<R> {
             }
             WatcherCommand::MakerAddress => {
                 log::debug!("Intercepted maker address request");
-                let height = rpc_backend
+                let height = rest_backend
                     .get_blockchain_info()
                     .ok()
                     .map(|v| v.blocks)

@@ -56,7 +56,7 @@ impl From<serde_cbor::Error> for NetError {
 #[derive(Debug)]
 pub enum FeeEstimatorError {
     /// Error from Bitcoin Core RPC
-    BitcoinRpc(bitcoind::bitcoincore_rpc::Error),
+    BitcoinRest(bitcoind::bitcoincore_rpc::Error),
     /// Error while receiving or parsing an HTTP Response
     HttpError(minreq::Error),
     /// Missing expected data in API response
@@ -71,7 +71,7 @@ pub enum FeeEstimatorError {
 
 impl From<bitcoind::bitcoincore_rpc::Error> for FeeEstimatorError {
     fn from(err: bitcoind::bitcoincore_rpc::Error) -> Self {
-        FeeEstimatorError::BitcoinRpc(err)
+        FeeEstimatorError::BitcoinRest(err)
     }
 }
 
