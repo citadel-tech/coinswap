@@ -543,7 +543,7 @@ impl Maker {
             connection_state.outgoing_contract.pubkey()?,
             connection_state.outgoing_contract.other_pubkey()?,
         ];
-        pubkeys_for_internal_key.sort_by(|a, b| a.inner.serialize().cmp(&b.inner.serialize()));
+        pubkeys_for_internal_key.sort_by_key(|a| a.inner.serialize());
         let internal_key = crate::protocol::musig_interface::get_aggregated_pubkey_compat(
             pubkeys_for_internal_key[0].inner,
             pubkeys_for_internal_key[1].inner,
