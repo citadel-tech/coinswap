@@ -8,9 +8,9 @@
 
 <p>
     <a href="https://github.com/citadel-tech/coinswap/blob/master/LICENSE"><img alt="MIT or Apache-2.0 Licensed" src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg"/></a>
-    <a href="https://github.com/citadel-tech/coinswap/actions/workflows/build.yaml"><img alt="CI Status" src="https://github.com/citadel-tech/coinswap/actions/workflows/build.yaml/badge.svg"></a>
-    <a href="https://github.com/citadel-tech/coinswap/actions/workflows/lint.yaml"><img alt="CI Status" src="https://github.com/citadel-tech/coinswap/actions/workflows/lint.yaml/badge.svg"></a>
-    <a href="https://github.com/citadel-tech/coinswap/actions/workflows/test.yaml"><img alt="CI Status" src="https://github.com/citadel-tech/coinswap/actions/workflows/test.yaml/badge.svg"></a>
+    <a href="https://github.com/citadel-tech/coinswap/actions/workflows/build.yaml"><img alt="Build Status" src="https://github.com/citadel-tech/coinswap/actions/workflows/build.yaml/badge.svg"></a>
+    <a href="https://github.com/citadel-tech/coinswap/actions/workflows/lint.yaml"><img alt="Lint Status" src="https://github.com/citadel-tech/coinswap/actions/workflows/lint.yaml/badge.svg"></a>
+    <a href="https://github.com/citadel-tech/coinswap/actions/workflows/test.yaml"><img alt="Test Status" src="https://github.com/citadel-tech/coinswap/actions/workflows/test.yaml/badge.svg"></a>
     <a href="https://codecov.io/github/citadel-tech/coinswap?branch=master">
     <img alt="Coverage" src="https://codecov.io/github/citadel-tech/coinswap/coverage.svg?branch=master">
     </a>
@@ -23,7 +23,7 @@
   
  - **Public Coinswap Marketplace Available On** [Mutinynet](https://github.com/benthecarman/bitcoin/tree/mutinynet-inq-29).
    - **Block Explorer:** [Mutinynet's mempool.space](https://mutinynet.com/mining)
-   - **Faucet:** [Mutinynet's Facuet](https://faucet.mutinynet.com/)
+   - **Faucet:** [Mutinynet's Faucet](https://faucet.mutinynet.com/)
 
 - **GUI Coinswap Client available for testing**: [Taker App](https://github.com/citadel-tech/taker-app)
 
@@ -34,23 +34,21 @@ This library is currently under development and is in an experimental stage. **M
 
 # About
 
-Coinswap is an [atomic swap](https://bitcoinops.org/en/topics/coinswap/) protocol that allows trustless atomic-swaps through a decentralized, sybil-resistant marketplace.
+Coinswap is a trustless, self-custodial [atomic swap](https://bitcoinops.org/en/topics/coinswap/) protocol built on Bitcoin. Unlike existing solutions that rely on centralized servers as [single points of failure](https://en.wikipedia.org/wiki/Single_point_of_failure), Coinswap's marketplace is seeded in the Bitcoin blockchain itself — no central host required, anyone with a Bitcoin node can participate.
 
-Existing swap solutions are centralized, rely on large swap servers, and have service providers as [single points of failure](https://en.wikipedia.org/wiki/Single_point_of_failure). This project aims at providing a completely trustless, self-custodial, and decentralized atomic-swap protocol, via a marketplace seeded in the Bitcoin blockchain itself. The protocol uses [Fidelity Bonds](https://github.com/JoinMarket-Org/joinmarket-clientserver/blob/master/docs/fidelity-bonds.md) to both attain sybil-resistance as well as seeding the marketplace using bitcoin transactions, enhancing censorship-resistance massively. The market doesn't need to be hosted on any particular server. Anyone with a bitcoin node can participate in the market.
+**Sybil resistance** is achieved through [Fidelity Bonds](https://github.com/JoinMarket-Org/joinmarket-clientserver/blob/master/docs/fidelity-bonds.md): time-locked UTXOs that make Sybil attacks economically costly while simultaneously bootstrapping the marketplace on-chain.
 
-The market consists of two actors: the `Makers` and the `Takers`. The `Makers` are *swap service providers*. They earn fees from swaps for providing liquidity. Individual makers can adjust their own fee rates, and open-market competition will ensure fee pressure is kept at the lowest. Individual makers can advertise for better reliability by putting in larger fidelity bonds to attract more swaps from the market.
+**Two roles:**
 
-The `Takers` are the clients, looking for swap services. The takers pay for all the fees, including both mining fees and maker swap fees. The takers don't need fidelity bonds to participate in the market. Takers choose the makers from the market based on their valid fidelity, available liquidity, offered fee rates, and past memory of successful swaps.
+- **`Makers`** are swap service providers. They earn fees (mining + swap) for supplying liquidity, compete on fee rates in an open market, and signal reliability through larger fidelity bonds. Unlike Lightning nodes, maker servers need no active management — they run in *install-fund-forget* mode on any consumer hardware (Umbrel, Start9, Mynode, etc.), though liquidity must remain in the node's hot wallet.
 
-Anyone can become a taker or a maker or both. They only need a running bitcoin full node with [specific configurations](/docs/demo.md#create-configuration-file) and enough liquidity to put for the swaps. Running the maker servers is a lucrative way for node-runners to put their nodes to work and earn sats. Unlike lightning nodes, the swap servers do not require active management. It works in an *install-fund-forget* mode, making it much simpler to run it in headless full node systems, like Umbrel, Start9, Mynode, etc. Although the liquidity for fidelity bonds and swap services has to be kept in the node's hot wallet.
+- **`Takers`** are clients initiating swaps. They pay all fees, require no fidelity bond, and select makers based on bond validity, available liquidity, fee rates, and past swap history.
 
-Similar to lightning, the swaps can be routed through multiple makers. No single maker in a swap route knows about other makers involved in the route. During a swap, the taker coordinates all messages between makers, reducing the visibility of each individual maker on the complete swap route. All communication occurs over Tor. The taker acts as a relay between makers, and the makers act as just a dumb server, responding to taker queries, providing liquidity, and earning fees. All protocol-level complexities are handled at the client side by the takers. This design allows keeping the maker servers very lightweight, which can be run on any consumer-grade hardware.
+**Multi-hop routing** mirrors Lightning: swaps are routed through multiple makers, and no single maker sees the full route. The taker relays all messages between makers over Tor, keeping each maker's view partial. Protocol complexity lives entirely on the taker side, keeping maker servers lightweight.
 
-The project builds on Chris Belcher's proof-of-concept of [teleport-transactions](https://github.com/bitcoin-teleport/teleport-transactions) and has matured with complete protocol handling, functional testing, sybil resistance, command-line applications, and GUI Apps.
+The project extends Chris Belcher's [teleport-transactions](https://github.com/bitcoin-teleport/teleport-transactions) proof-of-concept into a production-grade implementation with full protocol handling, functional testing, sybil resistance, CLI tools, and a GUI app. The same protocol can be extended for cross-chain swaps.
 
-The same protocol can also be extended to support other coins, creating an open decentralized cross-chain swap marketplace.
-
-For all protocol-level details, see the [Coinswap Protocol Specifications](https://github.com/citadel-tech/Coinswap-Protocol-Specification).
+For protocol-level details, see the [Coinswap Protocol Specifications](https://github.com/citadel-tech/Coinswap-Protocol-Specification).
 
 # Components
 
@@ -65,7 +63,7 @@ The crate compiles into following binaries.
 
 ## Dockers
 
-**Coinswap Docker**: A complete coinswap stack with pre configured, bitcoind, tor, makred, maker-cli and taker apps. Useful for one-click-setup. [See the guide](./docs/docker.md) 
+**Coinswap Docker**: A complete coinswap stack with pre configured, bitcoind, tor, makerd, maker-cli and taker apps. Useful for one-click-setup. [See the guide](./docs/docker.md) 
 
 ## Apps
 **`taker-app(beta)`**: a GUI swap client to perform Coinswaps. [Build from source](https://github.com/citadel-tech/taker-app) 
@@ -156,10 +154,11 @@ The [Test Framework](./tests/test_framework/mod.rs) spawns toy marketplaces in B
 
 ## Contributing
 
-- Browse [issues](https://github.com/citadel-tech/coinswap/issues), especially [`good first issue`](https://github.com/citadel-tech/coinswap/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22) tags
-- Review [open PRs](https://github.com/citadel-tech/coinswap/pulls) 
+- Browse [issues](https://github.com/citadel-tech/coinswap/issues), especially [`good first issue`](https://github.com/citadel-tech/coinswap/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22)
+- Review [open PRs](https://github.com/citadel-tech/coinswap/pulls)
 - Search for `TODO`s in the codebase
 - Read the [docs](./docs)
+- Read the [Contributing Guide](./CONTRIBUTING.md) — including the AI contributions policy
 
 ### Git Hooks
 
@@ -171,7 +170,7 @@ ln -s ../../git_hooks/pre-commit .git/hooks/pre-commit
 
 ## Community
 
-Dev community: [Discord](https://discord.gg/Wz42hVmrrK)
+Dev community: [Matrix](https://matrix.to/#/#citadel-foss:matrix.org)
 
 Dev discussions predominantly happen via FOSS best practices, and by using Github as the major community forum.
 
