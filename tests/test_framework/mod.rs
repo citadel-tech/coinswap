@@ -311,7 +311,7 @@ pub fn fund_and_verify_taker(
     // Assert spendable balance equals regular balance, since no fidelity/swap/contract
     assert_eq!(
         balances.spendable, balances.regular,
-        "Spendable and Regular balance missmatch | Spendable balance {} | Regular balance {}",
+        "Spendable and Regular balance mismatch | Spendable balance {} | Regular balance {}",
         balances.spendable, balances.regular
     );
 
