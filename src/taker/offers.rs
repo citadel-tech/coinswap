@@ -582,10 +582,8 @@ impl OfferBook {
 
     /// Gets the list of bad makers.
     fn get_bad_makers(&self, protocol: &MakerProtocol) -> Vec<OfferAndAddress> {
-        let mut makers: Vec<&MakerOfferCandidate> = self.makers.iter().collect();
-        makers.sort_by(|a, b| a.address.0.port.len().cmp(&b.address.0.port.len()));
-        makers
-            .into_iter()
+        self.makers
+            .iter()
             .filter(|m| m.state == MakerState::Bad)
             .filter(|m| m.protocol.as_ref() == Some(protocol))
             .filter_map(|m| m.as_offer_and_address())

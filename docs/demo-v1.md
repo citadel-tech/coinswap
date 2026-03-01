@@ -335,7 +335,7 @@ tail -f ~/.coinswap/taker/debug.log
 ### Getting Help
 
 If you're still stuck and couldn't get the apps running:
-- Join our [Discord](https://discord.gg/gs5R6pmAbR) and ask for help from developers directly
+- Join our [Matrix server](https://matrix.to/#/#citadel-foss:matrix.org) and ask for help from developers directly
 - Check the [GitHub Issues](https://github.com/citadel-tech/coinswap/issues) for known problems
 - Review the detailed component guides listed below
 
