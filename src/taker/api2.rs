@@ -340,7 +340,7 @@ impl Taker {
         swap_params: SwapParams,
     ) -> Result<Option<SwapReport>, TakerError> {
         let swap_start_time = std::time::Instant::now();
-        let initial_utxoset = self.wallet.list_all_utxo();
+        let initial_utxoset = self.wallet.list_all_utxo().cloned().collect();
 
         let available = self.wallet.get_balances()?.spendable;
 
@@ -454,8 +454,7 @@ impl Taker {
         let all_regular_utxo = self
             .wallet
             .list_descriptor_utxo_spend_info()
-            .into_iter()
-            .map(|(utxo, _)| utxo)
+            .map(|(utxo, _)| utxo.clone())
             .collect::<Vec<_>>();
 
         let initial_outpoints = initial_utxos
@@ -509,7 +508,6 @@ impl Taker {
         let output_swap_utxos = self
             .wallet
             .list_swept_incoming_swap_utxos()
-            .into_iter()
             .map(|(utxo, _)| {
                 let address = utxo
                     .address

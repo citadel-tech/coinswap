@@ -110,12 +110,13 @@ impl Wallet {
         let destination = Destination::Sweep(change_addr.clone());
 
         // Find utxo corresponding to expired fidelity bond.
-        let utxo = match self
+        let utxo = self
             .list_fidelity_spend_info()
-            .iter()
-            .find(|(_, spend_info)| *spend_info == expired_fidelity_spend_info)
-        {
-            Some((utxo, _)) => utxo,
+            .find(|(_, spend_info)| **spend_info == expired_fidelity_spend_info)
+            .map(|(utxo, _)| utxo.clone());
+
+        let utxo = match utxo {
+            Some(utxo) => utxo,
             None => {
                 // If no UTXO is found for the expired fidelity bond, it means the bond was already spent,
                 // but its `redeemed` flag was never updated. This is a known issue where the redemption
@@ -132,8 +133,7 @@ impl Wallet {
 
                 return Ok(());
             }
-        }
-        .clone();
+        };
 
         let tx = self.spend_coins(&[(utxo, expired_fidelity_spend_info)], destination, feerate)?;
         let txid = self.send_tx(&tx)?;
@@ -168,13 +168,13 @@ impl Wallet {
             if let UTXOSpendInfo::TimelockContract {
                 swapcoin_multisig_redeemscript,
                 input_value,
-            } = spend_info.clone()
+            } = spend_info
             {
-                if swapcoin_multisig_redeemscript == og_sc.get_multisig_redeemscript()
-                    && input_value == og_sc.contract_tx.output[0].value
+                if *swapcoin_multisig_redeemscript == og_sc.get_multisig_redeemscript()
+                    && *input_value == og_sc.contract_tx.output[0].value
                 {
                     let destination = Destination::Sweep(destination_address.clone());
-                    let coins = vec![(utxo, spend_info)];
+                    let coins = vec![(utxo.clone(), spend_info.clone())];
                     let tx = self.spend_coins(&coins, destination, feerate)?;
                     return Ok(tx);
                 }
@@ -196,14 +196,13 @@ impl Wallet {
             if let UTXOSpendInfo::HashlockContract {
                 swapcoin_multisig_redeemscript,
                 input_value,
-            } = spend_info.clone()
+            } = spend_info
             {
-                if swapcoin_multisig_redeemscript == ic_sc.get_multisig_redeemscript()
-                    && input_value == ic_sc.contract_tx.output[0].value
+                if *swapcoin_multisig_redeemscript == ic_sc.get_multisig_redeemscript()
+                    && *input_value == ic_sc.contract_tx.output[0].value
                 {
                     let destination = Destination::Sweep(destination_address.clone());
-                    let coin = (utxo, spend_info);
-                    let coins = vec![coin];
+                    let coins = vec![(utxo.clone(), spend_info.clone())];
                     let tx = self.spend_coins(&coins, destination, feerate)?;
                     return Ok(tx);
                 }

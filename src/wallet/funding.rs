@@ -11,6 +11,7 @@ use bitcoin::{
     Transaction, TxIn, TxOut, Txid, Witness,
 };
 
+use bitcoind::bitcoincore_rpc::bitcoincore_rpc_json::ListUnspentResultEntry;
 use bitcoind::bitcoincore_rpc::{json::CreateRawTransactionInput, RpcApi};
 
 use bitcoin::secp256k1::rand::{rngs::OsRng, RngCore};
@@ -22,7 +23,7 @@ use crate::{
 
 use super::Wallet;
 
-use super::{error::WalletError, AddressType};
+use super::{error::WalletError, AddressType, UTXOSpendInfo};
 
 #[derive(Debug)]
 pub struct CreateFundingTxesResult {
@@ -537,11 +538,11 @@ impl Wallet {
         //this function will pick the top most valuable UTXOs and use them
         //to create funding transactions
 
-        let mut seed_coin_utxo = self.list_descriptor_utxo_spend_info();
-        let mut swap_coin_utxo = self.list_swap_coin_utxo_spend_info();
-        seed_coin_utxo.append(&mut swap_coin_utxo);
-
-        let mut list_unspent_result = seed_coin_utxo;
+        let mut list_unspent_result: Vec<(ListUnspentResultEntry, UTXOSpendInfo)> = self
+            .list_descriptor_utxo_spend_info()
+            .chain(self.list_swap_coin_utxo_spend_info())
+            .map(|(utxo, spend_info)| (utxo.clone(), spend_info.clone()))
+            .collect();
         if list_unspent_result.len() < destinations.len() {
             return Err(WalletError::General(
                 "Not enough UTXOs to create this many funding txes".to_string(),

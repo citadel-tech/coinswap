@@ -241,7 +241,7 @@ pub fn fund_and_verify_taker(
     // Get initial state before funding
     let wallet = taker.get_wallet_mut();
     wallet.sync_and_save().unwrap();
-    let initial_utxo_set = wallet.list_all_utxo();
+    let initial_utxo_set = wallet.list_all_utxo().cloned().collect::<Vec<_>>();
     let initial_balances = wallet.get_balances().unwrap();
     let initial_external_index = *wallet.get_external_index();
     let mut new_txids = Vec::new();
@@ -269,7 +269,7 @@ pub fn fund_and_verify_taker(
 
     wallet.sync_and_save().unwrap();
 
-    let new_utxo_set = wallet.list_all_utxo();
+    let new_utxo_set = wallet.list_all_utxo().cloned().collect::<Vec<_>>();
     let expected_total = initial_balances.regular + utxo_value * u64::from(utxo_count);
     let balances = wallet.get_balances().unwrap();
 
@@ -336,7 +336,7 @@ pub fn fund_and_verify_maker(
 
     makers.iter().enumerate().for_each(|(maker_index, &maker)| {
         let mut wallet = maker.get_wallet().write().unwrap();
-        let initial_utxo_set = wallet.list_all_utxo();
+        let initial_utxo_set = wallet.list_all_utxo().cloned().collect::<Vec<_>>();
         let initial_balances = wallet.get_balances().unwrap();
         let mut new_txids = Vec::new();
 
@@ -350,7 +350,7 @@ pub fn fund_and_verify_maker(
 
         let mut wallet = maker.wallet.write().unwrap();
         wallet.sync_and_save().unwrap();
-        let new_utxo_set = wallet.list_all_utxo();
+        let new_utxo_set = wallet.list_all_utxo().cloned().collect::<Vec<_>>();
         let expected_total = initial_balances.regular + utxo_value * u64::from(utxo_count);
         let balances = wallet.get_balances().unwrap();
 
