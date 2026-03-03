@@ -11,8 +11,9 @@ use bitcoin::{
     Transaction, TxIn, TxOut, Txid, Witness,
 };
 
-use bitcoind::bitcoincore_rpc::bitcoincore_rpc_json::ListUnspentResultEntry;
-use bitcoind::bitcoincore_rpc::{json::CreateRawTransactionInput, RpcApi};
+use bitcoind::bitcoincore_rpc::{
+    bitcoincore_rpc_json::ListUnspentResultEntry, json::CreateRawTransactionInput, RpcApi,
+};
 
 use bitcoin::secp256k1::rand::{rngs::OsRng, RngCore};
 
