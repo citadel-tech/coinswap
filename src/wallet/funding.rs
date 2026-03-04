@@ -539,10 +539,9 @@ impl Wallet {
         //this function will pick the top most valuable UTXOs and use them
         //to create funding transactions
 
-        let mut list_unspent_result: Vec<(ListUnspentResultEntry, UTXOSpendInfo)> = self
+        let mut list_unspent_result: Vec<(&ListUnspentResultEntry, &UTXOSpendInfo)> = self
             .list_descriptor_utxo_spend_info()
             .chain(self.list_swap_coin_utxo_spend_info())
-            .map(|(utxo, spend_info)| (utxo.clone(), spend_info.clone()))
             .collect();
         if list_unspent_result.len() < destinations.len() {
             return Err(WalletError::General(

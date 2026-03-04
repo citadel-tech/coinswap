@@ -1615,14 +1615,14 @@ impl Wallet {
         let locked_utxos = self.list_lock_unspent()?;
 
         // Get regular and swap UTXOs separately
-        let available_regular_utxos: Vec<UtxoRef<'_>> = self
+        let available_regular_utxos: Vec<UtxoRef> = self
             .list_descriptor_utxo_spend_info()
             .filter(|(utxo, _)| {
                 let outpoint = OutPoint::new(utxo.txid, utxo.vout);
                 !locked_utxos.contains(&outpoint)
             })
             .collect();
-        let available_swap_utxos: Vec<UtxoRef<'_>> = self
+        let available_swap_utxos: Vec<UtxoRef> = self
             .list_swept_incoming_swap_utxos()
             .filter(|(utxo, _)| {
                 let outpoint = OutPoint::new(utxo.txid, utxo.vout);
@@ -1741,7 +1741,7 @@ impl Wallet {
 
         // Try each UTXO type in order
         let mut last_error = None;
-        let to_owned_selection = |selection: Vec<UtxoRef<'_>>| {
+        let to_owned_selection = |selection: Vec<UtxoRef>| {
             selection
                 .into_iter()
                 .map(|(utxo, spend_info)| (utxo.clone(), spend_info.clone()))
@@ -1759,7 +1759,7 @@ impl Wallet {
                 / unspents.len() as u64;
 
             // Segregate manually selected UTXOs from the unspents list
-            let (manual_unspents, unspents): (Vec<UtxoRef<'_>>, Vec<UtxoRef<'_>>) =
+            let (manual_unspents, unspents): (Vec<UtxoRef>, Vec<UtxoRef>) =
                 unspents.iter().copied().partition(|(utxo, _)| {
                     let outpoint = OutPoint::new(utxo.txid, utxo.vout);
                     manually_selected_outpoints
@@ -1772,7 +1772,7 @@ impl Wallet {
                 });
 
             // Group UTXOs by address
-            let mut address_groups: HashMap<String, Vec<UtxoRef<'_>>> = HashMap::new();
+            let mut address_groups: HashMap<String, Vec<UtxoRef>> = HashMap::new();
             for (utxo, spend_info) in unspents.iter().copied() {
                 let address_str = utxo
                     .address
