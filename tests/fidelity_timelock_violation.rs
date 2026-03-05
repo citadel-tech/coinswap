@@ -31,7 +31,7 @@ fn fidelity_limit_violation() {
     //Create a Taker
     let taker_behavior = vec![TakerBehavior::Normal];
     // Initialize test framework
-    let (test_framework, mut taproot_taker, taproot_maker, block_generation_handle) =
+    let (test_framework, mut taproot_taker, taproot_maker) =
         TestFramework::init_taproot(makers_config_map, taker_behavior);
 
     let bitcoind = &test_framework.bitcoind;
@@ -53,6 +53,8 @@ fn fidelity_limit_violation() {
             start_maker_server_taproot(maker_clone).unwrap();
         })
     };
+
+    test_framework.register_maker_threads(vec![taproot_maker_threads]);
 
     // Wait for taproot maker to complete setup
     while !maker.is_setup_complete.load(Relaxed) {
@@ -88,10 +90,7 @@ fn fidelity_limit_violation() {
     info!("✅ Taproot coinswap failed as expected: {err:?}");
 
     info!("🛑 Shutting down maker to simulate restart with corrupted config");
-    maker.shutdown.store(true, Relaxed);
-    taproot_maker_threads.join().unwrap();
-    test_framework.stop();
-    block_generation_handle.join().unwrap();
+    drop(test_framework);
 
     // Change maker config fidelity_timelock
     let config_path = maker.data_dir().join("config.toml");

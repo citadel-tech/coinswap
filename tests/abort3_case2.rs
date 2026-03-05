@@ -32,7 +32,7 @@ fn maker_abort3_case2() {
     let taker_behavior = vec![TakerBehavior::Normal];
     // Initiate test framework, Makers.
     // Taker has normal behavior.
-    let (test_framework, mut takers, makers, block_generation_handle) =
+    let (test_framework, mut takers, makers) =
         TestFramework::init(makers_config_map.into(), taker_behavior);
 
     warn!("🧪 Running Test: Maker closes connection after sending a ContractSigsForRecvr");
@@ -68,6 +68,8 @@ fn maker_abort3_case2() {
             })
         })
         .collect::<Vec<_>>();
+
+    test_framework.register_maker_threads(maker_threads);
 
     // Makers take time to fully setup.
     let org_maker_spend_balances = makers
@@ -277,15 +279,4 @@ fn maker_abort3_case2() {
         });
     log::info!("✅ Swap results verification complete");
     info!("🎉 All checks successful. Terminating integration test case");
-    // shutdown makers
-    makers
-        .iter()
-        .for_each(|maker| maker.shutdown.store(true, Relaxed));
-
-    maker_threads
-        .into_iter()
-        .for_each(|thread| thread.join().unwrap());
-
-    test_framework.stop();
-    block_generation_handle.join().unwrap();
 }

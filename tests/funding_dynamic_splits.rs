@@ -46,8 +46,7 @@ fn test_create_funding_txn_with_varied_distributions() {
     );
 
     // Initialize the test framework with a single taker with Normal behavior
-    let (test_framework, mut takers, _, _) =
-        TestFramework::init(vec![], vec![TakerBehavior::Normal]);
+    let (test_framework, mut takers, _) = TestFramework::init(vec![], vec![TakerBehavior::Normal]);
 
     let bitcoind = &test_framework.bitcoind;
     let taker = &mut takers[0];
@@ -147,6 +146,6 @@ fn test_create_funding_txn_with_varied_distributions() {
             MIN_FEE_RATE
         );
     }
-    test_framework.stop();
+
     println!("\nTest completed successfully.");
 }
