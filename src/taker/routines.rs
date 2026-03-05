@@ -77,6 +77,7 @@ pub(crate) fn req_sigs_for_sender_once<S: SwapCoin>(
     maker_multisig_nonces: &[SecretKey],
     maker_hashlock_nonces: &[SecretKey],
     locktime: u16,
+    id: String,
 ) -> Result<ContractSigsForSender, TakerError> {
     handshake_maker(socket)?;
     let txs_info = maker_multisig_nonces
@@ -100,6 +101,7 @@ pub(crate) fn req_sigs_for_sender_once<S: SwapCoin>(
     send_message(
         socket,
         &TakerToMakerMessage::ReqContractSigsForSender(ReqContractSigsForSender {
+            id,
             txs_info,
             hashvalue: outgoing_swapcoins[0].get_hashvalue()?,
             locktime,

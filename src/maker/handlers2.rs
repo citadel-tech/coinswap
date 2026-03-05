@@ -5,18 +5,23 @@
 //! SendersContract -> ReceiverToSenderContract -> PartialSignaturesAndNonces.
 //! Manages the taproot-based swap protocol with MuSig2 signatures.
 
+use bitcoin::OutPoint;
+
 use super::{
     api2::{ConnectionState, Maker},
     error::MakerError,
 };
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
-use crate::protocol::{
-    self,
-    messages2::{
-        GetOffer, MakerToTakerMessage, PrivateKeyHandover, SendersContract, SwapDetails,
-        TakerToMakerMessage,
+use crate::{
+    protocol::{
+        self,
+        messages2::{
+            GetOffer, MakerToTakerMessage, PrivateKeyHandover, SendersContract, SwapDetails,
+            TakerToMakerMessage,
+        },
     },
+    utill::MIN_FEE_RATE,
 };
 
 /// The Global Handle Message function for taproot protocol. Takes in a [`Arc<Maker>`] and handles
@@ -91,6 +96,52 @@ fn handle_swap_details(
     // Store swap details in connection state
     connection_state.swap_amount = swap_details.amount;
     connection_state.timelock = swap_details.timelock;
+
+    // Reserve utxo for this swap
+    // Sync wallet to get fresh UTXO state before coin selection
+    {
+        let mut wallet_write = maker.wallet.write()?;
+        wallet_write.sync_and_save()?;
+        log::info!("Sync at:----handle_swap_details----");
+    }
+
+    // Reserve UTXOs for this swap, This prevents double-spending across concurrent swaps by excluding UTXOs.
+    {
+        let required_amount = swap_details.amount;
+        let mut ongoing_state_lock = maker.ongoing_swap_state.lock()?;
+
+        let excluded_utxos = ongoing_state_lock
+            .iter()
+            .filter(|(id, _)| *id != &swap_details.id)
+            .flat_map(|(_, (state, _))| state.reserve_utxo.clone())
+            .collect();
+        log::info!("Excluded UTXOs {:?}", excluded_utxos);
+        let wallet = maker.wallet.read()?;
+        let selected_utxos =
+            wallet.coin_select(required_amount, MIN_FEE_RATE, None, Some(excluded_utxos))?;
+
+        connection_state.reserve_utxo = selected_utxos
+            .iter()
+            .map(|(utxo, _)| OutPoint::new(utxo.txid, utxo.vout))
+            .collect();
+
+        log::debug!(
+            "[{}] Reserved {} UTXOs for swap",
+            maker.config.network_port,
+            connection_state.reserve_utxo.len(),
+        );
+
+        ongoing_state_lock.insert(
+            swap_details.id.clone(),
+            (connection_state.clone(), Instant::now()),
+        );
+    }
+
+    log::info!(
+        "[{}] Inserted state for swap id: {}",
+        maker.config.network_port,
+        swap_details.id
+    );
 
     // Track swap start time for reporting
     connection_state.swap_start_time = Some(std::time::Instant::now());
