@@ -290,7 +290,10 @@ fn maker_abort2_case1() {
 
     let taker_wallet_mut = taker.get_wallet_mut();
 
-    let swap_coins = taker_wallet_mut.list_swept_incoming_swap_utxos();
+    let swap_coins = taker_wallet_mut
+        .list_swept_incoming_swap_utxos()
+        .map(|(utxo, spend_info)| (utxo.clone(), spend_info.clone()))
+        .collect::<Vec<_>>();
 
     let addr = taker_wallet_mut
         .get_next_internal_addresses(1, AddressType::P2WPKH)

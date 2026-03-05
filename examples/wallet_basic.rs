@@ -149,21 +149,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Show total UTXOs and swap coin count
     println!("\nUTXO Summary:");
-    let utxos = wallet.list_all_utxo();
+    let utxos = wallet.list_all_utxo().collect::<Vec<_>>();
     let swapcoins_count = wallet.get_swapcoins_count();
     println!("  Total UTXOs: {}", utxos.len());
     println!("  Swap coins: {swapcoins_count}");
 
     // Categorize UTXOs by type
     println!("\nUTXO Categories:");
-    let regular_utxos = wallet.list_descriptor_utxo_spend_info();
-    let swap_utxos = wallet.list_swap_coin_utxo_spend_info();
-    let fidelity_utxos = wallet.list_fidelity_spend_info();
-    let swept_utxos = wallet.list_swept_incoming_swap_utxos();
-    println!("  Regular UTXOs: {}", regular_utxos.len());
-    println!("  Swap UTXOs: {}", swap_utxos.len());
-    println!("  Fidelity UTXOs: {}", fidelity_utxos.len());
-    println!("  Swept swap UTXOs: {}", swept_utxos.len());
+    let regular_utxos_count = wallet.list_descriptor_utxo_spend_info().count();
+    let swap_utxos_count = wallet.list_swap_coin_utxo_spend_info().count();
+    let fidelity_utxos_count = wallet.list_fidelity_spend_info().count();
+    let swept_utxos_count = wallet.list_swept_incoming_swap_utxos().count();
+    println!("  Regular UTXOs: {}", regular_utxos_count);
+    println!("  Swap UTXOs: {}", swap_utxos_count);
+    println!("  Fidelity UTXOs: {}", fidelity_utxos_count);
+    println!("  Swept swap UTXOs: {}", swept_utxos_count);
 
     // Generate addresses
     println!("\nAddress Generation:");
@@ -254,8 +254,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Demonstrate swap operations
         println!("\nSwap Operations:");
-        if !swap_utxos.is_empty() {
-            println!("  Found {} incoming swap coin UTXOs", swap_utxos.len());
+        if swap_utxos_count > 0 {
+            println!("  Found {} incoming swap coin UTXOs", swap_utxos_count);
             println!("  Use wallet.sweep_incoming_swapcoins() to sweep completed swaps");
         } else {
             println!("  No incoming swap coins to sweep");
@@ -266,10 +266,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nAdvanced Wallet Information:");
 
     // Get advanced wallet info
-    let live_contracts = wallet.list_live_contract_spend_info();
-    let timelock_contracts = wallet.list_live_timelock_contract_spend_info();
-    let hashlock_contracts = wallet.list_live_hashlock_contract_spend_info();
-    let all_utxo_info = wallet.list_all_utxo_spend_info();
+    let live_contracts = wallet.list_live_contract_spend_info().collect::<Vec<_>>();
+    let timelock_contracts = wallet
+        .list_live_timelock_contract_spend_info()
+        .collect::<Vec<_>>();
+    let hashlock_contracts = wallet
+        .list_live_hashlock_contract_spend_info()
+        .collect::<Vec<_>>();
+    let all_utxo_info = wallet.list_all_utxo_spend_info().collect::<Vec<_>>();
 
     println!("  Live contracts: {}", live_contracts.len());
     println!("  Timelock contracts: {}", timelock_contracts.len());

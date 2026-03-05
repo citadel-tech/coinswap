@@ -126,7 +126,9 @@ fn drain_maker_liquidity_after_fidelity(maker: &Arc<TaprootMaker>, bitcoind: &bi
         .wallet()
         .read()
         .unwrap()
-        .list_descriptor_utxo_spend_info();
+        .list_descriptor_utxo_spend_info()
+        .map(|(utxo, spend_info)| (utxo.clone(), spend_info.clone()))
+        .collect::<Vec<_>>();
     let mut wallet = maker.wallet().write().unwrap();
     let tx = wallet
         .spend_from_wallet(
