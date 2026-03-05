@@ -1946,23 +1946,6 @@ impl Wallet {
         }))
     }
 
-    pub(crate) fn get_utxo(
-        &self,
-        (txid, vout): (Txid, u32),
-    ) -> Result<Option<UTXOSpendInfo>, WalletError> {
-        let utxos = self
-            .list_descriptor_utxo_spend_info()
-            .chain(self.list_swap_coin_utxo_spend_info());
-
-        for (utxo, spend_info) in utxos {
-            if utxo.txid == txid && utxo.vout == vout {
-                return Ok(Some(spend_info.clone()));
-            }
-        }
-
-        Ok(None)
-    }
-
     fn create_and_import_coinswap_address(
         &mut self,
         other_pubkey: &PublicKey,
