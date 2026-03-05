@@ -167,7 +167,7 @@ pub(crate) fn init_bitcoind(datadir: &std::path::Path, zmq_addr: String) -> Bitc
             Ok(path) => read_tarball_from_file(&path),
             Err(_) => {
                 let download_endpoint = env::var("BITCOIND_DOWNLOAD_ENDPOINT")
-                    .unwrap_or_else(|_| "http://172.81.178.3/bitcoin-binaries".to_owned());
+                    .unwrap_or_else(|_| "http://170.75.166.88/bitcoin-binaries".to_owned());
                 let url = format!("{download_endpoint}/{download_filename}");
                 download_bitcoind_tarball(&url, 5)
             }
