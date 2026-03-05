@@ -75,7 +75,7 @@ fn send_and_mine(
 
 #[test]
 fn plainwallet_plainbackup_plainrestore() {
-    info!("Running Test: Creating Wallet file, backing it up, then recieve a payment, and restore backup");
+    info!("Running Test: Creating Wallet file, backing it up, then receive a payment, and restore backup");
 
     let (original_wallet, rpc_config, wallet_backup_file, mut bitcoind, restored_wallet_file) =
         setup("plain_wallet_plainbackup_plain_restore".to_string());
@@ -106,7 +106,7 @@ fn plainwallet_plainbackup_plainrestore() {
     //cleanup(&mut bitcoind);
     cleanup(&mut bitcoind);
 
-    info!("🎉 Wallet Backup and Restore after tx test ran succefully!");
+    info!("🎉 Wallet Backup and Restore after tx test ran successfully!");
 }
 
 #[test]

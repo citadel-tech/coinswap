@@ -63,7 +63,7 @@ const TEST_CASES: &[(f64, &[f64], &str, &str)] = &[
 fn run_all_utxo_tests() {
     println!("=== Running All UTXO Tests ===");
     println!("\n🔧 Starting Manual Swapping in conjunction with Regular-Swapcoin clause Test");
-    test_maunal_coinselection();
+    test_manual_coinselection();
 
     println!("\n⏳ Waiting for cleanup...");
     std::thread::sleep(Duration::from_secs(10));
@@ -401,7 +401,7 @@ fn test_separated_utxo_coin_selection() {
     block_generation_handle.join().unwrap();
 }
 
-fn test_maunal_coinselection() {
+fn test_manual_coinselection() {
     let (test_framework, mut takers, maker, block_generation_handle) = TestFramework::init(
         vec![
             ((26102, Some(19053)), MakerBehavior::Normal),
