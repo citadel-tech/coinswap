@@ -1144,7 +1144,12 @@ impl Taker {
             match self.send_sigs_init_next_hop_once(maker_refund_locktime, funding_tx_infos) {
                 Ok(ret) => return Ok(ret),
                 Err(e) => {
-                    log::warn!(
+                    // If we already know there are no more suitable makers, then no point in trying to reconnect, just abort.
+                    if matches!(e, TakerError::NotEnoughMakersInOfferBook) {
+                        log::error!("No more suitable makers in offerbook to try for next hop. Aborting swap.");
+                        return Err(e);
+                    }
+                    log::error!(
                         "Failed to connect to maker {} to send signatures and init next hop, \
                             reattempting {} of {} | error={:?}",
                         &maker_oa.address,
@@ -1329,12 +1334,12 @@ impl Taker {
                 ) {
                     Ok(r) => r,
                     Err(e) => {
-                        self.offerbook.add_bad_maker(&next_maker);
-                        log::info!(
-                            "Failed to obtain sender's contract tx signature from next_maker {}, Banning Maker: {:?}",
+                        log::error!(
+                            "Failed to obtain sender's contract signature from the next maker {} | {:?}",
                             next_maker.address,
                             e
                         );
+                        self.offerbook.add_bad_maker(&next_maker);
                         continue; //go back to the start of the loop and try another maker
                     }
                 };
@@ -1388,8 +1393,10 @@ impl Taker {
             ) {
                 Ok(s) => s.sigs,
                 Err(e) => {
-                    log::error!("Could not get Receiver's signatures : {e:?}");
-                    log::warn!("Banning Maker : {}", previous_maker.peer.address);
+                    log::error!(
+                        "Could not get Receiver's signatures from maker {}: {e:?}",
+                        previous_maker.peer.address
+                    );
                     self.offerbook.add_bad_maker(&previous_maker.peer);
                     return Err(e);
                 }
@@ -1896,7 +1903,7 @@ impl Taker {
                             ));
                             continue;
                         } else {
-                            log::warn!(
+                            log::error!(
                                 "Failed to connect to maker {} to settle coinswap, \
                                         reattempt limit exceeded",
                                 &maker_address.address,

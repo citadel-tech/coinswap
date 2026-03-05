@@ -173,8 +173,13 @@ fn maker_abort2_case3() {
     // | **Taker**      | -                                  | 858                 | -                  | 858                        |
     // | **Maker16102** | -                                  | 858                 | -                  | 858                        |
 
+    // Maker gets banned for being naughty.
     info!("🚫 Verifying naughty maker gets banned");
-    // Maker6102 gets banned for being naughty.
+    assert_eq!(
+        taker.get_bad_makers().len(),
+        1,
+        "Taker should have exactly 1 bad maker"
+    );
     assert_eq!(
         format!("127.0.0.1:{naughty}"),
         taker.get_bad_makers()[0].address.to_string()

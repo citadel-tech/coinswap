@@ -162,8 +162,13 @@ fn maker_abort3_case2() {
     //
     // The Fee balance would look like `standard_swap` IT for this case.
 
-    info!("🚫 Verifying naughty maker gets banned");
     // Maker gets banned for being naughty.
+    info!("🚫 Verifying naughty maker gets banned");
+    assert_eq!(
+        taker.get_bad_makers().len(),
+        1,
+        "Taker should have exactly 1 bad maker"
+    );
     assert_eq!(
         format!("127.0.0.1:{naughty}"),
         taker.get_bad_makers()[0].address.to_string()

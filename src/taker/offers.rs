@@ -215,6 +215,7 @@ impl OfferBookHandle {
 
     /// Tag a maker as bad
     pub fn add_bad_maker(&self, maker: &OfferAndAddress) {
+        log::info!("Bad Maker added: {}", maker.address);
         self.inner.write().unwrap().mark_bad(&maker.address);
     }
 
