@@ -160,6 +160,11 @@ fn maker_abort2_case1() {
     // Maker might not get banned as Taker may not try 16102 for swap. If it does then check its 16102.
     if !taker.get_bad_makers().is_empty() {
         assert_eq!(
+            taker.get_bad_makers().len(),
+            1,
+            "Taker should have exactly 1 bad maker"
+        );
+        assert_eq!(
             format!("127.0.0.1:{naughty}"),
             taker.get_bad_makers()[0].address.to_string()
         );

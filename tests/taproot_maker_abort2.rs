@@ -213,8 +213,13 @@ fn test_taproot_maker_abort2() {
     }
     info!("✅ Taproot Maker abort 2 recovery test passed!");
 
-    info!("🚫 Verifying naughty maker gets banned");
     // Maker gets banned for being naughty.
+    info!("🚫 Verifying naughty maker gets banned");
+    assert_eq!(
+        taproot_taker.get_bad_makers().len(),
+        1,
+        "Taker should have exactly 1 bad maker"
+    );
     assert_eq!(
         format!("127.0.0.1:{naughty}"),
         taproot_taker.get_bad_makers()[0].address.to_string()

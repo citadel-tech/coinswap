@@ -782,8 +782,12 @@ impl Taker {
                     }
                 }
                 _ => {
+                    log::error!(
+                        "Received unexpected message from maker {} | msg: {:?}",
+                        suitable_maker.address,
+                        response
+                    );
                     self.offerbook.add_bad_maker(suitable_maker);
-                    log::warn!("Received unexpected message from maker: {:?}", response);
                     continue;
                 }
             }
@@ -1083,6 +1087,11 @@ impl Taker {
                 self.forward_contracts_and_coordinate_sweep(incoming_contract)?;
             }
             _ => {
+                log::error!(
+                    "Received unexpected message from first maker {} | msg: {:?}",
+                    first_maker.address,
+                    response
+                );
                 self.offerbook.add_bad_maker(first_maker);
                 return Err(TakerError::General(
                     "Unexpected response from first maker".to_string(),
@@ -1177,6 +1186,12 @@ impl Taker {
                     }
                 }
                 _ => {
+                    log::error!(
+                        "Received unexpected message from maker {} at index {} | msg: {:?}",
+                        maker.address,
+                        maker_index,
+                        maker_response
+                    );
                     self.offerbook.add_bad_maker(maker);
                     return Err(TakerError::General(format!(
                         "Unexpected response from maker {}",
@@ -1371,6 +1386,12 @@ impl Taker {
                         Some(maker_outgoing_privkey);
                 }
                 _ => {
+                    log::error!(
+                        "Received unexpected message from maker {} at index {} | msg: {:?}",
+                        maker_address,
+                        maker_index,
+                        response
+                    );
                     self.offerbook
                         .add_bad_maker(&self.ongoing_swap_state.chosen_makers[maker_index]);
                     return Err(TakerError::General(format!(

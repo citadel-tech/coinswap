@@ -1,0 +1,17 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security Vulnerability
+    url: https://github.com/citadel-tech/coinswap/security/advisories/new
+    about: >
+      Do NOT open a public issue for security vulnerabilities.
+      Report them privately via GitHub Security Advisories.
+      What to Include:
+        - A clear description of the impact and affected component(s) (`makerd`, `taker`, `maker-cli`, `wallet`, `watch_tower`, `protocol`)
+        - Steps to reproduce (ideally on regtest/mutinynet)
+        - Logs and versions (`git rev-parse --short HEAD`, `rustc --version`, `bitcoind --version`, `tor --version`)
+      We aim to follow responsible disclosure. Please give maintainers time to investigate and ship a fix before public disclosure.
+  - name: Protocol Discussion
+    url: https://github.com/citadel-tech/coinswap/discussions
+    about: >
+      For protocol design questions, RFCs, or open-ended ideas,
+      start a GitHub Discussion instead of opening an issue.
