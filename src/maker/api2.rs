@@ -107,6 +107,7 @@ pub struct ConnectionState {
     pub(crate) incoming_contract: IncomingSwapCoinV2,
     pub(crate) outgoing_contract: OutgoingSwapCoinV2,
     pub(crate) swap_start_time: Option<std::time::Instant>,
+    pub(crate) reserve_utxo: Vec<OutPoint>,
 }
 
 impl Default for ConnectionState {
@@ -161,6 +162,7 @@ impl Default for ConnectionState {
                 swap_id: None,
             },
             swap_start_time: None,
+            reserve_utxo: vec![],
         }
     }
 }
@@ -173,6 +175,7 @@ impl Clone for ConnectionState {
             incoming_contract: self.incoming_contract.clone(),
             outgoing_contract: self.outgoing_contract.clone(),
             swap_start_time: self.swap_start_time,
+            reserve_utxo: self.reserve_utxo.clone(),
         }
     }
 }
@@ -485,7 +488,13 @@ impl Maker {
 
             // Use coin_select to get UTXOs that sum to the required amount
             let selected_utxos = wallet
-                .coin_select(connection_state.swap_amount, MIN_FEE_RATE, None)
+                .coin_select(
+                    connection_state.swap_amount,
+                    MIN_FEE_RATE,
+                    (!connection_state.reserve_utxo.is_empty())
+                        .then(|| connection_state.reserve_utxo.clone()),
+                    None,
+                )
                 .map_err(|e| {
                     MakerError::General(format!("Coin selection failed: {:?}", e).leak())
                 })?;

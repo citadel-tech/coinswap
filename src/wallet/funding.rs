@@ -147,6 +147,7 @@ impl Wallet {
                 coinswap_amount,
                 fee_rate.to_btc(),
                 manually_selected_outpoints,
+                None,
             )?;
 
             let outpoints: Vec<OutPoint> = selected_utxo
@@ -226,8 +227,12 @@ impl Wallet {
         let result = (|| {
             for (address, &output_value) in destinations.iter().zip(output_values.iter()) {
                 let remaining = Amount::from_sat(output_value);
-                let selected_utxo =
-                    self.coin_select(remaining, fee_rate, manually_selected_outpoints.clone())?;
+                let selected_utxo = self.coin_select(
+                    remaining,
+                    fee_rate,
+                    manually_selected_outpoints.clone(),
+                    None,
+                )?;
 
                 let outpoints: Vec<OutPoint> = selected_utxo
                     .iter()

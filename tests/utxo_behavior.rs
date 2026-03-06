@@ -153,7 +153,7 @@ fn test_address_grouping_behavior() {
 
         // Call the coin selection algorithm we're testing
         let selected_utxos = wallet
-            .coin_select(target_amount, MIN_FEE_RATE, None)
+            .coin_select(target_amount, MIN_FEE_RATE, None, None)
             .unwrap();
 
         let selected_amounts: Vec<f64> = selected_utxos
@@ -282,7 +282,7 @@ fn test_separated_utxo_coin_selection() {
         println!("\n--- Test Case 1: Regular UTXOs Only ---");
         println!("Target: {} sats (< regular)", target_1.to_sat());
 
-        let result_1 = wallet.coin_select(target_1, MIN_FEE_RATE, None);
+        let result_1 = wallet.coin_select(target_1, MIN_FEE_RATE, None, None);
         assert!(
             result_1.is_ok(),
             "Test Case 1 failed: Expected success but got error: {:?}",
@@ -303,7 +303,7 @@ fn test_separated_utxo_coin_selection() {
             target_2.to_sat()
         );
 
-        let result_2 = wallet.coin_select(target_2, MIN_FEE_RATE, None);
+        let result_2 = wallet.coin_select(target_2, MIN_FEE_RATE, None, None);
         assert!(
             result_2.is_ok(),
             "Test Case 2 failed: Expected success but got error: {:?}",
@@ -324,7 +324,7 @@ fn test_separated_utxo_coin_selection() {
             target_3.to_sat()
         );
 
-        let result_3 = wallet.coin_select(target_3, MIN_FEE_RATE, None);
+        let result_3 = wallet.coin_select(target_3, MIN_FEE_RATE, None, None);
         assert!(
             result_3.is_err(),
             "Test Case 3 failed: Expected error but got success with {} UTXOs",
@@ -374,7 +374,7 @@ fn test_separated_utxo_coin_selection() {
         // Now retry the same target - should succeed with regular UTXOs only
         let target_3 = Amount::from_sat(46000000); // Same target
         println!("🔄 Retrying coin selection with additional regular funds...");
-        let result_3_retry = wallet.coin_select(target_3, MIN_FEE_RATE, None);
+        let result_3_retry = wallet.coin_select(target_3, MIN_FEE_RATE, None, None);
         assert!(
             result_3_retry.is_ok(),
             "Test Case 3 retry failed: Expected success with additional regular funds, got: {:?}",
@@ -656,7 +656,7 @@ fn test_manual_coinselection() {
         let result =
             taker
                 .get_wallet_mut()
-                .coin_select(target_amount, MIN_FEE_RATE, manual_outpoints);
+                .coin_select(target_amount, MIN_FEE_RATE, manual_outpoints, None);
         match (result, expected) {
             (Ok(selection), "Ok") => {
                 println!(

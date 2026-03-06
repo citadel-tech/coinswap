@@ -96,7 +96,10 @@ fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result
                 change_address_type: AddressType::P2WPKH,
             };
 
-            let coins_to_send = maker.wallet().read()?.coin_select(amount, feerate, None)?;
+            let coins_to_send = maker
+                .wallet()
+                .read()?
+                .coin_select(amount, feerate, None, None)?;
             let tx =
                 maker
                     .wallet()

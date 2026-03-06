@@ -961,7 +961,7 @@ impl Taker {
         // Use coin_select to get UTXOs that sum to the required amount
         let selected_utxos = self
             .wallet
-            .coin_select(send_amount, MIN_FEE_RATE, None)
+            .coin_select(send_amount, MIN_FEE_RATE, None, None)
             .map_err(|e| TakerError::General(format!("Coin selection failed: {:?}", e)))?;
 
         let hashlock_script = self

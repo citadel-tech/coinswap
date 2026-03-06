@@ -8,7 +8,7 @@ use std::{
     time::Duration,
 };
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::{
     security::KeyMaterial,
@@ -1548,6 +1548,7 @@ impl Wallet {
         amount: Amount,
         feerate: f64,
         manually_selected_outpoints: Option<Vec<OutPoint>>,
+        excluded_outpoints: Option<Vec<OutPoint>>,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
         // P2WPKH Breaks down as:
         // Non-witness data (multiplied by 4):
@@ -1613,20 +1614,21 @@ impl Wallet {
         type UtxoRef<'a> = (&'a ListUnspentResultEntry, &'a UTXOSpendInfo);
 
         let locked_utxos = self.list_lock_unspent()?;
-
+        let excluded: HashSet<OutPoint> =
+            excluded_outpoints.unwrap_or_default().into_iter().collect();
         // Get regular and swap UTXOs separately
         let available_regular_utxos: Vec<UtxoRef> = self
             .list_descriptor_utxo_spend_info()
             .filter(|(utxo, _)| {
                 let outpoint = OutPoint::new(utxo.txid, utxo.vout);
-                !locked_utxos.contains(&outpoint)
+                !locked_utxos.contains(&outpoint) && !excluded.contains(&outpoint)
             })
             .collect();
         let available_swap_utxos: Vec<UtxoRef> = self
             .list_swept_incoming_swap_utxos()
             .filter(|(utxo, _)| {
                 let outpoint = OutPoint::new(utxo.txid, utxo.vout);
-                !locked_utxos.contains(&outpoint)
+                !locked_utxos.contains(&outpoint) && !excluded.contains(&outpoint)
             })
             .collect();
 
