@@ -328,6 +328,7 @@ fn main() -> Result<(), TakerError> {
                         amount,
                         feerate.unwrap_or(MIN_FEE_RATE),
                         manually_selected_outpoints,
+                        None,
                     )?;
 
                     let outputs = vec![(Address::from_str(address)?.assume_checked(), amount)];

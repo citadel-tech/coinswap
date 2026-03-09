@@ -1681,6 +1681,7 @@ impl Taker {
                 maker_multisig_nonces,
                 maker_hashlock_nonces,
                 locktime,
+                self.ongoing_swap_state.id.clone(),
             ) {
                 Ok(ret) => {
                     return {

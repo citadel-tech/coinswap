@@ -117,7 +117,7 @@ pub(crate) fn handle_message(
             }
             TakerToMakerMessage::ReqContractSigsForSender(message) => {
                 connection_state.allowed_message = ExpectedMessage::ProofOfFunding;
-                Some(maker.handle_req_contract_sigs_for_sender(message)?)
+                Some(maker.handle_req_contract_sigs_for_sender(connection_state, message)?)
             }
             TakerToMakerMessage::RespProofOfFunding(proof) => {
                 connection_state.allowed_message =
@@ -142,7 +142,7 @@ pub(crate) fn handle_message(
         ExpectedMessage::ReqContractSigsForSender => {
             if let TakerToMakerMessage::ReqContractSigsForSender(message) = message {
                 connection_state.allowed_message = ExpectedMessage::ProofOfFunding;
-                Some(maker.handle_req_contract_sigs_for_sender(message)?)
+                Some(maker.handle_req_contract_sigs_for_sender(connection_state, message)?)
             } else {
                 return Err(MakerError::UnexpectedMessage {
                     expected: "ReqContractSigsForSender".to_string(),
@@ -231,6 +231,7 @@ impl Maker {
     /// transaction isn't valid.
     pub(crate) fn handle_req_contract_sigs_for_sender(
         &self,
+        connection_state: &mut ConnectionState,
         message: ReqContractSigsForSender,
     ) -> Result<MakerToTakerMessage, MakerError> {
         if let MakerBehavior::CloseAtReqContractSigsForSender = self.behavior {
@@ -257,6 +258,51 @@ impl Maker {
             funding_txids
         );
 
+        // Sync wallet to get fresh UTXO state before coin selection
+        {
+            let mut wallet_write = self.wallet.write()?;
+            wallet_write.sync_and_save()?;
+            log::info!("Sync at:----handle_req_contract_sigs_for_sender----");
+        }
+
+        // Reserve UTXOs for this swap, This prevents double-spending across concurrent swaps by excluding UTXOs.
+        {
+            let required_amount = Amount::from_sat(total_funding_amount);
+            let mut ongoing_state_lock = self.ongoing_swap_state.lock()?;
+
+            let excluded_utxos = ongoing_state_lock
+                .iter()
+                .filter(|(id, _)| *id != &message.id)
+                .flat_map(|(_, (state, _))| state.reserve_utxo.clone())
+                .collect();
+            log::info!("Excluded UTXOs {:?}", excluded_utxos);
+            let wallet = self.wallet.read()?;
+            let selected_utxos =
+                wallet.coin_select(required_amount, MIN_FEE_RATE, None, Some(excluded_utxos))?;
+
+            connection_state.reserve_utxo = selected_utxos
+                .iter()
+                .map(|(utxo, _)| OutPoint::new(utxo.txid, utxo.vout))
+                .collect();
+
+            log::debug!(
+                "[{}] Reserved {} UTXOs for swap",
+                self.config.network_port,
+                connection_state.reserve_utxo.len(),
+            );
+
+            ongoing_state_lock.insert(
+                message.id.clone(),
+                (connection_state.clone(), Instant::now()),
+            );
+        }
+
+        log::info!(
+            "[{}] Inserted state for swap id: {}",
+            self.config.network_port,
+            message.id
+        );
+
         let max_size = self.wallet.read()?.store.offer_maxsize;
         if total_funding_amount >= self.config.min_swap_amount && total_funding_amount <= max_size {
             Ok(MakerToTakerMessage::RespContractSigsForSender(
@@ -268,6 +314,7 @@ impl Maker {
                 self.config.min_swap_amount,
                 max_size
             );
+            self.ongoing_swap_state.lock()?.remove(&message.id);
             Err(MakerError::General("Not enough funds"))
         }
     }
@@ -408,7 +455,8 @@ impl Maker {
                 &SwapParams {
                     send_amount: Amount::from_sat(outgoing_amount),
                     maker_count: 0,
-                    manually_selected_outpoints: None,
+                    manually_selected_outpoints: (!connection_state.reserve_utxo.is_empty())
+                        .then(|| connection_state.reserve_utxo.clone()),
                 },
                 &message
                     .next_coinswap_info

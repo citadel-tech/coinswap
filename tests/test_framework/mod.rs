@@ -501,6 +501,7 @@ pub fn verify_maker_pre_swap_balance_taproot(taproot_makers: &[Arc<TaprootMaker>
                 14999518, // maker (normal case with slight fee variance)
                 34999500, // maker multi taker case (8 utxo funded)
                 34999518, // maker multi taker case (with slight fee variance)
+                5017632,  // maker multi taker case
             ],
             "Taproot Maker regular balance check after fidelity bond creation."
         );
