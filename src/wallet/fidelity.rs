@@ -547,7 +547,7 @@ impl Wallet {
             .expect("Bond is not yet confirmed");
 
         let secp = Secp256k1::new();
-        let cert_sig = secp.sign_ecdsa(
+        let cert_sig = secp.sign_ecdsa_low_r(
             &Message::from_digest_slice(cert_hash.as_byte_array())?,
             &fidelity_privkey,
         );

@@ -451,12 +451,12 @@ impl IncomingSwapCoin {
             .map_err(|e| WalletError::General(format!("Message creation error: {:?}", e)))?;
 
             let sig_mine = bitcoin::ecdsa::Signature {
-                signature: secp.sign_ecdsa(&sighash, my_privkey),
+                signature: secp.sign_ecdsa_low_r(&sighash, my_privkey),
                 sighash_type: EcdsaSighashType::All,
             };
 
             let sig_other = bitcoin::ecdsa::Signature {
-                signature: secp.sign_ecdsa(&sighash, other_privkey),
+                signature: secp.sign_ecdsa_low_r(&sighash, other_privkey),
                 sighash_type: EcdsaSighashType::All,
             };
 
@@ -505,7 +505,7 @@ impl IncomingSwapCoin {
             .map_err(|e| WalletError::General(format!("Message creation error: {:?}", e)))?;
 
             let sig = bitcoin::ecdsa::Signature {
-                signature: secp.sign_ecdsa(&sighash, &self.hashlock_privkey),
+                signature: secp.sign_ecdsa_low_r(&sighash, &self.hashlock_privkey),
                 sighash_type: EcdsaSighashType::All,
             };
 
@@ -1147,7 +1147,7 @@ impl OutgoingSwapCoin {
 
             // Sign with timelock privkey
             let msg = bitcoin::secp256k1::Message::from_digest(sighash.to_byte_array());
-            let sig = secp.sign_ecdsa(&msg, &self.timelock_privkey);
+            let sig = secp.sign_ecdsa_low_r(&msg, &self.timelock_privkey);
 
             let ecdsa_sig = bitcoin::ecdsa::Signature {
                 signature: sig,

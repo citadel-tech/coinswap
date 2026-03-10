@@ -2144,7 +2144,7 @@ impl Wallet {
                         input_value,
                         EcdsaSighashType::All,
                     )?;
-                    let sig = secp.sign_ecdsa(
+                    let sig = secp.sign_ecdsa_low_r(
                         &secp256k1::Message::from_digest_slice(&sighash[..])?,
                         &privkey,
                     );
