@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! SwapCoins are structures defining an ongoing swap operations.
 //! They are UTXOs + metadata which are not from the deterministic wallet
 //! and made in the process of a CoinSwap.

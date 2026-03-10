@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! SwapCoin2 structures define ongoing Taproot-based swap operations.
 
 use bitcoin::{

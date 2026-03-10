@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Definition of the Coinswap Contract Transaction.
 //!
 //! This module includes most of the fundamental functions defining the coinswap protocol.

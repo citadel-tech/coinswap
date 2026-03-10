@@ -9,7 +9,8 @@ use crate::{
     watch_tower::watcher_error::WatcherError,
 };
 
-use super::MakerBehavior;
+#[cfg(feature = "integration-test")]
+use super::unified_handlers::UnifiedMakerBehavior;
 
 /// Enum to handle Maker-related errors.
 ///
@@ -38,7 +39,8 @@ pub enum MakerError {
     /// Represents a network-related error.
     Net(NetError),
     /// Represents an error triggered by special maker behavior.
-    SpecialBehaviour(MakerBehavior),
+    #[cfg(feature = "integration-test")]
+    SpecialBehaviour(UnifiedMakerBehavior),
     /// Represents a protocol-related error.
     Protocol(ProtocolError),
     /// Tor Error.
@@ -101,8 +103,9 @@ impl From<WalletError> for MakerError {
     }
 }
 
-impl From<MakerBehavior> for MakerError {
-    fn from(value: MakerBehavior) -> Self {
+#[cfg(feature = "integration-test")]
+impl From<UnifiedMakerBehavior> for MakerError {
+    fn from(value: UnifiedMakerBehavior) -> Self {
         Self::SpecialBehaviour(value)
     }
 }

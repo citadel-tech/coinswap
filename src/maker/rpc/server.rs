@@ -13,7 +13,7 @@ use bitcoin::{Address, Amount};
 
 use super::messages::RpcMsgReq;
 use crate::{
-    maker::{config::MakerConfig, error::MakerError, rpc::messages::RpcMsgResp},
+    maker::{error::MakerError, rpc::messages::RpcMsgResp, unified_api::UnifiedMakerServerConfig},
     utill::{get_tor_hostname, read_message, send_message, HEART_BEAT_INTERVAL, UTXO},
     wallet::{AddressType, Destination, Wallet},
 };
@@ -22,7 +22,7 @@ use std::{path::Path, str::FromStr, sync::RwLock};
 pub trait MakerRpc {
     fn wallet(&self) -> &RwLock<Wallet>;
     fn data_dir(&self) -> &Path;
-    fn config(&self) -> &MakerConfig;
+    fn config(&self) -> &UnifiedMakerServerConfig;
     fn shutdown(&self) -> &AtomicBool;
 }
 

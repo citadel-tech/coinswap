@@ -10,23 +10,31 @@
 //! 6102: Client connection for swaps.
 //! 6103: RPC Connection for operations.
 
-mod api;
-mod api2;
-mod config;
 mod error;
-mod handlers;
-mod handlers2;
 mod rpc;
-mod server;
-mod server2;
 
-pub use api::{Maker, MakerBehavior};
+pub mod legacy_handlers;
+mod legacy_verification;
+pub mod taproot_handlers;
+mod taproot_verification;
+
+pub mod swap_tracker;
+pub mod unified_api;
+pub mod unified_handlers;
+pub mod unified_server;
+
 pub use error::MakerError;
 pub use rpc::{RpcMsgReq, RpcMsgResp};
-pub use server::start_maker_server;
 
-// Taproot protocol exports
-pub use api2::Maker as TaprootMaker;
+pub use swap_tracker::MakerSwapTracker;
 #[cfg(feature = "integration-test")]
-pub use api2::MakerBehavior as TaprootMakerBehavior;
-pub use server2::start_maker_server_taproot;
+pub use unified_api::UnifiedMakerBehavior;
+pub use unified_api::{UnifiedMakerServer, UnifiedMakerServerConfig};
+pub use unified_handlers::{
+    handle_message as unified_handle_message, MakerConfig as UnifiedHandlerConfig, SwapPhase,
+    UnifiedConnectionState, UnifiedMaker as UnifiedMakerTrait,
+};
+pub use unified_server::start_unified_server;
+
+pub use legacy_handlers::handle_legacy_message;
+pub use taproot_handlers::handle_taproot_message;

@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Coinswap Protocol Messages.
 //!
 //! Messages are communicated between one Taker and one or many Makers.

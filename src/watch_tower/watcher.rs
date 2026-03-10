@@ -39,6 +39,7 @@ pub struct Watcher<R: Role> {
     registry: FileRegistry,
     rx_requests: StdReceiver<WatcherCommand>,
     tx_events: CbSender<WatcherEvent>,
+    nostr_relays: Vec<String>,
     _role: PhantomData<R>,
 }
 
@@ -92,12 +93,14 @@ impl<R: Role> Watcher<R> {
         registry: FileRegistry,
         rx_requests: StdReceiver<WatcherCommand>,
         tx_events: CbSender<WatcherEvent>,
+        nostr_relays: Vec<String>,
     ) -> Self {
         Self {
             backend,
             registry,
             rx_requests,
             tx_events,
+            nostr_relays,
             _role: PhantomData,
         }
     }
@@ -114,6 +117,7 @@ impl<R: Role> Watcher<R> {
 
         let discovery_shutdown = Arc::new(AtomicBool::new(false));
         let registry = self.registry.clone();
+        let nostr_relays = self.nostr_relays.clone();
         std::thread::scope(move |s| {
             let discovery_clone = discovery_shutdown.clone();
             if R::RUN_DISCOVERY {
@@ -122,6 +126,7 @@ impl<R: Role> Watcher<R> {
                         rest_backend_1,
                         registry,
                         discovery_shutdown.clone(),
+                        &nostr_relays,
                     ) {
                         log::error!("Discovery thread failed: {:?}", e);
                     }

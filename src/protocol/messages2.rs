@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! This module defines the messages communicated between the parties(Taker, Maker)
 use crate::protocol::messages::FidelityProof;
 use bitcoin::{Amount, PublicKey, ScriptBuf, Txid};

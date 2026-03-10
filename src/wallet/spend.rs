@@ -156,6 +156,7 @@ impl Wallet {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub(crate) fn create_timelock_spend(
         &self,
         og_sc: &OutgoingSwapCoin,
@@ -185,6 +186,7 @@ impl Wallet {
         ))
     }
 
+    #[allow(dead_code)]
     pub(crate) fn create_hashlock_spend(
         &self,
         ic_sc: &IncomingSwapCoin,
