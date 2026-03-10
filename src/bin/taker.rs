@@ -64,7 +64,7 @@ struct Cli {
     pub password: Option<String>,
 
     /// Sets the verbosity level of debug.log file
-    #[clap(long, short = 'v', possible_values = &["off", "error", "warn", "info", "debug", "trace"], default_value = "info")]
+    #[arg(long, short = 'v', value_parser = ["off", "error", "warn", "info", "debug", "trace"], default_value = "info")]
     pub verbosity: String,
 
     /// List of commands for various wallet operations

@@ -35,7 +35,7 @@ use crate::{
     },
     utill::{read_message, send_message},
     wallet::verify_fidelity_checks,
-    watch_tower::{rpc_backend::BitcoinRpc, service::WatchService, watcher::WatcherEvent},
+    watch_tower::{rest_backend::BitcoinRest, service::WatchService, watcher::WatcherEvent},
 };
 
 /// Maximum number of attempts to connect to a maker.
@@ -317,7 +317,7 @@ pub struct OfferSyncService {
     offerbook: OfferBookHandle,
     watch_service: WatchService,
     socks_port: u16,
-    rpc_backend: BitcoinRpc,
+    rpc_backend: BitcoinRest,
     is_syncing: Arc<AtomicBool>,
     run_now: Arc<AtomicBool>,
 }
@@ -357,7 +357,7 @@ impl OfferSyncService {
         offerbook: OfferBookHandle,
         watch_service: WatchService,
         socks_port: u16,
-        rpc_backend: BitcoinRpc,
+        rpc_backend: BitcoinRest,
     ) -> Self {
         Self {
             offerbook,

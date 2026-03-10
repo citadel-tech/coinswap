@@ -2588,6 +2588,7 @@ impl Wallet {
         }))
     }
 
+    #[allow(dead_code)]
     pub(crate) fn get_utxo(
         &self,
         (txid, vout): (Txid, u32),

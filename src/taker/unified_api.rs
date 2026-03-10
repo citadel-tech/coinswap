@@ -45,7 +45,7 @@ use crate::{
     },
     watch_tower::{
         registry_storage::FileRegistry,
-        rpc_backend::BitcoinRpc,
+        rest_backend::BitcoinRest,
         service::WatchService,
         watcher::{Role, Watcher},
         zmq_backend::ZmqBackend,
@@ -628,7 +628,7 @@ impl UnifiedTaker {
         data_dir: &std::path::Path,
     ) -> Result<WatchService, TakerError> {
         let backend = ZmqBackend::new(&config.zmq_addr);
-        let rpc_backend = BitcoinRpc::new(rpc_config.clone())?;
+        let rpc_backend = BitcoinRest::new(rpc_config.clone())?;
         let blockchain_info = rpc_backend.get_blockchain_info()?;
         let file_registry = data_dir
             .join(".taker_watcher")
@@ -682,7 +682,7 @@ impl UnifiedTaker {
         socks_port: u16,
         rpc_config: RPCConfig,
     ) -> Result<OfferSyncHandle, TakerError> {
-        let rpc_backend_sync = BitcoinRpc::new(rpc_config)?;
+        let rpc_backend_sync = BitcoinRest::new(rpc_config)?;
         Ok(OfferSyncService::new(
             offerbook.clone(),
             watch_service.clone(),

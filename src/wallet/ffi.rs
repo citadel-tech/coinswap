@@ -144,7 +144,6 @@ impl Wallet {
             amount,
             fee_rate.unwrap_or(MIN_FEE_RATE),
             manually_selected_outpoints,
-            None,
         )?;
 
         let addr = Address::from_str(&address)
