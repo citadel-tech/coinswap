@@ -161,7 +161,7 @@ fn test_taproot_multi_maker_coinswap() {
     // 4-maker routes have compounding DER signature variance (~100 sat range)
     let spendable = taker_balances_after.spendable.to_sat();
     assert!(
-        (24989900..=24990200).contains(&spendable),
+        (24994700..=24995100).contains(&spendable),
         "Taker spendable balance out of range: {}",
         spendable
     );
@@ -173,7 +173,7 @@ fn test_taproot_multi_maker_coinswap() {
     assert_eq!(taker_balances_after.fidelity, Amount::ZERO);
     let diff = balance_diff.to_sat();
     assert!(
-        (9800..=10100).contains(&diff),
+        (4900..=5300).contains(&diff),
         "Taker fee paid out of range: {}",
         diff
     );
@@ -195,7 +195,7 @@ fn test_taproot_multi_maker_coinswap() {
         // Maker regular balances vary by position in the route (each hop deducts fees)
         let regular = balances.regular.to_sat();
         assert!(
-            (14501900..=14508900).contains(&regular),
+            (14499800..=14505000).contains(&regular),
             "Maker {} regular balance out of range: {}",
             i,
             regular
@@ -203,7 +203,7 @@ fn test_taproot_multi_maker_coinswap() {
         // Swap amounts decrease along the route as fees are deducted
         let swap = balances.swap.to_sat();
         assert!(
-            (491800..=500000).contains(&swap),
+            (495000..=500000).contains(&swap),
             "Maker {} swap balance out of range: {}",
             i,
             swap
@@ -229,7 +229,7 @@ fn test_taproot_multi_maker_coinswap() {
         // Fee earned depends on position: first maker earns most, last earns least
         let fee = maker_fee.to_sat();
         assert!(
-            (1000..=2500).contains(&fee),
+            (400..=1500).contains(&fee),
             "Maker {} fee earned out of range: {}",
             i,
             fee

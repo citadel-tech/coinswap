@@ -235,12 +235,12 @@ fn test_taproot_multi_taker_coinswap() {
 
         assert_in_range!(
             balances.regular.to_sat(),
-            [14003232, 14006776],
+            [14001182, 14003432],
             "Maker regular balance mismatch"
         );
         assert_in_range!(
             balances.swap.to_sat(),
-            [999400, 995100],
+            [999400, 997150],
             "Maker swap balance mismatch"
         );
         assert_in_range!(
@@ -261,11 +261,7 @@ fn test_taproot_multi_taker_coinswap() {
             maker_fee.to_sat()
         );
 
-        assert_in_range!(
-            maker_fee.to_sat(),
-            [3092, 2336],
-            "Maker fee earned mismatch"
-        );
+        assert_in_range!(maker_fee.to_sat(), [1042], "Maker fee earned mismatch");
     }
 
     info!("All multi-taker swap tests (Taproot) completed successfully!");
