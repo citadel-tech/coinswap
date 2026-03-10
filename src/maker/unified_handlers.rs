@@ -68,6 +68,8 @@ pub struct UnifiedConnectionState {
     pub swap_amount: Amount,
     /// Timelock value (Legacy: relative CSV, Taproot: absolute CLTV height).
     pub timelock: u32,
+    /// Relative locktime offset for deterministic fee calculation.
+    pub refund_locktime_offset: u16,
     /// Incoming swap coins (we receive).
     pub incoming_swapcoins: Vec<IncomingSwapCoin>,
     /// Outgoing swap coins (we send).
@@ -109,6 +111,7 @@ impl Default for UnifiedConnectionState {
             swap_id: None,
             swap_amount: Amount::ZERO,
             timelock: 0,
+            refund_locktime_offset: 0,
             incoming_swapcoins: Vec::new(),
             outgoing_swapcoins: Vec::new(),
             pending_funding_txes: Vec::new(),
@@ -447,6 +450,7 @@ fn handle_swap_details<M: UnifiedMaker>(
     state.swap_id = Some(details.id.clone());
     state.swap_amount = details.amount;
     state.timelock = details.timelock;
+    state.refund_locktime_offset = details.refund_locktime_offset;
     state.protocol = details.protocol_version;
     state.phase = SwapPhase::AwaitingContractData;
 

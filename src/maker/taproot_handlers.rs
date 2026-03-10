@@ -126,10 +126,9 @@ fn process_taproot_contract<M: UnifiedMaker>(
     incoming_swapcoin.internal_key = Some(data.internal_key);
     incoming_swapcoin.tap_tweak = Some(data.tap_tweak_scalar());
 
-    // Taproot uses absolute CLTV timelocks, convert to relative for fee calculation
-    let current_height = maker.get_current_height()?;
-    let relative_timelock = state.timelock.saturating_sub(current_height);
-    let fee = maker.calculate_swap_fee(incoming_funding_amount, relative_timelock);
+    // Use the relative offset sent by the taker for deterministic fee calculation
+    let fee =
+        maker.calculate_swap_fee(incoming_funding_amount, state.refund_locktime_offset as u32);
     let outgoing_amount = incoming_funding_amount
         .checked_sub(fee)
         .ok_or(MakerError::General("Fee exceeds incoming amount"))?;

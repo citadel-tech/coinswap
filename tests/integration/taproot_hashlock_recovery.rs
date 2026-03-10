@@ -195,7 +195,7 @@ fn test_taproot_hashlock_recovery() {
     );
     assert_in_range!(
         taker_balances.swap.to_sat(),
-        [495778],
+        [497450],
         "Taker swap balance mismatch"
     );
     assert_in_range!(
@@ -218,7 +218,7 @@ fn test_taproot_hashlock_recovery() {
 
     assert_in_range!(
         balance_diff.to_sat(),
-        [4506],
+        [2834],
         "Taker spendable balance change mismatch"
     );
 
@@ -235,12 +235,12 @@ fn test_taproot_hashlock_recovery() {
 
         assert_in_range!(
             maker_balances.regular.to_sat(),
-            [14501386, 14503158],
+            [14500361, 14501486],
             "Maker regular balance mismatch"
         );
         assert_in_range!(
             maker_balances.swap.to_sat(),
-            [499700, 497550],
+            [499700, 498575],
             "Maker swap balance mismatch"
         );
         assert_in_range!(

@@ -180,7 +180,7 @@ fn test_taproot_multi_taker_coinswap() {
 
     assert_in_range!(
         taker1_balances_after.spendable.to_sat(),
-        [14995494],
+        [14997166],
         "Taker 1 spendable balance mismatch"
     );
     assert_in_range!(
@@ -189,7 +189,7 @@ fn test_taproot_multi_taker_coinswap() {
         "Taker 1 contract balance mismatch"
     );
     assert_eq!(taker1_balances_after.fidelity, Amount::ZERO);
-    assert_in_range!(balance_diff1.to_sat(), [4506], "Taker 1 fee paid mismatch");
+    assert_in_range!(balance_diff1.to_sat(), [2834], "Taker 1 fee paid mismatch");
 
     // ---- Verify Taker 2 ----
     let taker2_balances_after = unified_takers[1]
@@ -208,7 +208,7 @@ fn test_taproot_multi_taker_coinswap() {
 
     assert_in_range!(
         taker2_balances_after.spendable.to_sat(),
-        [14995494],
+        [14997166],
         "Taker 2 spendable balance mismatch"
     );
     assert_in_range!(
@@ -217,7 +217,7 @@ fn test_taproot_multi_taker_coinswap() {
         "Taker 2 contract balance mismatch"
     );
     assert_eq!(taker2_balances_after.fidelity, Amount::ZERO);
-    assert_in_range!(balance_diff2.to_sat(), [4506], "Taker 2 fee paid mismatch");
+    assert_in_range!(balance_diff2.to_sat(), [2834], "Taker 2 fee paid mismatch");
 
     // ---- Verify Makers earned fees ----
     for (i, (maker, original_spendable)) in unified_makers

@@ -70,6 +70,9 @@ pub struct SwapDetails {
     /// - Legacy: relative block count (CSV).
     /// - Taproot: absolute block height (CLTV).
     pub timelock: u32,
+    /// Relative locktime offset used for fee calculation.
+    /// Ensures deterministic fees regardless of block height at processing time.
+    pub refund_locktime_offset: u16,
 }
 
 /// Acknowledgment of swap details from Maker.
