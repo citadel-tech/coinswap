@@ -188,19 +188,19 @@ fn test_taproot_timelock_recovery() {
         taker_balances.spendable,
     );
 
-    assert_in_range!(
+    assert_eq!(
         taker_balances.regular.to_sat(),
-        [14999416],
+        14999416,
         "Taker regular balance mismatch"
     );
-    assert_in_range!(
+    assert_eq!(
         taker_balances.swap.to_sat(),
-        [0],
+        0,
         "Taker swap balance mismatch"
     );
-    assert_in_range!(
+    assert_eq!(
         taker_balances.contract.to_sat(),
-        [0],
+        0,
         "Taker contract balance mismatch"
     );
     assert_eq!(taker_balances.fidelity, Amount::ZERO);
@@ -216,9 +216,9 @@ fn test_taproot_timelock_recovery() {
         taker_balances.spendable,
     );
 
-    assert_in_range!(
+    assert_eq!(
         balance_diff.to_sat(),
-        [584],
+        584,
         "Taker spendable balance change mismatch"
     );
 
@@ -233,20 +233,24 @@ fn test_taproot_timelock_recovery() {
             i, original, maker_balances.spendable,
         );
 
-        assert_in_range!(
+        let expected_regular = [14998936, 14999540];
+        assert_eq!(
             maker_balances.regular.to_sat(),
-            [14998936, 14999540],
-            "Maker regular balance mismatch"
+            expected_regular[i],
+            "Maker {} regular balance mismatch",
+            i
         );
-        assert_in_range!(
+        assert_eq!(
             maker_balances.swap.to_sat(),
-            [0],
-            "Maker swap balance mismatch"
+            0,
+            "Maker {} swap balance mismatch",
+            i
         );
-        assert_in_range!(
+        assert_eq!(
             maker_balances.contract.to_sat(),
-            [0],
-            "Maker contract balance mismatch"
+            0,
+            "Maker {} contract balance mismatch",
+            i
         );
         assert_eq!(maker_balances.fidelity, Amount::from_btc(0.05).unwrap());
     }

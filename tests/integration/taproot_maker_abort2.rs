@@ -188,19 +188,19 @@ fn test_taproot_maker_abort2() {
         taker_balances.spendable,
     );
 
-    assert_in_range!(
+    assert_eq!(
         taker_balances.regular.to_sat(),
-        [14499716],
+        14499716,
         "Taker regular balance mismatch"
     );
-    assert_in_range!(
+    assert_eq!(
         taker_balances.swap.to_sat(),
-        [497450],
+        497450,
         "Taker swap balance mismatch"
     );
-    assert_in_range!(
+    assert_eq!(
         taker_balances.contract.to_sat(),
-        [0],
+        0,
         "Taker contract balance mismatch"
     );
     assert_eq!(taker_balances.fidelity, Amount::ZERO);
@@ -216,9 +216,9 @@ fn test_taproot_maker_abort2() {
         taker_balances.spendable,
     );
 
-    assert_in_range!(
+    assert_eq!(
         balance_diff.to_sat(),
-        [2834],
+        2834,
         "Taker spendable balance change mismatch"
     );
 
@@ -233,30 +233,34 @@ fn test_taproot_maker_abort2() {
             i, original, maker_balances.spendable,
         );
 
-        assert_in_range!(
+        let expected_regular = [14500361, 14501486];
+        assert_eq!(
             maker_balances.regular.to_sat(),
-            [14500361, 14501486],
-            "Maker regular balance mismatch"
+            expected_regular[i],
+            "Maker {} regular balance mismatch",
+            i
         );
-        assert_in_range!(
+        let expected_swap = [499700, 498575];
+        assert_eq!(
             maker_balances.swap.to_sat(),
-            [499700, 498575],
-            "Maker swap balance mismatch"
+            expected_swap[i],
+            "Maker {} swap balance mismatch",
+            i
         );
-        assert_in_range!(
+        assert_eq!(
             maker_balances.contract.to_sat(),
-            [0],
-            "Maker contract balance mismatch"
+            0,
+            "Maker {} contract balance mismatch",
+            i
         );
         assert_eq!(maker_balances.fidelity, Amount::from_btc(0.05).unwrap());
 
-        // Makers should not have lost funds
-        assert!(
-            maker_balances.spendable >= original,
-            "Maker {} should not have lost funds. Original: {}, After: {}",
-            i,
-            original,
-            maker_balances.spendable
+        let expected_spendable = [15000061, 15000061];
+        assert_eq!(
+            maker_balances.spendable.to_sat(),
+            expected_spendable[i],
+            "Maker {} spendable balance mismatch",
+            i
         );
     }
 

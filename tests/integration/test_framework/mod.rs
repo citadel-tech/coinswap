@@ -10,20 +10,6 @@
 //!
 //! The test data also includes the backend bitcoind data-directory, which is useful for observing the blockchain states after a swap.
 
-// Temporary custom assert macro to check for balances ranging +-2 Sats owing to variability in Transaction Size by 1 vbyte(low-s).
-#[macro_export]
-macro_rules! assert_in_range {
-    ($value:expr, $allowed:expr, $msg:expr) => {{
-        let (value, allowed) = ($value, $allowed);
-        const RANGE: u64 = 2;
-        if !allowed
-            .iter()
-            .any(|x| x + RANGE == value || x.saturating_sub(RANGE) == value || *x == value)
-        {
-            panic!("{}: actual value = {}", $msg, value);
-        }
-    }};
-}
 
 use bip39::rand;
 use bitcoin::Amount;
@@ -353,18 +339,12 @@ pub fn verify_unified_maker_pre_swap_balances(makers: &[Arc<UnifiedMakerServer>]
             i, balances.regular, balances.swap, balances.contract, balances.fidelity, balances.spendable
         );
 
-        // Regular balance after fidelity bond (allow variance for different setups)
-        assert_in_range!(
-            balances.regular.to_sat(),
-            [
-                14999500, // maker (normal case)
-                14999518, // maker (normal case with slight fee variance)
-                14999540, // maker (unified taproot case with fee variance)
-                14999542, // maker (unified taproot case with fee variance)
-                34999500, // maker multi taker case (8 utxo funded)
-                34999518, // maker multi taker case (with slight fee variance)
-            ],
-            "Unified Maker regular balance check after fidelity bond creation."
+        // Regular balance after fidelity bond creation
+        let regular = balances.regular.to_sat();
+        assert!(
+            regular == 14999498 || regular == 14999540,
+            "Unified Maker regular balance check after fidelity bond creation: {}",
+            regular
         );
 
         assert_eq!(balances.swap, Amount::ZERO);

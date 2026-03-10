@@ -130,19 +130,19 @@ fn test_standard_coinswap() {
         taker_balances.spendable,
     );
 
-    assert_in_range!(
+    assert_eq!(
         taker_balances.regular.to_sat(),
-        [14499696],
+        14499696,
         "Taker regular balance mismatch"
     );
-    assert_in_range!(
+    assert_eq!(
         taker_balances.swap.to_sat(),
-        [495578],
+        495578,
         "Taker swap balance mismatch"
     );
-    assert_in_range!(
+    assert_eq!(
         taker_balances.contract.to_sat(),
-        [0],
+        0,
         "Taker contract balance mismatch"
     );
     assert_eq!(taker_balances.fidelity, Amount::ZERO);
@@ -153,9 +153,9 @@ fn test_standard_coinswap() {
 
     info!("Taker fees paid: {} sats", balance_diff.to_sat());
 
-    assert_in_range!(
+    assert_eq!(
         balance_diff.to_sat(),
-        [4726],
+        4726,
         "Taker spendable balance change mismatch"
     );
 
@@ -178,20 +178,25 @@ fn test_standard_coinswap() {
             balances.spendable,
         );
 
-        assert_in_range!(
+        let expected_regular = [14501444u64, 14503316][i];
+        let expected_swap = [499700u64, 497450][i];
+        assert_eq!(
             balances.regular.to_sat(),
-            [14501444, 14503316],
-            "Maker regular balance mismatch"
+            expected_regular,
+            "Maker {} regular balance mismatch",
+            i
         );
-        assert_in_range!(
+        assert_eq!(
             balances.swap.to_sat(),
-            [499700, 497450],
-            "Maker swap balance mismatch"
+            expected_swap,
+            "Maker {} swap balance mismatch",
+            i
         );
-        assert_in_range!(
+        assert_eq!(
             balances.contract.to_sat(),
-            [0],
-            "Maker contract balance mismatch"
+            0,
+            "Maker {} contract balance mismatch",
+            i
         );
         assert_eq!(balances.fidelity, Amount::from_btc(0.05).unwrap());
 
@@ -202,10 +207,12 @@ fn test_standard_coinswap() {
 
         info!("Maker {} fee earned: {} sats", i, maker_fee.to_sat());
 
-        assert_in_range!(
+        let expected_fee = [1646u64, 1268][i];
+        assert_eq!(
             maker_fee.to_sat(),
-            [1646, 1268],
-            "Maker fee earned mismatch"
+            expected_fee,
+            "Maker {} fee earned mismatch",
+            i
         );
     }
 

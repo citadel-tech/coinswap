@@ -137,14 +137,14 @@ fn test_taproot_maker_abort3() {
         taker_original_balance, taker_balances.spendable
     );
 
-    assert_in_range!(
+    assert_eq!(
         taker_balances.spendable.to_sat(),
-        [14997166],
+        14997166,
         "Taker spendable balance mismatch"
     );
-    assert_in_range!(
+    assert_eq!(
         taker_balances.contract.to_sat(),
-        [0],
+        0,
         "Taker contract balance mismatch"
     );
     assert_eq!(taker_balances.fidelity, Amount::ZERO);
@@ -160,17 +160,18 @@ fn test_taproot_maker_abort3() {
             "Maker {} balances: original={}, after={}",
             i, original, balances.spendable
         );
-        // Makers should not have lost funds after abort recovery
-        assert!(
-            balances.spendable.to_sat() >= 14999000,
-            "Maker {} spendable balance too low: {}",
-            i,
-            balances.spendable.to_sat()
+        let expected_spendable = [15000061, 14999540, 15000061];
+        assert_eq!(
+            balances.spendable.to_sat(),
+            expected_spendable[i],
+            "Maker {} spendable balance mismatch",
+            i
         );
-        assert_in_range!(
+        assert_eq!(
             balances.contract.to_sat(),
-            [0],
-            "Maker contract balance mismatch"
+            0,
+            "Maker {} contract balance mismatch",
+            i
         );
         assert_eq!(balances.fidelity, Amount::from_btc(0.05).unwrap());
     }

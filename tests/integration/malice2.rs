@@ -142,20 +142,24 @@ fn test_malice2_maker_broadcast_contract() {
             maker_balances.contract,
             maker_balances.spendable,
         );
-        assert_in_range!(
+        let expected_regular = [14501444u64, 14503316][i];
+        assert_eq!(
             maker_balances.regular.to_sat(),
-            [14501444, 14503316],
-            "Maker regular balance mismatch"
+            expected_regular,
+            "Maker {} regular balance mismatch",
+            i
         );
-        assert_in_range!(
+        assert_eq!(
             maker_balances.swap.to_sat(),
-            [0],
-            "Maker swap balance mismatch"
+            0,
+            "Maker {} swap balance mismatch",
+            i
         );
-        assert_in_range!(
+        assert_eq!(
             maker_balances.contract.to_sat(),
-            [0],
-            "Maker contract balance mismatch"
+            0,
+            "Maker {} contract balance mismatch",
+            i
         );
         assert_eq!(maker_balances.fidelity, Amount::from_btc(0.05).unwrap());
     }
@@ -199,19 +203,19 @@ fn test_malice2_maker_broadcast_contract() {
         taker_balances.spendable,
     );
 
-    assert_in_range!(
+    assert_eq!(
         taker_balances.regular.to_sat(),
-        [14999096],
+        14999096,
         "Taker regular balance mismatch"
     );
-    assert_in_range!(
+    assert_eq!(
         taker_balances.swap.to_sat(),
-        [0],
+        0,
         "Taker swap balance mismatch"
     );
-    assert_in_range!(
+    assert_eq!(
         taker_balances.contract.to_sat(),
-        [0],
+        0,
         "Taker contract balance mismatch"
     );
     assert_eq!(taker_balances.fidelity, Amount::ZERO);
@@ -227,9 +231,9 @@ fn test_malice2_maker_broadcast_contract() {
         taker_balances.spendable,
     );
 
-    assert_in_range!(
+    assert_eq!(
         balance_diff.to_sat(),
-        [904],
+        904,
         "Taker spendable balance change mismatch"
     );
 

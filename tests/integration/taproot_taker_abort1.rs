@@ -156,9 +156,10 @@ fn test_taproot_taker_abort1() {
     );
 
     // No funds should have been lost since no transactions were broadcast
-    assert!(
-        balance_diff.to_sat() < 1000,
-        "Taker should not have lost funds on early abort. Lost {} sats (expected < 1000)",
+    assert_eq!(
+        balance_diff.to_sat(),
+        0,
+        "Taker should not have lost funds on early abort. Lost {} sats",
         balance_diff.to_sat(),
     );
 

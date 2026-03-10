@@ -158,25 +158,18 @@ fn test_taproot_multi_maker_coinswap() {
         balance_diff
     );
 
-    // 4-maker routes have compounding DER signature variance (~100 sat range)
-    let spendable = taker_balances_after.spendable.to_sat();
-    assert!(
-        (24994700..=24995100).contains(&spendable),
-        "Taker spendable balance out of range: {}",
-        spendable
+    assert_eq!(
+        taker_balances_after.spendable.to_sat(),
+        24994916,
+        "Taker spendable balance mismatch"
     );
-    assert_in_range!(
+    assert_eq!(
         taker_balances_after.contract.to_sat(),
-        [0],
+        0,
         "Taker contract balance mismatch"
     );
     assert_eq!(taker_balances_after.fidelity, Amount::ZERO);
-    let diff = balance_diff.to_sat();
-    assert!(
-        (4900..=5300).contains(&diff),
-        "Taker fee paid out of range: {}",
-        diff
-    );
+    assert_eq!(balance_diff.to_sat(), 5084, "Taker fee paid mismatch");
 
     // Verify all 4 makers earned fees
     for (i, (maker, original_spendable)) in unified_makers
@@ -192,26 +185,25 @@ fn test_taproot_multi_maker_coinswap() {
             i, balances.regular, balances.swap, balances.contract, balances.fidelity, balances.spendable,
         );
 
-        // Maker regular balances vary by position in the route (each hop deducts fees)
-        let regular = balances.regular.to_sat();
-        assert!(
-            (14499800..=14505000).contains(&regular),
-            "Maker {} regular balance out of range: {}",
-            i,
-            regular
+        let expected_regular = [14500361, 14501486, 14502611, 14503736];
+        assert_eq!(
+            balances.regular.to_sat(),
+            expected_regular[i],
+            "Maker {} regular balance mismatch",
+            i
         );
-        // Swap amounts decrease along the route as fees are deducted
-        let swap = balances.swap.to_sat();
-        assert!(
-            (495000..=500000).contains(&swap),
-            "Maker {} swap balance out of range: {}",
-            i,
-            swap
+        let expected_swap = [499700, 498575, 497450, 496325];
+        assert_eq!(
+            balances.swap.to_sat(),
+            expected_swap[i],
+            "Maker {} swap balance mismatch",
+            i
         );
-        assert_in_range!(
+        assert_eq!(
             balances.contract.to_sat(),
-            [0],
-            "Maker contract balance mismatch"
+            0,
+            "Maker {} contract balance mismatch",
+            i
         );
         assert_eq!(balances.fidelity, Amount::from_btc(0.05).unwrap());
 
@@ -226,14 +218,7 @@ fn test_taproot_multi_maker_coinswap() {
             maker_fee.to_sat()
         );
 
-        // Fee earned depends on position: first maker earns most, last earns least
-        let fee = maker_fee.to_sat();
-        assert!(
-            (400..=1500).contains(&fee),
-            "Maker {} fee earned out of range: {}",
-            i,
-            fee
-        );
+        assert_eq!(maker_fee.to_sat(), 521, "Maker {} fee earned mismatch", i);
     }
 
     info!("All multi-maker swap tests (Taproot, 4 makers) completed successfully!");

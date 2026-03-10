@@ -127,14 +127,14 @@ fn maker_abort2_case2() {
         taker_original_balance, taker_balances.spendable
     );
 
-    assert_in_range!(
+    assert_eq!(
         taker_balances.spendable.to_sat(),
-        [14995274],
+        14995274,
         "Taker spendable balance mismatch"
     );
-    assert_in_range!(
+    assert_eq!(
         taker_balances.contract.to_sat(),
-        [0],
+        0,
         "Taker contract balance mismatch"
     );
     assert_eq!(taker_balances.fidelity, Amount::ZERO);
@@ -150,15 +150,18 @@ fn maker_abort2_case2() {
             "Maker {} balances: original={}, after={}",
             i, original, balances.spendable
         );
-        assert_in_range!(
+        let expected_spendable = [14999498u64, 15000766, 15001144][i];
+        assert_eq!(
             balances.spendable.to_sat(),
-            [14999498, 15000766, 15001144],
-            "Maker spendable balance mismatch"
+            expected_spendable,
+            "Maker {} spendable balance mismatch",
+            i
         );
-        assert_in_range!(
+        assert_eq!(
             balances.contract.to_sat(),
-            [0],
-            "Maker contract balance mismatch"
+            0,
+            "Maker {} contract balance mismatch",
+            i
         );
         assert_eq!(balances.fidelity, Amount::from_btc(0.05).unwrap());
     }
