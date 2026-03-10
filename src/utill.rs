@@ -65,6 +65,7 @@ pub type ContractMetadata = Vec<((ScriptBuf, Transaction), (u16, Transaction))>;
 /// Global heartbeat interval used during waiting periods in critical situations.
 pub(crate) const HEART_BEAT_INTERVAL: Duration = Duration::from_secs(3);
 
+#[allow(dead_code)]
 pub(crate) const BLOCK_DELAY: Duration = if cfg!(feature = "integration-test") {
     Duration::from_secs(10) // 10 secs delay for tests
 } else {
@@ -94,7 +95,7 @@ fn get_data_dir() -> PathBuf {
 }
 
 /// Get the Maker Directory
-pub(crate) fn get_maker_dir() -> PathBuf {
+pub fn get_maker_dir() -> PathBuf {
     get_data_dir().join("maker")
 }
 
@@ -244,6 +245,7 @@ pub fn read_message(reader: &mut TcpStream) -> Result<Vec<u8>, NetError> {
 }
 
 /// Apply the maker's privatekey to swapcoins, and check it's the correct privkey for corresponding pubkey.
+#[allow(dead_code)]
 pub(crate) fn check_and_apply_maker_private_keys<S: SwapCoin>(
     swapcoins: &mut [S],
     swapcoin_private_keys: &[MultisigPrivkey],

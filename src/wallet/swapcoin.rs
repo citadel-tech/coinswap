@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! SwapCoins are structures defining an ongoing swap operations.
 //! They are UTXOs + metadata which are not from the deterministic wallet
 //! and made in the process of a CoinSwap.
@@ -166,7 +167,7 @@ macro_rules! impl_walletswapcoin {
                 )
                 .map_err(ProtocolError::Secp)?;
                 let sig_mine = Signature {
-                    signature: secp.sign_ecdsa(&sighash, &self.my_privkey),
+                    signature: secp.sign_ecdsa_low_r(&sighash, &self.my_privkey),
                     sighash_type: EcdsaSighashType::All,
                 };
 
@@ -284,11 +285,11 @@ impl IncomingSwapCoin {
         .map_err(ProtocolError::Secp)?;
 
         let sig_mine = Signature {
-            signature: secp.sign_ecdsa(&sighash, &self.my_privkey),
+            signature: secp.sign_ecdsa_low_r(&sighash, &self.my_privkey),
             sighash_type: EcdsaSighashType::All,
         };
         let sig_other = Signature {
-            signature: secp.sign_ecdsa(
+            signature: secp.sign_ecdsa_low_r(
                 &sighash,
                 &self.other_privkey.expect("other's privatekey expected"),
             ),
@@ -327,7 +328,7 @@ impl IncomingSwapCoin {
         )
         .map_err(ProtocolError::Secp)?;
 
-        let sig_hashlock = secp.sign_ecdsa(&sighash, &self.hashlock_privkey);
+        let sig_hashlock = secp.sign_ecdsa_low_r(&sighash, &self.hashlock_privkey);
         let mut sig_hashlock_bytes = sig_hashlock.serialize_der().to_vec();
         sig_hashlock_bytes.push(EcdsaSighashType::All as u8);
         input.witness.push(sig_hashlock_bytes);
@@ -413,7 +414,7 @@ impl OutgoingSwapCoin {
         )
         .map_err(ProtocolError::Secp)?;
 
-        let sig_timelock = secp.sign_ecdsa(&sighash, &self.timelock_privkey);
+        let sig_timelock = secp.sign_ecdsa_low_r(&sighash, &self.timelock_privkey);
 
         let mut sig_timelock_bytes = sig_timelock.serialize_der().to_vec();
         sig_timelock_bytes.push(EcdsaSighashType::All as u8);

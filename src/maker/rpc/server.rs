@@ -13,7 +13,7 @@ use bitcoin::{Address, Amount};
 
 use super::messages::RpcMsgReq;
 use crate::{
-    maker::{config::MakerConfig, error::MakerError, rpc::messages::RpcMsgResp},
+    maker::{error::MakerError, rpc::messages::RpcMsgResp, unified_api::UnifiedMakerServerConfig},
     utill::{get_tor_hostname, read_message, send_message, HEART_BEAT_INTERVAL, UTXO},
     wallet::{AddressType, Destination, Wallet},
 };
@@ -22,7 +22,7 @@ use std::{path::Path, str::FromStr, sync::RwLock};
 pub trait MakerRpc {
     fn wallet(&self) -> &RwLock<Wallet>;
     fn data_dir(&self) -> &Path;
-    fn config(&self) -> &MakerConfig;
+    fn config(&self) -> &UnifiedMakerServerConfig;
     fn shutdown(&self) -> &AtomicBool;
 }
 
@@ -38,6 +38,7 @@ fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result
                 .wallet()
                 .read()?
                 .list_live_timelock_contract_spend_info()
+                .into_iter()
                 .map(|(utxo, spend_info)| UTXO::from_utxo_data((utxo.clone(), spend_info.clone())))
                 .collect();
             RpcMsgResp::ContractUtxoResp { utxos }
@@ -47,6 +48,7 @@ fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result
                 .wallet()
                 .read()?
                 .list_fidelity_spend_info()
+                .into_iter()
                 .map(|(utxo, spend_info)| UTXO::from_utxo_data((utxo.clone(), spend_info.clone())))
                 .collect();
             RpcMsgResp::FidelityUtxoResp { utxos }
@@ -56,6 +58,7 @@ fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result
                 .wallet()
                 .read()?
                 .list_all_utxo_spend_info()
+                .into_iter()
                 .map(|(utxo, spend_info)| UTXO::from_utxo_data((utxo.clone(), spend_info.clone())))
                 .collect();
             RpcMsgResp::UtxoResp { utxos }
@@ -65,6 +68,7 @@ fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result
                 .wallet()
                 .read()?
                 .list_incoming_swap_coin_utxo_spend_info()
+                .into_iter()
                 .map(|(utxo, spend_info)| UTXO::from_utxo_data((utxo.clone(), spend_info.clone())))
                 .collect();
             RpcMsgResp::SwapUtxoResp { utxos }
@@ -96,10 +100,7 @@ fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result
                 change_address_type: AddressType::P2WPKH,
             };
 
-            let coins_to_send = maker
-                .wallet()
-                .read()?
-                .coin_select(amount, feerate, None, None)?;
+            let coins_to_send = maker.wallet().read()?.coin_select(amount, feerate, None)?;
             let tx =
                 maker
                     .wallet()

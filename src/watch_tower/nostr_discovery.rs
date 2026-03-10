@@ -21,7 +21,7 @@ use nostr::{
 use tungstenite::{stream::MaybeTlsStream, Message};
 
 use crate::{
-    nostr_coinswap::{COINSWAP_KIND, NOSTR_RELAYS},
+    nostr_coinswap::COINSWAP_KIND,
     watch_tower::{
         registry_storage::FileRegistry,
         rest_backend::BitcoinRest,
@@ -36,6 +36,7 @@ pub fn run_discovery(
     bitcoin_rpc: BitcoinRest,
     registry: FileRegistry,
     shutdown: Arc<AtomicBool>,
+    relays: &[String],
 ) -> Result<(), WatcherError> {
     log::info!("Starting market discovery via Nostr");
 
@@ -43,7 +44,7 @@ pub fn run_discovery(
     let registry = Arc::new(registry);
     let bitcoin_rpc = Arc::new(bitcoin_rpc);
 
-    for relay in NOSTR_RELAYS {
+    for relay in relays {
         let relay = relay.to_string();
         let shutdown = shutdown.clone();
         let registry = Arc::clone(&registry);

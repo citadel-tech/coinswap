@@ -112,8 +112,9 @@ impl Wallet {
         // Find utxo corresponding to expired fidelity bond.
         let utxo = self
             .list_fidelity_spend_info()
-            .find(|(_, spend_info)| **spend_info == expired_fidelity_spend_info)
-            .map(|(utxo, _)| utxo.clone());
+            .into_iter()
+            .find(|(_, spend_info)| *spend_info == expired_fidelity_spend_info)
+            .map(|(utxo, _)| utxo);
 
         let utxo = match utxo {
             Some(utxo) => utxo,
@@ -156,6 +157,7 @@ impl Wallet {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub(crate) fn create_timelock_spend(
         &self,
         og_sc: &OutgoingSwapCoin,
@@ -166,12 +168,12 @@ impl Wallet {
 
         for (utxo, spend_info) in all_utxo {
             if let UTXOSpendInfo::TimelockContract {
-                swapcoin_multisig_redeemscript,
+                ref swapcoin_multisig_redeemscript,
                 input_value,
             } = spend_info
             {
                 if *swapcoin_multisig_redeemscript == og_sc.get_multisig_redeemscript()
-                    && *input_value == og_sc.contract_tx.output[0].value
+                    && input_value == og_sc.contract_tx.output[0].value
                 {
                     let destination = Destination::Sweep(destination_address.clone());
                     let coins = vec![(utxo.clone(), spend_info.clone())];
@@ -185,6 +187,7 @@ impl Wallet {
         ))
     }
 
+    #[allow(dead_code)]
     pub(crate) fn create_hashlock_spend(
         &self,
         ic_sc: &IncomingSwapCoin,
@@ -194,12 +197,12 @@ impl Wallet {
         let all_utxo = self.list_live_hashlock_contract_spend_info();
         for (utxo, spend_info) in all_utxo {
             if let UTXOSpendInfo::HashlockContract {
-                swapcoin_multisig_redeemscript,
+                ref swapcoin_multisig_redeemscript,
                 input_value,
             } = spend_info
             {
                 if *swapcoin_multisig_redeemscript == ic_sc.get_multisig_redeemscript()
-                    && *input_value == ic_sc.contract_tx.output[0].value
+                    && input_value == ic_sc.contract_tx.output[0].value
                 {
                     let destination = Destination::Sweep(destination_address.clone());
                     let coins = vec![(utxo.clone(), spend_info.clone())];

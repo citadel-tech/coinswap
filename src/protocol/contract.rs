@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Definition of the Coinswap Contract Transaction.
 //!
 //! This module includes most of the fundamental functions defining the coinswap protocol.
@@ -487,7 +488,7 @@ pub(crate) fn sign_contract_tx(
         )?[..],
     )?;
     let secp = Secp256k1::new();
-    let sig = secp.sign_ecdsa(&sighash, privkey);
+    let sig = secp.sign_ecdsa_low_r(&sighash, privkey);
     Ok(Signature {
         signature: sig,
         sighash_type: EcdsaSighashType::All,
@@ -1155,11 +1156,13 @@ mod test {
 
         let msg = b"0123456789abcdefghijklmnopqrstuv";
         let sig_1 = Signature {
-            signature: secp.sign_ecdsa(&Message::from_digest_slice(msg).unwrap(), &priv_1.inner),
+            signature: secp
+                .sign_ecdsa_low_r(&Message::from_digest_slice(msg).unwrap(), &priv_1.inner),
             sighash_type: EcdsaSighashType::All,
         };
         let sig_2 = Signature {
-            signature: secp.sign_ecdsa(&Message::from_digest_slice(msg).unwrap(), &priv_2.inner),
+            signature: secp
+                .sign_ecdsa_low_r(&Message::from_digest_slice(msg).unwrap(), &priv_2.inner),
             sighash_type: EcdsaSighashType::All,
         };
         let mut tx_input_1 = TxIn::default();

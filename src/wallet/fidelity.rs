@@ -223,6 +223,11 @@ pub struct FidelityBond {
 }
 
 impl FidelityBond {
+    /// The UTXO outpoint backing this bond.
+    pub fn outpoint(&self) -> OutPoint {
+        self.outpoint
+    }
+
     /// Whether the fidelity bond is spent or not
     pub fn is_spent(&self) -> bool {
         self.is_spent
@@ -431,7 +436,7 @@ impl Wallet {
     ) -> Result<u32, WalletError> {
         let (index, fidelity_addr, fidelity_pubkey) = self.get_next_fidelity_address(locktime)?;
 
-        let coins = self.coin_select(amount, feerate, None, None)?;
+        let coins = self.coin_select(amount, feerate, None)?;
         let outputs = vec![(fidelity_addr, amount)];
 
         let op_return_data = match maker_address {
@@ -542,7 +547,7 @@ impl Wallet {
             .expect("Bond is not yet confirmed");
 
         let secp = Secp256k1::new();
-        let cert_sig = secp.sign_ecdsa(
+        let cert_sig = secp.sign_ecdsa_low_r(
             &Message::from_digest_slice(cert_hash.as_byte_array())?,
             &fidelity_privkey,
         );
