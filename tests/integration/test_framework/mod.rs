@@ -10,7 +10,6 @@
 //!
 //! The test data also includes the backend bitcoind data-directory, which is useful for observing the blockchain states after a swap.
 
-
 use bip39::rand;
 use bitcoin::Amount;
 use nostr_rs_relay::{config, server::start_server};
