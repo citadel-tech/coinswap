@@ -13,8 +13,8 @@ use crate::{
         Hash160,
     },
     utill::{
-        check_tor_status, get_maker_dir, redeemscript_to_scriptpubkey, BLOCK_DELAY,
-        HEART_BEAT_INTERVAL, REQUIRED_CONFIRMS,
+        check_tor_status, get_maker_dir, get_tor_hostname, redeemscript_to_scriptpubkey,
+        BLOCK_DELAY, HEART_BEAT_INTERVAL, REQUIRED_CONFIRMS,
     },
     wallet::{ffi::SwapReport, RPCConfig, SwapCoin, WalletSwapCoin},
     watch_tower::{
@@ -572,6 +572,14 @@ impl MakerRpc for Maker {
     }
     fn shutdown(&self) -> &AtomicBool {
         &self.shutdown
+    }
+    fn get_tor_hostname(&self) -> Result<String, crate::utill::TorError> {
+        get_tor_hostname(
+            &self.data_dir,
+            self.config.control_port,
+            self.config.network_port,
+            &self.config.tor_auth_password,
+        )
     }
 }
 

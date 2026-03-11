@@ -14,7 +14,7 @@ use bitcoin::{Address, Amount};
 use super::messages::RpcMsgReq;
 use crate::{
     maker::{config::MakerConfig, error::MakerError, rpc::messages::RpcMsgResp},
-    utill::{get_tor_hostname, read_message, send_message, HEART_BEAT_INTERVAL, UTXO},
+    utill::{read_message, send_message, TorError, HEART_BEAT_INTERVAL, UTXO},
     wallet::{AddressType, Destination, Wallet},
 };
 use std::{path::Path, str::FromStr, sync::RwLock};
@@ -24,6 +24,7 @@ pub trait MakerRpc {
     fn data_dir(&self) -> &Path;
     fn config(&self) -> &MakerConfig;
     fn shutdown(&self) -> &AtomicBool;
+    fn get_tor_hostname(&self) -> Result<String, TorError>;
 }
 
 fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result<(), MakerError> {
@@ -118,12 +119,7 @@ fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result
             if cfg!(feature = "integration-test") {
                 RpcMsgResp::GetTorAddressResp("Maker is not running on TOR".to_string())
             } else {
-                let hostname = get_tor_hostname(
-                    maker.data_dir(),
-                    maker.config().control_port,
-                    maker.config().network_port,
-                    &maker.config().tor_auth_password,
-                )?;
+                let hostname = maker.get_tor_hostname()?;
                 let address = format!("{}:{}", hostname, maker.config().network_port);
                 RpcMsgResp::GetTorAddressResp(address)
             }
