@@ -26,11 +26,11 @@ use crate::{
         api::FIDELITY_BOND_UPDATE_INTERVAL,
         api2::{check_for_broadcasted_contracts, check_for_idle_states, ConnectionState},
         handlers2::handle_message_taproot,
-        rpc::start_rpc_server,
+        rpc::{server::MakerRpc, start_rpc_server},
     },
     nostr_coinswap::broadcast_bond_on_nostr,
     protocol::messages2::{MakerToTakerMessage, TakerToMakerMessage},
-    utill::{get_tor_hostname, read_message, send_message, HEART_BEAT_INTERVAL, MIN_FEE_RATE},
+    utill::{read_message, send_message, HEART_BEAT_INTERVAL, MIN_FEE_RATE},
     wallet::{AddressType, SwapReport, WalletError},
 };
 
@@ -47,12 +47,7 @@ fn network_bootstrap_taproot(maker: Arc<Maker>) -> Result<String, MakerError> {
         maker_address
     } else {
         // Always Tor in production
-        let maker_hostname = get_tor_hostname(
-            maker.data_dir(),
-            maker.config.control_port,
-            maker_port,
-            &maker.config.tor_auth_password,
-        )?;
+        let maker_hostname = maker.get_tor_hostname()?;
         let maker_address = format!("{maker_hostname}:{maker_port}");
         maker_address
     };

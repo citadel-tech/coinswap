@@ -19,7 +19,7 @@ use crate::{
             generate_partial_signature_compat, get_aggregated_nonce_compat,
         },
     },
-    utill::{check_tor_status, get_maker_dir, HEART_BEAT_INTERVAL, MIN_FEE_RATE},
+    utill::{check_tor_status, get_maker_dir, get_tor_hostname, HEART_BEAT_INTERVAL, MIN_FEE_RATE},
     wallet::{
         ffi::SwapReport, AddressType, Destination, IncomingSwapCoinV2, OutgoingSwapCoinV2,
         RPCConfig, Wallet, WalletError,
@@ -1103,6 +1103,14 @@ impl MakerRpc for Maker {
     }
     fn shutdown(&self) -> &AtomicBool {
         &self.shutdown
+    }
+    fn get_tor_hostname(&self) -> Result<String, crate::utill::TorError> {
+        get_tor_hostname(
+            &self.data_dir,
+            self.config.control_port,
+            self.config.network_port,
+            &self.config.tor_auth_password,
+        )
     }
 }
 

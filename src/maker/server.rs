@@ -4,7 +4,7 @@
 //! The server maintains the thread pool for P2P Connection, Watchtower, Bitcoin Backend, and RPC Client Request.
 //! The server listens at two ports: 6102 for P2P, and 6103 for RPC Client requests.
 
-use crate::protocol::messages::FidelityProof;
+use crate::{maker::rpc::server::MakerRpc, protocol::messages::FidelityProof};
 use bitcoin::{absolute::LockTime, Amount};
 use bitcoind::bitcoincore_rpc::RpcApi;
 
@@ -18,8 +18,6 @@ use std::{
     thread::{self, sleep},
     time::Duration,
 };
-
-use crate::utill::get_tor_hostname;
 
 pub(crate) use super::{api::RPC_PING_INTERVAL, Maker};
 
@@ -53,12 +51,7 @@ fn network_bootstrap(maker: Arc<Maker>) -> Result<String, MakerError> {
             format!("127.0.0.1:{maker_port}")
         } else {
             // Always Tor otherwise
-            let maker_hostname = get_tor_hostname(
-                maker.get_data_dir(),
-                maker.config.control_port,
-                maker_port,
-                &maker.config.tor_auth_password,
-            )?;
+            let maker_hostname = maker.get_tor_hostname()?;
             format!("{maker_hostname}:{maker_port}")
         }
     };
