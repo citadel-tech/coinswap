@@ -145,7 +145,7 @@ impl Wallet {
         let result = (|| {
             let selected_utxo = self.coin_select(
                 coinswap_amount,
-                fee_rate.to_btc(),
+                fee_rate.to_sat() as f64,
                 manually_selected_outpoints,
                 None,
             )?;
