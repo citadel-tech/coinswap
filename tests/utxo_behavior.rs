@@ -341,7 +341,7 @@ fn test_separated_utxo_coin_selection() {
                 // In default impl, it loops through Regular -> Swap.
                 println!("✅ Correctly failed with InsufficientFund");
                 println!("   Available: {available} sats (swap only), Required: {required} sats");
-                assert_eq!(*required, target_3.to_sat() + 324); // Should include 324 sats estimated fee
+                assert_eq!(*required, target_3.to_sat() + 416); // Should include 416 sats estimated fee
                 assert_eq!(*available, balances.swap.to_sat());
                 println!("✅ Confirmed: Only regular balance reported in insufficient funds error");
             }

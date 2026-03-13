@@ -1608,8 +1608,9 @@ impl Wallet {
         const INPUT_BASE_WEIGHT: u64 = 32 + 4 + 4 + 1;
 
         // P2WPKH output weight: Amount(8) + VarInt(1) + script_pubkey(22) = 31 bytes
-        const TARGET_OUTPUT_WEIGHT: u64 = Amount::SIZE as u64 + 1 + P2WPKH_SPK_SIZE as u64; // ~31 bytes
-        const CHANGE_OUTPUT_WEIGHT: u64 = Amount::SIZE as u64 + 1 + P2WPKH_SPK_SIZE as u64; // ~31 bytes
+        // weight = bytes * 4
+        const TARGET_OUTPUT_WEIGHT: u64 = (Amount::SIZE as u64 + 1 + P2WPKH_SPK_SIZE as u64) * 4; // 124 WU
+        const CHANGE_OUTPUT_WEIGHT: u64 = (Amount::SIZE as u64 + 1 + P2WPKH_SPK_SIZE as u64) * 4; // 124 WU
 
         type UtxoRef<'a> = (&'a ListUnspentResultEntry, &'a UTXOSpendInfo);
 
@@ -1709,14 +1710,14 @@ impl Wallet {
             ));
         }
 
-        let change_weight = Weight::from_vb_unwrap(CHANGE_OUTPUT_WEIGHT);
+        let change_weight = Weight::from_wu(CHANGE_OUTPUT_WEIGHT);
         let cost_of_change = {
             let creation_cost = calculate_fee(change_weight.to_vbytes_ceil(), feerate as f32)?;
             let future_spending_cost = calculate_fee(P2WPKH_INPUT_WEIGHT / 4, LONG_TERM_FEERATE)?;
             creation_cost + future_spending_cost
         };
 
-        let target_weight = Weight::from_vb_unwrap(TARGET_OUTPUT_WEIGHT);
+        let target_weight = Weight::from_wu(TARGET_OUTPUT_WEIGHT);
         let avg_output_weight = (change_weight.to_wu() + target_weight.to_wu()) / 2;
 
         // Try regular UTXOs first, then fall back to swap UTXOs if selection fails
@@ -1896,9 +1897,9 @@ impl Wallet {
             // Create coin selection options with adjusted target
             let coin_selection_option = CoinSelectionOpt {
                 target_value: remaining_target,
-                target_feerate: feerate as f32,
+                target_feerate: feerate as f32 / 4.0, //sats per wu
                 long_term_feerate: Some(LONG_TERM_FEERATE),
-                min_absolute_fee: MIN_FEE_RATE as u64 * tx_base_weight,
+                min_absolute_fee: MIN_FEE_RATE as u64 * (tx_base_weight / 4),
                 base_weight: tx_base_weight,
                 change_weight: change_weight.to_wu(),
                 change_cost: cost_of_change,
@@ -1933,7 +1934,9 @@ impl Wallet {
                     };
                     last_error = Some(WalletError::InsufficientFund {
                         available,
-                        required: amount.to_sat() + estimated_fee,
+                        required: amount.to_sat()
+                            + estimated_fee
+                            + coin_selection_option.min_change_value,
                     });
                     // Continue to try next UTXO type
                     continue;
@@ -1944,7 +1947,7 @@ impl Wallet {
         // If we've exhausted all UTXO types, return error
         Err(last_error.unwrap_or_else(|| WalletError::InsufficientFund {
             available: regular_total.max(swap_total),
-            required: amount.to_sat() + estimated_fee,
+            required: amount.to_sat() + estimated_fee + 294,
         }))
     }
 

@@ -87,7 +87,7 @@ fn multi_taker_concurrent_swap() {
 
             let balances = wallet.get_balances().unwrap();
 
-            verify_maker_pre_swap_balances(&balances, 5003500);
+            verify_maker_pre_swap_balances(&balances, 5003636);
 
             balances.spendable
         })

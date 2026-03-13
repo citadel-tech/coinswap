@@ -67,7 +67,7 @@ fn test_fidelity() {
     thread::sleep(Duration::from_secs(6));
 
     let log_path = format!("{}/taker/debug.log", test_framework.temp_dir.display());
-    test_framework.assert_log("Send at least 0.01000324 BTC to", &log_path);
+    test_framework.assert_log("Send at least 0.01000416 BTC to", &log_path);
 
     log::info!("💰 Adding sufficient funds for fidelity bond creation");
     // Provide the maker with more funds.
