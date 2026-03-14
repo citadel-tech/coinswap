@@ -606,14 +606,18 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
                     if transaction_broadcasted {
                         // Something is broadcasted. Report, Recover and Abort.
                         log::warn!(
-                            "Contract txs broadcasted!! txid: {} Recovering from ongoing swaps.",
+                            "[Peer: {}] Contract txs broadcasted!! txid: {} Recovering from ongoing swaps.",
+                            ip,
                             txid
                         );
                         failed_swap_ip.push(ip.clone());
 
                         // Spawn a separate thread to wait for contract maturity and broadcasting timelocked/hashlocked.
                         let maker_clone = maker.clone();
-                        log::info!("Spawning recovery thread after seeing contracts in mempool",);
+                        log::info!(
+                            "[Peer: {}] Spawning recovery thread after seeing contracts in mempool.",
+                            ip
+                        );
 
                         let incomings = connection_state.incoming_swapcoins.clone();
                         let outgoings = connection_state.outgoing_swapcoins.clone();
@@ -688,13 +692,17 @@ pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError>
 
                 if no_response_since > IDLE_CONNECTION_TIMEOUT {
                     log::error!(
-                        "Potential Dropped Connection from taker. No response since : {} secs. Recovering from swap",
+                        "[Peer: {}] Potential Dropped Connection from taker. No response since : {} secs. Recovering from swap",
+                        ip,
                         no_response_since.as_secs()
                     );
                     bad_ip.push(ip.clone());
                     // Spawn a separate thread to wait for contract maturity and broadcasting timelocked,hashlocked
                     let maker_clone = maker.clone();
-                    log::info!("Spawning recovery thread after Taker dropped",);
+                    log::info!(
+                        "[Peer: {}] Spawning recovery thread after Taker dropped",
+                        ip
+                    );
 
                     let incomings = state.incoming_swapcoins.clone();
                     let outgoings = state.outgoing_swapcoins.clone();
@@ -744,8 +752,14 @@ pub(crate) fn recover_from_swap(
         .map_err(WalletError::Rpc)? as u32;
     let timelock_expiry = start_height.saturating_add(timelock);
 
+    let anchor_txid = outgoing_swapcoins
+        .first()
+        .map(|o| o.contract_tx.compute_txid().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+
     log::info!(
-        "recover_from_swap started | height={} timelock_expiry={}",
+        "[Contract: {}] recover_from_swap started | height={} timelock_expiry={}",
+        anchor_txid,
         start_height,
         timelock_expiry
     );
@@ -805,8 +819,14 @@ fn recover_via_hashlock(
             .wallet
             .write()?
             .spend_from_hashlock_contract(&infos, &maker.watch_service)?;
+
+        let anchor_id = incoming
+            .first()
+            .map(|c| c.contract_tx.compute_txid().to_string())
+            .unwrap_or_default();
         log::info!(
-            "Maker hashlock recovery: {}/{} txs broadcasted",
+            "[Contract: {}] Maker hashlock recovery: {}/{} txs broadcasted",
+            anchor_id,
             broadcasted.len(),
             incoming.len()
         );
@@ -859,8 +879,14 @@ fn recover_via_timelock(
             .wallet
             .write()?
             .spend_from_timelock_contract(&infos, &maker.watch_service)?;
+
+        let anchor_id = outgoing
+            .first()
+            .map(|c| c.contract_tx.compute_txid().to_string())
+            .unwrap_or_default();
         log::info!(
-            "Maker timelock recovery: {}/{} txs broadcasted",
+            "[Contract: {}] Maker timelock recovery: {}/{} txs broadcasted",
+            anchor_id,
             broadcasted.len(),
             outgoing.len()
         );
