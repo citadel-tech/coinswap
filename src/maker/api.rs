@@ -175,14 +175,12 @@ pub(crate) struct ConnectionState {
 
 pub(crate) struct ThreadPool {
     pub(crate) threads: Mutex<Vec<JoinHandle<()>>>,
-    pub(crate) port: u16,
 }
 
 impl ThreadPool {
-    pub(crate) fn new(port: u16) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             threads: Mutex::new(Vec::new()),
-            port,
         }
     }
 
@@ -196,31 +194,22 @@ impl ThreadPool {
             .threads
             .lock()
             .map_err(|_| MakerError::General("Failed to lock threads"))?;
-
         log::info!("Joining {} threads", threads.len());
 
         let mut joined_count = 0;
         while let Some(thread) = threads.pop() {
-            let thread_name = thread.thread().name().unwrap().to_string();
-            println!("joining thread: {thread_name}");
-
+            let thread_name = thread.thread().name().unwrap_or("unknown").to_string();
             match thread.join() {
                 Ok(_) => {
-                    log::info!("[{}] Thread {} joined", self.port, thread_name);
+                    log::info!("Thread {} joined", thread_name);
                     joined_count += 1;
                 }
                 Err(e) => {
-                    log::error!(
-                        "[{}] Error {:?} while joining thread {}",
-                        self.port,
-                        e,
-                        thread_name
-                    );
+                    log::error!("Error {:?} while joining thread {}", e, thread_name);
                 }
             }
         }
-
-        log::info!("Successfully joined {joined_count} threads",);
+        log::info!("Successfully joined {joined_count} threads");
         Ok(())
     }
 }
@@ -324,8 +313,6 @@ impl Maker {
         log::info!("Sync at:----Maker init----");
         wallet.sync_and_save()?;
 
-        let network_port = config.network_port;
-
         Ok(Self {
             behavior,
             config,
@@ -335,7 +322,7 @@ impl Maker {
             highest_fidelity_proof: RwLock::new(None),
             is_setup_complete: AtomicBool::new(false),
             data_dir,
-            thread_pool: Arc::new(ThreadPool::new(network_port)),
+            thread_pool: Arc::new(ThreadPool::new()),
             watch_service,
         })
     }
@@ -619,18 +606,14 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
                     if transaction_broadcasted {
                         // Something is broadcasted. Report, Recover and Abort.
                         log::warn!(
-                            "[{}] Contract txs broadcasted!! txid: {} Recovering from ongoing swaps.",
-                            maker.config.network_port,
+                            "Contract txs broadcasted!! txid: {} Recovering from ongoing swaps.",
                             txid
                         );
                         failed_swap_ip.push(ip.clone());
 
                         // Spawn a separate thread to wait for contract maturity and broadcasting timelocked/hashlocked.
                         let maker_clone = maker.clone();
-                        log::info!(
-                            "[{}] Spawning recovery thread after seeing contracts in mempool",
-                            maker.config.network_port
-                        );
+                        log::info!("Spawning recovery thread after seeing contracts in mempool",);
 
                         let incomings = connection_state.incoming_swapcoins.clone();
                         let outgoings = connection_state.outgoing_swapcoins.clone();
@@ -705,17 +688,13 @@ pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError>
 
                 if no_response_since > IDLE_CONNECTION_TIMEOUT {
                     log::error!(
-                        "[{}] Potential Dropped Connection from taker. No response since : {} secs. Recovering from swap",
-                        maker.config.network_port,
+                        "Potential Dropped Connection from taker. No response since : {} secs. Recovering from swap",
                         no_response_since.as_secs()
                     );
                     bad_ip.push(ip.clone());
                     // Spawn a separate thread to wait for contract maturity and broadcasting timelocked,hashlocked
                     let maker_clone = maker.clone();
-                    log::info!(
-                        "[{}] Spawning recovery thread after Taker dropped",
-                        maker.config.network_port
-                    );
+                    log::info!("Spawning recovery thread after Taker dropped",);
 
                     let incomings = state.incoming_swapcoins.clone();
                     let outgoings = state.outgoing_swapcoins.clone();
@@ -766,8 +745,7 @@ pub(crate) fn recover_from_swap(
     let timelock_expiry = start_height.saturating_add(timelock);
 
     log::info!(
-        "[{}] recover_from_swap started | height={} timelock_expiry={}",
-        maker.config.network_port,
+        "recover_from_swap started | height={} timelock_expiry={}",
         start_height,
         timelock_expiry
     );
@@ -782,8 +760,7 @@ pub(crate) fn recover_from_swap(
 
         if current_height >= timelock_expiry {
             log::info!(
-                "[{}] timelock expired at {} (expiry={}), using timelock path",
-                maker.config.network_port,
+                "timelock expired at {} (expiry={}), using timelock path",
                 current_height,
                 timelock_expiry
             );
@@ -802,8 +779,7 @@ pub(crate) fn recover_from_swap(
 
         if all_preimages_known {
             log::info!(
-                "[{}] all preimages known at height {}, using hashlock path",
-                maker.config.network_port,
+                "all preimages known at height {}, using hashlock path",
                 current_height
             );
             return recover_via_hashlock(maker, incoming_swapcoins);
@@ -830,8 +806,7 @@ fn recover_via_hashlock(
             .write()?
             .spend_from_hashlock_contract(&infos, &maker.watch_service)?;
         log::info!(
-            "[{}] Maker hashlock recovery: {}/{} txs broadcasted",
-            maker.config.network_port,
+            "Maker hashlock recovery: {}/{} txs broadcasted",
             broadcasted.len(),
             incoming.len()
         );
@@ -885,8 +860,7 @@ fn recover_via_timelock(
             .write()?
             .spend_from_timelock_contract(&infos, &maker.watch_service)?;
         log::info!(
-            "[{}] Maker timelock recovery: {}/{} txs broadcasted",
-            maker.config.network_port,
+            "Maker timelock recovery: {}/{} txs broadcasted",
             broadcasted.len(),
             outgoing.len()
         );
@@ -943,11 +917,7 @@ fn check_for_watch_response(
     }
 
     for transaction in responses {
-        log::info!(
-            "[{}] Received WatchResponse with mempool txs: {:?}",
-            maker.config.network_port,
-            transaction
-        );
+        log::info!("Received WatchResponse with mempool txs: {:?}", transaction);
 
         for input in &transaction.input {
             let outpoint = (input.previous_output.txid, input.previous_output.vout);
@@ -1001,8 +971,7 @@ fn update_swapcoins_with_preimages<T: SwapCoin>(
                 let redeemscript = coin.get_multisig_redeemscript();
                 if apply_preimage(&redeemscript, *preimage) {
                     log::info!(
-                        "[{}] Applied preimage for {} swapcoin {:?}",
-                        maker.config.network_port,
+                        "Applied preimage for {} swapcoin {:?}",
                         if is_incoming { "incoming" } else { "outgoing" },
                         redeemscript
                     );

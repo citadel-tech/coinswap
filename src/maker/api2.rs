@@ -182,14 +182,12 @@ impl Clone for ConnectionState {
 
 pub(crate) struct ThreadPool {
     pub(crate) threads: Mutex<Vec<JoinHandle<()>>>,
-    pub(crate) port: u16,
 }
 
 impl ThreadPool {
-    pub(crate) fn new(port: u16) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             threads: Mutex::new(Vec::new()),
-            port,
         }
     }
 
@@ -204,30 +202,22 @@ impl ThreadPool {
             .threads
             .lock()
             .map_err(|_| MakerError::General("Failed to lock threads"))?;
-
         log::info!("Joining {} threads", threads.len());
 
         let mut joined_count = 0;
         while let Some(thread) = threads.pop() {
             let thread_name = thread.thread().name().unwrap_or("unknown").to_string();
-
             match thread.join() {
                 Ok(_) => {
-                    log::info!("[{}] Thread {} joined", self.port, thread_name);
+                    log::info!("Thread {} joined", thread_name);
                     joined_count += 1;
                 }
                 Err(e) => {
-                    log::error!(
-                        "[{}] Error {:?} while joining thread {}",
-                        self.port,
-                        e,
-                        thread_name
-                    );
+                    log::error!("Error {:?} while joining thread {}", e, thread_name);
                 }
             }
         }
-
-        log::info!("Successfully joined {joined_count} threads",);
+        log::info!("Successfully joined {joined_count} threads");
         Ok(())
     }
 }
@@ -327,8 +317,6 @@ impl Maker {
         log::info!("Sync at:----Maker init----");
         wallet.sync_and_save()?;
 
-        let network_port = config.network_port;
-
         Ok(Self {
             config,
             wallet: RwLock::new(wallet),
@@ -337,7 +325,7 @@ impl Maker {
             highest_fidelity_proof: RwLock::new(None),
             is_setup_complete: AtomicBool::new(false),
             data_dir,
-            thread_pool: Arc::new(ThreadPool::new(network_port)),
+            thread_pool: Arc::new(ThreadPool::new()),
             watch_service,
             #[cfg(feature = "integration-test")]
             behavior: behavior.unwrap_or(MakerBehavior::Normal),
@@ -508,11 +496,7 @@ impl Maker {
                 .rpc
                 .lock_unspent(&funding_outpoints)
                 .map_err(WalletError::Rpc)?;
-            log::info!(
-                "[{}] Locked {} funding UTXOs for swap",
-                self.config.network_port,
-                funding_outpoints.len()
-            );
+            log::info!("Locked {} funding UTXOs for swap", funding_outpoints.len());
 
             (outgoing_privkey, selected_utxos)
         };
@@ -736,8 +720,7 @@ impl Maker {
         #[cfg(feature = "integration-test")]
         if self.behavior == MakerBehavior::CloseAtPrivateKeyHandover {
             log::warn!(
-                "[{}] Maker behavior: CloseAtPrivateKeyHandover - Closing connection before sweep",
-                self.config.network_port
+                "Maker behavior: CloseAtPrivateKeyHandover - Closing connection before sweep",
             );
             return Err(MakerError::General(
                 "Maker closing connection before PrivateKeyHandover (test behavior)",
@@ -746,10 +729,7 @@ impl Maker {
 
         // Create the spending transaction if it doesn't exist
         if connection_state.incoming_contract.spending_tx().is_none() {
-            log::info!(
-                "[{}] Creating spending transaction for incoming contract",
-                self.config.network_port
-            );
+            log::info!("Creating spending transaction for incoming contract",);
             let tx = self.create_unsigned_spending_tx(connection_state)?;
             connection_state.incoming_contract.spending_tx = Some(tx);
         }
@@ -884,11 +864,7 @@ impl Maker {
             .send_raw_transaction(completed_tx.raw_hex())
             .map_err(|e| MakerError::Wallet(crate::wallet::WalletError::Rpc(e)))?;
 
-        log::info!(
-            "[{}] Maker sweep transaction broadcasted with txid: {:?}",
-            self.config.network_port,
-            txid
-        );
+        log::info!("Maker sweep transaction broadcasted with txid: {:?}", txid);
 
         // generate and save success report
         let incoming_contract_txid = connection_state
@@ -941,10 +917,7 @@ impl Maker {
         // Check for test behavior: close connection after sweeping
         #[cfg(feature = "integration-test")]
         if self.behavior == MakerBehavior::CloseAfterSweep {
-            log::warn!(
-                "[{}] Maker behavior: CloseAfterSweep - Closing connection after sweep",
-                self.config.network_port
-            );
+            log::warn!("Maker behavior: CloseAfterSweep - Closing connection after sweep",);
             return Err(MakerError::General(
                 "Maker closing connection after sweep (test behavior)",
             ));
@@ -983,8 +956,7 @@ impl Maker {
 
             wallet.remove_incoming_swapcoin_v2(&incoming_txid);
             log::info!(
-                "[{}] Removed incoming swapcoin {} after successful sweep",
-                self.config.network_port,
+                "Removed incoming swapcoin {} after successful sweep",
                 incoming_txid
             );
             // Sync to update utxo_cache with the swept UTXO so it's classified as SweptCoin
@@ -1008,8 +980,7 @@ impl Maker {
         let incoming_contract_txid = connection_state.incoming_contract.contract_txid()?;
 
         log::info!(
-            "[{}] Creating unsigned spending tx for incoming contract: {}",
-            self.config.network_port,
+            "Creating unsigned spending tx for incoming contract: {}",
             incoming_contract_txid
         );
 
@@ -1058,8 +1029,7 @@ impl Maker {
         };
 
         log::info!(
-            "[{}] Created unsigned spending tx with output value: {}",
-            self.config.network_port,
+            "Created unsigned spending tx with output value: {}",
             contract_value - Amount::from_sat(1000)
         );
 
@@ -1165,8 +1135,7 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
 
                 if outgoing_spent {
                     log::warn!(
-                        "[{}] Outgoing contract {} has been SPENT! Triggering recovery for swap {}",
-                        maker.config.network_port,
+                        "Outgoing contract {} has been SPENT! Triggering recovery for swap {}",
                         outgoing_txid,
                         swap_id
                     );
@@ -1176,10 +1145,7 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
                     let outgoing = connection_state.outgoing_contract.clone();
                     let maker_clone = maker.clone();
 
-                    log::info!(
-                        "[{}] Spawning recovery thread after detecting outgoing contract spend",
-                        maker.config.network_port
-                    );
+                    log::info!("Spawning recovery thread after detecting outgoing contract spend",);
 
                     let handle = std::thread::Builder::new()
                         .name("Taproot Contract Recovery Thread".to_string())
@@ -1214,8 +1180,7 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
 
                 if incoming_spent {
                     log::warn!(
-                        "[{}] Incoming contract {} has been SPENT! Triggering recovery for swap with {}",
-                        maker.config.network_port,
+                        "Incoming contract {} has been SPENT! Triggering recovery for swap with {}",
                         incoming_txid,
                         swap_id
                     );
@@ -1225,10 +1190,7 @@ pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), M
                     let outgoing = connection_state.outgoing_contract.clone();
                     let maker_clone = maker.clone();
 
-                    log::info!(
-                        "[{}] Spawning recovery thread after detecting incoming contract spend",
-                        maker.config.network_port
-                    );
+                    log::info!("Spawning recovery thread after detecting incoming contract spend",);
 
                     let handle = std::thread::Builder::new()
                         .name("Taproot Contract Recovery Thread".to_string())
@@ -1270,8 +1232,7 @@ pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError>
             for (swap_id, (state, instant)) in lock_on_state.iter_mut() {
                 if instant.elapsed() > IDLE_CONNECTION_TIMEOUT {
                     log::error!(
-                        "[{}] Potential dropped connection from taker {}. No response since {} secs. Recovering from swap.",
-                        maker.config.network_port,
+                        "Potential dropped connection from taker {}. No response since {} secs. Recovering from swap.",
                         swap_id,
                         instant.elapsed().as_secs()
                     );
@@ -1285,11 +1246,7 @@ pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError>
                         let outgoing = state.outgoing_contract.clone();
                         let maker_clone = maker.clone();
 
-                        log::info!(
-                            "[{}] Spawning recovery thread after taker {} dropped",
-                            maker.config.network_port,
-                            swap_id
-                        );
+                        log::info!("Spawning recovery thread after taker {} dropped", swap_id);
 
                         // Spawn recovery thread
                         let handle = std::thread::Builder::new()
@@ -1330,8 +1287,7 @@ pub(crate) fn restore_broadcasted_contracts_on_reboot_v2(
         maker.wallet.read()?.find_unfinished_swapcoins_v2();
 
     log::info!(
-        "[{}] Found {} unfinished incoming and {} unfinished outgoing taproot swapcoins on reboot",
-        maker.config.network_port,
+        "Found {} unfinished incoming and {} unfinished outgoing taproot swapcoins on reboot",
         incoming_swapcoins.len(),
         outgoing_swapcoins.len()
     );
@@ -1340,8 +1296,7 @@ pub(crate) fn restore_broadcasted_contracts_on_reboot_v2(
     for incoming in incoming_swapcoins.iter() {
         let Some(ref incoming_swap_id) = incoming.swap_id else {
             log::warn!(
-                "[{}] Incoming swapcoin {} has no swap_id, skipping",
-                maker.config.network_port,
+                "Incoming swapcoin {} has no swap_id, skipping",
                 incoming.contract_tx.compute_txid()
             );
             continue;
@@ -1357,8 +1312,7 @@ pub(crate) fn restore_broadcasted_contracts_on_reboot_v2(
             let incoming_txid = incoming.contract_tx.compute_txid();
 
             log::info!(
-                "[{}] Orphaned incoming swapcoin {} (swap_id={}) has no matching outgoing. Maker has no funds at risk. Cleaning up stale entry.",
-                maker.config.network_port,
+                "Orphaned incoming swapcoin {} (swap_id={}) has no matching outgoing. Maker has no funds at risk. Cleaning up stale entry.",
                 incoming_txid,
                 incoming_swap_id
             );
@@ -1370,8 +1324,7 @@ pub(crate) fn restore_broadcasted_contracts_on_reboot_v2(
         };
 
         log::info!(
-            "[{}] Spawning recovery thread for swap_id={} (incoming={}, outgoing={})",
-            maker.config.network_port,
+            "Spawning recovery thread for swap_id={} (incoming={}, outgoing={})",
             incoming_swap_id,
             incoming.contract_tx.compute_txid(),
             outgoing.contract_tx.compute_txid()
@@ -1412,9 +1365,10 @@ pub(crate) fn recover_from_swap(
 
     let outgoing_contract_txid = outgoing_swapcoin.contract_tx.compute_txid();
 
+    let id = incoming_swapcoin.swap_id.as_deref().unwrap_or("unknown");
     log::info!(
-        "[{}] Taproot recover_from_swap started for outgoing contract {}",
-        maker.config.network_port,
+        "[Swap: {}] Taproot recover_from_swap started for outgoing contract {}",
+        id,
         outgoing_contract_txid
     );
 
@@ -1446,8 +1400,7 @@ pub(crate) fn recover_from_swap(
             // and we already claimed the incoming contract via key-path. No recovery needed.
             if incoming_swapcoin.other_privkey.is_some() {
                 log::info!(
-                    "[{}] Incoming contract {} already spent via key-path (swap succeeded). Recovery not needed.",
-                    maker.config.network_port,
+                    "Incoming contract {} already spent via key-path (swap succeeded). Recovery not needed.",
                     incoming_contract_txid
                 );
                 // Stop watching the outgoing contract
@@ -1458,8 +1411,7 @@ pub(crate) fn recover_from_swap(
             // If we don't have other_privkey, the taker used timelock recovery on the incoming
             // contract. We must recover our funds from the outgoing contract via timelock.
             log::warn!(
-                "[{}] Incoming contract {} was spent by taker via timelock (no key exchange). We must recover our outgoing contract.",
-                maker.config.network_port,
+                "Incoming contract {} was spent by taker via timelock (no key exchange). We must recover our outgoing contract.",
                 incoming_contract_txid
             );
             // Continue to timelock recovery for our outgoing contract below
@@ -1473,18 +1425,12 @@ pub(crate) fn recover_from_swap(
                 ..
             }) = maker.watch_service.poll_event()
             {
-                log::info!(
-                    "[{}] Detected spend of outgoing contract, attempting to extract preimage",
-                    maker.config.network_port
-                );
+                log::info!("Detected spend of outgoing contract, attempting to extract preimage",);
                 // Try to extract preimage from witness
                 if let Some(preimage) =
                     crate::protocol::contract2::extract_preimage_from_spending_tx(&spending_tx)
                 {
-                    log::info!(
-                        "[{}] Successfully extracted preimage from outgoing contract spend",
-                        maker.config.network_port
-                    );
+                    log::info!("Successfully extracted preimage from outgoing contract spend",);
                     incoming_swapcoin.hash_preimage = Some(preimage);
                 }
             }
@@ -1492,10 +1438,7 @@ pub(crate) fn recover_from_swap(
 
         // Check if we have the preimage for hashlock recovery (prioritize this over timelock)
         if incoming_swapcoin.hash_preimage.is_some() {
-            log::info!(
-                "[{}] Preimage available, recovering incoming contract via hashlock",
-                maker.config.network_port
-            );
+            log::info!("Preimage available, recovering incoming contract via hashlock",);
             // Stop watching the outgoing contract before recovery
             maker.watch_service.unwatch(outgoing_outpoint);
             return recover_via_hashlock(maker, incoming_swapcoin);
@@ -1516,8 +1459,7 @@ pub(crate) fn recover_from_swap(
             // The taker may have spent it via hashlock, in which case we should extract preimage
             if incoming_swapcoin.hash_preimage.is_none() {
                 log::info!(
-                    "[{}] Timelock expired, doing final check for outgoing contract spend before timelock recovery",
-                    maker.config.network_port
+                    "Timelock expired, doing final check for outgoing contract spend before timelock recovery",
                 );
 
                 // Check if outgoing contract is spent by checking if the UTXO exists
@@ -1532,8 +1474,7 @@ pub(crate) fn recover_from_swap(
 
                 if outgoing_spent {
                     log::info!(
-                        "[{}] Outgoing contract already spent, attempting to extract preimage from blockchain",
-                        maker.config.network_port
+                        "Outgoing contract already spent, attempting to extract preimage from blockchain",
                     );
 
                     // Try to get spending transaction via watcher
@@ -1549,8 +1490,7 @@ pub(crate) fn recover_from_swap(
                             )
                         {
                             log::info!(
-                                "[{}] Successfully extracted preimage from spent outgoing contract",
-                                maker.config.network_port
+                                "Successfully extracted preimage from spent outgoing contract",
                             );
                             incoming_swapcoin.hash_preimage = Some(preimage);
                             // Stop watching and recover incoming via hashlock
@@ -1562,18 +1502,14 @@ pub(crate) fn recover_from_swap(
                     // If we couldn't extract preimage but outgoing is spent, maker already swept
                     // their incoming during the swap, so they have recovered their funds
                     log::warn!(
-                        "[{}] Outgoing contract spent but couldn't extract preimage. Maker should have already swept incoming.",
-                        maker.config.network_port
+                        "Outgoing contract spent but couldn't extract preimage. Maker should have already swept incoming.",
                     );
                     maker.watch_service.unwatch(outgoing_outpoint);
                     return Ok(());
                 }
             }
 
-            log::info!(
-                "[{}] Timelock matured, recovering outgoing contract via timelock",
-                maker.config.network_port
-            );
+            log::info!("Timelock matured, recovering outgoing contract via timelock",);
             maker.watch_service.unwatch(outgoing_outpoint);
             return recover_via_timelock(maker, outgoing_swapcoin);
         }
@@ -1586,10 +1522,7 @@ pub(crate) fn recover_from_swap(
 
 /// Recover incoming contract via hashlock script-path spend.
 fn recover_via_hashlock(maker: Arc<Maker>, incoming: IncomingSwapCoinV2) -> Result<(), MakerError> {
-    log::info!(
-        "[{}] Starting hashlock recovery for incoming contract",
-        maker.config.network_port
-    );
+    log::info!("Starting hashlock recovery for incoming contract",);
 
     let incoming_contract_txid = incoming.contract_tx.compute_txid();
     let incoming_amount = incoming.funding_amount.to_sat();
@@ -1613,8 +1546,7 @@ fn recover_via_hashlock(maker: Arc<Maker>, incoming: IncomingSwapCoinV2) -> Resu
                 match wallet.spend_via_hashlock_v2(&incoming, &preimage, &maker.watch_service) {
                     Ok(txid) => {
                         log::info!(
-                            "[{}] Maker Successfully recovered incoming contract via hashlock: {}",
-                            maker.config.network_port,
+                            "Maker Successfully recovered incoming contract via hashlock: {}",
                             txid
                         );
 
@@ -1639,19 +1571,12 @@ fn recover_via_hashlock(maker: Arc<Maker>, incoming: IncomingSwapCoinV2) -> Resu
                         Some(Ok(()))
                     }
                     Err(e) => {
-                        log::error!(
-                            "[{}] Failed to recover via hashlock: {:?}",
-                            maker.config.network_port,
-                            e
-                        );
+                        log::error!("Failed to recover via hashlock: {:?}", e);
                         Some(Err(MakerError::Wallet(e)))
                     }
                 }
             } else {
-                log::warn!(
-                    "[{}] Preimage not available yet, waiting...",
-                    maker.config.network_port
-                );
+                log::warn!("Preimage not available yet, waiting...",);
                 None
             }
         };
@@ -1670,10 +1595,7 @@ fn recover_via_hashlock(maker: Arc<Maker>, incoming: IncomingSwapCoinV2) -> Resu
 
 /// Recover outgoing contract via timelock script-path spend.
 fn recover_via_timelock(maker: Arc<Maker>, outgoing: OutgoingSwapCoinV2) -> Result<(), MakerError> {
-    log::info!(
-        "[{}] Starting timelock recovery for outgoing contract",
-        maker.config.network_port
-    );
+    log::info!("Starting timelock recovery for outgoing contract",);
 
     let outgoing_contract_txid = outgoing.contract_tx.compute_txid();
     let outgoing_amount = outgoing.funding_amount.to_sat();
@@ -1696,8 +1618,7 @@ fn recover_via_timelock(maker: Arc<Maker>, outgoing: OutgoingSwapCoinV2) -> Resu
             match wallet.spend_via_timelock_v2(&outgoing, &maker.watch_service) {
                 Ok(txid) => {
                     log::info!(
-                        "[{}] Maker Successfully recovered outgoing contract via timelock: {}",
-                        maker.config.network_port,
+                        "Maker Successfully recovered outgoing contract via timelock: {}",
                         txid
                     );
 
@@ -1721,11 +1642,7 @@ fn recover_via_timelock(maker: Arc<Maker>, outgoing: OutgoingSwapCoinV2) -> Resu
                     Some(Ok(()))
                 }
                 Err(e) => {
-                    log::error!(
-                        "[{}] Failed to recover via timelock: {:?}",
-                        maker.config.network_port,
-                        e
-                    );
+                    log::error!("Failed to recover via timelock: {:?}", e);
                     Some(Err(MakerError::Wallet(e)))
                 }
             }

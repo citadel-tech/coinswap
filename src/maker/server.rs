@@ -236,18 +236,14 @@ fn setup_fidelity_bond(maker: &Maker, maker_address: &str) -> Result<FidelityPro
                         thread::sleep(Duration::from_secs(total_sleep));
                     } else {
                         log::error!(
-                            "[{}] Fidelity Bond Creation failed: {:?}. Shutting Down Maker server",
-                            maker.config.network_port,
+                            "Fidelity Bond Creation failed: {:?}. Shutting Down Maker server",
                             e
                         );
                         return Err(e.into());
                     }
                 }
                 Ok(i) => {
-                    log::info!(
-                        "[{}] Successfully created fidelity bond",
-                        maker.config.network_port
-                    );
+                    log::info!("Successfully created fidelity bond",);
                     let highest_proof = maker
                         .get_wallet()
                         .read()?
@@ -290,8 +286,7 @@ fn check_swap_liquidity(maker: &Maker) -> Result<(), MakerError> {
                 .write()?
                 .get_next_external_address(AddressType::P2WPKH)?;
             log::warn!(
-                "[{}] Low Swap Liquidity | Min: {} sats | Available: {} sats. Add funds to {:?}",
-                maker.config.network_port,
+                "Low Swap Liquidity | Min: {} sats | Available: {} sats. Add funds to {:?}",
                 min_required,
                 offer_max_size,
                 addr,
@@ -302,8 +297,7 @@ fn check_swap_liquidity(maker: &Maker) -> Result<(), MakerError> {
             thread::sleep(Duration::from_secs(sleep_duration));
         } else {
             log::info!(
-                "[{}] Swap Liquidity ready: {} sats | Min: {} sats | Listening for requests.",
-                maker.config.network_port,
+                "Swap Liquidity ready: {} sats | Min: {} sats | Listening for requests.",
                 offer_max_size,
                 min_required
             );
@@ -319,18 +313,11 @@ fn check_connection_with_core(maker: &Maker) -> Result<(), MakerError> {
     let mut rcp_ping_success = true;
     while !maker.shutdown.load(Relaxed) {
         if let Err(e) = maker.wallet.read()?.rpc.get_blockchain_info() {
-            log::error!(
-                "[{}] RPC Connection failed | Error: {} | Reattempting...",
-                maker.config.network_port,
-                e
-            );
+            log::error!("RPC Connection failed | Error: {} | Reattempting...", e);
             rcp_ping_success = false;
         } else {
             if !rcp_ping_success {
-                log::info!(
-                    "[{}] Bitcoin Core RPC connection is live.",
-                    maker.config.network_port
-                );
+                log::info!("Bitcoin Core RPC connection is live.",);
             }
 
             break;
@@ -355,11 +342,11 @@ fn handle_client(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(), Maker
             Err(e) => {
                 if let NetError::IO(e) = e {
                     if e.kind() == ErrorKind::UnexpectedEof {
-                        log::info!("[{}] Connection ended.", maker.config.network_port);
+                        log::info!("Connection ended.");
                         break;
                     } else {
                         // For any other errors, report them
-                        log::error!("[{}] Net Error: {}", maker.config.network_port, e);
+                        log::error!("Net Error: {}", e);
                         continue;
                     }
                 }
@@ -367,14 +354,14 @@ fn handle_client(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(), Maker
         }
         let taker_msg = serde_cbor::from_slice::<TakerToMakerMessage>(&bytes)?;
 
-        log::info!("[{}] <=== {}", maker.config.network_port, taker_msg);
+        log::info!("<=== {}", taker_msg);
 
         let reply = handle_message(maker, &mut connection_state, taker_msg);
 
         match reply {
             Ok(reply) => {
                 if let Some(message) = reply {
-                    log::info!("[{}] ===> {} ", maker.config.network_port, message);
+                    log::info!("===> {}", message);
                     if let Err(e) = send_message(stream, &message) {
                         log::error!("Closing due to IO error in sending message: {e:?}");
                         continue;
@@ -386,18 +373,10 @@ fn handle_client(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(), Maker
             Err(err) => {
                 match &err {
                     MakerError::SpecialBehaviour(sp) => {
-                        log::error!(
-                            "[{}] Maker Special Behavior Triggered Disconnection : {:?}",
-                            maker.config.network_port,
-                            sp
-                        );
+                        log::error!("Maker Special Behavior Triggered Disconnection : {:?}", sp);
                     }
                     e => {
-                        log::error!(
-                            "[{}] Internal message handling error occurred: {:?}",
-                            maker.config.network_port,
-                            e
-                        );
+                        log::error!("Internal message handling error occurred: {:?}", e);
                     }
                 }
                 break;
@@ -437,18 +416,11 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
     // This ensures these functions are not executed twice in quick succession.
     interval_tracker += HEART_BEAT_INTERVAL.as_secs() as u32;
 
-    let network_port = maker.config.network_port;
-
     {
         let wallet = maker.get_wallet().read()?;
+        log::info!("Bitcoin Network: {}", wallet.store.network);
         log::info!(
-            "[{}] Bitcoin Network: {}",
-            network_port,
-            wallet.store.network
-        );
-        log::info!(
-            "[{}] Spendable Wallet Balance: {}",
-            network_port,
+            "Spendable Wallet Balance: {}",
             wallet.get_balances()?.spendable
         );
     }
@@ -465,7 +437,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         let idle_conn_check_thread = thread::Builder::new()
             .name("Idle Client Checker Thread".to_string())
             .spawn(move || {
-                log::info!("[{network_port}] Spawning Client connection status checker thread");
+                log::info!("Spawning Client connection status checker thread");
                 if let Err(e) = check_for_idle_states(maker_clone.clone()) {
                     log::error!("Failed checking client's idle state {e:?}");
                     maker_clone.shutdown.store(true, Relaxed);
@@ -481,7 +453,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         let contract_watcher_thread = thread::Builder::new()
             .name("Contract Watcher Thread".to_string())
             .spawn(move || {
-                log::info!("[{network_port}] Spawning contract-watcher thread");
+                log::info!("Spawning contract-watcher thread");
                 if let Err(e) = check_for_broadcasted_contracts(maker_clone.clone()) {
                     maker_clone.shutdown.store(true, Relaxed);
                     log::error!("Failed checking broadcasted contracts {e:?}");
@@ -495,7 +467,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         let rpc_thread = thread::Builder::new()
             .name("RPC Thread".to_string())
             .spawn(move || {
-                log::info!("[{network_port}] Spawning RPC server thread");
+                log::info!("Spawning RPC server thread");
                 match start_rpc_server(maker_clone.clone()) {
                     Ok(_) => (),
                     Err(e) => {
@@ -517,7 +489,9 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         }
 
         maker.is_setup_complete.store(true, Relaxed);
-        log::info!("[{}] Server Setup completed!! Use maker-cli to operate the server and the internal wallet.", maker.config.network_port);
+        log::info!(
+            "Server Setup completed!! Use maker-cli to operate the server and the internal wallet."
+        );
     }
 
     while !maker.shutdown.load(Relaxed) {
@@ -542,16 +516,16 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         }
         match listener.accept() {
             Ok((mut stream, _)) => {
-                log::info!("[{network_port}] Received incoming connection");
+                log::info!("Received incoming connection");
 
                 if let Err(e) = handle_client(&maker, &mut stream) {
-                    log::error!("[{network_port}] Error Handling client request {e:?}");
+                    log::error!("Error Handling client request {e:?}");
                 }
             }
 
             Err(e) => {
                 if e.kind() != ErrorKind::WouldBlock {
-                    log::error!("[{network_port}] Error accepting incoming connection: {e:?}");
+                    log::error!("Error accepting incoming connection: {e:?}");
                 }
             }
         };
@@ -569,7 +543,7 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
         sleep(HEART_BEAT_INTERVAL);
     }
 
-    log::info!("[{network_port}] Maker is shutting down.");
+    log::info!("Maker is shutting down.");
 
     maker.watch_service.shutdown();
 
