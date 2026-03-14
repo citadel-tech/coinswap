@@ -330,7 +330,7 @@ fn check_connection_with_core(maker: &Maker) -> Result<(), MakerError> {
 }
 
 /// Handle a single client connection.
-fn handle_client(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(), MakerError> {
+fn handle_client(maker: &Arc<Maker>, stream: &mut TcpStream, addr: std::net::SocketAddr) -> Result<(), MakerError> {
     stream.set_nonblocking(false)?; // Block this thread until message is read.
 
     let mut connection_state = ConnectionState::default();
@@ -342,7 +342,7 @@ fn handle_client(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(), Maker
             Err(e) => {
                 if let NetError::IO(e) = e {
                     if e.kind() == ErrorKind::UnexpectedEof {
-                        log::info!("Connection ended.");
+                        log::info!("[Peer: {}] Connection ended.", addr);
                         break;
                     } else {
                         // For any other errors, report them
@@ -354,14 +354,14 @@ fn handle_client(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(), Maker
         }
         let taker_msg = serde_cbor::from_slice::<TakerToMakerMessage>(&bytes)?;
 
-        log::info!("<=== {}", taker_msg);
+        log::info!("[Peer: {}] <=== {}", addr, taker_msg);
 
         let reply = handle_message(maker, &mut connection_state, taker_msg);
 
         match reply {
             Ok(reply) => {
                 if let Some(message) = reply {
-                    log::info!("===> {}", message);
+                    log::info!("[Peer: {}] ===> {}", addr, message);
                     if let Err(e) = send_message(stream, &message) {
                         log::error!("Closing due to IO error in sending message: {e:?}");
                         continue;
@@ -515,11 +515,11 @@ pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
             }
         }
         match listener.accept() {
-            Ok((mut stream, _)) => {
-                log::info!("Received incoming connection");
+            Ok((mut stream, addr)) => {
+                log::info!("[Peer: {}] Received incoming connection", addr);
 
-                if let Err(e) = handle_client(&maker, &mut stream) {
-                    log::error!("Error Handling client request {e:?}");
+                if let Err(e) = handle_client(&maker, &mut stream, addr) {
+                    log::error!("[Peer: {}] Error Handling client request {:?}", addr, e);
                 }
             }
 

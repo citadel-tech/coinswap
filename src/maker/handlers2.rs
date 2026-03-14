@@ -199,7 +199,8 @@ fn handle_senders_contract(
         wallet.add_outgoing_swapcoin_v2(&connection_state.outgoing_contract);
         wallet.save_to_disk()?;
         log::info!(
-            "Persisted incoming and outgoing swapcoins with swap_id={} to wallet",
+            "[Swap: {}] Persisted to wallet with internal swap_id={}",
+            senders_contract.id,
             swap_id
         );
     }
