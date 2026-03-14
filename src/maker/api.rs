@@ -818,7 +818,7 @@ fn recover_via_hashlock(
         .first()
         .map(|c| c.contract_tx.compute_txid().to_string())
         .unwrap_or_default();
-        
+
     while !maker.shutdown.load(Relaxed) {
         let broadcasted = maker
             .wallet
@@ -871,15 +871,15 @@ fn recover_via_timelock(
     outgoing: Vec<OutgoingSwapCoin>,
 ) -> Result<(), MakerError> {
     let infos = maker
-    .wallet
-    .write()?
-    .broadcast_outgoing_contracts(outgoing.clone())?;
-    
+        .wallet
+        .write()?
+        .broadcast_outgoing_contracts(outgoing.clone())?;
+
     let anchor_id = outgoing
         .first()
         .map(|c| c.contract_tx.compute_txid().to_string())
         .unwrap_or_default();
-
+        
     while !maker.shutdown.load(Relaxed) {
         let broadcasted = maker
             .wallet
