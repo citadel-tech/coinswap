@@ -814,16 +814,17 @@ fn recover_via_hashlock(
         .write()?
         .broadcast_incoming_contracts(incoming.clone())?;
 
+    let anchor_id = incoming
+        .first()
+        .map(|c| c.contract_tx.compute_txid().to_string())
+        .unwrap_or_default();
+        
     while !maker.shutdown.load(Relaxed) {
         let broadcasted = maker
             .wallet
             .write()?
             .spend_from_hashlock_contract(&infos, &maker.watch_service)?;
 
-        let anchor_id = incoming
-            .first()
-            .map(|c| c.contract_tx.compute_txid().to_string())
-            .unwrap_or_default();
         log::info!(
             "[Contract: {}] Maker hashlock recovery: {}/{} txs broadcasted",
             anchor_id,
@@ -870,9 +871,14 @@ fn recover_via_timelock(
     outgoing: Vec<OutgoingSwapCoin>,
 ) -> Result<(), MakerError> {
     let infos = maker
-        .wallet
-        .write()?
-        .broadcast_outgoing_contracts(outgoing.clone())?;
+    .wallet
+    .write()?
+    .broadcast_outgoing_contracts(outgoing.clone())?;
+    
+    let anchor_id = outgoing
+        .first()
+        .map(|c| c.contract_tx.compute_txid().to_string())
+        .unwrap_or_default();
 
     while !maker.shutdown.load(Relaxed) {
         let broadcasted = maker
@@ -880,10 +886,6 @@ fn recover_via_timelock(
             .write()?
             .spend_from_timelock_contract(&infos, &maker.watch_service)?;
 
-        let anchor_id = outgoing
-            .first()
-            .map(|c| c.contract_tx.compute_txid().to_string())
-            .unwrap_or_default();
         log::info!(
             "[Contract: {}] Maker timelock recovery: {}/{} txs broadcasted",
             anchor_id,
