@@ -1068,6 +1068,23 @@ impl Maker {
 
         Ok(())
     }
+
+    /// Sweep incoming taproot swapcoins after successful coinswap
+    pub fn sweep_after_successful_coinswap(&self) -> Result<(), MakerError> {
+        let swept_txids = self
+            .wallet
+            .write()?
+            .sweep_incoming_swapcoins(MIN_FEE_RATE)?; 
+            
+        if !swept_txids.is_empty() {
+            log::info!(
+                "Successfully swept {} taproot incoming swap coins: {:?}",
+                swept_txids.len(),
+                swept_txids
+            );
+        }
+        Ok(())
+    }
 }
 
 impl MakerRpc for Maker {

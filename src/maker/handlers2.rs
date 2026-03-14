@@ -31,7 +31,12 @@ pub(crate) fn handle_message_taproot(
     connection_state: &mut ConnectionState,
     message: TakerToMakerMessage,
 ) -> Result<Option<MakerToTakerMessage>, MakerError> {
-    log::debug!("Handling message: {:?}", message);
+    match &message {
+        TakerToMakerMessage::PrivateKeyHandover(_) => {
+            log::debug!("Handling message: PrivateKeyHandover [REDACTED]");
+        }
+        _ => log::debug!("Handling message: {:?}", message),
+    }
 
     match message {
         TakerToMakerMessage::GetOffer(get_offer_msg) => handle_get_offer(maker, get_offer_msg),
@@ -67,6 +72,9 @@ fn handle_privkey_handover(
     privkey_handover: PrivateKeyHandover,
 ) -> Result<Option<MakerToTakerMessage>, MakerError> {
     let response = maker.process_private_key_handover(&privkey_handover, connection_state)?;
+    maker.sweep_after_successful_coinswap()?;
+    maker.wallet().write()?.sync_and_save()?;
+
     Ok(Some(MakerToTakerMessage::PrivateKeyHandover(response)))
 }
 

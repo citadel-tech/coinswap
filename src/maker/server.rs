@@ -363,7 +363,7 @@ fn handle_client(maker: &Arc<Maker>, stream: &mut TcpStream, addr: std::net::Soc
                 if let Some(message) = reply {
                     log::info!("[Peer: {}] ===> {}", addr, message);
                     if let Err(e) = send_message(stream, &message) {
-                        log::error!("Closing due to IO error in sending message: {e:?}");
+                        log::error!("[Peer: {}] Closing due to IO error in sending message: {e:?}", addr);
                         continue;
                     }
                 } else {
@@ -373,10 +373,10 @@ fn handle_client(maker: &Arc<Maker>, stream: &mut TcpStream, addr: std::net::Soc
             Err(err) => {
                 match &err {
                     MakerError::SpecialBehaviour(sp) => {
-                        log::error!("Maker Special Behavior Triggered Disconnection : {:?}", sp);
+                        log::error!("[Peer: {}] Maker Special Behavior Triggered Disconnection : {:?}", addr, sp);
                     }
                     e => {
-                        log::error!("Internal message handling error occurred: {:?}", e);
+                        log::error!("[Peer: {}] Internal message handling error occurred: {:?}", addr, e);
                     }
                 }
                 break;
