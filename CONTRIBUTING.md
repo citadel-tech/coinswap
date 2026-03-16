@@ -5,6 +5,7 @@ Thank you for your interest in contributing to **CoinSwap**!
 We are building functioning, minimal-viable binaries and libraries for the trustless, peer-to-peer [Maxwell-Belcher CoinSwap protocol](https://github.com/citadel-tech/Coinswap-Protocol-Specification) on Bitcoin. This is **experimental security-critical software** — every change can affect atomicity, privacy (Tor), sybil resistance (fidelity bonds), or real BTC. Because of this, we maintain **very high standards** for code quality, testing, and human understanding.
 
 We welcome contributions from everyone, but we expect contributors to understand the critical nature of this codebase.
+To understand the codebase, please refer to this [wiki](https://deepwiki.com/citadel-tech/coinswap).
 
 ## Code of Conduct
 
