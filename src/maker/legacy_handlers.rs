@@ -29,7 +29,7 @@ pub fn handle_legacy_message<M: Maker>(
 ) -> Result<Option<MakerToTakerMessage>, MakerError> {
     log::debug!(
         "[{}] Handling Legacy message: {} (swap_id: {:?})",
-        maker.network_port(),
+        maker.wallet_name(),
         message,
         state.swap_id
     );
@@ -77,7 +77,7 @@ fn process_req_contract_sigs_for_sender<M: Maker>(
         if maker.behavior() == MakerBehavior::CloseAtReqContractSigsForSender {
             log::warn!(
                 "[{}] Test behavior: closing at ReqContractSigsForSender",
-                maker.network_port()
+                maker.wallet_name()
             );
             return Err(MakerError::General(
                 "Test: closing at ReqContractSigsForSender",
@@ -87,7 +87,7 @@ fn process_req_contract_sigs_for_sender<M: Maker>(
 
     log::info!(
         "[{}] Processing ReqContractSigsForSender for swap {} with {} contracts",
-        maker.network_port(),
+        maker.wallet_name(),
         req.id,
         req.txs_info.len()
     );
@@ -98,7 +98,7 @@ fn process_req_contract_sigs_for_sender<M: Maker>(
 
     log::info!(
         "[{}] Generated {} signatures for sender contracts",
-        maker.network_port(),
+        maker.wallet_name(),
         sigs.len()
     );
 
@@ -134,7 +134,7 @@ fn process_proof_of_funding<M: Maker>(
         if maker.behavior() == MakerBehavior::CloseAtProofOfFunding {
             log::warn!(
                 "[{}] Test behavior: closing at ProofOfFunding",
-                maker.network_port()
+                maker.wallet_name()
             );
             return Err(MakerError::General("Test: closing at ProofOfFunding"));
         }
@@ -142,7 +142,7 @@ fn process_proof_of_funding<M: Maker>(
 
     log::info!(
         "[{}] Processing ProofOfFunding for swap {} with {} funding txs",
-        maker.network_port(),
+        maker.wallet_name(),
         pof.id,
         pof.confirmed_funding_txes.len()
     );
@@ -151,7 +151,7 @@ fn process_proof_of_funding<M: Maker>(
 
     log::info!(
         "[{}] Verified proof of funding, hashvalue: {:?}",
-        maker.network_port(),
+        maker.wallet_name(),
         hashvalue
     );
 
@@ -227,7 +227,7 @@ fn process_proof_of_funding<M: Maker>(
 
     log::info!(
         "[{}] Created {} incoming swapcoins, total amount: {}",
-        maker.network_port(),
+        maker.wallet_name(),
         state.incoming_swapcoins.len(),
         incoming_amount
     );
@@ -239,7 +239,7 @@ fn process_proof_of_funding<M: Maker>(
 
     log::info!(
         "[{}] Incoming: {}, Fee: {}, Outgoing: {}",
-        maker.network_port(),
+        maker.wallet_name(),
         incoming_amount,
         swap_fee,
         outgoing_amount
@@ -248,7 +248,7 @@ fn process_proof_of_funding<M: Maker>(
     // Sync wallet before creating outgoing swaps to get fresh UTXO state.
     log::info!(
         "[{}] Sync at:----process_proof_of_funding----",
-        maker.network_port()
+        maker.wallet_name()
     );
     maker.sync_and_save_wallet()?;
 
@@ -278,7 +278,7 @@ fn process_proof_of_funding<M: Maker>(
     if !excluded_utxos.is_empty() {
         log::info!(
             "[{}] Excluding {} UTXOs from other active swaps",
-            maker.network_port(),
+            maker.wallet_name(),
             excluded_utxos.len()
         );
     }
@@ -346,7 +346,7 @@ fn process_proof_of_funding<M: Maker>(
 
     log::info!(
         "[{}] Created {} outgoing swapcoins, requesting signatures",
-        maker.network_port(),
+        maker.wallet_name(),
         outgoing_swapcoins.len()
     );
 
@@ -374,7 +374,7 @@ fn process_resp_contract_sigs_for_recvr_and_sender<M: Maker>(
         if maker.behavior() == MakerBehavior::CloseAtContractSigsForRecvrAndSender {
             log::warn!(
                 "[{}] Test behavior: closing at RespContractSigsForRecvrAndSender",
-                maker.network_port()
+                maker.wallet_name()
             );
             return Err(MakerError::General(
                 "Test: closing at ContractSigsForRecvrAndSender",
@@ -384,7 +384,7 @@ fn process_resp_contract_sigs_for_recvr_and_sender<M: Maker>(
 
     log::info!(
         "[{}] Processing RespContractSigsForRecvrAndSender for swap {} ({} receiver sigs, {} sender sigs)",
-        maker.network_port(),
+        maker.wallet_name(),
         resp.id,
         resp.receivers_sigs.len(),
         resp.senders_sigs.len()
@@ -404,7 +404,7 @@ fn process_resp_contract_sigs_for_recvr_and_sender<M: Maker>(
         &resp.senders_sigs,
         &state.incoming_swapcoins,
         &state.outgoing_swapcoins,
-        maker.network_port(),
+        maker.wallet_name(),
     )?;
 
     for (sig, incoming) in resp
@@ -415,7 +415,7 @@ fn process_resp_contract_sigs_for_recvr_and_sender<M: Maker>(
         incoming.others_contract_sig = Some(*sig);
         log::debug!(
             "[{}] Stored receiver signature in incoming swapcoin",
-            maker.network_port()
+            maker.wallet_name()
         );
     }
 
@@ -427,7 +427,7 @@ fn process_resp_contract_sigs_for_recvr_and_sender<M: Maker>(
         outgoing.others_contract_sig = Some(*sig);
         log::debug!(
             "[{}] Stored sender signature in outgoing swapcoin",
-            maker.network_port()
+            maker.wallet_name()
         );
     }
 
@@ -437,7 +437,7 @@ fn process_resp_contract_sigs_for_recvr_and_sender<M: Maker>(
         if maker.behavior() == MakerBehavior::SkipFundingBroadcast {
             log::warn!(
                 "[{}] Test behavior: skipping funding broadcast",
-                maker.network_port()
+                maker.wallet_name()
             );
             state.phase = SwapPhase::AwaitingPrivateKeyHandover;
             for incoming in &state.incoming_swapcoins {
@@ -453,13 +453,13 @@ fn process_resp_contract_sigs_for_recvr_and_sender<M: Maker>(
 
     log::info!(
         "[{}] SECURITY: Broadcasting {} funding txs after receiving signatures",
-        maker.network_port(),
+        maker.wallet_name(),
         state.pending_funding_txes.len()
     );
 
     for funding_tx in &state.pending_funding_txes {
         let txid = maker.broadcast_transaction(funding_tx)?;
-        log::info!("[{}] Broadcast funding tx: {}", maker.network_port(), txid);
+        log::info!("[{}] Broadcast funding tx: {}", maker.wallet_name(), txid);
     }
 
     state.pending_funding_txes.clear();
@@ -491,7 +491,7 @@ fn process_resp_contract_sigs_for_recvr_and_sender<M: Maker>(
         if maker.behavior() == MakerBehavior::BroadcastContractAfterSetup {
             log::warn!(
                 "[{}] Test behavior: broadcasting contract txs after setup, then closing",
-                maker.network_port()
+                maker.wallet_name()
             );
             for outgoing in &state.outgoing_swapcoins {
                 let _ = maker.broadcast_transaction(&outgoing.contract_tx);
@@ -504,7 +504,7 @@ fn process_resp_contract_sigs_for_recvr_and_sender<M: Maker>(
 
     log::info!(
         "[{}] Funding broadcast complete for swap {}",
-        maker.network_port(),
+        maker.wallet_name(),
         resp.id
     );
 
@@ -526,7 +526,7 @@ fn process_req_contract_sigs_for_recvr<M: Maker>(
         if maker.behavior() == MakerBehavior::CloseAtContractSigsForRecvr {
             log::warn!(
                 "[{}] Test behavior: closing at ReqContractSigsForRecvr",
-                maker.network_port()
+                maker.wallet_name()
             );
             return Err(MakerError::General("Test: closing at ContractSigsForRecvr"));
         }
@@ -534,7 +534,7 @@ fn process_req_contract_sigs_for_recvr<M: Maker>(
 
     log::info!(
         "[{}] Processing ReqContractSigsForRecvr for swap {} with {} txs",
-        maker.network_port(),
+        maker.wallet_name(),
         req.id,
         req.txs.len()
     );
@@ -579,12 +579,12 @@ fn process_req_contract_sigs_for_recvr<M: Maker>(
                 ) {
                     Ok(sig) => {
                         sigs.push(sig);
-                        log::debug!("[{}] Signed receiver contract tx", maker.network_port());
+                        log::debug!("[{}] Signed receiver contract tx", maker.wallet_name());
                     }
                     Err(e) => {
                         log::warn!(
                             "[{}] Failed to sign receiver contract tx: {:?}",
-                            maker.network_port(),
+                            maker.wallet_name(),
                             e
                         );
                         return Err(MakerError::General("Failed to sign receiver contract tx"));
@@ -593,14 +593,14 @@ fn process_req_contract_sigs_for_recvr<M: Maker>(
             } else {
                 log::warn!(
                     "[{}] No private key in outgoing swapcoin",
-                    maker.network_port()
+                    maker.wallet_name()
                 );
                 return Err(MakerError::General("No private key in outgoing swapcoin"));
             }
         } else {
             log::warn!(
                 "[{}] Could not find matching outgoing swapcoin for multisig",
-                maker.network_port()
+                maker.wallet_name()
             );
             return Err(MakerError::General(
                 "Could not find matching outgoing swapcoin",
@@ -610,7 +610,7 @@ fn process_req_contract_sigs_for_recvr<M: Maker>(
 
     log::info!(
         "[{}] Generated {} signatures for receiver contracts",
-        maker.network_port(),
+        maker.wallet_name(),
         sigs.len()
     );
 
@@ -638,7 +638,7 @@ fn process_legacy_handover<M: Maker>(
         if maker.behavior() == MakerBehavior::CloseAtHashPreimage {
             log::warn!(
                 "[{}] Test behavior: closing at hash preimage / private key handover",
-                maker.network_port()
+                maker.wallet_name()
             );
             return Err(MakerError::General("Test: closing at hash preimage"));
         }
@@ -646,7 +646,7 @@ fn process_legacy_handover<M: Maker>(
 
     log::info!(
         "[{}] Processing Legacy private key handover for swap {} with {} key(s)",
-        maker.network_port(),
+        maker.wallet_name(),
         handover.id,
         handover.privkeys.len()
     );
@@ -659,7 +659,7 @@ fn process_legacy_handover<M: Maker>(
     super::legacy_verification::verify_legacy_privkey_handover(
         &handover.privkeys,
         &state.incoming_swapcoins,
-        maker.network_port(),
+        maker.wallet_name(),
     )?;
 
     // Extract outgoing privkeys for response
@@ -693,7 +693,7 @@ fn process_legacy_handover<M: Maker>(
 
     log::info!(
         "[{}] Legacy swap {} completed successfully, returning {} private key(s)",
-        maker.network_port(),
+        maker.wallet_name(),
         handover.id,
         privkeys.len()
     );

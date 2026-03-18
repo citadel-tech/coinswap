@@ -45,7 +45,10 @@ const FIDELITY_BOND_UPDATE_INTERVAL: Duration = Duration::from_secs(600);
 
 /// Start the maker server.
 pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
-    log::info!("[{}] Starting maker server", maker.config.network_port);
+    log::info!(
+        "[{}] Starting maker server",
+        maker.config.wallet_name.as_str()
+    );
 
     let listener = match TcpListener::bind(("127.0.0.1", maker.config.network_port)) {
         Ok(l) => l,
@@ -65,18 +68,21 @@ pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
         format!("127.0.0.1:{maker_port}")
     } else {
         let maker_hostname = maker.get_tor_hostname()?;
-        format!("{maker_hostname}:{maker_port}")
+        maker_hostname.to_string()
     };
 
     log::info!(
         "[{}] Setting up fidelity bond...",
-        maker.config.network_port
+        maker.config.wallet_name.as_str()
     );
     let fidelity_proof = maker.setup_fidelity_bond(&maker_address)?;
 
     spawn_nostr_broadcast_thread(&maker, fidelity_proof)?;
 
-    log::info!("[{}] Checking swap liquidity...", maker.config.network_port);
+    log::info!(
+        "[{}] Checking swap liquidity...",
+        maker.config.wallet_name.as_str()
+    );
     maker.check_swap_liquidity()?;
 
     // Check for unfinished swapcoins from a previous run and start recovery.
@@ -89,7 +95,7 @@ pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
         if !inc.is_empty() || !out.is_empty() {
             log::info!(
                 "[{}] Incomplete swaps detected on startup: {} incoming, {} outgoing. Starting recovery.",
-                maker.config.network_port,
+                maker.config.wallet_name.as_str(),
                 inc.len(),
                 out.len()
             );
@@ -115,12 +121,12 @@ pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
             .map_err(|_| MakerError::General("Failed to lock wallet"))?;
         log::info!(
             "[{}] Bitcoin Network: {}",
-            maker.config.network_port,
+            maker.config.wallet_name.as_str(),
             wallet.store.network
         );
         log::info!(
             "[{}] Spendable Wallet Balance: {}",
-            maker.config.network_port,
+            maker.config.wallet_name.as_str(),
             wallet.get_balances().map_err(MakerError::Wallet)?.spendable
         );
     }
@@ -128,7 +134,7 @@ pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
     maker.is_setup_complete.store(true, Relaxed);
     log::info!(
         "[{}] Server setup complete! Listening on port {}",
-        maker.config.network_port,
+        maker.config.wallet_name.as_str(),
         maker.config.network_port
     );
 
@@ -174,7 +180,7 @@ pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
             Ok((stream, addr)) => {
                 log::info!(
                     "[{}] New connection from {}",
-                    maker.config.network_port,
+                    maker.config.wallet_name.as_str(),
                     addr
                 );
 
@@ -193,19 +199,26 @@ pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
                 sleep(Duration::from_millis(100));
             }
             Err(e) => {
-                log::error!("[{}] Accept error: {}", maker.config.network_port, e);
+                log::error!(
+                    "[{}] Accept error: {}",
+                    maker.config.wallet_name.as_str(),
+                    e
+                );
             }
         }
     }
 
-    log::info!("[{}] Server shutting down...", maker.config.network_port);
+    log::info!(
+        "[{}] Server shutting down...",
+        maker.config.wallet_name.as_str()
+    );
 
     maker.watch_service.shutdown();
     maker.thread_pool.join_all_threads()?;
 
     log::info!(
         "[{}] Sync at:----Shutdown wallet----",
-        maker.config.network_port
+        maker.config.wallet_name.as_str()
     );
     maker
         .wallet
@@ -214,7 +227,10 @@ pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
         .sync_and_save()
         .map_err(MakerError::Wallet)?;
 
-    log::info!("[{}] Server shutdown complete", maker.config.network_port);
+    log::info!(
+        "[{}] Server shutdown complete",
+        maker.config.wallet_name.as_str()
+    );
 
     Ok(())
 }
@@ -226,7 +242,7 @@ fn spawn_nostr_broadcast_thread(
 ) -> Result<(), MakerError> {
     log::info!(
         "[{}] Spawning nostr background task",
-        maker.config.network_port
+        maker.config.wallet_name.as_str()
     );
 
     let maker_clone = Arc::clone(maker);
@@ -281,7 +297,7 @@ fn handle_connection(maker: Arc<MakerServer>, stream: TcpStream) -> Result<(), M
 
     log::debug!(
         "[{}] Starting connection handler",
-        maker.config.network_port
+        maker.config.wallet_name.as_str()
     );
 
     loop {
@@ -289,13 +305,16 @@ fn handle_connection(maker: Arc<MakerServer>, stream: TcpStream) -> Result<(), M
         if maker.is_shutdown() {
             log::info!(
                 "[{}] Shutdown requested, closing connection",
-                maker.config.network_port
+                maker.config.wallet_name.as_str()
             );
             break;
         }
 
         if state.is_timed_out(IDLE_CONNECTION_TIMEOUT.as_secs()) {
-            log::info!("[{}] Connection timed out", maker.config.network_port);
+            log::info!(
+                "[{}] Connection timed out",
+                maker.config.wallet_name.as_str()
+            );
             break;
         }
 
@@ -304,7 +323,7 @@ fn handle_connection(maker: Arc<MakerServer>, stream: TcpStream) -> Result<(), M
             Err(e) => {
                 log::debug!(
                     "[{}] Read error (may be normal disconnect): {:?}",
-                    maker.config.network_port,
+                    maker.config.wallet_name.as_str(),
                     e
                 );
                 break;
@@ -313,14 +332,18 @@ fn handle_connection(maker: Arc<MakerServer>, stream: TcpStream) -> Result<(), M
 
         log::debug!(
             "[{}] Received message: {:?}",
-            maker.config.network_port,
+            maker.config.wallet_name.as_str(),
             message
         );
 
         let response = match handle_message(&maker, &mut state, message) {
             Ok(resp) => resp,
             Err(e) => {
-                log::error!("[{}] Handler error: {:?}", maker.config.network_port, e);
+                log::error!(
+                    "[{}] Handler error: {:?}",
+                    maker.config.wallet_name.as_str(),
+                    e
+                );
                 // Some errors are recoverable, some are not
                 break;
             }
@@ -329,14 +352,14 @@ fn handle_connection(maker: Arc<MakerServer>, stream: TcpStream) -> Result<(), M
         if let Some(response) = response {
             log::debug!(
                 "[{}] Sending response: {:?}",
-                maker.config.network_port,
+                maker.config.wallet_name.as_str(),
                 response
             );
 
             if let Err(e) = send_message(&stream, &response) {
                 log::error!(
                     "[{}] Failed to send response: {:?}",
-                    maker.config.network_port,
+                    maker.config.wallet_name.as_str(),
                     e
                 );
                 break;
@@ -346,12 +369,12 @@ fn handle_connection(maker: Arc<MakerServer>, stream: TcpStream) -> Result<(), M
         if state.phase == super::handlers::SwapPhase::Completed {
             log::info!(
                 "[{}] Swap completed, sweeping incoming swapcoins",
-                maker.config.network_port
+                maker.config.wallet_name.as_str()
             );
             if let Err(e) = maker.sweep_incoming_swapcoins() {
                 log::error!(
                     "[{}] Failed to sweep incoming swapcoins: {:?}",
-                    maker.config.network_port,
+                    maker.config.wallet_name.as_str(),
                     e
                 );
             }
@@ -360,7 +383,7 @@ fn handle_connection(maker: Arc<MakerServer>, stream: TcpStream) -> Result<(), M
             if let Err(e) = maker.sync_and_save_wallet() {
                 log::error!(
                     "[{}] Failed to sync wallet after sweep: {:?}",
-                    maker.config.network_port,
+                    maker.config.wallet_name.as_str(),
                     e
                 );
             }
@@ -394,7 +417,7 @@ fn handle_connection(maker: Arc<MakerServer>, stream: TcpStream) -> Result<(), M
 
     log::debug!(
         "[{}] Connection handler finished",
-        maker.config.network_port
+        maker.config.wallet_name.as_str()
     );
 
     Ok(())
@@ -414,7 +437,7 @@ fn check_for_idle_states(maker: Arc<MakerServer>) -> Result<(), MakerError> {
         for idle in idle_swaps {
             log::error!(
                 "[{}] Potential dropped connection from taker. Swap {} idle. Recovering from swap",
-                maker.config.network_port,
+                maker.config.wallet_name.as_str(),
                 idle.swap_id
             );
 
@@ -484,7 +507,7 @@ fn fidelity_renewal_loop(maker: Arc<MakerServer>, maker_address: &str) -> Result
 
         log::debug!(
             "[{}] Checking fidelity bond status...",
-            maker.config.network_port
+            maker.config.wallet_name.as_str()
         );
 
         // Redeem any expired bonds
@@ -496,7 +519,7 @@ fn fidelity_renewal_loop(maker: Arc<MakerServer>, maker_address: &str) -> Result
         {
             log::warn!(
                 "[{}] Failed to redeem expired fidelity bonds: {:?}",
-                maker.config.network_port,
+                maker.config.wallet_name.as_str(),
                 e
             );
             continue;
@@ -506,7 +529,7 @@ fn fidelity_renewal_loop(maker: Arc<MakerServer>, maker_address: &str) -> Result
         if let Err(e) = maker.setup_fidelity_bond(maker_address) {
             log::warn!(
                 "[{}] Fidelity bond renewal failed: {:?}",
-                maker.config.network_port,
+                maker.config.wallet_name.as_str(),
                 e
             );
         }
@@ -571,7 +594,7 @@ fn check_for_preimage_via_watchtower(
 
     log::info!(
         "[{}] Extracted {} preimage(s) from on-chain hashlock spends",
-        maker.config.network_port,
+        maker.config.wallet_name.as_str(),
         preimages.len()
     );
 
@@ -613,7 +636,7 @@ fn check_for_preimage_via_watchtower(
                         swapcoin.set_preimage(*preimage);
                         log::info!(
                             "[{}] Applied extracted preimage to incoming swapcoin {}",
-                            maker.config.network_port,
+                            maker.config.wallet_name.as_str(),
                             wallet_key
                         );
                     }
@@ -683,7 +706,7 @@ fn recover_from_swap(
 
     log::info!(
         "[{}] recover_from_swap started | height={} timelock_expiry={} | incoming={} outgoing={}",
-        maker.config.network_port,
+        maker.config.wallet_name.as_str(),
         start_height,
         timelock_expiry,
         incoming_swapcoins.len(),
@@ -704,7 +727,7 @@ fn recover_from_swap(
         if !funding_broadcast {
             log::info!(
                 "[{}] Funding was never broadcast for swap {} — nothing to recover. Discarding swapcoins.",
-                maker.config.network_port,
+                maker.config.wallet_name.as_str(),
                 swap_id
             );
 
@@ -769,7 +792,7 @@ fn recover_from_swap(
         if all_preimages_known && !incoming_swapcoins.is_empty() {
             log::info!(
                 "[{}] All preimages known, recovering via hashlock path",
-                maker.config.network_port
+                maker.config.wallet_name.as_str()
             );
 
             maker
@@ -789,7 +812,7 @@ fn recover_from_swap(
             if !swept.is_empty() {
                 log::info!(
                     "[{}] Recovered {} incoming swapcoins via hashlock",
-                    maker.config.network_port,
+                    maker.config.wallet_name.as_str(),
                     swept.resolved.len()
                 );
 
@@ -867,7 +890,7 @@ fn recover_from_swap(
         if current_height >= timelock_expiry {
             log::info!(
                 "[{}] Timelock expired at {} (expiry={}), recovering via timelock path",
-                maker.config.network_port,
+                maker.config.wallet_name.as_str(),
                 current_height,
                 timelock_expiry
             );
@@ -895,7 +918,7 @@ fn recover_from_swap(
             if !recovered.is_empty() {
                 log::info!(
                     "[{}] Recovered {} outgoing swapcoins via timelock",
-                    maker.config.network_port,
+                    maker.config.wallet_name.as_str(),
                     recovered.len()
                 );
 

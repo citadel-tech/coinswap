@@ -78,7 +78,7 @@ const DISCOVERY_WAIT_MAX: Duration = Duration::from_secs(150);
 pub struct OfferAndAddress {
     /// Details for Maker Offer
     pub offer: Offer,
-    /// Maker Address: onion_addr:port
+    /// Maker Address: onion_addr
     pub address: MakerAddress,
     /// Current state of maker
     pub state: MakerState,
@@ -765,10 +765,10 @@ impl TryFrom<String> for OnionAddress {
     fn try_from(value: String) -> Result<Self, Self::Error> {
         let mut parts = value.splitn(2, ':');
         let onion_addr = parts.next().ok_or("Missing onion address")?.to_string();
-        let port = parts.next().ok_or("Missing port")?.to_string();
+        let port = parts.next().unwrap_or("6102").to_string();
 
-        if onion_addr.is_empty() || port.is_empty() {
-            return Err("Empty onion address or port");
+        if onion_addr.is_empty() {
+            return Err("Empty onion address");
         }
 
         Ok(OnionAddress { onion_addr, port })
