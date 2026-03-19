@@ -5,7 +5,7 @@
 //! fidelity bond information and other coordination signals required
 //! by the Coinswap protocol.
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use nostr::{
     event::{EventBuilder, Kind, Tag, TagStandard},
@@ -34,6 +34,9 @@ const EXPIRATION_SECS: u64 = 86400;
 pub fn broadcast_bond_on_nostr(fidelity: FidelityProof) -> Result<(), MakerError> {
     let outpoint = fidelity.bond.outpoint;
     let content = format!("{}:{}", outpoint.txid, outpoint.vout);
+    // Kind 37777 is in the NIP-33 parameterized-replaceable range (30000..39999),
+    // so included a stable `d` tag to keep relay handling spec-compliant.
+    let d_tag = format!("fidelity:{}", content);
 
     let secret_key = SecretKey::generate();
     let keys = Keys::new(secret_key);
@@ -47,7 +50,24 @@ pub fn broadcast_bond_on_nostr(fidelity: FidelityProof) -> Result<(), MakerError
         .as_secs()
         + EXPIRATION_SECS;
 
+    log::debug!(
+        "Publishing fidelity bond to Nostr | outpoint={} amount_sats={} lock_time={} conf_height={:?} cert_expiry={:?} is_spent={} pubkey={} cert_hash={} cert_sig={:?} content={} d_tag={} expiration_unix={}",
+        fidelity.bond.outpoint,
+        fidelity.bond.amount.to_sat(),
+        fidelity.bond.lock_time.to_consensus_u32(),
+        fidelity.bond.conf_height,
+        fidelity.bond.cert_expiry,
+        fidelity.bond.is_spent,
+        fidelity.bond.pubkey,
+        fidelity.cert_hash,
+        fidelity.cert_sig,
+        content,
+        d_tag,
+        expiration
+    );
+
     let event = EventBuilder::new(Kind::Custom(COINSWAP_KIND), content)
+        .tag(Tag::identifier(d_tag))
         .tag(Tag::from_standardized(TagStandard::Expiration(
             Timestamp::from_secs(expiration),
         )))
@@ -55,12 +75,21 @@ pub fn broadcast_bond_on_nostr(fidelity: FidelityProof) -> Result<(), MakerError
         .sign_with_keys(&keys)
         .expect("Event should be signed");
 
+    log::debug!(
+        "Nostr event built | event_id={} pubkey={} kind={} created_at={} tags={:?}",
+        event.id,
+        event.pubkey,
+        COINSWAP_KIND,
+        event.created_at,
+        event.tags
+    );
+
     let msg = ClientMessage::Event(std::borrow::Cow::Owned(event));
 
     log::debug!("nostr wire msg: {}", msg.as_json());
 
+    const RELAY_DELAY: Duration = Duration::from_secs(2);
     const MAX_RETRIES: usize = 3;
-    const RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
 
     let mut success = false;
 
@@ -79,9 +108,8 @@ pub fn broadcast_bond_on_nostr(fidelity: FidelityProof) -> Result<(), MakerError
                         MAX_RETRIES,
                         e
                     );
-
                     if attempt < MAX_RETRIES {
-                        std::thread::sleep(RETRY_DELAY);
+                        std::thread::sleep(RELAY_DELAY);
                     }
                 }
             }

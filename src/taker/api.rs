@@ -9,7 +9,7 @@ use std::{
     collections::{HashMap, HashSet},
     net::TcpStream,
     path::PathBuf,
-    sync::mpsc,
+    sync::{atomic::AtomicBool, mpsc, Arc},
     thread::{self, sleep},
     time::{Duration, Instant},
 };
@@ -240,9 +240,11 @@ impl Taker {
         let rpc_config_watcher = rpc_config.clone();
 
         let mut watcher = Watcher::<Taker>::new(backend, registry, rx_requests, tx_events);
+        let initial_sync_complete = Arc::new(AtomicBool::new(false));
+        let initial_sync_complete_watcher = initial_sync_complete.clone();
         _ = thread::Builder::new()
             .name("Watcher thread".to_string())
-            .spawn(move || watcher.run(rpc_config_watcher));
+            .spawn(move || watcher.run(rpc_config_watcher, initial_sync_complete_watcher));
 
         let watch_service = WatchService::new(tx_requests, rx_responses);
 
@@ -272,6 +274,7 @@ impl Taker {
             watch_service.clone(),
             config.socks_port,
             rest_backend,
+            initial_sync_complete,
         )
         .start();
 
@@ -2422,14 +2425,9 @@ impl Taker {
             .collect()
     }
 
-    /// Indicates if offerbook syncing is in progress or not.
-    pub fn is_offerbook_syncing(&self) -> bool {
-        self.offer_sync_handle.is_syncing()
-    }
-
-    /// Run offer sync now.
-    pub fn run_offer_sync_now(&self) {
-        self.offer_sync_handle.run_sync_now()
+    /// Trigger a manual offerbook sync and block until it completes.
+    pub fn sync_offerbook_and_wait(&self) -> Result<(), TakerError> {
+        self.offer_sync_handle.sync_and_wait()
     }
 }
 

@@ -351,15 +351,12 @@ fn main() -> Result<(), TakerError> {
                     taker.get_wallet_mut().sync_and_save()?;
                 }
                 Commands::FetchOffers => {
-                    use std::time::{Duration, Instant};
+                    use std::time::Instant;
 
                     println!("Waiting for offerbook synchronization to complete…");
                     let sync_start = Instant::now();
 
-                    while taker.is_offerbook_syncing() {
-                        println!("Offerbook sync in progress...");
-                        std::thread::sleep(Duration::from_secs(2));
-                    }
+                    taker.sync_offerbook_and_wait()?;
 
                     println!("Offerbook synchronized in {:.2?}", sync_start.elapsed());
 
