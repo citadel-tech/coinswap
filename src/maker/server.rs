@@ -4,7 +4,7 @@
 //! The server maintains the thread pool for P2P Connection, Watchtower, Bitcoin Backend, and RPC Client Request.
 //! The server listens at two ports: 6102 for P2P, and 6103 for RPC Client requests.
 
-use crate::{maker::rpc::server::MakerRpc, protocol::messages::FidelityProof};
+use crate::{maker::rpc::server::MakerRpc, wallet::FidelityBond};
 use bitcoin::{absolute::LockTime, Amount};
 use bitcoind::bitcoincore_rpc::RpcApi;
 
@@ -100,10 +100,10 @@ fn spawn_nostr_broadcast_task(maker: Arc<Maker>) -> Result<(), MakerError> {
 
             while !maker_clone.shutdown.load(Ordering::Acquire) {
                 if elapsed >= interval {
-                    let fidelity = match maker_clone.highest_fidelity_proof.read() {
+                    let fidelity = match maker_clone.highest_fidelity_bond.read() {
                         Ok(guard) => guard.clone(),
                         Err(e) => {
-                            log::error!("Failed to read highest_fidelity_proof: {:?}", e);
+                            log::error!("Failed to read highest_fidelity_bond: {:?}", e);
                             return;
                         }
                     };
@@ -139,10 +139,10 @@ fn spawn_nostr_broadcast_task(maker: Arc<Maker>) -> Result<(), MakerError> {
 /// A valid fidelity bond is one that has not expired, been redeemed, or spent.
 ///
 /// ## Returns:
-/// - The highest **FidelityProof**, proving ownership of the highest valid fidelity bond, the maker has.
-fn setup_fidelity_bond(maker: &Maker, maker_address: &str) -> Result<FidelityProof, MakerError> {
+/// - The highest **FidelityBond**, proving ownership of the highest valid fidelity bond, the maker has.
+fn setup_fidelity_bond(maker: &Maker, maker_address: &str) -> Result<FidelityBond, MakerError> {
     let highest_index = maker.get_wallet().read()?.get_highest_fidelity_index()?;
-    let mut proof = maker.highest_fidelity_proof.write()?;
+    let mut proof = maker.highest_fidelity_bond.write()?;
 
     if let Some(i) = highest_index {
         let wallet_read = maker.get_wallet().read()?;
@@ -154,14 +154,11 @@ fn setup_fidelity_bond(maker: &Maker, maker_address: &str) -> Result<FidelityPro
         let bond_value = wallet_read.calculate_bond_value(&bond)?.to_sat();
         drop(wallet_read);
 
-        let highest_proof = maker
-            .get_wallet()
-            .read()?
-            .generate_fidelity_proof(i, maker_address)?;
+        let highest_proof = maker.get_wallet().read()?.fetch_fidelity_bond(i)?;
 
         log::info!(
             "Highest bond at outpoint {} | index {} | Amount {:?} sats | Remaining Timelock for expiry : {:?} Blocks | Current Bond Value : {:?} sats",
-            highest_proof.bond.outpoint,
+            highest_proof.outpoint,
             i,
             bond.amount.to_sat(),
             bond.lock_time.to_consensus_u32() - current_height,
@@ -248,10 +245,7 @@ fn setup_fidelity_bond(maker: &Maker, maker_address: &str) -> Result<FidelityPro
                         "[{}] Successfully created fidelity bond",
                         maker.config.network_port
                     );
-                    let highest_proof = maker
-                        .get_wallet()
-                        .read()?
-                        .generate_fidelity_proof(i, maker_address)?;
+                    let highest_proof = maker.get_wallet().read()?.fetch_fidelity_bond(i)?;
 
                     *proof = Some(highest_proof);
 

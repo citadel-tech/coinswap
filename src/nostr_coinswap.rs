@@ -16,7 +16,7 @@ use nostr::{
 };
 use tungstenite::Message;
 
-use crate::{maker::MakerError, protocol::messages::FidelityProof};
+use crate::{maker::MakerError, wallet::FidelityBond};
 
 /// nostr url for coinswap
 #[cfg(not(feature = "integration-test"))]
@@ -31,8 +31,8 @@ pub const COINSWAP_KIND: u16 = 37777;
 const EXPIRATION_SECS: u64 = 86400;
 
 /// Broadcasts a fidelity bond announcement over Nostr.
-pub fn broadcast_bond_on_nostr(fidelity: FidelityProof) -> Result<(), MakerError> {
-    let outpoint = fidelity.bond.outpoint;
+pub fn broadcast_bond_on_nostr(fidelity: FidelityBond) -> Result<(), MakerError> {
+    let outpoint = fidelity.outpoint;
     let content = format!("{}:{}", outpoint.txid, outpoint.vout);
     // Kind 37777 is in the NIP-33 parameterized-replaceable range (30000..39999),
     // so included a stable `d` tag to keep relay handling spec-compliant.
@@ -51,16 +51,13 @@ pub fn broadcast_bond_on_nostr(fidelity: FidelityProof) -> Result<(), MakerError
         + EXPIRATION_SECS;
 
     log::debug!(
-        "Publishing fidelity bond to Nostr | outpoint={} amount_sats={} lock_time={} conf_height={:?} cert_expiry={:?} is_spent={} pubkey={} cert_hash={} cert_sig={:?} content={} d_tag={} expiration_unix={}",
-        fidelity.bond.outpoint,
-        fidelity.bond.amount.to_sat(),
-        fidelity.bond.lock_time.to_consensus_u32(),
-        fidelity.bond.conf_height,
-        fidelity.bond.cert_expiry,
-        fidelity.bond.is_spent,
-        fidelity.bond.pubkey,
-        fidelity.cert_hash,
-        fidelity.cert_sig,
+        "Publishing fidelity bond to Nostr | outpoint={} amount_sats={} lock_time={} conf_height={:?} is_spent={} pubkey={}  content={} d_tag={} expiration_unix={}",
+        fidelity.outpoint,
+        fidelity.amount.to_sat(),
+        fidelity.lock_time.to_consensus_u32(),
+        fidelity.conf_height,
+        fidelity.is_spent,
+        fidelity.pubkey,
         content,
         d_tag,
         expiration

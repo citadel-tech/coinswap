@@ -31,7 +31,7 @@ use crate::{
     nostr_coinswap::broadcast_bond_on_nostr,
     protocol::messages2::{MakerToTakerMessage, TakerToMakerMessage},
     utill::{read_message, send_message, HEART_BEAT_INTERVAL, MIN_FEE_RATE},
-    wallet::{AddressType, SwapReport, WalletError},
+    wallet::{AddressType, FidelityBond, SwapReport, WalletError},
 };
 
 use crate::maker::error::MakerError;
@@ -94,10 +94,10 @@ fn spawn_nostr_broadcast_task(maker: Arc<Maker>) -> Result<(), MakerError> {
 
             while !maker_clone.shutdown.load(Ordering::Acquire) {
                 if elapsed >= interval {
-                    let fidelity = match maker_clone.highest_fidelity_proof.read() {
+                    let fidelity = match maker_clone.highest_fidelity_bond.read() {
                         Ok(guard) => guard.clone(),
                         Err(e) => {
-                            log::error!("Failed to read highest_fidelity_proof: {:?}", e);
+                            log::error!("Failed to read highest_fidelity_bond: {:?}", e);
                             return;
                         }
                     };
@@ -132,7 +132,7 @@ fn spawn_nostr_broadcast_task(maker: Arc<Maker>) -> Result<(), MakerError> {
 fn setup_fidelity_bond_taproot(
     maker: &Maker,
     maker_address: &str,
-) -> Result<crate::protocol::messages::FidelityProof, MakerError> {
+) -> Result<FidelityBond, MakerError> {
     use crate::wallet::WalletError;
     use bitcoin::absolute::LockTime;
     use std::thread;
@@ -149,23 +149,14 @@ fn setup_fidelity_bond_taproot(
         let bond_value = wallet_read.calculate_bond_value(&bond)?.to_sat();
         drop(wallet_read);
 
-        let proof_message = maker
-            .wallet()
-            .read()?
-            .generate_fidelity_proof(i, maker_address)?;
+        let proof_message = maker.wallet().read()?.fetch_fidelity_bond(i)?;
 
-        let highest_proof = crate::protocol::messages::FidelityProof {
-            bond: proof_message.bond.clone(),
-            cert_hash: *bitcoin::hashes::sha256d::Hash::from_bytes_ref(
-                proof_message.cert_hash.as_ref(),
-            ),
-            cert_sig: proof_message.cert_sig,
-        };
+        let highest_proof = proof_message.clone();
 
         log::info!(
             "[{}] Using existing fidelity bond at outpoint {} | index {} | Amount {:?} sats | Remaining Timelock for expiry : {:?} Blocks | Current Bond Value : {:?} sats",
             maker.config.network_port,
-            proof_message.bond.outpoint,
+            proof_message.outpoint,
             i,
             bond.amount.to_sat(),
             bond.lock_time.to_consensus_u32() - current_height,
@@ -173,7 +164,7 @@ fn setup_fidelity_bond_taproot(
         );
 
         // Store the fidelity proof in maker
-        *maker.highest_fidelity_proof.write()? = Some(highest_proof.clone());
+        *maker.highest_fidelity_bond.write()? = Some(highest_proof.clone());
 
         return Ok(highest_proof);
     }
@@ -276,26 +267,16 @@ fn setup_fidelity_bond_taproot(
                     "[{}] Successfully created fidelity bond",
                     maker.config.network_port
                 );
-                let proof_message = maker
-                    .wallet()
-                    .read()?
-                    .generate_fidelity_proof(i, maker_address)?;
+                let proof_message = maker.wallet().read()?.fetch_fidelity_bond(i)?;
 
-                // Convert to messages2::FidelityProof
-                let highest_proof = crate::protocol::messages::FidelityProof {
-                    bond: proof_message.bond,
-                    cert_hash: *bitcoin::hashes::sha256d::Hash::from_bytes_ref(
-                        proof_message.cert_hash.as_ref(),
-                    ),
-                    cert_sig: proof_message.cert_sig,
-                };
+                let highest_proof = proof_message;
 
                 // sync and save the wallet data to disk
                 log::info!("Sync at end:----setup_fidelity_bond----");
                 maker.wallet().write()?.sync_and_save()?;
 
                 // Store the fidelity proof in maker
-                *maker.highest_fidelity_proof.write()? = Some(highest_proof.clone());
+                *maker.highest_fidelity_bond.write()? = Some(highest_proof.clone());
 
                 return Ok(highest_proof);
             }

@@ -2360,7 +2360,7 @@ impl Taker {
             return Ok(header);
         };
 
-        let bond = &offer.fidelity.bond;
+        let bond = &offer.fidelity;
         let bond_value = self.get_wallet().calculate_bond_value(bond)?;
 
         Ok(format!(

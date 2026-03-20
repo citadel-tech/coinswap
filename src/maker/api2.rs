@@ -21,8 +21,8 @@ use crate::{
     },
     utill::{check_tor_status, get_maker_dir, get_tor_hostname, HEART_BEAT_INTERVAL, MIN_FEE_RATE},
     wallet::{
-        ffi::SwapReport, AddressType, Destination, IncomingSwapCoinV2, OutgoingSwapCoinV2,
-        RPCConfig, Wallet, WalletError,
+        ffi::SwapReport, AddressType, Destination, FidelityBond, IncomingSwapCoinV2,
+        OutgoingSwapCoinV2, RPCConfig, Wallet, WalletError,
     },
     watch_tower::{
         service::{start_maker_watch_service, WatchService},
@@ -242,8 +242,8 @@ pub struct Maker {
     pub shutdown: AtomicBool,
     /// Map of IP address to Connection State + last Connected instant
     pub(crate) ongoing_swap_state: Mutex<HashMap<String, (ConnectionState, Instant)>>,
-    /// Highest Value Fidelity Proof
-    pub(crate) highest_fidelity_proof: RwLock<Option<crate::protocol::messages::FidelityProof>>,
+    /// Highest Value Fidelity Bond
+    pub(crate) highest_fidelity_bond: RwLock<Option<FidelityBond>>,
     /// Is setup complete
     pub is_setup_complete: AtomicBool,
     /// Path for the data directory.
@@ -334,7 +334,7 @@ impl Maker {
             wallet: RwLock::new(wallet),
             shutdown: AtomicBool::new(false),
             ongoing_swap_state: Mutex::new(HashMap::new()),
-            highest_fidelity_proof: RwLock::new(None),
+            highest_fidelity_bond: RwLock::new(None),
             is_setup_complete: AtomicBool::new(false),
             data_dir,
             thread_pool: Arc::new(ThreadPool::new(network_port)),
@@ -364,7 +364,7 @@ impl Maker {
         let max_size = balances.spendable;
 
         // Read the cached fidelity proof
-        let fidelity_proof = self.highest_fidelity_proof.read()?;
+        let fidelity_proof = self.highest_fidelity_bond.read()?;
         let fidelity_proof = fidelity_proof
             .as_ref()
             .ok_or_else(|| MakerError::General("No fidelity proof available"))?
@@ -1077,7 +1077,7 @@ impl Maker {
                 .fidelity_bond
                 .iter()
                 .filter_map(|(i, bond)| {
-                    if bond.conf_height.is_none() && bond.cert_expiry.is_none() {
+                    if bond.conf_height.is_none() {
                         let conf_height = wallet_read
                             .wait_for_tx_confirmation(bond.outpoint.txid)
                             .ok()?;

@@ -1,15 +1,14 @@
 use crate::{
-    protocol::messages::FidelityProof,
     utill::{redeemscript_to_scriptpubkey, MIN_FEE_RATE},
     wallet::{AddressType, Wallet},
+    watch_tower::utils::process_fidelity,
 };
 use bitcoin::{
     absolute::LockTime,
     bip32::{ChildNumber, DerivationPath},
-    hashes::{sha256d, Hash},
     opcodes::all::{OP_CHECKSIGVERIFY, OP_CLTV},
     script::{Builder, Instruction},
-    secp256k1::{Keypair, Message, Secp256k1},
+    secp256k1::{Keypair, Secp256k1},
     Address, Amount, OutPoint, PublicKey, ScriptBuf, Transaction,
 };
 use bitcoind::bitcoincore_rpc::RpcApi;
@@ -56,11 +55,10 @@ pub enum FidelityError {
     BondDoesNotExist,
     BondAlreadyRedeemed,
     BondLocktimeExpired,
-    CertExpired,
-    InvalidCertHash,
     General(String),
     InvalidBondLocktime,
     BondUncomfirmed,
+    InvalidOpReturn,
 }
 
 impl std::fmt::Display for FidelityError {
@@ -72,12 +70,13 @@ impl std::fmt::Display for FidelityError {
                 write!(f, "Fidelity bond has already been redeemed")
             }
             FidelityError::BondLocktimeExpired => write!(f, "Fidelity bond locktime has expired"),
-            FidelityError::CertExpired => write!(f, "Fidelity certificate has expired"),
-            FidelityError::InvalidCertHash => write!(f, "Invalid fidelity certificate hash"),
             FidelityError::InvalidBondLocktime => {
                 write!(f, "Fidelity bond locktime is outside the acceptable range")
             }
             FidelityError::BondUncomfirmed => write!(f, "Fidelity bond transaction is unconfirmed"),
+            FidelityError::InvalidOpReturn => {
+                write!(f, "Invalid OP_RETURN data in fidelity bond transaction")
+            }
             FidelityError::General(msg) => write!(f, "{}", msg),
         }
     }
@@ -102,17 +101,16 @@ fn fidelity_redeemscript(lock_time: &LockTime, pubkey: &PublicKey) -> ScriptBuf 
 }
 
 /// Verifies a fidelity bond by checking timelock validity,
-/// certificate integrity, redeem script existence, and ECDSA signature correctness.
+/// redeem script existence.
 pub(crate) fn verify_fidelity_checks(
-    proof: &FidelityProof,
-    addr: &str,
+    bond: &FidelityBond,
+    onion_addr: &str,
     tx: Transaction,
     current_height: u64,
 ) -> Result<(), WalletError> {
     // Ensure fidelity bond timelock lies within allowed range
-    let bond_height = proof.bond.lock_time.to_consensus_u32()
-        - proof
-            .bond
+    let bond_height = bond.lock_time.to_consensus_u32()
+        - bond
             .conf_height
             .ok_or(WalletError::Fidelity(FidelityError::BondDoesNotExist))?;
     if !(MIN_FIDELITY_TIMELOCK..=MAX_FIDELITY_TIMELOCK).contains(&bond_height) {
@@ -127,34 +125,34 @@ pub(crate) fn verify_fidelity_checks(
 
     // Check if bond lock time has expired
     let lock_time = LockTime::from_height(current_height as u32)?;
-    if lock_time > proof.bond.lock_time {
+    if lock_time > bond.lock_time {
         return Err(FidelityError::BondLocktimeExpired.into());
     }
 
-    // Verify certificate hash
-    let expected_cert_hash = proof
-        .bond
-        .generate_cert_hash(addr)
-        .ok_or(WalletError::Fidelity(FidelityError::BondUncomfirmed))?;
-    if proof.cert_hash != expected_cert_hash {
-        return Err(FidelityError::InvalidCertHash.into());
+    // Verify OP_RETURN matches the Maker offer
+    match process_fidelity(&tx) {
+        Some(fidelity) => {
+            if fidelity.onion != onion_addr {
+                return Err(FidelityError::General(format!(
+                    "Fidelity OP_RETURN onion address mismatch. Expected: {}, Found: {}",
+                    onion_addr, fidelity.onion
+                ))
+                .into());
+            }
+        }
+        None => return Err(FidelityError::InvalidOpReturn.into()),
     }
 
     // Validate redeem script and corresponding output scriptPubKey
-    let fidelity_redeem_script = fidelity_redeemscript(&proof.bond.lock_time, &proof.bond.pubkey);
+    let fidelity_redeem_script = fidelity_redeemscript(&bond.lock_time, &bond.pubkey);
     let derived_script_pubkey = redeemscript_to_scriptpubkey(&fidelity_redeem_script)?;
     let tx_out = tx
-        .tx_out(proof.bond.outpoint.vout as usize)
+        .tx_out(bond.outpoint.vout as usize)
         .map_err(|_| WalletError::General("Outputs index error".to_string()))?;
 
     if tx_out.script_pubkey != derived_script_pubkey {
         return Err(WalletError::Fidelity(FidelityError::BondDoesNotExist));
     }
-
-    // Verify ECDSA signature
-    let secp = Secp256k1::new();
-    let cert_message = Message::from_digest_slice(proof.cert_hash.as_byte_array())?;
-    secp.verify_ecdsa(&cert_message, &proof.cert_sig, &proof.bond.pubkey.inner)?;
 
     Ok(())
 }
@@ -216,8 +214,6 @@ pub struct FidelityBond {
     pub(crate) pubkey: PublicKey,
     // Height at which the bond was confirmed.
     pub(crate) conf_height: Option<u32>,
-    // Cert expiry denoted in multiple of difficulty adjustment period (2016 blocks)
-    pub(crate) cert_expiry: Option<u32>,
     /// Whether this bond is spent or not.
     pub(crate) is_spent: bool,
 }
@@ -235,28 +231,6 @@ impl FidelityBond {
     /// Get the script_pubkey for this bond.
     pub(crate) fn script_pub_key(&self) -> ScriptBuf {
         redeemscript_to_scriptpubkey(&self.redeem_script()).expect("This can never panic as fidelity redeemscript template is hardcoded in a private function.")
-    }
-
-    /// Generate the bond's certificate hash.
-    pub(crate) fn generate_cert_hash(&self, addr: &str) -> Option<sha256d::Hash> {
-        self.cert_expiry.map(|expiry| {
-            let cert_msg_str = format!(
-                "fidelity-bond-cert|{}|{}|{}|{}|{}|{}",
-                self.outpoint, self.pubkey, expiry, self.lock_time, self.amount, addr
-            );
-            let cert_msg = cert_msg_str.as_bytes();
-            let mut btc_signed_msg = Vec::<u8>::new();
-            btc_signed_msg.extend("\x18Bitcoin Signed Message:\n".as_bytes());
-            btc_signed_msg.push(cert_msg.len() as u8);
-            btc_signed_msg.extend(cert_msg);
-
-            sha256d::Hash::hash(&btc_signed_msg)
-        })
-    }
-
-    /// Calculate the expiry value. This depends on the bond's confirmation height
-    pub(crate) fn get_fidelity_expiry(conf_height: u32) -> u32 {
-        (conf_height + 2) /* safety buffer */ / 2016 + 5
     }
 }
 
@@ -458,9 +432,8 @@ impl Wallet {
                 amount,
                 lock_time: locktime,
                 pubkey: fidelity_pubkey,
-                // `Conf_height` & `cert_expiry` are considered None as they can't be known before the confirmation.
+                // `Conf_height` considered None as they can't be known before the confirmation.
                 conf_height: None,
-                cert_expiry: None,
                 is_spent: false,
             };
             self.store.fidelity_bond.insert(index, bond);
@@ -479,14 +452,12 @@ impl Wallet {
         index: u32,
         conf_height: u32,
     ) -> Result<(), WalletError> {
-        let cert_expiry = FidelityBond::get_fidelity_expiry(conf_height);
         let bond = self
             .store
             .fidelity_bond
             .get_mut(&index)
             .ok_or(FidelityError::BondDoesNotExist)?;
 
-        bond.cert_expiry = Some(cert_expiry);
         bond.conf_height = Some(conf_height);
 
         Ok(())
@@ -519,12 +490,8 @@ impl Wallet {
         })
     }
 
-    /// Generate a [`FidelityProof`] for bond at a given index and a specific onion address.
-    pub(crate) fn generate_fidelity_proof(
-        &self,
-        index: u32,
-        maker_addr: &str,
-    ) -> Result<FidelityProof, WalletError> {
+    /// Gets a [`FidelityBond`] for bond at a given index and check spent
+    pub(crate) fn fetch_fidelity_bond(&self, index: u32) -> Result<FidelityBond, WalletError> {
         // Generate a fidelity bond proof from the fidelity data.
         let bond = self
             .store
@@ -535,23 +502,7 @@ impl Wallet {
             return Err(FidelityError::BondAlreadyRedeemed.into());
         }
 
-        let fidelity_privkey = self.get_fidelity_keypair(index)?.secret_key();
-
-        let cert_hash = bond
-            .generate_cert_hash(maker_addr)
-            .expect("Bond is not yet confirmed");
-
-        let secp = Secp256k1::new();
-        let cert_sig = secp.sign_ecdsa(
-            &Message::from_digest_slice(cert_hash.as_byte_array())?,
-            &fidelity_privkey,
-        );
-
-        Ok(FidelityProof {
-            bond: bond.clone(),
-            cert_hash,
-            cert_sig,
-        })
+        Ok(bond.clone())
     }
 
     fn encode_fidelity_op_return(
