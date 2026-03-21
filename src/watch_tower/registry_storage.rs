@@ -47,6 +47,8 @@ struct RegistryData {
     watches: HashMap<OutPoint, WatchRequest>,
     fidelity: HashSet<Fidelity>,
     checkpoint: Option<Checkpoint>,
+    #[serde(default)]
+    nostr_cursors: HashMap<String, u64>,
 }
 
 /// Registry used by the watcher.
@@ -184,6 +186,39 @@ impl FileRegistry {
     /// Loads the most recently saved checkpoint, if any.
     pub fn load_checkpoint(&self) -> Option<Checkpoint> {
         self.data.lock().unwrap().checkpoint.clone()
+    }
+
+    /// Loads the latest processed Nostr event timestamp for a relay.
+    pub fn load_nostr_cursor(&self, relay_url: &str) -> Option<u64> {
+        let cursor = self.with_data(|data| data.nostr_cursors.get(relay_url).copied());
+        log::debug!(
+            "Nostr cursor load: relay_url={}, cursor={:?}",
+            relay_url,
+            cursor
+        );
+        cursor
+    }
+
+    /// Persists the latest processed Nostr event timestamp for a relay.
+    pub fn save_nostr_cursor(&self, relay_url: &str, created_at_secs: u64) {
+        let (prev, next, updated) = self.with_data(|data| {
+            let entry = data.nostr_cursors.entry(relay_url.to_string()).or_insert(0);
+            let prev = *entry;
+            if created_at_secs > *entry {
+                *entry = created_at_secs;
+            }
+            let next = *entry;
+            (prev, next, next != prev)
+        });
+        log::debug!(
+            "Nostr cursor save: relay_url={}, incoming={}, previous={}, stored={}, advanced={}",
+            relay_url,
+            created_at_secs,
+            prev,
+            next,
+            updated
+        );
+        self.flush();
     }
 
     fn with_data<F, T>(&self, f: F) -> T

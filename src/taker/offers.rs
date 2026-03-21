@@ -68,7 +68,10 @@ const UNRESPONSIVE_MAKER_BACKOFF_STEP: Duration = Duration::from_secs(30 * 60);
 const UNRESPONSIVE_MAKER_BACKOFF_STEP: Duration = Duration::from_secs(10);
 
 #[cfg(feature = "integration-test")]
-const INITIAL_DISCOVERY_WAIT_MAX: Duration = Duration::from_secs(10);
+const DISCOVERY_WAIT_MAX: Duration = Duration::from_secs(10);
+
+#[cfg(not(feature = "integration-test"))]
+const DISCOVERY_WAIT_MAX: Duration = Duration::from_secs(150);
 
 /// Represents an offer along with the corresponding maker address.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -433,6 +436,28 @@ impl OfferSyncService {
         Ok(())
     }
 
+    /// Manual sync path only: wait up to DISCOVERY_WAIT_MAX for initial EOSE.
+    /// Automatic periodic syncs are not gated by this wait.
+    fn wait_for_discovery_for_manual_sync(&self, shutdown_flag: &AtomicBool) {
+        if self.initial_discovery_complete.load(Ordering::SeqCst) {
+            return;
+        }
+
+        let wait_start = std::time::Instant::now();
+        while !self.initial_discovery_complete.load(Ordering::SeqCst)
+            && !shutdown_flag.load(Ordering::Relaxed)
+        {
+            if wait_start.elapsed() >= DISCOVERY_WAIT_MAX {
+                log::warn!(
+                    "Initial Nostr discovery did not complete in {:?}; running manual offer sync and continuing discovery in background",
+                    DISCOVERY_WAIT_MAX
+                );
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        }
+    }
+
     /// Starts the offerbook service
     pub fn start(self) -> OfferSyncHandle {
         let shutdown = Arc::new(AtomicBool::new(false));
@@ -447,51 +472,18 @@ impl OfferSyncService {
                 #[cfg(feature = "integration-test")]
                 std::thread::sleep(Duration::from_secs(7));
 
-                // Wait for Nostr discovery to complete its initial relay
-                // scan (EOSE) before attempting the first offerbook sync.
-                log::info!("Waiting for initial Nostr discovery to complete...");
-                let discovery_wait_start = std::time::Instant::now();
-
-                while !self.initial_discovery_complete.load(Ordering::SeqCst)
-                    && !shutdown_flag.load(Ordering::Relaxed)
-                {
-                    #[cfg(feature = "integration-test")]
-                    if discovery_wait_start.elapsed() >= INITIAL_DISCOVERY_WAIT_MAX {
-                        log::warn!(
-                            "Initial Nostr discovery did not complete in {:?}; continuing with periodic offer sync",
-                            INITIAL_DISCOVERY_WAIT_MAX
-                        );
-                        break;
-                    }
-
-                    std::thread::sleep(Duration::from_millis(200));
-                }
-
-                if shutdown_flag.load(Ordering::Relaxed) {
-                    log::info!(
-                        "Offer sync startup interrupted after {:.1}s due to shutdown",
-                        discovery_wait_start.elapsed().as_secs_f64()
-                    );
-                } else if self.initial_discovery_complete.load(Ordering::SeqCst) {
-                    log::info!(
-                        "Initial Nostr discovery completed in {:.1}s",
-                        discovery_wait_start.elapsed().as_secs_f64()
-                    );
-                }
-
                 while !shutdown_flag.load(Ordering::Relaxed) {
                     log::info!("Running offerbook sync");
                     if let Err(e) = self.run_once() {
                         log::warn!("Offer sync iteration failed: {e:?}");
                     }
                     log::debug!("Running offerbook sync completed");
-
-                    Self::drain_and_ack(&cmd_rx);
                     let mut slept = Duration::ZERO;
                     while slept < OFFER_SYNC_INTERVAL && !shutdown_flag.load(Ordering::Relaxed) {
                         match cmd_rx.try_recv() {
                             Ok(SyncCommand::SyncNow(done_tx)) => {
                                 log::info!("Manual offerbook sync requested");
+                                self.wait_for_discovery_for_manual_sync(&shutdown_flag);
                                 if let Err(e) = self.run_once() {
                                     log::warn!("Manual offer sync failed: {e:?}");
                                 }

@@ -16,6 +16,7 @@ use nostr::{
     event::Kind,
     filter::Filter,
     message::{ClientMessage, RelayMessage, SubscriptionId},
+    types::Timestamp,
     util::JsonUtil,
 };
 use tungstenite::{stream::MaybeTlsStream, Message};
@@ -120,7 +121,13 @@ fn connect_and_run_once(
 ) -> Result<(), WatcherError> {
     let (mut socket, _) = tungstenite::connect(relay_url)?;
 
-    let filter = Filter::new().kind(Kind::Custom(COINSWAP_KIND));
+    let since = registry.load_nostr_cursor(relay_url).map(Timestamp::from);
+
+    let mut filter = Filter::new().kind(Kind::Custom(COINSWAP_KIND));
+    if let Some(since) = since {
+        filter = filter.since(since);
+    }
+
     let req = ClientMessage::Req {
         subscription_id: Cow::Owned(SubscriptionId::new(format!(
             "market-discovery-{}",
@@ -134,9 +141,10 @@ fn connect_and_run_once(
     socket.flush()?;
 
     log::info!(
-        "Subscribed to fidelity announcements on {} (kind={})",
+        "Subscribed to fidelity announcements on {} (kind={}, since={:?})",
         relay_url,
-        COINSWAP_KIND
+        COINSWAP_KIND,
+        since
     );
 
     read_event_loop(
@@ -212,6 +220,8 @@ fn handle_relay_message(
             let Some((txid, vout)) = parse_fidelity_event(&event) else {
                 return Ok(());
             };
+
+            registry.save_nostr_cursor(relay_url, event.created_at.as_secs());
 
             if seen_txid.lock()?.insert(txid) {
                 log::debug!("add new cache {}", txid);
