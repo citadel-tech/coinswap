@@ -103,7 +103,11 @@ impl<R: Role> Watcher<R> {
     }
 
     /// Runs the watcher loop: handles ZMQ events and commands, optionally spawning discovery.
-    pub fn run(&mut self, rpc_config: RPCConfig) -> Result<(), WatcherError> {
+    pub fn run(
+        &mut self,
+        rpc_config: RPCConfig,
+        initial_sync_complete: Arc<AtomicBool>,
+    ) -> Result<(), WatcherError> {
         log::info!("Watcher initiated");
         let rest_backend_1 = BitcoinRest::new(rpc_config.clone())?;
         let rest_backend_2 = BitcoinRest::new(rpc_config)?;
@@ -117,15 +121,20 @@ impl<R: Role> Watcher<R> {
         std::thread::scope(move |s| {
             let discovery_clone = discovery_shutdown.clone();
             if R::RUN_DISCOVERY {
+                let initial_sync_complete = initial_sync_complete.clone();
                 s.spawn(move || {
                     if let Err(e) = nostr_discovery::run_discovery(
                         rest_backend_1,
                         registry,
                         discovery_shutdown.clone(),
+                        initial_sync_complete,
                     ) {
                         log::error!("Discovery thread failed: {:?}", e);
                     }
                 });
+            } else {
+                // No discovery — mark initial sync as trivially complete.
+                initial_sync_complete.store(true, Ordering::SeqCst);
             }
             loop {
                 match self.rx_requests.try_recv() {

@@ -16,6 +16,7 @@ use nostr::{
     event::Kind,
     filter::Filter,
     message::{ClientMessage, RelayMessage, SubscriptionId},
+    types::Timestamp,
     util::JsonUtil,
 };
 use tungstenite::{stream::MaybeTlsStream, Message};
@@ -36,6 +37,7 @@ pub fn run_discovery(
     bitcoin_rpc: BitcoinRest,
     registry: FileRegistry,
     shutdown: Arc<AtomicBool>,
+    initial_sync_complete: Arc<AtomicBool>,
 ) -> Result<(), WatcherError> {
     log::info!("Starting market discovery via Nostr");
 
@@ -49,6 +51,7 @@ pub fn run_discovery(
         let registry = Arc::clone(&registry);
         let bitcoin_rpc = Arc::clone(&bitcoin_rpc);
         let seen_txid = Arc::clone(&seen_txid);
+        let initial_sync_complete = initial_sync_complete.clone();
 
         std::thread::Builder::new()
             .name(format!("nostr-session-{}", relay))
@@ -59,6 +62,7 @@ pub fn run_discovery(
                     shutdown,
                     bitcoin_rpc,
                     &seen_txid,
+                    &initial_sync_complete,
                 );
             })?;
     }
@@ -74,6 +78,7 @@ fn run_nostr_session_for_relay(
     shutdown: Arc<AtomicBool>,
     bitcoin_rpc: Arc<BitcoinRest>,
     seen_txid: &Arc<Mutex<SeenTxids>>,
+    initial_sync_complete: &Arc<AtomicBool>,
 ) {
     log::info!("Starting Nostr session for relay {}", relay_url);
 
@@ -84,6 +89,7 @@ fn run_nostr_session_for_relay(
             shutdown.clone(),
             bitcoin_rpc.clone(),
             seen_txid,
+            initial_sync_complete,
         ) {
             Ok(()) => {
                 // Likely exited due to shutdown
@@ -111,10 +117,17 @@ fn connect_and_run_once(
     shutdown: Arc<AtomicBool>,
     bitcoin_rpc: Arc<BitcoinRest>,
     seen_txid: &Arc<Mutex<SeenTxids>>,
+    initial_sync_complete: &Arc<AtomicBool>,
 ) -> Result<(), WatcherError> {
     let (mut socket, _) = tungstenite::connect(relay_url)?;
 
-    let filter = Filter::new().kind(Kind::Custom(COINSWAP_KIND));
+    let since = registry.load_nostr_cursor(relay_url).map(Timestamp::from);
+
+    let mut filter = Filter::new().kind(Kind::Custom(COINSWAP_KIND));
+    if let Some(since) = since {
+        filter = filter.since(since);
+    }
+
     let req = ClientMessage::Req {
         subscription_id: Cow::Owned(SubscriptionId::new(format!(
             "market-discovery-{}",
@@ -128,9 +141,10 @@ fn connect_and_run_once(
     socket.flush()?;
 
     log::info!(
-        "Subscribed to fidelity announcements on {} (kind={})",
+        "Subscribed to fidelity announcements on {} (kind={}, since={:?})",
         relay_url,
-        COINSWAP_KIND
+        COINSWAP_KIND,
+        since
     );
 
     read_event_loop(
@@ -140,6 +154,7 @@ fn connect_and_run_once(
         bitcoin_rpc,
         relay_url,
         seen_txid,
+        initial_sync_complete,
     )
 }
 
@@ -151,6 +166,7 @@ fn read_event_loop(
     bitcoin_rpc: Arc<BitcoinRest>,
     relay_url: &str,
     seen_txid: &Arc<Mutex<SeenTxids>>,
+    initial_sync_complete: &Arc<AtomicBool>,
 ) -> Result<(), WatcherError> {
     while !shutdown.load(Ordering::SeqCst) {
         let msg = socket.read()?;
@@ -169,6 +185,7 @@ fn read_event_loop(
             bitcoin_rpc.clone(),
             relay_url,
             seen_txid,
+            initial_sync_complete,
         )?;
     }
 
@@ -184,6 +201,7 @@ fn handle_relay_message(
     bitcoin_rpc: Arc<BitcoinRest>,
     relay_url: &str,
     seen_txid: &Arc<Mutex<SeenTxids>>,
+    initial_sync_complete: &Arc<AtomicBool>,
 ) -> Result<(), WatcherError> {
     match msg {
         RelayMessage::Event { event, .. } => {
@@ -202,6 +220,8 @@ fn handle_relay_message(
             let Some((txid, vout)) = parse_fidelity_event(&event) else {
                 return Ok(());
             };
+
+            registry.save_nostr_cursor(relay_url, event.created_at.as_secs());
 
             if seen_txid.lock()?.insert(txid) {
                 log::debug!("add new cache {}", txid);
@@ -227,6 +247,10 @@ fn handle_relay_message(
 
         RelayMessage::EndOfStoredEvents(sub_id) => {
             log::info!("EOSE received for subscription {sub_id} via {relay_url}");
+            if !initial_sync_complete.load(Ordering::SeqCst) {
+                initial_sync_complete.store(true, Ordering::SeqCst);
+                log::info!("Initial Nostr discovery sync complete (triggered by {relay_url})");
+            }
         }
 
         _ => {}

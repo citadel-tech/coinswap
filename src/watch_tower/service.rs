@@ -4,7 +4,11 @@ use bitcoin::OutPoint;
 use crossbeam_channel::{unbounded, Receiver as CbReceiver};
 use std::{
     path::Path,
-    sync::mpsc::{self, Sender as StdSender},
+    sync::{
+        atomic::AtomicBool,
+        mpsc::{self, Sender as StdSender},
+        Arc,
+    },
     thread,
 };
 
@@ -98,9 +102,10 @@ pub fn start_maker_watch_service(
     let rpc_config_watcher = rpc_config.clone();
     let mut watcher = Watcher::<Maker>::new(backend, registry, rx_requests, tx_events);
 
+    // Makers don't run discovery, so pass an already-complete flag.
     thread::Builder::new()
         .name("Watcher thread".to_string())
-        .spawn(move || watcher.run(rpc_config_watcher))
+        .spawn(move || watcher.run(rpc_config_watcher, Arc::new(AtomicBool::new(true))))
         .expect("failed to spawn watcher thread");
 
     Ok(WatchService::new(tx_requests, rx_responses))
