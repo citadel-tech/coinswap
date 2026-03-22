@@ -20,14 +20,13 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use bitcoin::hashes::Hash;
 use serde::{Deserialize, Serialize};
 use socks::Socks5Stream;
 
 use crate::{
     protocol::{
         error::ProtocolError,
-        messages::{FidelityProof, GiveOffer, MakerToTakerMessage, Offer, TakerToMakerMessage},
+        messages::{GiveOffer, MakerToTakerMessage, Offer, TakerToMakerMessage},
         messages2::{self, GetOffer},
     },
     taker::{
@@ -39,7 +38,7 @@ use crate::{
         routines::handshake_maker,
     },
     utill::{read_message, send_message},
-    wallet::verify_fidelity_checks,
+    wallet::{verify_fidelity_checks, FidelityBond},
     watch_tower::{rest_backend::BitcoinRest, service::WatchService, watcher::WatcherEvent},
 };
 
@@ -413,7 +412,7 @@ impl OfferSyncService {
 
             for oa in offers {
                 responded.insert(oa.address.clone());
-                match self.verify_fidelity_proof(&oa.offer.fidelity, &oa.address.to_string()) {
+                match self.verify_fidelity_bond(&oa.offer.fidelity, &oa.address.to_string()) {
                     Ok(_) => {
                         book.mark_success(&oa.address, oa.offer, oa.protocol, now);
                     }
@@ -518,16 +517,16 @@ impl OfferSyncService {
     }
 
     /// do the fidelity proof
-    fn verify_fidelity_proof(
+    fn verify_fidelity_bond(
         &self,
-        proof: &FidelityProof,
+        bond: &FidelityBond,
         onion_addr: &str,
     ) -> Result<(), TakerError> {
-        let txid = proof.bond.outpoint.txid;
+        let txid = bond.outpoint.txid;
         let transaction = self.rest_backend.get_raw_tx(&txid)?;
         let current_height = self.rest_backend.get_block_count()?;
 
-        verify_fidelity_checks(proof, onion_addr, transaction, current_height)
+        verify_fidelity_checks(bond, onion_addr, transaction, current_height)
             .map_err(TakerError::Wallet)
     }
 }
@@ -885,14 +884,7 @@ impl MakerAddress {
             max_size: taproot_offer.max_size,
             min_size: taproot_offer.min_size,
             tweakable_point: taproot_offer.tweakable_point,
-            fidelity: crate::protocol::messages::FidelityProof {
-                bond: taproot_offer.fidelity.bond,
-                cert_hash: bitcoin::hashes::sha256d::Hash::from_slice(
-                    taproot_offer.fidelity.cert_hash.as_ref(),
-                )
-                .unwrap(),
-                cert_sig: taproot_offer.fidelity.cert_sig,
-            },
+            fidelity: taproot_offer.fidelity,
         };
 
         log::info!(
@@ -921,7 +913,7 @@ mod tests {
     use bitcoin::{
         absolute::LockTime,
         hashes::Hash,
-        secp256k1::{Message, Secp256k1, SecretKey},
+        secp256k1::{Secp256k1, SecretKey},
         Amount, OutPoint, Txid,
     };
 
@@ -932,7 +924,7 @@ mod tests {
         })
     }
 
-    fn dummy_offer(maker_addr: &str) -> Offer {
+    fn dummy_offer() -> Offer {
         let secp = Secp256k1::new();
         let secret_key = SecretKey::from_slice(&[1; 32]).expect("valid secret key");
         let secp_pubkey = bitcoin::secp256k1::PublicKey::from_secret_key(&secp, &secret_key);
@@ -947,15 +939,8 @@ mod tests {
             lock_time: LockTime::from_height(1000).expect("valid height locktime"),
             pubkey,
             conf_height: Some(1000),
-            cert_expiry: Some(1),
             is_spent: false,
         };
-
-        let cert_hash = bond
-            .generate_cert_hash(maker_addr)
-            .expect("cert_expiry set");
-        let msg = Message::from_digest_slice(cert_hash.as_byte_array()).expect("32-byte digest");
-        let cert_sig = secp.sign_ecdsa(&msg, &secret_key);
 
         Offer {
             base_fee: 0,
@@ -966,11 +951,7 @@ mod tests {
             max_size: 1,
             min_size: 1,
             tweakable_point: pubkey,
-            fidelity: FidelityProof {
-                bond,
-                cert_hash,
-                cert_sig,
-            },
+            fidelity: bond,
         }
     }
 
@@ -1025,11 +1006,7 @@ mod tests {
             next_offer_check_ts: Some(now_ts + 123),
         };
 
-        candidate.mark_success(
-            dummy_offer(&candidate.address.to_string()),
-            MakerProtocol::Taproot,
-            now_ts,
-        );
+        candidate.mark_success(dummy_offer(), MakerProtocol::Taproot, now_ts);
         assert_eq!(candidate.state, MakerState::Bad);
     }
 

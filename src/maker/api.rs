@@ -9,14 +9,14 @@
 use crate::{
     protocol::{
         contract::{check_hashvalues_are_equal, read_hashvalue_from_contract},
-        messages::{FidelityProof, ReqContractSigsForSender, PREIMAGE_LEN},
+        messages::{ReqContractSigsForSender, PREIMAGE_LEN},
         Hash160,
     },
     utill::{
         check_tor_status, get_maker_dir, get_tor_hostname, redeemscript_to_scriptpubkey,
         BLOCK_DELAY, HEART_BEAT_INTERVAL, REQUIRED_CONFIRMS,
     },
-    wallet::{ffi::SwapReport, RPCConfig, SwapCoin, WalletSwapCoin},
+    wallet::{ffi::SwapReport, FidelityBond, RPCConfig, SwapCoin, WalletSwapCoin},
     watch_tower::{
         service::{start_maker_watch_service, WatchService},
         watcher::{Role, WatcherEvent},
@@ -237,8 +237,8 @@ pub struct Maker {
     pub shutdown: AtomicBool,
     /// Map of IP address to Connection State + last Connected instant
     pub(crate) ongoing_swap_state: Mutex<HashMap<String, (ConnectionState, Instant)>>,
-    /// Highest Value Fidelity Proof
-    pub(crate) highest_fidelity_proof: RwLock<Option<FidelityProof>>,
+    /// Highest Value Fidelity Bond
+    pub(crate) highest_fidelity_bond: RwLock<Option<FidelityBond>>,
     /// Is setup complete
     pub is_setup_complete: AtomicBool,
     /// Path for the data directory.
@@ -332,7 +332,7 @@ impl Maker {
             wallet: RwLock::new(wallet),
             shutdown: AtomicBool::new(false),
             ongoing_swap_state: Mutex::new(HashMap::new()),
-            highest_fidelity_proof: RwLock::new(None),
+            highest_fidelity_bond: RwLock::new(None),
             is_setup_complete: AtomicBool::new(false),
             data_dir,
             thread_pool: Arc::new(ThreadPool::new(network_port)),
@@ -361,7 +361,7 @@ impl Maker {
                 .fidelity_bond
                 .iter()
                 .filter_map(|(i, bond)| {
-                    if bond.conf_height.is_none() && bond.cert_expiry.is_none() {
+                    if bond.conf_height.is_none() {
                         let conf_height = wallet_read
                             .wait_for_tx_confirmation(bond.outpoint.txid)
                             .unwrap();

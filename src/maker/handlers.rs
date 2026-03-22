@@ -101,8 +101,10 @@ pub(crate) fn handle_message(
                     (tweakable_point, max_size)
                 };
                 connection_state.allowed_message = ExpectedMessage::ReqContractSigsForSender;
-                let fidelity = maker.highest_fidelity_proof.read()?;
-                let fidelity = fidelity.as_ref().expect("proof expected");
+                let fidelity = maker.highest_fidelity_bond.read()?;
+                let fidelity = fidelity
+                    .as_ref()
+                    .ok_or(MakerError::General("No fidelity bond available"))?;
                 Some(MakerToTakerMessage::RespOffer(Box::new(Offer {
                     base_fee: maker.config.base_fee,
                     amount_relative_fee_pct: maker.config.amount_relative_fee_pct,

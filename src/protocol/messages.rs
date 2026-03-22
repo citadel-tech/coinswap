@@ -57,10 +57,7 @@
 
 use std::fmt::Display;
 
-use bitcoin::{
-    ecdsa::Signature, hashes::sha256d::Hash, secp256k1::SecretKey, Amount, PublicKey, ScriptBuf,
-    Transaction,
-};
+use bitcoin::{ecdsa::Signature, secp256k1::SecretKey, Amount, PublicKey, ScriptBuf, Transaction};
 
 use serde::{Deserialize, Serialize};
 
@@ -235,17 +232,6 @@ pub(crate) struct MakerHello {
     pub(crate) protocol_version_max: u32,
 }
 
-/// Contains proof data related to fidelity bond.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct FidelityProof {
-    /// Details for Fidelity Bond
-    pub bond: FidelityBond,
-    /// Double SHA256 hash of certificate message proving bond ownership and binding to maker address
-    pub cert_hash: Hash,
-    /// ECDSA signature over cert_hash using the bond's private key
-    pub cert_sig: bitcoin::secp256k1::ecdsa::Signature,
-}
-
 /// Represents an offer in the context of the Coinswap protocol.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct Offer {
@@ -266,8 +252,8 @@ pub struct Offer {
     /// Displayed public key of makers, for receiving swaps.
     /// Actual swap addresses are derived from this public key using unique nonces per swap.
     pub tweakable_point: PublicKey,
-    /// Cryptographic proof of fidelity bond for Sybil resistance
-    pub fidelity: FidelityProof,
+    /// fidelity bond for Sybil resistance
+    pub fidelity: FidelityBond,
 }
 
 /// Contract Tx signatures provided by a Sender of a Coinswap.

@@ -1,9 +1,10 @@
 //! This module defines the messages communicated between the parties(Taker, Maker)
-use crate::protocol::messages::FidelityProof;
 use bitcoin::{Amount, PublicKey, ScriptBuf, Txid};
 use secp256k1::musig::{PartialSignature, PublicNonce};
 use serde::{Deserialize, Serialize};
 use std::{convert::TryInto, fmt::Display};
+
+use crate::wallet::FidelityBond;
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 /// Serializable wrapper for secp256k1 PublicNonce
@@ -137,8 +138,8 @@ pub struct Offer {
     pub time_relative_fee: f64,
     /// Minimum time lock duration required by the maker
     pub minimum_locktime: u16,
-    /// Fidelity proof demonstrating the maker's commitment
-    pub fidelity: FidelityProof,
+    /// Fidelity bond demonstrating the maker's commitment
+    pub fidelity: FidelityBond,
     /// Minimum swap amount the maker will accept (in satoshis)
     pub min_size: u64,
     /// Maximum swap amount the maker can handle (in satoshis)
