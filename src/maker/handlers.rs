@@ -54,10 +54,7 @@ pub(crate) fn handle_message(
 ) -> Result<Option<MakerToTakerMessage>, MakerError> {
     // If taker is waiting for funding confirmation, reset the timer.
     if let TakerToMakerMessage::WaitingFundingConfirmation(id) = &message {
-        log::info!(
-            "[{}] Taker is waiting for funding confirmation. Resetting timer.",
-            maker.config.network_port
-        );
+        log::info!("Taker is waiting for funding confirmation. Resetting timer.",);
         maker
             .ongoing_swap_state
             .lock()?
@@ -252,8 +249,7 @@ impl Maker {
         });
 
         log::info!(
-            "[{}] Total Funding Amount = {} | Funding Txids = {:?}",
-            self.config.network_port,
+            "Total Funding Amount = {} | Funding Txids = {:?}",
             Amount::from_sat(total_funding_amount),
             funding_txids
         );
@@ -286,8 +282,7 @@ impl Maker {
                 .collect();
 
             log::debug!(
-                "[{}] Reserved {} UTXOs for swap",
-                self.config.network_port,
+                "Reserved {} UTXOs for swap",
                 connection_state.reserve_utxo.len(),
             );
 
@@ -297,11 +292,7 @@ impl Maker {
             );
         }
 
-        log::info!(
-            "[{}] Inserted state for swap id: {}",
-            self.config.network_port,
-            message.id
-        );
+        log::info!("Inserted state for swap id: {}", message.id);
 
         let max_size = self.wallet.read()?.store.offer_maxsize;
         if total_funding_amount >= self.config.min_swap_amount && total_funding_amount <= max_size {
@@ -333,10 +324,7 @@ impl Maker {
         // Basic verification of ProofOfFunding Message.
         // Check function definition for all the checks performed.
         let hashvalue = self.verify_proof_of_funding(&message)?;
-        log::info!(
-            "[{}] Validated Proof of Funding of receiving swap. Adding Incoming Swaps.",
-            self.config.network_port
-        );
+        log::info!("Validated Proof of Funding of receiving swap. Adding Incoming Swaps.",);
 
         // Import transactions and addresses into Bitcoin core's wallet.
         // Add IncomingSwapcoin to Maker's Wallet
@@ -479,8 +467,7 @@ impl Maker {
             .expect("This should not overflow as we just checked above.");
 
         log::info!(
-            "[{}] Prepared outgoing funding txs: {:?}.",
-            self.config.network_port,
+            "Prepared outgoing funding txs: {:?}.",
             my_funding_txes
                 .iter()
                 .map(|tx| tx.compute_txid())
@@ -488,8 +475,7 @@ impl Maker {
         );
 
         log::info!(
-            "[{}] Incoming Swap Amount = {} | Outgoing Swap Amount = {} | Coinswap Fee = {} |   Refund Tx locktime (blocks) = {} | Total Funding Tx Mining Fees = {}",
-            self.config.network_port,
+            "Incoming Swap Amount = {} | Outgoing Swap Amount = {} | Coinswap Fee = {} |   Refund Tx locktime (blocks) = {} | Total Funding Tx Mining Fees = {}",
             Amount::from_sat(incoming_amount),
             Amount::from_sat(outgoing_amount),
             Amount::from_sat(act_coinswap_fees),
@@ -621,11 +607,7 @@ impl Maker {
             assert_eq!(txid, my_funding_tx.compute_txid());
             my_funding_txids.push(txid);
         }
-        log::info!(
-            "[{}] Broadcasted funding txs: {:?}",
-            self.config.network_port,
-            my_funding_txids
-        );
+        log::info!("Broadcasted funding txs: {:?}", my_funding_txids);
 
         // Update the connection state.
         self.ongoing_swap_state.lock()?.insert(
@@ -687,11 +669,7 @@ impl Maker {
             incoming_swapcoin.hash_preimage = Some(message.preimage);
         }
 
-        log::info!(
-            "[{}] received preimage for hashvalue={}",
-            self.config.network_port,
-            hashvalue
-        );
+        log::info!("received preimage for hashvalue={}", hashvalue);
         let mut swapcoin_private_keys = Vec::<MultisigPrivkey>::new();
 
         // Send our privkey and mark the outgoing swapcoin as "done".

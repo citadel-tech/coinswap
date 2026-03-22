@@ -31,13 +31,13 @@ pub(crate) fn handle_message_taproot(
     connection_state: &mut ConnectionState,
     message: TakerToMakerMessage,
 ) -> Result<Option<MakerToTakerMessage>, MakerError> {
-    log::debug!(
-        "[{}] Handling message: {:?}",
-        maker.config.network_port,
-        message
-    );
+    match &message {
+        TakerToMakerMessage::PrivateKeyHandover(_) => {
+            log::debug!("Handling message: PrivateKeyHandover [REDACTED]");
+        }
+        _ => log::debug!("Handling message: {:?}", message),
+    }
 
-    // Handle messages based on their type, not on expected state
     match message {
         TakerToMakerMessage::GetOffer(get_offer_msg) => handle_get_offer(maker, get_offer_msg),
         TakerToMakerMessage::SwapDetails(swap_details) => {
@@ -52,35 +52,40 @@ pub(crate) fn handle_message_taproot(
     }
 }
 
-/// Handles GetOffer message and returns an Offer with fidelity proof
 fn handle_get_offer(
     maker: &Arc<Maker>,
     _get_offer: GetOffer,
 ) -> Result<Option<MakerToTakerMessage>, MakerError> {
-    log::info!("[{}] Handling GetOffer request", maker.config.network_port);
-
-    // Create offer using the new api2 implementation
+    log::info!("Handling GetOffer request");
     let offer = maker.create_offer()?;
-
     log::info!(
-        "[{}] Sending offer: min_size={}, max_size={}",
-        maker.config.network_port,
+        "Sending offer: min_size={}, max_size={}",
         offer.min_size,
         offer.max_size
     );
-
     Ok(Some(MakerToTakerMessage::RespOffer(Box::new(offer))))
 }
 
-/// Handles SwapDetails message and validates the swap parameters
+fn handle_privkey_handover(
+    maker: &Arc<Maker>,
+    connection_state: &mut ConnectionState,
+    privkey_handover: PrivateKeyHandover,
+) -> Result<Option<MakerToTakerMessage>, MakerError> {
+    let response = maker.process_private_key_handover(&privkey_handover, connection_state)?;
+    maker.sweep_after_successful_coinswap()?;
+    maker.wallet().write()?.sync_and_save()?;
+
+    Ok(Some(MakerToTakerMessage::PrivateKeyHandover(response)))
+}
+
 fn handle_swap_details(
     maker: &Arc<Maker>,
     connection_state: &mut ConnectionState,
     swap_details: SwapDetails,
 ) -> Result<Option<MakerToTakerMessage>, MakerError> {
     log::info!(
-        "[{}] Handling SwapDetails: amount={}, timelock={}, tx_count={}",
-        maker.config.network_port,
+        "[Swap: {}] Handling SwapDetails: amount={}, timelock={}, tx_count={}",
+        swap_details.id,
         swap_details.amount,
         swap_details.timelock,
         swap_details.no_of_tx
@@ -90,22 +95,17 @@ fn handle_swap_details(
     connection_state.incoming_contract.my_privkey = Some(privkey);
     connection_state.incoming_contract.my_pubkey = Some(pubkey);
 
-    // Validate swap parameters using api2
     maker.validate_swap_parameters(&swap_details)?;
 
-    // Store swap details in connection state
     connection_state.swap_amount = swap_details.amount;
     connection_state.timelock = swap_details.timelock;
 
-    // Reserve utxo for this swap
-    // Sync wallet to get fresh UTXO state before coin selection
     {
         let mut wallet_write = maker.wallet.write()?;
         wallet_write.sync_and_save()?;
         log::info!("Sync at:----handle_swap_details----");
     }
 
-    // Reserve UTXOs for this swap, This prevents double-spending across concurrent swaps by excluding UTXOs.
     {
         let required_amount = swap_details.amount;
         let mut ongoing_state_lock = maker.ongoing_swap_state.lock()?;
@@ -115,7 +115,7 @@ fn handle_swap_details(
             .filter(|(id, _)| *id != &swap_details.id)
             .flat_map(|(_, (state, _))| state.reserve_utxo.clone())
             .collect();
-        log::info!("Excluded UTXOs {:?}", excluded_utxos);
+
         let wallet = maker.wallet.read()?;
         let selected_utxos =
             wallet.coin_select(required_amount, MIN_FEE_RATE, None, Some(excluded_utxos))?;
@@ -126,8 +126,8 @@ fn handle_swap_details(
             .collect();
 
         log::debug!(
-            "[{}] Reserved {} UTXOs for swap",
-            maker.config.network_port,
+            "[Swap: {}] Reserved {} UTXOs for swap",
+            swap_details.id,
             connection_state.reserve_utxo.len(),
         );
 
@@ -137,36 +137,24 @@ fn handle_swap_details(
         );
     }
 
-    log::info!(
-        "[{}] Inserted state for swap id: {}",
-        maker.config.network_port,
-        swap_details.id
-    );
+    log::info!("Inserted state for swap id: {}", swap_details.id);
 
-    // Track swap start time for reporting
     connection_state.swap_start_time = Some(std::time::Instant::now());
 
-    // Calculate our fee for this swap
     let our_fee = maker.calculate_swap_fee(swap_details.amount, swap_details.timelock);
-    log::info!(
-        "[{}] Calculated fee: {}",
-        maker.config.network_port,
-        our_fee
-    );
+    log::info!("[Swap: {}] Calculated fee: {}", swap_details.id, our_fee);
 
-    // Check for CloseAfterAckResponse behavior
     #[cfg(feature = "integration-test")]
     if maker.behavior == super::api2::MakerBehavior::CloseAfterAckResponse {
         log::warn!(
-            "[{}] Maker behavior: CloseAfterAckResponse - Closing connection after sending Ack Response message to taker",
-            maker.config.network_port
+            "[Swap: {}] Maker behavior: CloseAfterAckResponse - Closing connection",
+            swap_details.id
         );
         return Err(MakerError::General(
             "Maker closing connection after sending AckResponse to taker (test behavior)",
         ));
     }
 
-    // Send acknowledgment
     Ok(Some(MakerToTakerMessage::AckResponse(
         protocol::messages2::AckResponse {
             tweakable_point: Some(pubkey),
@@ -174,35 +162,31 @@ fn handle_swap_details(
     )))
 }
 
-/// Handles SendersContract message and creates our receiver contract
 fn handle_senders_contract(
     maker: &Arc<Maker>,
     connection_state: &mut ConnectionState,
     senders_contract: SendersContract,
 ) -> Result<Option<MakerToTakerMessage>, MakerError> {
     log::info!(
-        "[{}] Handling SendersContract with {} contracts",
-        maker.config.network_port,
+        "[Swap: {}] Handling SendersContract with {} contracts",
+        senders_contract.id,
         senders_contract.contract_txs.len()
     );
 
-    // Check for CloseAtContractSigsExchange behavior (before creating outgoing contract)
     #[cfg(feature = "integration-test")]
     if maker.behavior == super::api2::MakerBehavior::CloseAtContractSigsExchange {
         log::warn!(
-            "[{}] Maker behavior: CloseAtContractSigsExchange - Closing connection after receiving incoming contract",
-            maker.config.network_port
+            "[Swap: {}] Maker behavior: CloseAtContractSigsExchange - Closing connection",
+            senders_contract.id
         );
         return Err(MakerError::General(
             "Maker closing connection at contract exchange (test behavior)",
         ));
     }
 
-    // Process the sender's contract and create our response
     let receiver_contract =
         maker.verify_and_process_senders_contract(&senders_contract, connection_state)?;
 
-    // Generate a unique swap_id to link incoming and outgoing swapcoins
     let swap_id = format!(
         "{}-{}",
         std::time::SystemTime::now()
@@ -217,35 +201,25 @@ fn handle_senders_contract(
     connection_state.incoming_contract.swap_id = Some(swap_id.clone());
     connection_state.outgoing_contract.swap_id = Some(swap_id.clone());
 
-    // Persist both incoming and outgoing swapcoins for recovery
     {
         let mut wallet = maker.wallet().write()?;
         wallet.add_incoming_swapcoin_v2(&connection_state.incoming_contract);
         wallet.add_outgoing_swapcoin_v2(&connection_state.outgoing_contract);
         wallet.save_to_disk()?;
         log::info!(
-            "[{}] Persisted incoming and outgoing swapcoins with swap_id={} to wallet",
-            maker.config.network_port,
+            "[Swap: {}] Persisted to wallet with internal swap_id={}",
+            senders_contract.id,
             swap_id
         );
     }
 
     log::info!(
-        "[{}] Sending SenderContractFromMaker with {} contracts",
-        maker.config.network_port,
+        "[Swap: {}] Sending SenderContractFromMaker with {} contracts",
+        senders_contract.id,
         receiver_contract.contract_txs.len()
     );
 
     Ok(Some(MakerToTakerMessage::SenderContractFromMaker(
         receiver_contract,
     )))
-}
-
-fn handle_privkey_handover(
-    maker: &Arc<Maker>,
-    connection_state: &mut ConnectionState,
-    privkey_handover: PrivateKeyHandover,
-) -> Result<Option<MakerToTakerMessage>, MakerError> {
-    let response = maker.process_private_key_handover(&privkey_handover, connection_state)?;
-    Ok(Some(MakerToTakerMessage::PrivateKeyHandover(response)))
 }
