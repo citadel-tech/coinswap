@@ -1,6 +1,6 @@
 # Working with `bitcoind` for the Mutinynet
 
-In this tutorial, we will guide you through setting up [Mutinynet](https://github.com/benthecarman/bitcoin/tree/mutinynet-inq-29), which running on the [inquisition hardfork](https://github.com/bitcoin-inquisition/bitcoin) of bitcoin core, to allow experimental consensus rules, while maintaining compatibility with existing Bitcoin consensus rules. 
+In this tutorial, we will guide you through setting up [Mutinynet](https://github.com/benthecarman/bitcoin/tree/mutinynet-inq-29), which runs on the [inquisition hardfork](https://github.com/bitcoin-inquisition/bitcoin) of Bitcoin Core, to allow experimental consensus rules while maintaining compatibility with existing Bitcoin consensus rules.
 
 Coinswap doesn't need any experimental consensus. Mutinynet serves as a stable public Bitcoin Signet network to host the first movers of the coinswap marketplace.
 
@@ -65,8 +65,7 @@ Useful links for Mutinynet operations:
  - [Mutinynet Block Explorer](https://mutinynet.com/mining)
  - [Mutinynet Faucet](https://faucet.mutinynet.com/)
 
-> **Note**: Command outputs for the rest of the tutorial below are shown for Regtest, but all commands are equivalent for Mutinynet. Except
-> the mining command, `bitcoin-cli generatetoaddress`. Instead of that, to get funds in the wallet, use the Mutiny Faucet.  
+> **Note**: Command outputs for the rest of the tutorial below are shown for Regtest, but all commands are equivalent for Mutinynet. Except for the mining command, `bitcoin-cli generatetoaddress`. Instead of that, to get funds in the wallet, use the Mutiny Faucet.
 
 To check the status of the node and confirm that it's running, use:
 

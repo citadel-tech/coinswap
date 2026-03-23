@@ -1,6 +1,6 @@
 # Coinswap V2: Live Demo Setup Instructions
 
-Instructions for the full Coinswap setup to be used for live demo.
+Instructions for the full Coinswap setup to be used for the live demo.
 
 ## Setup The Backend
 
@@ -70,7 +70,7 @@ coinswap-makerd  | 2025-12-01T14:40:23.957581168+00:00 INFO coinswap::maker::ser
 
 ## Setup The Frontend
 
-Compiling the frontend requires npm and node at the latest version. Use the following commands to install node using nvm, if you don't have it already.
+Compiling the frontend requires the latest versions of npm and node. Use the following commands to install node using nvm, if you don't have it already.
 
 ### Get nvm Latest
 ```shell

@@ -42,7 +42,7 @@ This will display a detailed guide about the app and its capabilities.
 ```bash
 coinswap 0.1.2
 Developers at Citadel-Tech
-A simple command line app to operate as coinswap client.
+A simple command line app to operate as a CoinSwap client.
 
 The app works as a regular Bitcoin wallet with the added capability to perform coinswaps. The app
 requires a running Bitcoin Core node with RPC access. It currently only runs on Testnet4. Suggested
