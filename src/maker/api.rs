@@ -159,6 +159,44 @@ impl Default for MakerServerConfig {
 }
 
 impl MakerServerConfig {
+    /// Validates that all required ports are available before heavy operations
+    pub(crate) fn validate_ports(
+        &self,
+    ) -> Result<(std::net::TcpListener, std::net::TcpListener), MakerError> {
+        use std::net::TcpListener;
+
+        if self.network_port == self.rpc_port {
+            return Err(MakerError::General(
+                "Network port and RPC port cannot be the same",
+            ));
+        }
+
+        // Check network port
+        let network_listener = match TcpListener::bind(("127.0.0.1", self.network_port)) {
+            Ok(listener) => listener,
+            Err(_) => {
+                let err_msg = format!("Network port {} is already in use", self.network_port);
+                log::error!("{}", err_msg);
+                return Err(MakerError::General(
+                    "Configured network port is already in use",
+                ));
+            }
+        };
+
+        // Check RPC port
+        let rpc_listener = match TcpListener::bind(("127.0.0.1", self.rpc_port)) {
+            Ok(listener) => listener,
+            Err(_) => {
+                let err_msg = format!("RPC port {} is already in use", self.rpc_port);
+                log::error!("{}", err_msg);
+                return Err(MakerError::General(
+                    "Configured RPC port is already in use",
+                ));
+            }
+        };
+
+        Ok((network_listener, rpc_listener))
+    }
     /// Load configuration from a TOML file at the given path.
     ///
     /// If `config_path` is `None`, defaults to `~/.coinswap/maker/config.toml`.
@@ -378,6 +416,10 @@ pub struct MakerServer {
     pub swap_tracker: Mutex<MakerSwapTracker>,
     /// Nostr relay URLs for fidelity bond broadcasting.
     pub nostr_relays: Vec<String>,
+    /// Saved network listener
+    pub(crate) network_listener: Mutex<Option<std::net::TcpListener>>,
+    /// Saved RPC listener
+    pub(crate) rpc_listener: Mutex<Option<std::net::TcpListener>>,
     /// Test-only behavior override.
     #[cfg(feature = "integration-test")]
     pub behavior: MakerBehavior,
@@ -414,6 +456,10 @@ impl MakerServer {
 
         let wallet =
             Wallet::load_or_init_wallet(&wallet_path, &rpc_config, config.password.clone())?;
+
+        // Validate ports are available before heavy initialization
+        let (network_listener, rpc_listener) = config.validate_ports()?;
+        log::info!("All required ports are available");
 
         // Initial wallet sync
         let mut wallet = wallet;
@@ -453,6 +499,8 @@ impl MakerServer {
             data_dir,
             swap_tracker: Mutex::new(swap_tracker),
             nostr_relays,
+            network_listener: Mutex::new(Some(network_listener)),
+            rpc_listener: Mutex::new(Some(rpc_listener)),
             #[cfg(feature = "integration-test")]
             behavior: MakerBehavior::default(),
         })
@@ -1429,5 +1477,8 @@ impl MakerRpc for MakerServer {
             self.config.network_port,
             &self.config.tor_auth_password,
         )
+    }
+    fn take_rpc_listener(&self) -> Option<std::net::TcpListener> {
+        self.rpc_listener.lock().unwrap().take()
     }
 }

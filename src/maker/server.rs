@@ -2,7 +2,7 @@
 
 use std::{
     io::ErrorKind,
-    net::{Ipv4Addr, TcpListener, TcpStream},
+    net::TcpStream,
     sync::{
         atomic::Ordering::{self, Relaxed},
         Arc,
@@ -112,8 +112,13 @@ pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
         );
     }
 
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, maker.config.network_port))
-        .map_err(MakerError::IO)?;
+    let listener_from_maker = maker
+        .network_listener
+        .lock()
+        .unwrap()
+        .take()
+        .expect("Network listener already consumed or not set");
+    let listener = Arc::new(listener_from_maker);
     listener.set_nonblocking(true).map_err(MakerError::IO)?;
 
     maker.is_setup_complete.store(true, Relaxed);
@@ -731,6 +736,7 @@ fn recover_from_swap(
         r.phase = MakerSwapPhase::Recovering;
         r.recovery.phase = MakerRecoveryPhase::Monitoring;
     });
+
 
     // NOTE: Do NOT re-register outgoing contract outputs here.
     // They were already registered with the watch tower during swap setup
