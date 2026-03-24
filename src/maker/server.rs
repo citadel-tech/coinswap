@@ -737,7 +737,6 @@ fn recover_from_swap(
         r.recovery.phase = MakerRecoveryPhase::Monitoring;
     });
 
-
     // NOTE: Do NOT re-register outgoing contract outputs here.
     // They were already registered with the watch tower during swap setup
     // (in legacy_handlers / taproot_handlers). Re-registering would overwrite

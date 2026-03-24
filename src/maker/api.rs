@@ -189,9 +189,7 @@ impl MakerServerConfig {
             Err(_) => {
                 let err_msg = format!("RPC port {} is already in use", self.rpc_port);
                 log::error!("{}", err_msg);
-                return Err(MakerError::General(
-                    "Configured RPC port is already in use",
-                ));
+                return Err(MakerError::General("Configured RPC port is already in use"));
             }
         };
 
