@@ -48,6 +48,8 @@ The project extends Chris Belcher's [teleport-transactions](https://github.com/b
 
 For protocol-level details, see the [Coinswap Protocol Specifications](https://github.com/citadel-tech/Coinswap-Protocol-Specification).
 
+For questions about the repo, it's recommended to use [Deepwiki](https://deepwiki.com/citadel-tech/coinswap).
+
 # Components
 
 ## Crate Binaries
