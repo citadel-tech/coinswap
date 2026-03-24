@@ -110,7 +110,12 @@ impl WalletStore {
         path: &Path,
         store_enc_material: &Option<KeyMaterial>,
     ) -> Result<(), WalletError> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
         let wallet_file = fs::OpenOptions::new()
+            .create(true)
             .write(true)
             .truncate(true)
             .open(path)?;
