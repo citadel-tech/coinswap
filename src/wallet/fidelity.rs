@@ -1,5 +1,5 @@
 use crate::{
-    protocol::messages::FidelityProof,
+    protocol::common_messages::FidelityProof,
     utill::{redeemscript_to_scriptpubkey, MIN_FEE_RATE},
     wallet::{AddressType, Wallet},
 };
@@ -10,7 +10,7 @@ use bitcoin::{
     opcodes::all::{OP_CHECKSIGVERIFY, OP_CLTV},
     script::{Builder, Instruction},
     secp256k1::{Keypair, Message, Secp256k1},
-    Address, Amount, OutPoint, PublicKey, ScriptBuf, Transaction,
+    Address, Amount, OutPoint, PublicKey, ScriptBuf, Transaction, Txid,
 };
 use bitcoind::bitcoincore_rpc::RpcApi;
 use serde::{Deserialize, Serialize};
@@ -223,6 +223,11 @@ pub struct FidelityBond {
 }
 
 impl FidelityBond {
+    /// The UTXO outpoint backing this bond.
+    pub fn outpoint(&self) -> OutPoint {
+        self.outpoint
+    }
+
     /// Whether the fidelity bond is spent or not
     pub fn is_spent(&self) -> bool {
         self.is_spent
@@ -421,6 +426,8 @@ impl Wallet {
     /// Create a new fidelity bond with given amount and absolute height based locktime.
     /// This function creates the fidelity transaction, signs and broadcast it.
     /// Upon confirmation it stores the fidelity information in the wallet data.
+    /// Create and broadcast the fidelity bond transaction. Returns `(index, txid)`
+    /// so the caller can wait for confirmation without holding the wallet lock.
     pub fn create_fidelity(
         &mut self,
         amount: Amount,
@@ -428,7 +435,7 @@ impl Wallet {
         maker_address: Option<&str>,
         feerate: f64,
         change_address_type: AddressType,
-    ) -> Result<u32, WalletError> {
+    ) -> Result<(u32, Txid), WalletError> {
         let (index, fidelity_addr, fidelity_pubkey) = self.get_next_fidelity_address(locktime)?;
 
         let coins = self.coin_select(amount, feerate, None, None)?;
@@ -449,7 +456,7 @@ impl Wallet {
 
         let txid = self.send_tx(&tx)?;
 
-        // Register this bond even if it is in mempool and not yet confirmed to avoid the edge case when the maker server
+        // Register this bond even if it is in mempool and not yet confirmed to avoid the edge case when the Maker server
         // unexpectedly shutdown while it was waiting for the fidelity transaction confirmation.
         // Otherwise the wallet wouldn't know about this bond in this case and would attempt to create a new bond again.
         {
@@ -467,14 +474,11 @@ impl Wallet {
             self.save_to_disk()?;
         }
 
-        let conf_height = self.wait_for_tx_confirmation(txid)?;
-
-        self.update_fidelity_bond_conf_details(index, conf_height)?;
-
-        Ok(index)
+        Ok((index, txid))
     }
 
-    pub(crate) fn update_fidelity_bond_conf_details(
+    /// Update the confirmation height and certificate expiry of a fidelity bond after it confirms.
+    pub fn update_fidelity_bond_conf_details(
         &mut self,
         index: u32,
         conf_height: u32,
@@ -542,7 +546,7 @@ impl Wallet {
             .expect("Bond is not yet confirmed");
 
         let secp = Secp256k1::new();
-        let cert_sig = secp.sign_ecdsa(
+        let cert_sig = secp.sign_ecdsa_low_r(
             &Message::from_digest_slice(cert_hash.as_byte_array())?,
             &fidelity_privkey,
         );

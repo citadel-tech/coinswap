@@ -129,12 +129,25 @@ impl Wallet {
         }
 
         // Sometimes in test multiple wallet scans can occur at same time, resulting in error.
-        let last_synced_height = self
+        let mut last_synced_height = self
             .store
             .last_synced_height
             .unwrap_or(0)
             .max(self.store.wallet_birthday.unwrap_or(0));
         let node_synced = self.rpc.get_block_count()?;
+
+        // If the chain is shorter than the wallet's last synced height (e.g. node
+        // restarted with a fresh chain or a reorg), reset to rescan from the start.
+        if last_synced_height > node_synced {
+            log::warn!(
+                "Wallet last_synced_height ({}) exceeds chain height ({}), resetting to 0",
+                last_synced_height,
+                node_synced
+            );
+            last_synced_height = 0;
+            self.store.last_synced_height = Some(0);
+        }
+
         log::info!("Re-scanning Blockchain from:{last_synced_height} to:{node_synced}");
 
         let block_hash = self.rpc.get_block_hash(last_synced_height)?;

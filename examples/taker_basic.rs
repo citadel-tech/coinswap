@@ -2,7 +2,7 @@
 //!
 //! This example demonstrates how to use the Coinswap Taker API:
 //! - Initialize a Taker instance with Bitcoin Core RPC
-//! - Check wallet balance and generate addresses  
+//! - Check wallet balance and generate addresses
 //! - Fund the wallet with test coins
 //! - Demonstrate swap parameters setup
 //!
@@ -29,7 +29,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         BitcoinD,
     };
     use coinswap::{
-        taker::{SwapParams, Taker},
+        protocol::common_messages::ProtocolVersion,
+        taker::{SwapParams, Taker, TakerInitConfig},
         wallet::{AddressType, RPCConfig},
     };
     println!("=== Coinswap Taker Basic Example ===");
@@ -86,122 +87,125 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         wallet_name: "taker-example".to_string(), // Use specific wallet name
     };
 
-    // Initialize Taker with default data directory and wallet name
+    // Initialize Taker with builder-style config
     println!("About to initialize taker...");
 
-    let mut taker = Taker::init(
-        None,                              // Use default data directory
-        Some("taker-example".to_string()), // Wallet file name
-        Some(rpc_config),                  // rpc_config
-        Some(9051),                        //control port
-        None,                              // tor_auth_password
-        "tcp://127.0.0.1:3321".to_string(),
-        None, // Encryption Password
-    )
-    .unwrap();
+    let config = TakerInitConfig::default()
+        .with_wallet_name("taker-example".to_string())
+        .with_rpc_config(rpc_config)
+        .with_zmq_addr("tcp://127.0.0.1:3321".to_string());
+
+    let taker = Taker::init(config).unwrap();
 
     println!("Taker initialized successfully!");
 
     // Check initial wallet balance and UTXOs
-    let wallet = taker.get_wallet();
-    let balances = wallet.get_balances().unwrap();
-    let utxos = wallet.list_all_utxo().collect::<Vec<_>>();
+    {
+        let wallet = taker.get_wallet().read().unwrap();
+        let balances = wallet.get_balances().unwrap();
+        let utxos = wallet.list_all_utxo();
 
-    println!("Initial wallet state:");
-    println!("  Spendable: {} BTC", balances.spendable.to_btc());
-    println!("  Regular: {} BTC", balances.regular.to_btc());
-    println!("  UTXOs: {}", utxos.len());
+        println!("Initial wallet state:");
+        println!("  Spendable: {} BTC", balances.spendable.to_btc());
+        println!("  Regular: {} BTC", balances.regular.to_btc());
+        println!("  UTXOs: {}", utxos.len());
+    }
 
     // Fund the wallet if empty
-    if balances.spendable == Amount::ZERO {
-        println!("\nFunding wallet with test coins...");
+    {
+        let balances = taker.get_wallet().read().unwrap().get_balances().unwrap();
+        if balances.spendable == Amount::ZERO {
+            println!("\nFunding wallet with test coins...");
 
-        let wallet_mut = taker.get_wallet_mut();
-        let funding_address = wallet_mut
-            .get_next_external_address(AddressType::P2WPKH)
-            .unwrap();
+            let mut wallet = taker.get_wallet().write().unwrap();
+            let funding_address = wallet
+                .get_next_external_address(AddressType::P2WPKH)
+                .unwrap();
 
-        // Send coins from bitcoind to the taker wallet
-        let fund_amount = Amount::from_btc(0.01).unwrap();
-        let _txid = bitcoind
-            .client
-            .send_to_address(
-                &funding_address,
-                fund_amount,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-            )
-            .unwrap();
+            // Send coins from bitcoind to the taker wallet
+            let fund_amount = Amount::from_btc(0.01).unwrap();
+            let _txid = bitcoind
+                .client
+                .send_to_address(
+                    &funding_address,
+                    fund_amount,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .unwrap();
 
-        // Mine a block to confirm the transaction
-        bitcoind
-            .client
-            .generate_to_address(1, &mining_address)
-            .unwrap();
+            // Mine a block to confirm the transaction
+            bitcoind
+                .client
+                .generate_to_address(1, &mining_address)
+                .unwrap();
 
-        // Sync wallet to see the new funds
-        wallet_mut.sync_and_save().unwrap();
+            // Sync wallet to see the new funds
+            wallet.sync_and_save().unwrap();
 
-        let updated_balances = wallet_mut.get_balances().unwrap();
-        println!("Wallet funded successfully!");
-        println!("  New balance: {} BTC", updated_balances.spendable.to_btc());
+            let updated_balances = wallet.get_balances().unwrap();
+            println!("Wallet funded successfully!");
+            println!("  New balance: {} BTC", updated_balances.spendable.to_btc());
+        }
     }
 
     // Generate a new receiving address
-    let wallet_mut = taker.get_wallet_mut();
-    let new_address = wallet_mut
-        .get_next_external_address(AddressType::P2WPKH)
-        .unwrap();
-    println!("\nGenerated new receiving address: {}", new_address);
+    {
+        let mut wallet = taker.get_wallet().write().unwrap();
+        let new_address = wallet
+            .get_next_external_address(AddressType::P2WPKH)
+            .unwrap();
+        println!("\nGenerated new receiving address: {}", new_address);
 
-    // Demonstrate sending coins (send small amount to ourselves)
-    println!("\nDemonstrating send functionality:");
-    let send_amount = Amount::from_btc(0.001).unwrap();
-    let internal_address = wallet_mut
-        .get_next_internal_addresses(1, AddressType::P2WPKH)
-        .unwrap()[0]
-        .clone();
+        // Demonstrate sending coins (send small amount to ourselves)
+        println!("\nDemonstrating send functionality:");
+        let send_amount = Amount::from_btc(0.001).unwrap();
+        let internal_address = wallet
+            .get_next_internal_addresses(1, AddressType::P2WPKH)
+            .unwrap()[0]
+            .clone();
 
-    println!(
-        "Sending {} BTC to internal address: {}",
-        send_amount.to_btc(),
-        internal_address
-    );
-    // Note: In production you would call: wallet.send_to_address(&address, amount, fee_rate)
-    println!("(Send functionality ready - commented out to avoid spending coins in example)");
-
-    // Show current balances
-    let final_balances = wallet_mut.get_balances().unwrap();
-    println!("\nFinal wallet balances:");
-    println!("  Spendable: {} BTC", final_balances.spendable.to_btc());
-    println!("  Regular: {} BTC", final_balances.regular.to_btc());
-    println!("  Swap: {} BTC", final_balances.swap.to_btc());
-    println!("  Fidelity: {} BTC", final_balances.fidelity.to_btc());
-    println!("  Contract: {} BTC", final_balances.contract.to_btc());
-
-    // Show UTXOs
-    let utxos = wallet_mut.list_all_utxo().collect::<Vec<_>>();
-    println!("\nUTXO information:");
-    println!("  Total UTXOs: {}", utxos.len());
-    if !utxos.is_empty() {
         println!(
-            "  Sample UTXO: {} ({} BTC)",
-            utxos[0].txid,
-            utxos[0].amount.to_btc()
+            "Sending {} BTC to internal address: {}",
+            send_amount.to_btc(),
+            internal_address
         );
+        println!("(Send functionality ready - commented out to avoid spending coins in example)");
+
+        // Show current balances
+        let final_balances = wallet.get_balances().unwrap();
+        println!("\nFinal wallet balances:");
+        println!("  Spendable: {} BTC", final_balances.spendable.to_btc());
+        println!("  Regular: {} BTC", final_balances.regular.to_btc());
+        println!("  Swap: {} BTC", final_balances.swap.to_btc());
+        println!("  Fidelity: {} BTC", final_balances.fidelity.to_btc());
+        println!("  Contract: {} BTC", final_balances.contract.to_btc());
+
+        // Show UTXOs
+        let utxos = wallet.list_all_utxo();
+        println!("\nUTXO information:");
+        println!("  Total UTXOs: {}", utxos.len());
+        if !utxos.is_empty() {
+            println!(
+                "  Sample UTXO: {} ({} BTC)",
+                utxos[0].txid,
+                utxos[0].amount.to_btc()
+            );
+        }
     }
 
     // Coinswap setup
     println!("\nCoinswap setup:");
 
     let swap_params = SwapParams {
+        protocol: ProtocolVersion::Legacy,
         send_amount: Amount::from_btc(0.005).unwrap(),
         maker_count: 2,
-        manually_selected_outpoints: None,
+        ..Default::default()
     };
 
     println!("Swap parameters:");
@@ -211,18 +215,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         swap_params.send_amount.to_sat()
     );
     println!("  Makers needed: {}", swap_params.maker_count);
+    println!("  Protocol: {:?}", swap_params.protocol);
 
-    // TODO: Uncomment this when we want to test the actual swap
-    // For now, commenting out since it requires maker connections
-    /*
-    println!("Attempting coinswap...");
-    let result = taker.do_coinswap(swap_params).unwrap();
-    println!("Coinswap completed successfully: {:?}", result);
-    */
+    // In production, you would call:
+    //   let summary = taker.prepare_coinswap(swap_params).unwrap();
+    //   let report = taker.start_coinswap(&summary.swap_id).unwrap();
 
-    println!("Coinswap call commented out for this example.");
+    println!("\nCoinswap call commented out for this example.");
     println!("\nIn production, you would call:");
-    println!("  let result = taker.do_coinswap(swap_params).unwrap();");
+    println!("  let summary = taker.prepare_coinswap(swap_params).unwrap();");
+    println!("  let report = taker.start_coinswap(&summary.swap_id).unwrap();");
     println!("\nThis would:");
     println!("- Connect to the tracker server to find makers");
     println!("- Negotiate with {} makers", swap_params.maker_count);

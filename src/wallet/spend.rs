@@ -15,9 +15,7 @@ use crate::{
     wallet::{api::UTXOSpendInfo, FidelityError},
 };
 
-use super::{
-    error::WalletError, swapcoin::SwapCoin, AddressType, IncomingSwapCoin, OutgoingSwapCoin, Wallet,
-};
+use super::{error::WalletError, AddressType, Wallet};
 
 /// Represents different destination options for a transaction.
 #[derive(Debug, Clone, PartialEq)]
@@ -112,8 +110,9 @@ impl Wallet {
         // Find utxo corresponding to expired fidelity bond.
         let utxo = self
             .list_fidelity_spend_info()
-            .find(|(_, spend_info)| **spend_info == expired_fidelity_spend_info)
-            .map(|(utxo, _)| utxo.clone());
+            .into_iter()
+            .find(|(_, spend_info)| *spend_info == expired_fidelity_spend_info)
+            .map(|(utxo, _)| utxo);
 
         let utxo = match utxo {
             Some(utxo) => utxo,
@@ -154,63 +153,6 @@ impl Wallet {
         }
 
         Ok(())
-    }
-
-    pub(crate) fn create_timelock_spend(
-        &self,
-        og_sc: &OutgoingSwapCoin,
-        destination_address: &Address,
-        feerate: f64,
-    ) -> Result<Transaction, WalletError> {
-        let all_utxo = self.list_live_timelock_contract_spend_info();
-
-        for (utxo, spend_info) in all_utxo {
-            if let UTXOSpendInfo::TimelockContract {
-                swapcoin_multisig_redeemscript,
-                input_value,
-            } = spend_info
-            {
-                if *swapcoin_multisig_redeemscript == og_sc.get_multisig_redeemscript()
-                    && *input_value == og_sc.contract_tx.output[0].value
-                {
-                    let destination = Destination::Sweep(destination_address.clone());
-                    let coins = vec![(utxo.clone(), spend_info.clone())];
-                    let tx = self.spend_coins(&coins, destination, feerate)?;
-                    return Ok(tx);
-                }
-            }
-        }
-        Err(WalletError::General(
-            "Timelock Contract Does not exist".to_string(),
-        ))
-    }
-
-    pub(crate) fn create_hashlock_spend(
-        &self,
-        ic_sc: &IncomingSwapCoin,
-        destination_address: &Address,
-        feerate: f64,
-    ) -> Result<Transaction, WalletError> {
-        let all_utxo = self.list_live_hashlock_contract_spend_info();
-        for (utxo, spend_info) in all_utxo {
-            if let UTXOSpendInfo::HashlockContract {
-                swapcoin_multisig_redeemscript,
-                input_value,
-            } = spend_info
-            {
-                if *swapcoin_multisig_redeemscript == ic_sc.get_multisig_redeemscript()
-                    && *input_value == ic_sc.contract_tx.output[0].value
-                {
-                    let destination = Destination::Sweep(destination_address.clone());
-                    let coins = vec![(utxo.clone(), spend_info.clone())];
-                    let tx = self.spend_coins(&coins, destination, feerate)?;
-                    return Ok(tx);
-                }
-            }
-        }
-        Err(WalletError::General(
-            "Hashlock Contract Does not exist".to_string(),
-        ))
     }
 
     /// Creates a [`Transaction`] spending given UTXOs to a [`Destination`] with fee calculated from `feerate`.
@@ -281,14 +223,17 @@ impl Wallet {
                     input_value,
                 } => {
                     let outgoing_swap_coin = self
-                        .find_outgoing_swapcoin(swapcoin_multisig_redeemscript)
+                        .find_outgoing_swapcoin_by_multisig(swapcoin_multisig_redeemscript)
                         .expect("Cannot find Outgoing Swap Coin");
+                    let timelock = outgoing_swap_coin
+                        .get_timelock()
+                        .expect("Cannot get timelock from Outgoing Swap Coin");
                     tx.input.push(TxIn {
                         previous_output: OutPoint {
                             txid: outgoing_swap_coin.contract_tx.compute_txid(),
                             vout: 0,
                         },
-                        sequence: Sequence(outgoing_swap_coin.get_timelock()? as u32),
+                        sequence: Sequence(timelock),
                         witness: Witness::new(),
                         script_sig: ScriptBuf::new(),
                     });
@@ -300,7 +245,7 @@ impl Wallet {
                     input_value,
                 } => {
                     let incoming_swap_coin = self
-                        .find_incoming_swapcoin(swapcoin_multisig_redeemscript)
+                        .find_incoming_swapcoin_by_multisig(swapcoin_multisig_redeemscript)
                         .expect("Cannot find Incoming Swap Coin");
                     tx.input.push(TxIn {
                         previous_output: OutPoint {
@@ -493,9 +438,9 @@ impl Wallet {
                         });
                     } else {
                         log::info!(
-                            "Remaining change {} sats indexed {} is below dust threshold. Skipping change output. (fee: {} sats)",
-                            i,
+                            "Remaining change {} sats at index {} is below dust threshold. Skipping change output. (fee: {} sats)",
                             change.to_sat(),
+                            i,
                             fee_wchange.to_sat()
                         );
                     }

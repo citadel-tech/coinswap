@@ -149,17 +149,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Show total UTXOs and swap coin count
     println!("\nUTXO Summary:");
-    let utxos = wallet.list_all_utxo().collect::<Vec<_>>();
-    let swapcoins_count = wallet.get_swapcoins_count();
+    let utxos = wallet.list_all_utxo();
+    let incoming_count = wallet.get_incoming_swapcoins_count();
+    let outgoing_count = wallet.get_outgoing_swapcoins_count();
     println!("  Total UTXOs: {}", utxos.len());
-    println!("  Swap coins: {swapcoins_count}");
+    println!(
+        "  Swap coins: {} (incoming: {}, outgoing: {})",
+        incoming_count + outgoing_count,
+        incoming_count,
+        outgoing_count
+    );
 
     // Categorize UTXOs by type
     println!("\nUTXO Categories:");
-    let regular_utxos_count = wallet.list_descriptor_utxo_spend_info().count();
-    let swap_utxos_count = wallet.list_swap_coin_utxo_spend_info().count();
-    let fidelity_utxos_count = wallet.list_fidelity_spend_info().count();
-    let swept_utxos_count = wallet.list_swept_incoming_swap_utxos().count();
+    let regular_utxos_count = wallet.list_descriptor_utxo_spend_info().len();
+    let swap_utxos_count = wallet.list_swap_coin_utxo_spend_info().len();
+    let fidelity_utxos_count = wallet.list_fidelity_spend_info().len();
+    let swept_utxos_count = wallet.list_swept_incoming_swap_utxos().len();
     println!("  Regular UTXOs: {}", regular_utxos_count);
     println!("  Swap UTXOs: {}", swap_utxos_count);
     println!("  Fidelity UTXOs: {}", fidelity_utxos_count);
@@ -266,14 +272,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nAdvanced Wallet Information:");
 
     // Get advanced wallet info
-    let live_contracts = wallet.list_live_contract_spend_info().collect::<Vec<_>>();
-    let timelock_contracts = wallet
-        .list_live_timelock_contract_spend_info()
-        .collect::<Vec<_>>();
-    let hashlock_contracts = wallet
-        .list_live_hashlock_contract_spend_info()
-        .collect::<Vec<_>>();
-    let all_utxo_info = wallet.list_all_utxo_spend_info().collect::<Vec<_>>();
+    let live_contracts = wallet.list_live_contract_spend_info();
+    let timelock_contracts = wallet.list_live_timelock_contract_spend_info();
+    let hashlock_contracts = wallet.list_live_hashlock_contract_spend_info();
+    let all_utxo_info = wallet.list_all_utxo_spend_info();
 
     println!("  Live contracts: {}", live_contracts.len());
     println!("  Timelock contracts: {}", timelock_contracts.len());

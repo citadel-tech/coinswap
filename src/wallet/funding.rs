@@ -32,12 +32,14 @@ impl Wallet {
         destinations: &[Address],
         fee_rate: f64,
         manually_selected_outpoints: Option<Vec<OutPoint>>,
+        excluded_outpoints: Option<Vec<OutPoint>>,
     ) -> Result<CreateFundingTxesResult, WalletError> {
         let ret = self.create_funding_txes_random_amounts(
             coinswap_amount,
             destinations,
             fee_rate,
             manually_selected_outpoints,
+            excluded_outpoints,
         );
 
         if ret.is_err() {
@@ -129,6 +131,7 @@ impl Wallet {
         destinations: Vec<Address>,
         fee_rate: Amount,
         manually_selected_outpoints: Option<Vec<OutPoint>>,
+        excluded_outpoints: Option<Vec<OutPoint>>,
     ) -> Result<CreateFundingTxesResult, WalletError> {
         // Unlock all unspent UTXOs
         self.rpc.unlock_unspent_all()?;
@@ -147,7 +150,7 @@ impl Wallet {
                 coinswap_amount,
                 fee_rate.to_sat() as f64,
                 manually_selected_outpoints,
-                None,
+                excluded_outpoints,
             )?;
 
             let outpoints: Vec<OutPoint> = selected_utxo
@@ -209,6 +212,7 @@ impl Wallet {
         destinations: &[Address],
         fee_rate: f64,
         manually_selected_outpoints: Option<Vec<OutPoint>>,
+        excluded_outpoints: Option<Vec<OutPoint>>,
     ) -> Result<CreateFundingTxesResult, WalletError> {
         let output_values = Wallet::generate_amount_fractions(destinations.len(), coinswap_amount)?;
 
@@ -231,7 +235,7 @@ impl Wallet {
                     remaining,
                     fee_rate,
                     manually_selected_outpoints.clone(),
-                    None,
+                    excluded_outpoints.clone(),
                 )?;
 
                 let outpoints: Vec<OutPoint> = selected_utxo

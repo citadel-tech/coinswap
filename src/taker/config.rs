@@ -97,7 +97,7 @@ tor_auth_password = {}",
 #[cfg(test)]
 mod tests {
 
-    use crate::taker::api::REFUND_LOCKTIME;
+    use crate::taker::api::REFUND_LOCKTIME_BASE;
 
     use super::*;
     use std::{
@@ -143,7 +143,10 @@ mod tests {
         let config = TakerConfig::new(Some(&config_path)).unwrap();
         remove_temp_config(&config_path);
 
-        assert_eq!(REFUND_LOCKTIME, 20);
+        #[cfg(not(feature = "integration-test"))]
+        assert_eq!(REFUND_LOCKTIME_BASE, 20);
+        #[cfg(feature = "integration-test")]
+        assert_eq!(REFUND_LOCKTIME_BASE, 150);
         assert_eq!(config, TakerConfig::default());
     }
 
@@ -169,7 +172,10 @@ mod tests {
         let config_path = create_temp_config(contents, "different_data_taker_config.toml");
         let config = TakerConfig::new(Some(&config_path)).unwrap();
         remove_temp_config(&config_path);
-        assert_eq!(REFUND_LOCKTIME, 20);
+        #[cfg(not(feature = "integration-test"))]
+        assert_eq!(REFUND_LOCKTIME_BASE, 20);
+        #[cfg(feature = "integration-test")]
+        assert_eq!(REFUND_LOCKTIME_BASE, 150);
         assert_eq!(
             TakerConfig {
                 socks_port: 9050,         // Configurable via TOML.

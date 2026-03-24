@@ -18,10 +18,7 @@ use std::{
     path::Path,
 };
 
-use super::{
-    swapcoin::{IncomingSwapCoin, OutgoingSwapCoin},
-    swapcoin2::{IncomingSwapCoinV2, OutgoingSwapCoinV2},
-};
+use super::swapcoin::{IncomingSwapCoin, OutgoingSwapCoin, WatchOnlySwapCoin};
 
 use bitcoind::bitcoincore_rpc::bitcoincore_rpc_json::ListUnspentResultEntry;
 
@@ -48,14 +45,13 @@ pub(crate) struct WalletStore {
     pub(super) external_index: u32,
     /// The maximum size for an offer in the wallet.
     pub(crate) offer_maxsize: u64,
-    /// Map of multisig redeemscript to incoming swapcoins.
-    pub(super) incoming_swapcoins: HashMap<ScriptBuf, IncomingSwapCoin>,
-    /// Map of multisig redeemscript to outgoing swapcoins.
-    pub(super) outgoing_swapcoins: HashMap<ScriptBuf, OutgoingSwapCoin>,
-    /// Map of taproot contract txid to incoming taproot swapcoins.
-    pub(super) incoming_swapcoins_v2: HashMap<bitcoin::Txid, IncomingSwapCoinV2>,
-    /// Map of taproot contract txid to outgoing taproot swapcoins.
-    pub(super) outgoing_swapcoins_v2: HashMap<bitcoin::Txid, OutgoingSwapCoinV2>,
+    /// Map of swap_id to incoming swapcoins.
+    pub(super) incoming_swapcoins: HashMap<String, IncomingSwapCoin>,
+    /// Map of swap_id to outgoing swapcoins.
+    pub(super) outgoing_swapcoins: HashMap<String, OutgoingSwapCoin>,
+    /// Map of swap_id to watch-only swapcoins.
+    #[serde(default)]
+    pub(super) watchonly_swapcoins: HashMap<String, Vec<WatchOnlySwapCoin>>,
     /// Map of prevout to contract redeemscript.
     pub(super) prevout_to_contract_map: HashMap<OutPoint, ScriptBuf>,
     /// Set of swept incoming swap coin scriptpubkeys to prevent mixing with regular UTXOs
@@ -89,8 +85,7 @@ impl WalletStore {
             offer_maxsize: 0,
             incoming_swapcoins: HashMap::new(),
             outgoing_swapcoins: HashMap::new(),
-            incoming_swapcoins_v2: HashMap::new(),
-            outgoing_swapcoins_v2: HashMap::new(),
+            watchonly_swapcoins: HashMap::new(),
             prevout_to_contract_map: HashMap::new(),
             swept_incoming_swapcoins: HashSet::new(),
             fidelity_bond: HashMap::new(),

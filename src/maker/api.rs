@@ -1,197 +1,333 @@
-//! The Maker API.
-//!
-//! Defines the core functionality of the Maker in a swap protocol implementation.
-//! It includes structures for managing maker behavior, connection states, and recovery from swap events.
-//! The module provides methods for initializing a Maker, verifying swap messages, and monitoring
-//! contract broadcasts and handle idle Taker connections. Additionally, it handles recovery by broadcasting
-//! contract transactions and claiming funds after an unsuccessful swap event.
+//! Maker API for both Legacy (ECDSA) and Taproot (MuSig2) protocols.
 
-use crate::{
-    protocol::{
-        contract::{check_hashvalues_are_equal, read_hashvalue_from_contract},
-        messages::{FidelityProof, ReqContractSigsForSender, PREIMAGE_LEN},
-        Hash160,
-    },
-    utill::{
-        check_tor_status, get_maker_dir, get_tor_hostname, redeemscript_to_scriptpubkey,
-        BLOCK_DELAY, HEART_BEAT_INTERVAL, REQUIRED_CONFIRMS,
-    },
-    wallet::{ffi::SwapReport, RPCConfig, SwapCoin, WalletSwapCoin},
-    watch_tower::{
-        service::{start_maker_watch_service, WatchService},
-        watcher::{Role, WatcherEvent},
-    },
-};
-use bitcoin::{
-    ecdsa::Signature,
-    hashes::Hash,
-    secp256k1::{self, Secp256k1},
-    OutPoint, PublicKey, ScriptBuf, Transaction,
-};
-use bitcoind::bitcoincore_rpc::RpcApi;
 use std::{
-    collections::{HashMap, HashSet},
-    convert::TryInto,
+    collections::HashMap,
+    io::Write,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, Ordering::Relaxed},
+        atomic::{AtomicBool, Ordering},
         Arc, Mutex, RwLock,
     },
-    thread::JoinHandle,
+    thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
 
-use super::rpc::server::MakerRpc;
+use bitcoin::{Amount, Network, OutPoint, PublicKey, Transaction};
+use bitcoind::bitcoincore_rpc::RpcApi;
 
 use crate::{
-    protocol::{
-        contract::{
-            check_hashlock_has_pubkey, check_multisig_has_pubkey, check_reedemscript_is_multisig,
-            find_funding_output_index, read_contract_locktime,
-        },
-        messages::ProofOfFunding,
+    nostr_coinswap::NOSTR_RELAYS,
+    protocol::common_messages::{FidelityProof, ProtocolVersion, SwapDetails},
+    utill::{get_maker_dir, parse_field, parse_toml, MIN_FEE_RATE},
+    wallet::{
+        swapcoin::{IncomingSwapCoin, OutgoingSwapCoin},
+        AddressType, FidelityError, RPCConfig, Wallet, WalletError, MAX_FIDELITY_TIMELOCK,
+        MIN_FIDELITY_TIMELOCK,
     },
-    wallet::{IncomingSwapCoin, OutgoingSwapCoin, Wallet, WalletError},
+    watch_tower::service::WatchService,
 };
 
-use super::{config::MakerConfig, error::MakerError};
-
-/// Interval for health checks on a stable RPC connection with bitcoind.
-pub const RPC_PING_INTERVAL: u32 = 9;
-
-/// Maker triggers the recovery mechanism, if Taker is idle for more than 15 mins during a swap.
 #[cfg(feature = "integration-test")]
-pub const IDLE_CONNECTION_TIMEOUT: Duration = Duration::from_secs(60);
-#[cfg(not(feature = "integration-test"))]
-pub const IDLE_CONNECTION_TIMEOUT: Duration = Duration::from_secs(60 * 15);
+pub use super::handlers::MakerBehavior;
 
-/// The minimum difference in locktime (in blocks) between the incoming and outgoing swaps.
-///
-/// This value specifies the reaction time, in blocks, available to a Maker
-/// to claim the refund transaction in case of recovery.
-///
-/// According to [BOLT #2](https://github.com/lightning/bolts/blob/aa5207aeaa32d841353dd2df3ce725a4046d528d/02-peer-protocol.md?plain=1#L1798),
-/// the estimated minimum `cltv_expiry_delta` is 18 blocks.
-/// To enhance safety, the default value is set to 20 blocks.
-pub const MIN_CONTRACT_REACTION_TIME: u16 = 20;
+use super::{
+    error::MakerError,
+    handlers::{ConnectionState, Maker as MakerTrait, MakerConfig, SwapPhase},
+    rpc::server::MakerRpc,
+    swap_tracker::MakerSwapTracker,
+};
 
-/// spent with witnesses:
-//  hashlock case:
-//  <hashlock_signature> <preimage len 32>
-pub const MIN_WITNESS_ITEM_FOR_HASHLOCK: usize = 2;
-/// # Fee Parameters for Coinswap
-///
-/// These parameters define the fees charged by Makers in a coinswap transaction.
-///
-/// - `base_fee`: A fixed base fee charged by the Maker for providing its services (configurable in maker config, default: 100 sats in production, 1000 sats in tests)
-/// - `amount_relative_fee_pct`: A percentage fee based on the swap amount (configurable in maker config, default: 0.1% in production, 2.5% in tests)
-/// - `TIME_RELATIVE_FEE_PCT`: A percentage fee based on the refund locktime (duration the Maker must wait for a refund).
-///
-/// The coinswap fee increases with both the swap amount and the refund locktime.
-/// Refer to `REFUND_LOCKTIME` and `REFUND_LOCKTIME_STEP` in `taker::api.rs` for related parameters.
-///
-/// ### Fee Calculation
-/// The total fee for a swap is calculated as:
-/// `total_fee = base_fee + (swap_amount * amount_relative_fee_pct) / 100 + (swap_amount * refund_locktime * time_relative_fee_pct) / 100`
-///
-/// ### Example (Default Values)
-/// For a swap amount of 100,000 sats and a refund locktime of 20 blocks:
-/// - `base_fee` = 100 sats (default production value)
-/// - `amount_relative_fee` = (100,000 * 0.1) / 100 = 100 sats (default production value)
-/// - `time_relative_fee` = (100,000 * 20 * 0.005) / 100 = 100 sats (default production value)
-/// - `total_fee` = 300 sats (0.3%)
-///
-/// The default fee rate values are designed to asymptotically approach 5% of the swap amount as the swap amount increases.
-///
-/// Minimum Coinswap amount; makers will not accept amounts below this.
-#[cfg(feature = "integration-test")]
-pub const TIME_RELATIVE_FEE_PCT: f64 = 0.10;
-#[cfg(not(feature = "integration-test"))]
-pub const TIME_RELATIVE_FEE_PCT: f64 = 0.005;
-
+/// Minimum swap amount in satoshis.
 pub const MIN_SWAP_AMOUNT: u64 = 10_000;
 
-/// Interval for redeeming expired bonds, creating new ones if needed,
-#[cfg(feature = "integration-test")]
-pub(crate) const FIDELITY_BOND_UPDATE_INTERVAL: u32 = 30;
-#[cfg(not(feature = "integration-test"))]
-pub(crate) const FIDELITY_BOND_UPDATE_INTERVAL: u32 = 600; // 1 Block Interval
-/// Interval to check if there is enough liquidity for swaps.
-/// If the available balance is below the minimum, maker server won't listen for any swap requests until funds are added.
-#[cfg(feature = "integration-test")]
-pub(crate) const SWAP_LIQUIDITY_CHECK_INTERVAL: u32 = 30;
-#[cfg(not(feature = "integration-test"))]
-pub(crate) const SWAP_LIQUIDITY_CHECK_INTERVAL: u32 = 600; // Equals to FIDELITY_BOND_UPDATE_INTERVAL
-
-/// Used to configure the maker for testing purposes.
-///
-/// This enum defines various behaviors that can be assigned to the maker during testing
-/// to simulate different scenarios or states. These behaviors can help in verifying
-/// the robustness and correctness of the system under different conditions.
-#[derive(Debug, Clone, Copy)]
-pub enum MakerBehavior {
-    /// Represents the normal behavior of the maker.
-    Normal,
-    /// Simulates closure at the "Request Contract Signatures for Sender" step.
-    CloseAtReqContractSigsForSender,
-    /// Simulates closure at the "Proof of Funding" step.
-    CloseAtProofOfFunding,
-    /// Simulates closure at the "Contract Signatures for Receiver and Sender" step.
-    CloseAtContractSigsForRecvrAndSender,
-    /// Simulates closure at the "Contract Signatures for Receiver" step.
-    CloseAtContractSigsForRecvr,
-    /// Simulates closure at the "Hash Preimage" step.
-    CloseAtHashPreimage,
-    /// Simulates broadcasting the contract immediately after setup.
-    BroadcastContractAfterSetup,
+/// Swap state tracked per swap_id (persisted across connections).
+#[derive(Debug, Clone)]
+struct SwapState {
+    /// Swap amount.
+    swap_amount: Amount,
+    /// Timelock value (Legacy: relative CSV, Taproot: absolute CLTV height).
+    timelock: u32,
+    /// Protocol version for this swap.
+    protocol: ProtocolVersion,
+    /// Current phase of the swap.
+    phase: SwapPhase,
+    /// Incoming swapcoins (we receive).
+    incoming_swapcoins: Vec<IncomingSwapCoin>,
+    /// Outgoing swapcoins (we send).
+    outgoing_swapcoins: Vec<OutgoingSwapCoin>,
+    /// Pending funding transactions (for Legacy protocol).
+    /// Stored until signature exchange completes, then broadcast.
+    pending_funding_txes: Vec<Transaction>,
+    /// Whether the funding transaction was actually broadcast to the network.
+    funding_broadcast: bool,
+    /// Contract fee rate for multi-hop swap creation.
+    contract_feerate: f64,
+    /// Reserved UTXOs for this swap (prevents concurrent double-spending).
+    reserve_utxo: Vec<OutPoint>,
+    /// Last activity timestamp.
+    last_activity: Instant,
 }
 
-/// Expected messages for the taker in the context of [`ConnectionState`] structure.
-///
-/// If the received message doesn't match the expected message,
-/// a protocol error will be returned.
-#[derive(Debug, Default, PartialEq, Clone)]
-pub(crate) enum ExpectedMessage {
-    #[default]
-    TakerHello,
-    NewlyConnectedTaker,
-    ReqContractSigsForSender,
-    ProofOfFunding,
-    ProofOfFundingORContractSigsForRecvrAndSender,
-    ReqContractSigsForRecvr,
-    HashPreimage,
-    PrivateKeyHandover,
+impl Default for SwapState {
+    fn default() -> Self {
+        SwapState {
+            swap_amount: Amount::ZERO,
+            timelock: 0,
+            protocol: ProtocolVersion::Legacy,
+            phase: SwapPhase::AwaitingHello,
+            incoming_swapcoins: Vec::new(),
+            outgoing_swapcoins: Vec::new(),
+            pending_funding_txes: Vec::new(),
+            funding_broadcast: false,
+            contract_feerate: 0.0,
+            reserve_utxo: Vec::new(),
+            last_activity: Instant::now(),
+        }
+    }
 }
 
-/// Maintains the state of a connection, including the list of swapcoins and the next expected message.
-#[derive(Debug, Default, Clone)]
-pub(crate) struct ConnectionState {
-    pub(crate) allowed_message: ExpectedMessage,
-    pub(crate) incoming_swapcoins: Vec<IncomingSwapCoin>,
-    pub(crate) outgoing_swapcoins: Vec<OutgoingSwapCoin>,
-    pub(crate) pending_funding_txes: Vec<Transaction>,
-    pub(crate) reserve_utxo: Vec<OutPoint>,
+/// Maker Server configuration for the trait-based approach.
+#[derive(Debug, Clone)]
+pub struct MakerServerConfig {
+    /// Data directory for the Maker.
+    pub data_dir: PathBuf,
+    /// Network port for incoming connections.
+    pub network_port: u16,
+    /// RPC port for maker-cli commands.
+    pub rpc_port: u16,
+    /// Base fee in satoshis per swap.
+    pub base_fee: u64,
+    /// Amount-relative fee percentage.
+    pub amount_relative_fee_pct: f64,
+    /// Time-relative fee percentage.
+    pub time_relative_fee_pct: f64,
+    /// Minimum swap amount in satoshis.
+    pub min_swap_amount: u64,
+    /// Required confirmations for funding transactions.
+    pub required_confirms: u32,
+    /// Supported protocol versions.
+    pub supported_protocols: Vec<ProtocolVersion>,
+    /// ZMQ address for transaction monitoring.
+    pub zmq_addr: String,
+    /// Fidelity bond amount in satoshis.
+    pub fidelity_amount: u64,
+    /// Fidelity bond timelock in blocks.
+    pub fidelity_timelock: u32,
+    /// Bitcoin network.
+    pub network: Network,
+    /// Wallet name.
+    pub wallet_name: String,
+    /// RPC configuration.
+    pub rpc_config: RPCConfig,
+    /// Control port for Tor interface.
+    pub control_port: u16,
+    /// Socks port for Tor proxy.
+    pub socks_port: u16,
+    /// Authentication password for Tor interface.
+    pub tor_auth_password: String,
+    /// Wallet password (optional).
+    pub password: Option<String>,
+    /// Nostr relay URLs for fidelity bond broadcasting.
+    pub nostr_relays: Vec<String>,
 }
 
-pub(crate) struct ThreadPool {
-    pub(crate) threads: Mutex<Vec<JoinHandle<()>>>,
-    pub(crate) port: u16,
+impl Default for MakerServerConfig {
+    fn default() -> Self {
+        MakerServerConfig {
+            data_dir: PathBuf::from("./data"),
+            network_port: 6102,
+            rpc_port: 6103,
+            base_fee: 1000,
+            amount_relative_fee_pct: 0.025,
+            time_relative_fee_pct: 0.001,
+            min_swap_amount: 10_000,
+            required_confirms: 1,
+            supported_protocols: vec![ProtocolVersion::Legacy, ProtocolVersion::Taproot],
+            zmq_addr: "tcp://127.0.0.1:28332".to_string(),
+            fidelity_amount: 10_000,   // 0.05 BTC
+            fidelity_timelock: 15_000, // ~6 months (MAX_FIDELITY_TIMELOCK)
+            network: Network::Regtest,
+            wallet_name: "maker".to_string(),
+            rpc_config: RPCConfig::default(),
+            control_port: 9051,
+            socks_port: 9050,
+            tor_auth_password: String::new(),
+            password: None,
+            nostr_relays: NOSTR_RELAYS.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+}
+
+impl MakerServerConfig {
+    /// Load configuration from a TOML file at the given path.
+    ///
+    /// If `config_path` is `None`, defaults to `~/.coinswap/maker/config.toml`.
+    /// If the file doesn't exist or is empty, a default config file is created.
+    /// Fields missing from the file fall back to defaults.
+    pub fn new(config_path: Option<&Path>) -> Result<Self, WalletError> {
+        let default_config_path = get_maker_dir().join("config.toml");
+        let config_path = config_path.unwrap_or(&default_config_path);
+        let default_config = Self::default();
+
+        if !config_path.exists() || std::fs::metadata(config_path)?.len() == 0 {
+            log::warn!(
+                "Maker config file not found, creating default at: {}",
+                config_path.display()
+            );
+            default_config.write_to_file(config_path)?;
+        }
+
+        let config_map = parse_toml(config_path)?;
+        log::info!("Loaded config file from: {}", config_path.display());
+
+        let fidelity_timelock = parse_field(
+            config_map.get("fidelity_timelock"),
+            default_config.fidelity_timelock,
+        );
+        if !(MIN_FIDELITY_TIMELOCK..=MAX_FIDELITY_TIMELOCK).contains(&fidelity_timelock) {
+            log::warn!(
+                "Invalid fidelity_timelock: {} blocks. Accepted range is [{}-{}] blocks.",
+                fidelity_timelock,
+                MIN_FIDELITY_TIMELOCK,
+                MAX_FIDELITY_TIMELOCK
+            );
+            return Err(WalletError::Fidelity(FidelityError::InvalidBondLocktime));
+        }
+
+        let min_swap_amount = parse_field(
+            config_map.get("min_swap_amount"),
+            default_config.min_swap_amount,
+        );
+        if min_swap_amount < MIN_SWAP_AMOUNT {
+            log::error!(
+                "Configured min_swap_amount {} is below protocol minimum {} sats",
+                min_swap_amount,
+                MIN_SWAP_AMOUNT
+            );
+            return Err(WalletError::InsufficientFund {
+                available: min_swap_amount,
+                required: MIN_SWAP_AMOUNT,
+            });
+        }
+
+        Ok(MakerServerConfig {
+            network_port: parse_field(config_map.get("network_port"), default_config.network_port),
+            rpc_port: parse_field(config_map.get("rpc_port"), default_config.rpc_port),
+            base_fee: parse_field(config_map.get("base_fee"), default_config.base_fee),
+            amount_relative_fee_pct: parse_field(
+                config_map.get("amount_relative_fee_pct"),
+                default_config.amount_relative_fee_pct,
+            ),
+            time_relative_fee_pct: parse_field(
+                config_map.get("time_relative_fee_pct"),
+                default_config.time_relative_fee_pct,
+            ),
+            min_swap_amount,
+            required_confirms: parse_field(
+                config_map.get("required_confirms"),
+                default_config.required_confirms,
+            ),
+            fidelity_amount: parse_field(
+                config_map.get("fidelity_amount"),
+                default_config.fidelity_amount,
+            ),
+            fidelity_timelock,
+            control_port: parse_field(config_map.get("control_port"), default_config.control_port),
+            socks_port: parse_field(config_map.get("socks_port"), default_config.socks_port),
+            tor_auth_password: parse_field(
+                config_map.get("tor_auth_password"),
+                default_config.tor_auth_password,
+            ),
+            // Runtime fields — not read from config file
+            data_dir: default_config.data_dir,
+            network: default_config.network,
+            wallet_name: default_config.wallet_name,
+            rpc_config: default_config.rpc_config,
+            zmq_addr: default_config.zmq_addr,
+            password: default_config.password,
+            supported_protocols: default_config.supported_protocols,
+            nostr_relays: default_config.nostr_relays,
+        })
+    }
+
+    /// Write the current configuration to a TOML file.
+    pub fn write_to_file(&self, path: &Path) -> std::io::Result<()> {
+        let toml_data = format!(
+            "\
+# Maker Configuration File
+
+# Network port for client connections
+network_port = {}
+# RPC port for maker-cli operations
+rpc_port = {}
+# Socks port for Tor proxy
+socks_port = {}
+# Control port for Tor interface
+control_port = {}
+# Authentication password for Tor interface
+tor_auth_password = {}
+# Minimum amount in satoshis that can be swapped
+min_swap_amount = {}
+# Fidelity Bond amount in satoshis
+fidelity_amount = {}
+# Fidelity Bond timelock in blocks (must be between {} and {})
+fidelity_timelock = {}
+# A fixed base fee charged by the Maker for providing its services (in satoshis)
+base_fee = {}
+# A percentage fee based on the swap amount
+amount_relative_fee_pct = {}
+# A percentage fee based on the swap duration
+time_relative_fee_pct = {}
+# Required confirmations for funding transactions
+required_confirms = {}
+",
+            self.network_port,
+            self.rpc_port,
+            self.socks_port,
+            self.control_port,
+            self.tor_auth_password,
+            self.min_swap_amount,
+            self.fidelity_amount,
+            MIN_FIDELITY_TIMELOCK,
+            MAX_FIDELITY_TIMELOCK,
+            self.fidelity_timelock,
+            self.base_fee,
+            self.amount_relative_fee_pct,
+            self.time_relative_fee_pct,
+            self.required_confirms,
+        );
+
+        std::fs::create_dir_all(path.parent().expect("Config path should not be root"))?;
+        let mut file = std::fs::File::create(path)?;
+        file.write_all(toml_data.as_bytes())?;
+        file.flush()?;
+        Ok(())
+    }
+}
+
+/// Thread pool for managing background threads.
+pub struct ThreadPool {
+    threads: Mutex<Vec<JoinHandle<()>>>,
+    port: u16,
 }
 
 impl ThreadPool {
-    pub(crate) fn new(port: u16) -> Self {
+    /// Create a new thread pool.
+    pub fn new(port: u16) -> Self {
         Self {
             threads: Mutex::new(Vec::new()),
             port,
         }
     }
 
-    pub(crate) fn add_thread(&self, handle: JoinHandle<()>) {
+    /// Add a thread to the pool.
+    pub fn add_thread(&self, handle: JoinHandle<()>) {
         let mut threads = self.threads.lock().unwrap();
         threads.push(handle);
     }
-    #[inline]
-    pub(crate) fn join_all_threads(&self) -> Result<(), MakerError> {
+
+    /// Join all threads in the pool.
+    pub fn join_all_threads(&self) -> Result<(), MakerError> {
         let mut threads = self
             .threads
             .lock()
@@ -199,216 +335,857 @@ impl ThreadPool {
 
         log::info!("Joining {} threads", threads.len());
 
-        let mut joined_count = 0;
         while let Some(thread) = threads.pop() {
-            let thread_name = thread.thread().name().unwrap().to_string();
-            println!("joining thread: {thread_name}");
+            let thread_name = thread.thread().name().unwrap_or("unknown").to_string();
 
             match thread.join() {
                 Ok(_) => {
                     log::info!("[{}] Thread {} joined", self.port, thread_name);
-                    joined_count += 1;
                 }
-                Err(e) => {
-                    log::error!(
-                        "[{}] Error {:?} while joining thread {}",
-                        self.port,
-                        e,
-                        thread_name
-                    );
+                Err(_) => {
+                    log::error!("[{}] Thread {} panicked", self.port, thread_name);
                 }
             }
         }
 
-        log::info!("Successfully joined {joined_count} threads",);
         Ok(())
     }
 }
 
-/// Represents the maker in the swap protocol.
-pub struct Maker {
-    /// Defines special maker behavior, only applicable for testing
-    pub(crate) behavior: MakerBehavior,
-    /// Maker configurations
-    pub(crate) config: MakerConfig,
-    /// Maker's underlying wallet
-    pub wallet: RwLock<Wallet>,
-    /// A flag to trigger shutdown event
+/// Maker server
+///
+/// This implements the `Maker` trait with actual swap logic.
+pub struct MakerServer {
+    /// Configuration.
+    pub config: MakerServerConfig,
+    /// Wallet.
+    pub wallet: Arc<RwLock<Wallet>>,
+    /// Shutdown flag.
     pub shutdown: AtomicBool,
-    /// Map of IP address to Connection State + last Connected instant
-    pub(crate) ongoing_swap_state: Mutex<HashMap<String, (ConnectionState, Instant)>>,
-    /// Highest Value Fidelity Proof
-    pub(crate) highest_fidelity_proof: RwLock<Option<FidelityProof>>,
-    /// Is setup complete
+    /// Is setup complete flag.
     pub is_setup_complete: AtomicBool,
-    /// Path for the data directory.
-    data_dir: PathBuf,
-    /// Thread pool for managing all spawned threads
-    pub(crate) thread_pool: Arc<ThreadPool>,
-    /// Watcher service
+    /// Highest fidelity proof.
+    pub highest_fidelity_proof: RwLock<Option<FidelityProof>>,
+    /// Ongoing swap states by swap_id.
+    ongoing_swaps: Mutex<HashMap<String, SwapState>>,
+    /// Watch service for contract monitoring.
     pub watch_service: WatchService,
+    /// Thread pool for background threads.
+    pub thread_pool: Arc<ThreadPool>,
+    /// Data directory.
+    pub data_dir: PathBuf,
+    /// Persistent swap tracker for recovery progress.
+    pub swap_tracker: Mutex<MakerSwapTracker>,
+    /// Nostr relay URLs for fidelity bond broadcasting.
+    pub nostr_relays: Vec<String>,
+    /// Test-only behavior override.
+    #[cfg(feature = "integration-test")]
+    pub behavior: MakerBehavior,
 }
 
-#[allow(clippy::too_many_arguments)]
-impl Maker {
-    /// Initializes a Maker structure.
-    ///
-    /// This function sets up a Maker instance with configurable parameters.
-    /// It handles the initialization of data directories, wallet files, and RPC configurations.
-    ///
-    /// ### Parameters:
-    /// - `data_dir`:
-    ///   - `Some(value)`: Use the specified directory for storing data.
-    ///   - `None`: Use the default data directory (e.g., for Linux: `~/.coinswap/maker`).
-    /// - `wallet_file_name`:
-    ///   - `Some(value)`: Attempt to load a wallet file named `value`. If it does not exist, a new wallet with the given name will be created.
-    ///   - `None`: Create a new wallet file with the default name `maker-wallet`.
-    /// - If `rpc_config` = `None`: Use the default [`RPCConfig`]
-    pub fn init(
-        data_dir: Option<PathBuf>,
-        wallet_file_name: Option<String>,
-        rpc_config: Option<RPCConfig>,
-        network_port: Option<u16>,
-        rpc_port: Option<u16>,
-        control_port: Option<u16>,
-        tor_auth_password: Option<String>,
-        socks_port: Option<u16>,
-        behavior: MakerBehavior,
-        zmq_addr: String,
-        password: Option<String>,
-    ) -> Result<Self, MakerError> {
-        // Get the provided data directory or the default data directory.
-        let data_dir = data_dir.unwrap_or(get_maker_dir());
+/// Idle swap data returned by [`MakerServer::drain_idle_swaps`].
+pub struct IdleSwapData {
+    /// Unique swap identifier.
+    pub swap_id: String,
+    /// Protocol version used for this swap.
+    pub protocol: crate::protocol::common_messages::ProtocolVersion,
+    /// Swap amount in satoshis.
+    pub swap_amount_sat: u64,
+    /// Incoming swapcoins (maker receives).
+    pub incoming_swapcoins: Vec<IncomingSwapCoin>,
+    /// Outgoing swapcoins (maker sends).
+    pub outgoing_swapcoins: Vec<OutgoingSwapCoin>,
+    /// Whether the funding transaction was actually broadcast.
+    pub funding_broadcast: bool,
+}
+
+impl MakerServer {
+    /// Initialize a new maker server with full setup.
+    pub fn init(config: MakerServerConfig) -> Result<Self, MakerError> {
+        let data_dir = config.data_dir.clone();
+        std::fs::create_dir_all(&data_dir).map_err(MakerError::IO)?;
+
         let wallets_dir = data_dir.join("wallets");
+        let wallet_path = wallets_dir.join(&config.wallet_name);
 
-        // Use the provided name or default to `maker-wallet` if not specified.
-        let wallet_file_name = wallet_file_name.unwrap_or_else(|| "maker-wallet".to_string());
-        let wallet_path = wallets_dir.join(&wallet_file_name);
+        // Initialize or load wallet
+        let mut rpc_config = config.rpc_config.clone();
+        rpc_config.wallet_name = config.wallet_name.clone();
 
-        let mut rpc_config = rpc_config.unwrap_or_default();
-        rpc_config.wallet_name = wallet_file_name;
+        let wallet =
+            Wallet::load_or_init_wallet(&wallet_path, &rpc_config, config.password.clone())?;
 
-        // If the config file doesn't exist, the default config will be loaded.
-        let mut config = MakerConfig::new(Some(&data_dir.join("config.toml")))?;
-
-        if let Some(port) = network_port {
-            config.network_port = port;
-        }
-
-        let watch_service =
-            start_maker_watch_service(&zmq_addr, &rpc_config, &data_dir, config.network_port)?;
-
-        let mut wallet = Wallet::load_or_init_wallet(&wallet_path, &rpc_config, password)?;
-
-        if let Some(rpc_port) = rpc_port {
-            config.rpc_port = rpc_port;
-        }
-
-        if let Some(socks_port) = socks_port {
-            config.socks_port = socks_port;
-        }
-
-        if let Some(control_port) = control_port {
-            config.control_port = control_port;
-        }
-
-        if let Some(tor_auth_password) = tor_auth_password {
-            config.tor_auth_password = tor_auth_password;
-        }
-
-        if !cfg!(feature = "integration-test") {
-            check_tor_status(config.control_port, config.tor_auth_password.as_str())?;
-        }
-        config.write_to_file(&data_dir.join("config.toml"))?;
-
-        log::info!("Sync at:----Maker init----");
+        // Initial wallet sync
+        let mut wallet = wallet;
+        log::info!("Sync at:----MakerServer init----");
         wallet.sync_and_save()?;
 
-        let network_port = config.network_port;
+        // Initialize watch service
+        let watch_service = crate::watch_tower::service::start_maker_watch_service(
+            &config.zmq_addr,
+            &rpc_config,
+            &data_dir,
+            config.network_port,
+        )
+        .map_err(MakerError::Watcher)?;
 
-        Ok(Self {
-            behavior,
-            config,
-            wallet: RwLock::new(wallet),
+        let swap_tracker = MakerSwapTracker::load_or_create(&data_dir)?;
+        let incomplete = swap_tracker.incomplete_swaps();
+        if !incomplete.is_empty() {
+            log::info!(
+                "[{}] Loaded {} incomplete swap records from previous run",
+                config.network_port,
+                incomplete.len()
+            );
+            swap_tracker.log_state();
+        }
+
+        let nostr_relays = config.nostr_relays.clone();
+        Ok(MakerServer {
+            config: config.clone(),
+            wallet: Arc::new(RwLock::new(wallet)),
             shutdown: AtomicBool::new(false),
-            ongoing_swap_state: Mutex::new(HashMap::new()),
-            highest_fidelity_proof: RwLock::new(None),
             is_setup_complete: AtomicBool::new(false),
-            data_dir,
-            thread_pool: Arc::new(ThreadPool::new(network_port)),
+            highest_fidelity_proof: RwLock::new(None),
+            ongoing_swaps: Mutex::new(HashMap::new()),
             watch_service,
+            thread_pool: Arc::new(ThreadPool::new(config.network_port)),
+            data_dir,
+            swap_tracker: Mutex::new(swap_tracker),
+            nostr_relays,
+            #[cfg(feature = "integration-test")]
+            behavior: MakerBehavior::default(),
         })
     }
 
-    /// Returns data directory of Maker
-    pub fn get_data_dir(&self) -> &Path {
-        &self.data_dir
+    /// Check if shutdown has been requested.
+    pub fn is_shutdown(&self) -> bool {
+        self.shutdown.load(Ordering::Relaxed)
     }
 
-    /// Returns a reference to the Maker's wallet.
-    pub fn get_wallet(&self) -> &RwLock<Wallet> {
-        &self.wallet
-    }
+    /// Setup fidelity bond for this maker.
+    pub fn setup_fidelity_bond(&self, maker_address: &str) -> Result<FidelityProof, MakerError> {
+        use bitcoin::absolute::LockTime;
+        use bitcoind::bitcoincore_rpc::RpcApi;
 
-    /// Ensures all unconfirmed fidelity bonds in the maker's wallet are tracked until confirmation.  
-    /// Once confirmed, updates their confirmation details in the wallet.
-    pub(super) fn track_and_update_unconfirmed_fidelity_bonds(&self) -> Result<(), MakerError> {
-        let bond_conf_heights = {
-            let wallet_read = self.get_wallet().read()?;
+        let highest_index = self
+            .wallet
+            .read()
+            .map_err(|_| MakerError::General("Failed to lock wallet"))?
+            .get_highest_fidelity_index()
+            .map_err(MakerError::Wallet)?;
 
-            wallet_read
-                .store
-                .fidelity_bond
-                .iter()
-                .filter_map(|(i, bond)| {
-                    if bond.conf_height.is_none() && bond.cert_expiry.is_none() {
-                        let conf_height = wallet_read
-                            .wait_for_tx_confirmation(bond.outpoint.txid)
-                            .unwrap();
-                        Some((*i, conf_height))
-                    } else {
-                        None
+        let mut proof = self
+            .highest_fidelity_proof
+            .write()
+            .map_err(|_| MakerError::General("Failed to lock fidelity proof"))?;
+
+        if let Some(i) = highest_index {
+            // Existing fidelity bond found
+            let wallet_read = self
+                .wallet
+                .read()
+                .map_err(|_| MakerError::General("Failed to lock wallet"))?;
+            let bond = wallet_read.store.fidelity_bond.get(&i).unwrap().clone();
+            let current_height = wallet_read
+                .rpc
+                .get_block_count()
+                .map_err(WalletError::Rpc)? as u32;
+            let bond_value = wallet_read
+                .calculate_bond_value(&bond)
+                .map_err(MakerError::Wallet)?
+                .to_sat();
+            drop(wallet_read);
+
+            let highest_proof = self
+                .wallet
+                .read()
+                .map_err(|_| MakerError::General("Failed to lock wallet"))?
+                .generate_fidelity_proof(i, maker_address)
+                .map_err(MakerError::Wallet)?;
+
+            log::info!(
+                "Highest bond at outpoint {} | index {} | Amount {:?} sats | Remaining Timelock: {:?} Blocks | Bond Value: {:?} sats",
+                highest_proof.bond.outpoint,
+                i,
+                bond.amount.to_sat(),
+                bond.lock_time.to_consensus_u32() - current_height,
+                bond_value
+            );
+
+            *proof = Some(highest_proof);
+        } else {
+            // Need to create new fidelity bond
+            log::info!("No active Fidelity Bonds found. Creating one.");
+
+            let amount = Amount::from_sat(self.config.fidelity_amount);
+            log::info!("Fidelity value chosen = {:?} sats", amount.to_sat());
+
+            let current_height = self
+                .wallet
+                .read()
+                .map_err(|_| MakerError::General("Failed to lock wallet"))?
+                .rpc
+                .get_block_count()
+                .map_err(WalletError::Rpc)? as u32;
+
+            // Set locktime for test (950 blocks) or production
+            #[cfg(feature = "integration-test")]
+            let locktime = {
+                use super::handlers::MakerBehavior;
+                let offset = if self.behavior == MakerBehavior::InvalidFidelityTimelock {
+                    log::warn!("Test behavior: using invalid (too short) fidelity timelock");
+                    10
+                } else {
+                    950
+                };
+                LockTime::from_height(current_height + offset).map_err(WalletError::Locktime)?
+            };
+            #[cfg(not(feature = "integration-test"))]
+            let locktime = LockTime::from_height(self.config.fidelity_timelock + current_height)
+                .map_err(WalletError::Locktime)?;
+
+            log::info!(
+                "Fidelity timelock {:?} blocks",
+                locktime.to_consensus_u32() - current_height
+            );
+
+            // Wait for funds and create fidelity bond
+            let sleep_increment = 10;
+            let mut sleep_multiplier = 0;
+
+            while !self.shutdown.load(Ordering::Relaxed) {
+                sleep_multiplier += 1;
+
+                log::info!("Sync at:----setup_fidelity_bond----");
+                self.wallet
+                    .write()
+                    .map_err(|_| MakerError::General("Failed to lock wallet"))?
+                    .sync_and_save()
+                    .map_err(MakerError::Wallet)?;
+
+                let fidelity_result = self
+                    .wallet
+                    .write()
+                    .map_err(|_| MakerError::General("Failed to lock wallet"))?
+                    .create_fidelity(
+                        amount,
+                        locktime,
+                        Some(maker_address),
+                        MIN_FEE_RATE,
+                        AddressType::P2WPKH,
+                    );
+
+                match fidelity_result {
+                    Err(e) => {
+                        if let WalletError::InsufficientFund {
+                            available,
+                            required,
+                        } = e
+                        {
+                            log::warn!("Insufficient funds to create fidelity bond.");
+                            let needed = required - available;
+                            let addr = self
+                                .wallet
+                                .write()
+                                .map_err(|_| MakerError::General("Failed to lock wallet"))?
+                                .get_next_external_address(AddressType::P2WPKH)
+                                .map_err(MakerError::Wallet)?;
+
+                            log::info!(
+                                "Send at least {:.8} BTC to {:?}",
+                                Amount::from_sat(needed).to_btc(),
+                                addr
+                            );
+
+                            let total_sleep = sleep_increment * sleep_multiplier.min(60);
+                            log::info!("Next sync in {total_sleep:?} secs");
+                            thread::sleep(std::time::Duration::from_secs(total_sleep));
+                        } else {
+                            log::error!(
+                                "[{}] Fidelity Bond Creation failed: {:?}",
+                                self.config.network_port,
+                                e
+                            );
+                            return Err(MakerError::Wallet(e));
+                        }
                     }
-                })
-                .collect::<HashMap<u32, u32>>()
-        };
+                    Ok((index, txid)) => {
+                        // Wait for confirmation WITHOUT holding the wallet lock,
+                        // so other operations (swaps, balance reads, etc.) aren't blocked.
+                        log::info!(
+                            "[{}] Fidelity bond broadcast, waiting for confirmation: {}",
+                            self.config.network_port,
+                            txid
+                        );
+                        let conf_height = self
+                            .wallet
+                            .read()
+                            .map_err(|_| MakerError::General("Failed to lock wallet"))?
+                            .wait_for_tx_confirmation(txid, Some(&self.shutdown))
+                            .map_err(MakerError::Wallet)?;
 
-        bond_conf_heights.into_iter().try_for_each(|(i, ht)| {
-            self.get_wallet()
-                .write()?
-                .update_fidelity_bond_conf_details(i, ht)?;
-            Ok::<(), MakerError>(())
-        })?;
+                        // Re-acquire write lock briefly to finalize
+                        self.wallet
+                            .write()
+                            .map_err(|_| MakerError::General("Failed to lock wallet"))?
+                            .update_fidelity_bond_conf_details(index, conf_height)
+                            .map_err(MakerError::Wallet)?;
+
+                        log::info!(
+                            "[{}] Successfully created fidelity bond",
+                            self.config.network_port
+                        );
+                        let highest_proof = self
+                            .wallet
+                            .read()
+                            .map_err(|_| MakerError::General("Failed to lock wallet"))?
+                            .generate_fidelity_proof(index, maker_address)
+                            .map_err(MakerError::Wallet)?;
+
+                        *proof = Some(highest_proof);
+
+                        log::info!("Sync at end:----setup_fidelity_bond----");
+                        self.wallet
+                            .write()
+                            .map_err(|_| MakerError::General("Failed to lock wallet"))?
+                            .sync_and_save()
+                            .map_err(MakerError::Wallet)?;
+                        break;
+                    }
+                }
+            }
+        }
+
+        proof
+            .clone()
+            .ok_or(MakerError::General("No fidelity proof after setup"))
+    }
+
+    /// Check if maker has enough liquidity for swaps.
+    pub fn check_swap_liquidity(&self) -> Result<(), MakerError> {
+        let sleep_increment = 10u64;
+        let mut sleep_duration = 0u64;
+
+        let addr = self
+            .wallet
+            .write()
+            .map_err(|_| MakerError::General("Failed to lock wallet"))?
+            .get_next_external_address(AddressType::P2WPKH)
+            .map_err(MakerError::Wallet)?;
+
+        while !self.shutdown.load(Ordering::Relaxed) {
+            log::info!("Sync at:----check_swap_liquidity----");
+            self.wallet
+                .write()
+                .map_err(|_| MakerError::General("Failed to lock wallet"))?
+                .sync_and_save()
+                .map_err(MakerError::Wallet)?;
+
+            let offer_max_size = self
+                .wallet
+                .read()
+                .map_err(|_| MakerError::General("Failed to lock wallet"))?
+                .store
+                .offer_maxsize;
+
+            let min_required = self.config.min_swap_amount;
+
+            if offer_max_size < min_required {
+                log::warn!(
+                    "Low Swap Liquidity | Min: {min_required} sats | Available: {offer_max_size} sats. Add funds to {addr:?}"
+                );
+
+                sleep_duration = (sleep_duration + sleep_increment).min(600);
+                log::info!("Next sync in {sleep_duration:?} secs");
+                thread::sleep(std::time::Duration::from_secs(sleep_duration));
+            } else {
+                log::info!(
+                    "Swap Liquidity: {offer_max_size} sats | Min: {min_required} sats | Listening for requests."
+                );
+                break;
+            }
+        }
 
         Ok(())
     }
 
-    /// Checks consistency of the [`ProofOfFunding`] message and return the Hashvalue
-    /// used in hashlock transaction.
-    pub(crate) fn verify_proof_of_funding(
+    /// Atomically find and remove stale entries from `ongoing_swaps`.
+    /// Returns swap data for each idle swap.
+    /// Only drains entries where `outgoing_swapcoins` is non-empty (otherwise nothing to recover).
+    pub fn drain_idle_swaps(&self, timeout: Duration) -> Vec<IdleSwapData> {
+        let mut swaps = self.ongoing_swaps.lock().unwrap();
+        let mut idle = Vec::new();
+
+        let stale_ids: Vec<String> = swaps
+            .iter()
+            .filter(|(_, state)| {
+                state.last_activity.elapsed() > timeout && !state.outgoing_swapcoins.is_empty()
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+
+        for id in stale_ids {
+            if let Some(state) = swaps.remove(&id) {
+                idle.push(IdleSwapData {
+                    swap_id: id,
+                    protocol: state.protocol,
+                    swap_amount_sat: state.swap_amount.to_sat(),
+                    incoming_swapcoins: state.incoming_swapcoins,
+                    outgoing_swapcoins: state.outgoing_swapcoins,
+                    funding_broadcast: state.funding_broadcast,
+                });
+            }
+        }
+
+        idle
+    }
+
+    /// Remove a completed swap's entry from `ongoing_swaps`.
+    pub fn remove_swap_state(&self, swap_id: &str) {
+        let mut swaps = self.ongoing_swaps.lock().unwrap();
+        swaps.remove(swap_id);
+    }
+
+    /// Check if any swaps are currently in progress.
+    pub fn has_ongoing_swaps(&self) -> bool {
+        !self.ongoing_swaps.lock().unwrap().is_empty()
+    }
+}
+
+impl MakerTrait for MakerServer {
+    fn network_port(&self) -> u16 {
+        self.config.network_port
+    }
+
+    fn get_tweakable_keypair(
         &self,
-        message: &ProofOfFunding,
-    ) -> Result<Hash160, MakerError> {
+    ) -> Result<(bitcoin::secp256k1::SecretKey, PublicKey), MakerError> {
+        let wallet = self
+            .wallet
+            .read()
+            .map_err(|_| MakerError::General("Failed to lock wallet"))?;
+        wallet.get_tweakable_keypair().map_err(MakerError::Wallet)
+    }
+
+    fn get_fidelity_proof(&self) -> Result<FidelityProof, MakerError> {
+        let proof = self
+            .highest_fidelity_proof
+            .read()
+            .map_err(|_| MakerError::General("Failed to lock fidelity proof"))?;
+        proof
+            .clone()
+            .ok_or(MakerError::General("No fidelity proof available"))
+    }
+
+    fn get_config(&self) -> MakerConfig {
+        MakerConfig {
+            base_fee: self.config.base_fee,
+            amount_relative_fee_pct: self.config.amount_relative_fee_pct,
+            time_relative_fee_pct: self.config.time_relative_fee_pct,
+            min_swap_amount: self.config.min_swap_amount,
+            max_swap_amount: self
+                .wallet
+                .read()
+                .map(|w| w.store.offer_maxsize)
+                .unwrap_or(u64::MAX),
+            required_confirms: self.config.required_confirms,
+            supported_protocols: self.config.supported_protocols.clone(),
+        }
+    }
+
+    fn validate_swap_parameters(&self, details: &SwapDetails) -> Result<(), MakerError> {
+        use super::handlers::MIN_CONTRACT_REACTION_TIME;
+
+        let config = self.get_config();
+
+        // Check amount is within bounds
+        let amount_sat = details.amount.to_sat();
+        if amount_sat < config.min_swap_amount {
+            return Err(MakerError::General("Swap amount below minimum"));
+        }
+        if amount_sat > config.max_swap_amount {
+            return Err(MakerError::General("Swap amount above maximum"));
+        }
+
+        // Check protocol is supported
+        if !self
+            .config
+            .supported_protocols
+            .contains(&details.protocol_version)
+        {
+            return Err(MakerError::General("Protocol version not supported"));
+        }
+
+        // Check maker has enough liquidity to fund the outgoing swap
+        if let Ok(wallet) = self.wallet.read() {
+            if let Ok(balances) = wallet.get_balances() {
+                let swap_liquidity = balances.regular + balances.swap;
+                if swap_liquidity < details.amount {
+                    return Err(MakerError::General(
+                        "Not enough liquidity for this swap amount",
+                    ));
+                }
+            }
+        }
+
+        // Check timelock bounds
+        if details.protocol_version == ProtocolVersion::Legacy {
+            if details.timelock < MIN_CONTRACT_REACTION_TIME as u32 {
+                log::warn!(
+                    "Legacy timelock {} is below minimum reaction time {}",
+                    details.timelock,
+                    MIN_CONTRACT_REACTION_TIME
+                );
+                return Err(MakerError::General(
+                    "Legacy timelock is below minimum reaction time",
+                ));
+            }
+        } else if details.timelock == 0 {
+            return Err(MakerError::General("Taproot timelock is zero"));
+        }
+
+        Ok(())
+    }
+
+    fn calculate_swap_fee(&self, amount: Amount, timelock: u32) -> Amount {
+        let total_fee = self.config.base_fee as f64
+            + (amount.to_sat() as f64 * self.config.amount_relative_fee_pct) / 100.00
+            + (amount.to_sat() as f64 * timelock as f64 * self.config.time_relative_fee_pct)
+                / 100.00;
+        Amount::from_sat(total_fee.ceil() as u64)
+    }
+
+    fn network(&self) -> Network {
+        self.config.network
+    }
+
+    fn create_funding_transaction(
+        &self,
+        amount: Amount,
+        address: bitcoin::Address,
+        excluded_outpoints: Option<Vec<OutPoint>>,
+    ) -> Result<(Transaction, u32), MakerError> {
+        let mut wallet = self
+            .wallet
+            .write()
+            .map_err(|_| MakerError::General("Failed to lock wallet"))?;
+
+        let result = wallet
+            .create_funding_txes(
+                amount,
+                &[address],
+                crate::utill::MIN_FEE_RATE,
+                None,
+                excluded_outpoints,
+            )
+            .map_err(MakerError::Wallet)?;
+
+        // Return the first (and only) funding tx and its output position
+        let tx = result
+            .funding_txes
+            .into_iter()
+            .next()
+            .ok_or(MakerError::General("No funding tx created"))?;
+        let output_position = result
+            .payment_output_positions
+            .first()
+            .copied()
+            .unwrap_or(0);
+
+        Ok((tx, output_position))
+    }
+
+    fn get_current_height(&self) -> Result<u32, MakerError> {
+        let wallet = self
+            .wallet
+            .read()
+            .map_err(|_| MakerError::General("Failed to lock wallet"))?;
+        wallet
+            .rpc
+            .get_block_count()
+            .map(|h| h as u32)
+            .map_err(|e| MakerError::Wallet(crate::wallet::WalletError::Rpc(e)))
+    }
+
+    fn verify_contract_tx_on_chain(&self, txid: &bitcoin::Txid) -> Result<(), MakerError> {
+        let wallet = self
+            .wallet
+            .read()
+            .map_err(|_| MakerError::General("Failed to lock wallet"))?;
+
+        wallet
+            .rpc
+            .get_raw_transaction(txid, None)
+            .map_err(|_| MakerError::General("Incoming contract tx not found on-chain"))?;
+
+        Ok(())
+    }
+
+    fn broadcast_transaction(&self, tx: &Transaction) -> Result<bitcoin::Txid, MakerError> {
+        let wallet = self
+            .wallet
+            .read()
+            .map_err(|_| MakerError::General("Failed to lock wallet"))?;
+
+        wallet.send_tx(tx).map_err(MakerError::Wallet)
+    }
+
+    fn save_incoming_swapcoin(
+        &self,
+        swapcoin: &crate::wallet::swapcoin::IncomingSwapCoin,
+    ) -> Result<(), MakerError> {
+        let mut wallet = self
+            .wallet
+            .write()
+            .map_err(|_| MakerError::General("Failed to lock wallet"))?;
+        wallet.add_incoming_swapcoin(swapcoin);
+        wallet.save_to_disk().map_err(MakerError::Wallet)
+    }
+
+    fn save_outgoing_swapcoin(
+        &self,
+        swapcoin: &crate::wallet::swapcoin::OutgoingSwapCoin,
+    ) -> Result<(), MakerError> {
+        let mut wallet = self
+            .wallet
+            .write()
+            .map_err(|_| MakerError::General("Failed to lock wallet"))?;
+        wallet.add_outgoing_swapcoin(swapcoin);
+        wallet.save_to_disk().map_err(MakerError::Wallet)
+    }
+
+    fn register_watch_outpoint(&self, outpoint: OutPoint) {
+        self.watch_service.register_watch_request(outpoint);
+    }
+
+    fn unwatch_outpoint(&self, outpoint: OutPoint) {
+        self.watch_service.unwatch(outpoint);
+    }
+
+    fn sync_and_save_wallet(&self) -> Result<(), MakerError> {
+        self.wallet
+            .write()
+            .map_err(|_| MakerError::General("Failed to lock wallet"))?
+            .sync_and_save()
+            .map_err(MakerError::Wallet)
+    }
+
+    fn sweep_incoming_swapcoins(&self) -> Result<(), MakerError> {
+        log::info!(
+            "[{}] Sweeping coins after successful swap",
+            self.config.network_port
+        );
+
+        // Sweep all completed incoming swapcoins
+        let sweep_outcome = self
+            .wallet
+            .write()
+            .map_err(|_| MakerError::General("Failed to lock wallet"))?
+            .sweep_incoming_swapcoins(MIN_FEE_RATE)
+            .map_err(MakerError::Wallet)?;
+
+        if !sweep_outcome.is_empty() {
+            log::info!(
+                "[{}] Successfully swept {} incoming swap coins",
+                self.config.network_port,
+                sweep_outcome.resolved.len(),
+            );
+        }
+
+        // Sync and save wallet state
+        log::info!(
+            "[{}] Sync at:----sweep_incoming_swapcoins----",
+            self.config.network_port
+        );
+        self.wallet
+            .write()
+            .map_err(|_| MakerError::General("Failed to lock wallet"))?
+            .sync_and_save()
+            .map_err(MakerError::Wallet)?;
+
+        Ok(())
+    }
+
+    fn store_connection_state(&self, swap_id: &str, state: &ConnectionState) {
+        let mut swaps = self.ongoing_swaps.lock().unwrap();
+        let swap_state = swaps.entry(swap_id.to_string()).or_default();
+        swap_state.swap_amount = state.swap_amount;
+        swap_state.timelock = state.timelock;
+        swap_state.protocol = state.protocol;
+        swap_state.phase = state.phase;
+        swap_state.incoming_swapcoins = state.incoming_swapcoins.clone();
+        swap_state.outgoing_swapcoins = state.outgoing_swapcoins.clone();
+        swap_state.pending_funding_txes = state.pending_funding_txes.clone();
+        swap_state.funding_broadcast = state.funding_broadcast;
+        swap_state.contract_feerate = state.contract_feerate;
+        swap_state.reserve_utxo = state.reserve_utxo.clone();
+        swap_state.last_activity = Instant::now();
+        log::debug!(
+            "[{}] Stored connection state for {}: amount={}, timelock={}, protocol={:?}, outgoing_count={}",
+            self.config.network_port,
+            swap_id,
+            state.swap_amount,
+            state.timelock,
+            state.protocol,
+            state.outgoing_swapcoins.len()
+        );
+    }
+
+    fn get_connection_state(&self, swap_id: &str) -> Option<ConnectionState> {
+        let swaps = self.ongoing_swaps.lock().unwrap();
+        swaps.get(swap_id).map(|s| {
+            let mut state = ConnectionState::new(s.protocol);
+            state.swap_id = Some(swap_id.to_string());
+            state.swap_amount = s.swap_amount;
+            state.timelock = s.timelock;
+            state.phase = s.phase;
+            state.incoming_swapcoins = s.incoming_swapcoins.clone();
+            state.outgoing_swapcoins = s.outgoing_swapcoins.clone();
+            state.pending_funding_txes = s.pending_funding_txes.clone();
+            state.funding_broadcast = s.funding_broadcast;
+            state.contract_feerate = s.contract_feerate;
+            state.reserve_utxo = s.reserve_utxo.clone();
+            state
+        })
+    }
+
+    fn remove_connection_state(&self, swap_id: &str) {
+        self.remove_swap_state(swap_id);
+    }
+
+    fn data_dir(&self) -> &std::path::Path {
+        &self.data_dir
+    }
+
+    fn collect_excluded_utxos(&self, current_swap_id: &str) -> Vec<OutPoint> {
+        let swaps = self.ongoing_swaps.lock().unwrap();
+        swaps
+            .iter()
+            .filter(|(id, _)| id.as_str() != current_swap_id)
+            .flat_map(|(_, state)| state.reserve_utxo.clone())
+            .collect()
+    }
+
+    fn verify_and_sign_sender_contract_txs(
+        &self,
+        txs_info: &[crate::protocol::legacy_messages::ContractTxInfoForSender],
+        hashvalue: &crate::protocol::Hash160,
+        locktime: u16,
+    ) -> Result<Vec<bitcoin::ecdsa::Signature>, MakerError> {
+        log::info!(
+            "[{}] Verifying and signing {} sender contract txs",
+            self.config.network_port,
+            txs_info.len()
+        );
+
+        // Full verification: multisig format, pubkeys, structure, P2WSH output
+        let (tweakable_privkey, tweakable_pubkey) = self.get_tweakable_keypair()?;
+        super::legacy_verification::verify_req_contract_sigs_for_sender(
+            txs_info,
+            &tweakable_pubkey,
+            hashvalue,
+            locktime,
+            self.config.network_port,
+        )?;
+
+        let mut sigs = Vec::new();
+
+        for txinfo in txs_info {
+            self.wallet
+                .write()
+                .map_err(|_| MakerError::General("Failed to lock wallet"))?
+                .cache_prevout_to_contract(
+                    txinfo.senders_contract_tx.input[0].previous_output,
+                    txinfo.senders_contract_tx.output[0].script_pubkey.clone(),
+                )?;
+
+            // Derive multisig privkey using the nonce
+            let multisig_privkey = tweakable_privkey
+                .add_tweak(&txinfo.multisig_nonce.into())
+                .map_err(|_| MakerError::General("Failed to derive multisig privkey"))?;
+
+            // Sign the contract transaction
+            let sig = crate::protocol::contract::sign_contract_tx(
+                &txinfo.senders_contract_tx,
+                &txinfo.multisig_redeemscript,
+                txinfo.funding_input_value,
+                &multisig_privkey,
+            )
+            .map_err(|e| {
+                log::error!("Failed to sign contract tx: {:?}", e);
+                MakerError::General("Failed to sign contract transaction")
+            })?;
+
+            log::debug!("[{}] Signed sender contract tx", self.config.network_port);
+            sigs.push(sig);
+        }
+
+        log::info!(
+            "[{}] Generated {} signatures for sender contracts",
+            self.config.network_port,
+            sigs.len()
+        );
+        Ok(sigs)
+    }
+
+    fn verify_proof_of_funding(
+        &self,
+        message: &crate::protocol::legacy_messages::ProofOfFunding,
+    ) -> Result<crate::protocol::Hash160, MakerError> {
+        use super::handlers::MIN_CONTRACT_REACTION_TIME;
+        use crate::{
+            protocol::contract::{
+                check_hashlock_has_pubkey, check_multisig_has_pubkey,
+                check_reedemscript_is_multisig, read_contract_locktime,
+                read_hashvalue_from_contract,
+            },
+            utill::{redeemscript_to_scriptpubkey, REQUIRED_CONFIRMS},
+        };
+        use bitcoin::{hashes::Hash, OutPoint};
+        use bitcoind::bitcoincore_rpc::RpcApi;
+
+        log::info!(
+            "[{}] Verifying proof of funding for swap {}",
+            self.config.network_port,
+            message.id
+        );
+
         if message.confirmed_funding_txes.is_empty() {
             return Err(MakerError::General("No funding txs provided by Taker"));
         }
 
+        let min_reaction_time = MIN_CONTRACT_REACTION_TIME;
+        let mut hashvalue: Option<crate::protocol::Hash160> = None;
+
         for funding_info in &message.confirmed_funding_txes {
-            // check that the new locktime is sufficiently short enough compared to the
-            // locktime in the provided funding tx
+            // Check that the new locktime is sufficiently short enough
             let locktime = read_contract_locktime(&funding_info.contract_redeemscript)?;
-            if locktime - message.refund_locktime < MIN_CONTRACT_REACTION_TIME {
+            // Use saturating_sub to avoid overflow
+            let locktime_diff = locktime.saturating_sub(message.refund_locktime);
+            if locktime_diff < min_reaction_time {
                 return Err(MakerError::General(
                     "Next hop locktime too close to current hop locktime",
                 ));
             }
 
-            let funding_output_index = find_funding_output_index(funding_info)?;
+            // Find the funding output index
+            let multisig_spk = redeemscript_to_scriptpubkey(&funding_info.multisig_redeemscript)?;
+            let funding_output_index = funding_info
+                .funding_tx
+                .output
+                .iter()
+                .position(|o| o.script_pubkey == multisig_spk)
+                .ok_or(MakerError::General("Funding output not found"))?
+                as u32;
 
-            // check the funding_tx is confirmed to required depth
-            if let Some(txout) = self
+            // Check the funding_tx is confirmed to required depth
+            let wallet_read = self
                 .wallet
-                .read()?
+                .read()
+                .map_err(|_| MakerError::General("Failed to lock wallet"))?;
+
+            if let Some(txout) = wallet_read
                 .rpc
                 .get_tx_out(
                     &funding_info.funding_tx.compute_txid(),
@@ -428,592 +1205,229 @@ impl Maker {
 
             check_reedemscript_is_multisig(&funding_info.multisig_redeemscript)?;
 
-            let (_, tweabale_pubkey) = self.wallet.read()?.get_tweakable_keypair()?;
+            let (_, tweakable_pubkey) = wallet_read.get_tweakable_keypair()?;
 
             check_multisig_has_pubkey(
                 &funding_info.multisig_redeemscript,
-                &tweabale_pubkey,
+                &tweakable_pubkey,
                 &funding_info.multisig_nonce,
             )?;
 
             check_hashlock_has_pubkey(
                 &funding_info.contract_redeemscript,
-                &tweabale_pubkey,
+                &tweakable_pubkey,
                 &funding_info.hashlock_nonce,
             )?;
 
-            // check that the provided contract matches the scriptpubkey from the
-            // cache which was populated when the ReqContractSigsForSender message arrived
+            // Check that the provided contract matches the scriptpubkey from the cache
             let contract_spk = redeemscript_to_scriptpubkey(&funding_info.contract_redeemscript)?;
 
-            if !self.wallet.read()?.does_prevout_match_cached_contract(
-                &(OutPoint {
+            if !wallet_read.does_prevout_match_cached_contract(
+                &OutPoint {
                     txid: funding_info.funding_tx.compute_txid(),
                     vout: funding_output_index,
-                }),
+                },
                 &contract_spk,
             )? {
                 return Err(MakerError::General(
                     "Provided contract does not match sender contract tx, rejecting",
                 ));
             }
+
+            // Extract and verify hashvalue
+            let this_hashvalue = read_hashvalue_from_contract(&funding_info.contract_redeemscript)?;
+            if let Some(ref prev_hashvalue) = hashvalue {
+                if *prev_hashvalue != this_hashvalue {
+                    return Err(MakerError::General("Hash values in contracts do not match"));
+                }
+            } else {
+                hashvalue = Some(this_hashvalue);
+            }
         }
 
-        Ok(check_hashvalues_are_equal(message)?)
+        let hashvalue = hashvalue.ok_or(MakerError::General("No hashvalue found in contracts"))?;
+        log::info!(
+            "[{}] Proof of funding verified successfully, hashvalue={:?}",
+            self.config.network_port,
+            hashvalue.to_byte_array()
+        );
+        Ok(hashvalue)
     }
 
-    /// Verify the contract transaction for Sender and return the signatures.
-    pub(crate) fn verify_and_sign_contract_tx(
+    fn initialize_coinswap(
         &self,
-        message: &ReqContractSigsForSender,
-    ) -> Result<Vec<Signature>, MakerError> {
-        let mut sigs = Vec::<Signature>::new();
-        for txinfo in &message.txs_info {
-            if txinfo.senders_contract_tx.input.len() != 1
-                || txinfo.senders_contract_tx.output.len() != 1
-            {
-                return Err(MakerError::General(
-                    "Invalid number of inputs or outputs in contract transaction",
-                ));
-            }
+        send_amount: Amount,
+        next_multisig_pubkeys: &[PublicKey],
+        next_hashlock_pubkeys: &[PublicKey],
+        hashvalue: crate::protocol::Hash160,
+        locktime: u16,
+        contract_feerate: f64,
+        excluded_outpoints: Option<Vec<OutPoint>>,
+    ) -> Result<(Vec<Transaction>, Vec<OutgoingSwapCoin>, Amount), MakerError> {
+        log::info!(
+            "[{}] Initializing coinswap: amount={} sats, {} pubkeys",
+            self.config.network_port,
+            send_amount.to_sat(),
+            next_multisig_pubkeys.len()
+        );
 
-            if !self.wallet.read()?.does_prevout_match_cached_contract(
-                &txinfo.senders_contract_tx.input[0].previous_output,
-                &txinfo.senders_contract_tx.output[0].script_pubkey,
-            )? {
-                return Err(MakerError::General(
-                    "Taker attempting multiple contract attacks, rejecting",
-                ));
-            }
+        let mut wallet = self
+            .wallet
+            .write()
+            .map_err(|_| MakerError::General("Failed to lock wallet"))?;
 
-            let (tweakable_privkey, tweakable_pubkey) =
-                self.wallet.read()?.get_tweakable_keypair()?;
+        let (coinswap_addresses, my_multisig_privkeys): (Vec<_>, Vec<_>) = next_multisig_pubkeys
+            .iter()
+            .map(|other_key| wallet.create_and_import_coinswap_address(other_key))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(MakerError::Wallet)?
+            .into_iter()
+            .unzip();
 
-            check_multisig_has_pubkey(
-                &txinfo.multisig_redeemscript,
-                &tweakable_pubkey,
-                &txinfo.multisig_nonce,
+        let create_funding_txes_result = wallet
+            .create_funding_txes(
+                send_amount,
+                &coinswap_addresses,
+                contract_feerate,
+                None,
+                excluded_outpoints,
+            )
+            .map_err(MakerError::Wallet)?;
+
+        let mut outgoing_swapcoins = Vec::new();
+        for (
+            (((my_funding_tx, &utxo_index), &my_multisig_privkey), &other_multisig_pubkey),
+            hashlock_pubkey,
+        ) in create_funding_txes_result
+            .funding_txes
+            .iter()
+            .zip(create_funding_txes_result.payment_output_positions.iter())
+            .zip(my_multisig_privkeys.iter())
+            .zip(next_multisig_pubkeys.iter())
+            .zip(next_hashlock_pubkeys.iter())
+        {
+            let (timelock_pubkey, timelock_privkey) = crate::utill::generate_keypair();
+            let contract_redeemscript = crate::protocol::contract::create_contract_redeemscript(
+                hashlock_pubkey,
+                &timelock_pubkey,
+                &hashvalue,
+                &locktime,
+            );
+            let funding_amount = my_funding_tx.output[utxo_index as usize].value;
+            let my_senders_contract_tx = crate::protocol::contract::create_senders_contract_tx(
+                bitcoin::OutPoint {
+                    txid: my_funding_tx.compute_txid(),
+                    vout: utxo_index,
+                },
+                funding_amount,
+                &contract_redeemscript,
             )?;
 
-            let secp = Secp256k1::new();
-
-            let hashlock_privkey = tweakable_privkey.add_tweak(&txinfo.hashlock_nonce.into())?;
-
-            let hashlock_pubkey = PublicKey {
-                compressed: true,
-                inner: secp256k1::PublicKey::from_secret_key(&secp, &hashlock_privkey),
-            };
-
-            crate::protocol::contract::is_contract_out_valid(
-                &txinfo.senders_contract_tx.output[0],
-                &hashlock_pubkey,
-                &txinfo.timelock_pubkey,
-                &message.hashvalue,
-                &message.locktime,
-                &MIN_CONTRACT_REACTION_TIME,
-            )?;
-
-            self.wallet.write()?.cache_prevout_to_contract(
-                txinfo.senders_contract_tx.input[0].previous_output,
-                txinfo.senders_contract_tx.output[0].script_pubkey.clone(),
-            )?;
-
-            let multisig_privkey = tweakable_privkey.add_tweak(&txinfo.multisig_nonce.into())?;
-
-            let sig = crate::protocol::contract::sign_contract_tx(
-                &txinfo.senders_contract_tx,
-                &txinfo.multisig_redeemscript,
-                txinfo.funding_input_value,
-                &multisig_privkey,
-            )?;
-            sigs.push(sig);
+            outgoing_swapcoins.push(OutgoingSwapCoin::new_legacy(
+                my_multisig_privkey,
+                other_multisig_pubkey,
+                my_senders_contract_tx,
+                contract_redeemscript,
+                timelock_privkey,
+                funding_amount,
+            ));
         }
-        Ok(sigs)
+
+        let mining_fees = Amount::from_sat(create_funding_txes_result.total_miner_fee);
+
+        log::info!(
+            "[{}] Created {} funding txs and {} outgoing swapcoins, mining_fees={}",
+            self.config.network_port,
+            create_funding_txes_result.funding_txes.len(),
+            outgoing_swapcoins.len(),
+            mining_fees
+        );
+
+        Ok((
+            create_funding_txes_result.funding_txes,
+            outgoing_swapcoins,
+            mining_fees,
+        ))
     }
 
-    pub(crate) fn send_watch_request(
+    fn find_outgoing_swapcoin(
         &self,
-        swap_coin: &impl SwapCoin,
-    ) -> Result<Vec<Transaction>, MakerError> {
-        let mut responses = Vec::new();
-
-        let contract_tx = swap_coin.get_contract_tx();
-        let contract_txid = contract_tx.compute_txid();
-
-        for (vout, _) in contract_tx.output.iter().enumerate() {
-            let outpoint = OutPoint {
-                txid: contract_txid,
-                vout: vout as u32,
-            };
-            self.watch_service.watch_request(outpoint);
-            let watch_event = self.watch_service.wait_for_event();
-
-            if let Some(WatcherEvent::UtxoSpent {
-                spending_tx: Some(spending_tx),
-                ..
-            }) = watch_event
-            {
-                responses.push(spending_tx);
+        multisig_redeemscript: &bitcoin::ScriptBuf,
+    ) -> Option<OutgoingSwapCoin> {
+        // Check the ongoing swap states for outgoing swapcoins
+        if let Ok(swaps) = self.ongoing_swaps.lock() {
+            for state in swaps.values() {
+                for outgoing in &state.outgoing_swapcoins {
+                    if outgoing.protocol == crate::protocol::ProtocolVersion::Legacy {
+                        if let (Some(my_pubkey), Some(other_pubkey)) =
+                            (&outgoing.my_pubkey, &outgoing.other_pubkey)
+                        {
+                            let computed_script =
+                                crate::protocol::contract::create_multisig_redeemscript(
+                                    my_pubkey,
+                                    other_pubkey,
+                                );
+                            if &computed_script == multisig_redeemscript {
+                                log::debug!(
+                                    "[{}] Found outgoing swapcoin in ongoing swap state",
+                                    self.config.network_port
+                                );
+                                return Some(outgoing.clone());
+                            }
+                        }
+                    }
+                }
             }
         }
-        Ok(responses)
+
+        // Check outgoing swapcoins in wallet
+        if let Ok(wallet) = self.wallet.read() {
+            if let Some(swapcoin) = wallet.find_outgoing_swapcoin_by_multisig(multisig_redeemscript)
+            {
+                log::debug!(
+                    "[{}] Found outgoing swapcoin in wallet store",
+                    self.config.network_port
+                );
+                return Some(swapcoin.clone());
+            }
+        }
+
+        log::debug!(
+            "[{}] No outgoing swapcoin found for multisig script",
+            self.config.network_port
+        );
+        None
+    }
+
+    #[cfg(feature = "integration-test")]
+    fn behavior(&self) -> MakerBehavior {
+        self.behavior
     }
 }
 
-impl MakerRpc for Maker {
+impl MakerRpc for MakerServer {
     fn wallet(&self) -> &RwLock<Wallet> {
         &self.wallet
     }
-    fn data_dir(&self) -> &Path {
+
+    fn data_dir(&self) -> &std::path::Path {
         &self.data_dir
     }
-    fn config(&self) -> &MakerConfig {
+
+    fn config(&self) -> &MakerServerConfig {
         &self.config
     }
+
     fn shutdown(&self) -> &AtomicBool {
         &self.shutdown
     }
+
     fn get_tor_hostname(&self) -> Result<String, crate::utill::TorError> {
-        get_tor_hostname(
+        crate::utill::get_tor_hostname(
             &self.data_dir,
             self.config.control_port,
             self.config.network_port,
             &self.config.tor_auth_password,
         )
     }
-}
-
-/// Constantly checks for contract transactions in the bitcoin network for all
-/// unsettled swap.
-///
-/// If any one of them is ever observed, run the recovery routine.
-pub(crate) fn check_for_broadcasted_contracts(maker: Arc<Maker>) -> Result<(), MakerError> {
-    let mut failed_swap_ip = Vec::new();
-    loop {
-        if maker.shutdown.load(Relaxed) {
-            break;
-        }
-        // An extra scope to release all locks when done.
-        {
-            let mut lock_onstate = maker.ongoing_swap_state.lock()?;
-            for (ip, (connection_state, _)) in lock_onstate.iter_mut() {
-                let txids_to_watch = connection_state
-                    .incoming_swapcoins
-                    .iter()
-                    .map(|is| is.contract_tx.compute_txid())
-                    .chain(
-                        connection_state
-                            .outgoing_swapcoins
-                            .iter()
-                            .map(|oc| oc.contract_tx.compute_txid()),
-                    )
-                    .collect::<Vec<_>>();
-
-                // No need to check for other contracts in the connection state, if any one of them
-                // is ever observed in the mempool/block, run recovery routine.
-                for txid in txids_to_watch {
-                    let read_lock = maker.wallet.read()?;
-                    let transaction_broadcasted =
-                        read_lock.rpc.get_raw_transaction_info(&txid, None).is_ok();
-                    drop(read_lock);
-                    if transaction_broadcasted {
-                        // Something is broadcasted. Report, Recover and Abort.
-                        log::warn!(
-                            "[{}] Contract txs broadcasted!! txid: {} Recovering from ongoing swaps.",
-                            maker.config.network_port,
-                            txid
-                        );
-                        failed_swap_ip.push(ip.clone());
-
-                        // Spawn a separate thread to wait for contract maturity and broadcasting timelocked/hashlocked.
-                        let maker_clone = maker.clone();
-                        log::info!(
-                            "[{}] Spawning recovery thread after seeing contracts in mempool",
-                            maker.config.network_port
-                        );
-
-                        let incomings = connection_state.incoming_swapcoins.clone();
-                        let outgoings = connection_state.outgoing_swapcoins.clone();
-
-                        let handle = std::thread::Builder::new()
-                            .name("Swap recovery thread".to_string())
-                            .spawn(move || {
-                                if let Err(e) = recover_from_swap(maker_clone, incomings, outgoings)
-                                {
-                                    log::error!("Failed to recover from swap due to: {e:?}");
-                                }
-                            })?;
-                        maker.thread_pool.add_thread(handle);
-                        // Clear the state value here
-                        *connection_state = ConnectionState::default();
-                        break;
-                    }
-                }
-            }
-
-            // Clear the state entry here
-            for ip in failed_swap_ip.iter() {
-                lock_onstate.remove(ip);
-            }
-        } // All locks are cleared here.
-
-        std::thread::sleep(HEART_BEAT_INTERVAL);
-    }
-
-    Ok(())
-}
-
-/// Checks for swapcoins present in wallet store on reboot and starts recovery if found on bitcoind network.
-/// If any one of them is ever observed, run the recovery routine.
-pub(crate) fn restore_broadcasted_contracts_on_reboot(
-    maker: &Arc<Maker>,
-) -> Result<(), MakerError> {
-    let (incomings, outgoings) = maker.wallet.read()?.find_unfinished_swapcoins();
-    // Spawn a separate thread to wait for contract maturity and broadcasting timelocked/hashlocked.
-    let maker_clone = maker.clone();
-    let handle = std::thread::Builder::new()
-        .name("Swap recovery thread".to_string())
-        .spawn(move || {
-            if let Err(e) = recover_from_swap(maker_clone, incomings, outgoings) {
-                log::error!("Failed to recover from swap due to: {e:?}");
-            }
-        })?;
-    maker.thread_pool.add_thread(handle);
-
-    Ok(())
-}
-
-/// Check that if any Taker connection went idle.
-///
-/// If a connection remains idle for more than idle timeout time, that's a potential DOS attack.
-/// Broadcast the contract transactions and claim funds via timelock.
-pub(crate) fn check_for_idle_states(maker: Arc<Maker>) -> Result<(), MakerError> {
-    let mut bad_ip = Vec::new();
-
-    loop {
-        if maker.shutdown.load(Relaxed) {
-            break;
-        }
-        let current_time = Instant::now();
-
-        // Extra scope to release all locks when done.
-        {
-            let mut lock_on_state = maker.ongoing_swap_state.lock()?;
-            for (ip, (state, last_connected_time)) in lock_on_state.iter_mut() {
-                let no_response_since =
-                    current_time.saturating_duration_since(*last_connected_time);
-
-                if no_response_since > IDLE_CONNECTION_TIMEOUT {
-                    log::error!(
-                        "[{}] Potential Dropped Connection from taker. No response since : {} secs. Recovering from swap",
-                        maker.config.network_port,
-                        no_response_since.as_secs()
-                    );
-                    bad_ip.push(ip.clone());
-                    // Spawn a separate thread to wait for contract maturity and broadcasting timelocked,hashlocked
-                    let maker_clone = maker.clone();
-                    log::info!(
-                        "[{}] Spawning recovery thread after Taker dropped",
-                        maker.config.network_port
-                    );
-
-                    let incomings = state.incoming_swapcoins.clone();
-                    let outgoings = state.outgoing_swapcoins.clone();
-
-                    let handle = std::thread::Builder::new()
-                        .name("Swap Recovery Thread".to_string())
-                        .spawn(move || {
-                            if let Err(e) = recover_from_swap(maker_clone, incomings, outgoings) {
-                                log::error!("Failed to recover from swap due to: {e:?}");
-                            }
-                        })?;
-                    maker.thread_pool.add_thread(handle);
-                    // Clear the state values here
-                    *state = ConnectionState::default();
-                    break;
-                }
-            }
-
-            // Clear the state entry here
-            for ip in bad_ip.iter() {
-                lock_on_state.remove(ip);
-            }
-        } // All locks are cleared here
-
-        std::thread::sleep(HEART_BEAT_INTERVAL);
-    }
-
-    Ok(())
-}
-
-pub(crate) fn recover_from_swap(
-    maker: Arc<Maker>,
-    incoming_swapcoins: Vec<IncomingSwapCoin>,
-    outgoing_swapcoins: Vec<OutgoingSwapCoin>,
-) -> Result<(), MakerError> {
-    let timelock = outgoing_swapcoins
-        .first()
-        .and_then(|o| o.get_timelock().ok())
-        .ok_or(MakerError::General("missing timelock on outgoing swapcoin"))?
-        as u32;
-
-    let start_height = maker
-        .wallet
-        .read()?
-        .rpc
-        .get_block_count()
-        .map_err(WalletError::Rpc)? as u32;
-    let timelock_expiry = start_height.saturating_add(timelock);
-
-    log::info!(
-        "[{}] recover_from_swap started | height={} timelock_expiry={}",
-        maker.config.network_port,
-        start_height,
-        timelock_expiry
-    );
-
-    while !maker.shutdown.load(Relaxed) {
-        let current_height = maker
-            .wallet
-            .read()?
-            .rpc
-            .get_block_count()
-            .map_err(WalletError::Rpc)? as u32;
-
-        if current_height >= timelock_expiry {
-            log::info!(
-                "[{}] timelock expired at {} (expiry={}), using timelock path",
-                maker.config.network_port,
-                current_height,
-                timelock_expiry
-            );
-            return recover_via_timelock(maker, outgoing_swapcoins);
-        }
-
-        check_for_watch_response(&maker, &outgoing_swapcoins, &incoming_swapcoins)?;
-
-        let wallet = maker.wallet.read()?;
-        let all_preimages_known = incoming_swapcoins.iter().all(|incoming| {
-            wallet
-                .find_incoming_swapcoin(&incoming.get_multisig_redeemscript())
-                .is_some_and(|s| s.is_hash_preimage_known())
-        });
-        drop(wallet);
-
-        if all_preimages_known {
-            log::info!(
-                "[{}] all preimages known at height {}, using hashlock path",
-                maker.config.network_port,
-                current_height
-            );
-            return recover_via_hashlock(maker, incoming_swapcoins);
-        }
-
-        std::thread::sleep(HEART_BEAT_INTERVAL);
-    }
-
-    Ok(())
-}
-
-fn recover_via_hashlock(
-    maker: Arc<Maker>,
-    incoming: Vec<IncomingSwapCoin>,
-) -> Result<(), MakerError> {
-    let infos = maker
-        .wallet
-        .write()?
-        .broadcast_incoming_contracts(incoming.clone())?;
-
-    while !maker.shutdown.load(Relaxed) {
-        let broadcasted = maker
-            .wallet
-            .write()?
-            .spend_from_hashlock_contract(&infos, &maker.watch_service)?;
-        log::info!(
-            "[{}] Maker hashlock recovery: {}/{} txs broadcasted",
-            maker.config.network_port,
-            broadcasted.len(),
-            incoming.len()
-        );
-        if broadcasted.len() == incoming.len() {
-            let network = maker.wallet.read()?.store.network.to_string();
-            for (i, inc) in incoming.iter().enumerate() {
-                let incoming_txid = inc.contract_tx.compute_txid();
-                let swap_id = format!("recovery_hashlock_{}", incoming_txid);
-
-                let report = SwapReport::maker_recovery(
-                    swap_id,
-                    "hashlock",
-                    inc.funding_amount.to_sat(),
-                    0,
-                    incoming_txid.to_string(),
-                    "N/A".to_string(),
-                    broadcasted
-                        .get(i)
-                        .map(|t| t.compute_txid().to_string())
-                        .unwrap_or_default(),
-                    0,
-                    network.clone(),
-                );
-                report.print();
-                if let Err(e) = report.save_to_disk(&maker.data_dir) {
-                    log::warn!("Failed to save hashlock recovery report: {:?}", e);
-                }
-            }
-
-            #[cfg(feature = "integration-test")]
-            maker.shutdown.store(true, Relaxed);
-            break;
-        }
-        std::thread::sleep(HEART_BEAT_INTERVAL);
-    }
-    Ok(())
-}
-
-fn recover_via_timelock(
-    maker: Arc<Maker>,
-    outgoing: Vec<OutgoingSwapCoin>,
-) -> Result<(), MakerError> {
-    let infos = maker
-        .wallet
-        .write()?
-        .broadcast_outgoing_contracts(outgoing.clone())?;
-
-    while !maker.shutdown.load(Relaxed) {
-        let broadcasted = maker
-            .wallet
-            .write()?
-            .spend_from_timelock_contract(&infos, &maker.watch_service)?;
-        log::info!(
-            "[{}] Maker timelock recovery: {}/{} txs broadcasted",
-            maker.config.network_port,
-            broadcasted.len(),
-            outgoing.len()
-        );
-        if broadcasted.len() == outgoing.len() {
-            let network = maker.wallet.read()?.store.network.to_string();
-            for (i, out) in outgoing.iter().enumerate() {
-                let outgoing_txid = out.contract_tx.compute_txid();
-                let swap_id = format!("recovery_timelock_{}", outgoing_txid);
-                let timelock = out.get_timelock().unwrap_or(0);
-
-                let report = SwapReport::maker_recovery(
-                    swap_id,
-                    "timelock",
-                    0,
-                    out.funding_amount.to_sat(),
-                    "N/A".to_string(),
-                    outgoing_txid.to_string(),
-                    broadcasted
-                        .get(i)
-                        .map(|t| t.compute_txid().to_string())
-                        .unwrap_or_default(),
-                    timelock,
-                    network.clone(),
-                );
-                report.print();
-                if let Err(e) = report.save_to_disk(&maker.data_dir) {
-                    log::warn!("Failed to save timelock recovery report: {:?}", e);
-                }
-            }
-
-            #[cfg(feature = "integration-test")]
-            maker.shutdown.store(true, Relaxed);
-            break;
-        }
-        std::thread::sleep(BLOCK_DELAY);
-    }
-    Ok(())
-}
-
-/// Checks for `WatchResponse` messages from the tracker, extracts preimages from mempool
-/// transactions, and updates maker swapcoins accordingly.
-fn check_for_watch_response(
-    maker: &Maker,
-    outgoings: &[OutgoingSwapCoin],
-    incomings: &[IncomingSwapCoin],
-) -> Result<(), MakerError> {
-    let mut seen_outpoints = HashSet::new();
-    let mut preimages = Vec::new();
-
-    // Collect all responses for the outgoing contracts
-    let mut responses = Vec::new();
-    for outgoing in outgoings {
-        responses.extend(maker.send_watch_request(outgoing)?);
-    }
-
-    for transaction in responses {
-        log::info!(
-            "[{}] Received WatchResponse with mempool txs: {:?}",
-            maker.config.network_port,
-            transaction
-        );
-
-        for input in &transaction.input {
-            let outpoint = (input.previous_output.txid, input.previous_output.vout);
-            if seen_outpoints.insert(outpoint)
-                && input.witness.len() >= MIN_WITNESS_ITEM_FOR_HASHLOCK
-                && input.witness[1].len() == PREIMAGE_LEN
-            {
-                if let Ok(preimage) = input.witness[1].try_into() {
-                    preimages.push(preimage);
-                }
-            }
-        }
-        update_swapcoins_with_preimages(maker, incomings, &preimages, true)?;
-        update_swapcoins_with_preimages(maker, outgoings, &preimages, false)?;
-    }
-
-    Ok(())
-}
-
-fn update_swapcoins_with_preimages<T: SwapCoin>(
-    maker: &Maker,
-    coins: &[T],
-    preimages: &[[u8; 32]],
-    is_incoming: bool,
-) -> Result<(), MakerError> {
-    if preimages.is_empty() {
-        return Ok(());
-    }
-
-    let mut wallet = maker.wallet.write()?;
-
-    let mut apply_preimage = |redeemscript: &ScriptBuf, preimage: [u8; 32]| {
-        if is_incoming {
-            if let Some(swap) = wallet.find_incoming_swapcoin_mut(redeemscript) {
-                swap.hash_preimage = Some(preimage);
-                return true;
-            }
-        } else if let Some(swap) = wallet.find_outgoing_swapcoin_mut(redeemscript) {
-            swap.hash_preimage = Some(preimage);
-            return true;
-        }
-        false
-    };
-
-    for coin in coins {
-        for preimage in preimages {
-            let hash = Hash160::hash(preimage);
-            let matches_contract =
-                read_hashvalue_from_contract(&coin.get_contract_redeemscript())? == hash;
-            if matches_contract {
-                let redeemscript = coin.get_multisig_redeemscript();
-                if apply_preimage(&redeemscript, *preimage) {
-                    log::info!(
-                        "[{}] Applied preimage for {} swapcoin {:?}",
-                        maker.config.network_port,
-                        if is_incoming { "incoming" } else { "outgoing" },
-                        redeemscript
-                    );
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
-
-impl Role for Maker {
-    const RUN_DISCOVERY: bool = false;
 }

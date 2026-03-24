@@ -100,9 +100,9 @@ impl std::fmt::Display for SwapStatus {
 /// charged by each maker in the multi-hop swap.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MakerFeeInfo {
-    /// Zero-based index of the maker in the swap route.
+    /// Zero-based index of the Maker in the swap route.
     pub maker_index: usize,
-    /// Network address of the maker (e.g., onion address with port).
+    /// Network address of the Maker (e.g., onion address with port).
     pub maker_address: String,
     /// Fixed base fee charged by this maker (in satoshis).
     pub base_fee: f64,
@@ -294,34 +294,6 @@ impl SwapReport {
                 incoming_contract_txid: Some(incoming_contract_txid),
                 outgoing_contract_txid: Some(outgoing_contract_txid),
                 recovery_txids: Some(vec![recovery_txid]),
-                timelock,
-                ..Default::default()
-            },
-            0.0,
-        )
-    }
-
-    /// Create a failed maker swap report.
-    pub fn maker_failed(
-        swap_id: String,
-        incoming_amount: u64,
-        outgoing_amount: u64,
-        incoming_contract_txid: String,
-        outgoing_contract_txid: String,
-        timelock: u16,
-        network: String,
-        error_message: String,
-    ) -> Self {
-        Self::maker_report(
-            Self {
-                swap_id,
-                status: SwapStatus::Failed,
-                network,
-                error_message: Some(error_message),
-                incoming_amount,
-                outgoing_amount,
-                incoming_contract_txid: Some(incoming_contract_txid),
-                outgoing_contract_txid: Some(outgoing_contract_txid),
                 timelock,
                 ..Default::default()
             },
