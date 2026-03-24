@@ -27,7 +27,7 @@ use crate::utill::{calculate_fee_sats, redeemscript_to_scriptpubkey};
 
 use super::{
     error::ProtocolError,
-    messages::{FundingTxInfo, ProofOfFunding},
+    legacy_messages::{FundingTxInfo, ProofOfFunding},
 };
 
 // relatively simple handling of miner fees for now, each funding transaction is considered
@@ -38,9 +38,9 @@ use super::{
 // but all those complications will go away when we move to ecdsa2p and scriptless scripts
 // so there's no point adding complications for something that we'll hopefully get rid of soon
 // this size here is for a tx with 2 p2wpkh outputs, 3 singlesig inputs and 1 2of2 multisig input
-// if the maker can get stuff confirmed cheaper than this then they can keep that money
-// if the maker ends up paying more then that's their problem
-// we could avoid this guessing by adding one more round trip to the protocol where the maker
+// if the Maker can get stuff confirmed cheaper than this then they can keep that money
+// if the Maker ends up paying more then that's their problem
+// we could avoid this guessing by adding one more round trip to the protocol where the Maker
 // calculates exactly how big the transactions will be and then taker knows exactly the miner fee
 // to pay for
 
@@ -53,6 +53,7 @@ const PUBKEY2_OFFSET: usize = PUBKEY1_OFFSET + PUBKEY_LENGTH + 1;
 
 /// Calculate the coin swap fee based on various parameters.
 /// swap_amount in sats, refund_locktime in blocks.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn calculate_coinswap_fee(
     // Should we consider value in Amount?
     swap_amount: u64,
@@ -129,6 +130,7 @@ pub(crate) fn calculate_pubkey_from_nonce(
 }
 
 /// Find the index of the funding output in the funding transaction.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn find_funding_output_index(
     funding_tx_info: &FundingTxInfo,
 ) -> Result<u32, ProtocolError> {
@@ -298,6 +300,7 @@ pub(crate) fn read_hashvalue_from_contract(
 }
 
 /// Check that all the contract redeemscripts involve the same hashvalue.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn check_hashvalues_are_equal(
     message: &ProofOfFunding,
 ) -> Result<Hash160, ProtocolError> {
@@ -359,16 +362,6 @@ pub(crate) fn read_hashlock_pubkey_from_contract(
         return Err(ProtocolError::General("Contract redeemscript too short"));
     }
     Ok(PublicKey::from_slice(&redeemscript.to_bytes()[27..60])?)
-}
-
-/// Read the timelock pubkey from a contract redeem script.
-pub(crate) fn read_timelock_pubkey_from_contract(
-    redeemscript: &Script,
-) -> Result<PublicKey, ProtocolError> {
-    if redeemscript.to_bytes().len() < 99 {
-        return Err(ProtocolError::General("Contract redeemscript too short"));
-    }
-    Ok(PublicKey::from_slice(&redeemscript.to_bytes()[65..98])?)
 }
 
 /// Read the pubkeys from a multisig redeem script.
@@ -487,7 +480,7 @@ pub(crate) fn sign_contract_tx(
         )?[..],
     )?;
     let secp = Secp256k1::new();
-    let sig = secp.sign_ecdsa(&sighash, privkey);
+    let sig = secp.sign_ecdsa_low_r(&sighash, privkey);
     Ok(Signature {
         signature: sig,
         sighash_type: EcdsaSighashType::All,
@@ -517,7 +510,7 @@ pub(crate) fn verify_contract_tx_sig(
 
 #[cfg(test)]
 mod test {
-    use crate::protocol::messages::NextHopInfo;
+    use crate::protocol::legacy_messages::NextHopInfo;
 
     use super::*;
     use bitcoin::{
@@ -1016,45 +1009,6 @@ mod test {
     }
 
     #[test]
-    fn test_read_timelock_pubkey_from_contract() {
-        let hashvalue = Hash160::from_slice(&thread_rng().gen::<[u8; 20]>()).unwrap();
-
-        let pub_hashlock = PublicKey::from_str(
-            "032e58afe51f9ed8ad3cc7897f634d881fdbe49a81564629ded8156bebd2ffd1af",
-        )
-        .unwrap();
-
-        let pub_timelock = PublicKey::from_str(
-            "039b6347398505f5ec93826dc61c19f47c66c0283ee9be980e29ce325a0f4679ef",
-        )
-        .unwrap();
-
-        let locktime = random::<u16>();
-
-        let contract_script =
-            create_contract_redeemscript(&pub_hashlock, &pub_timelock, &hashvalue, &locktime);
-
-        let test_timelock_pubkey_1 = read_timelock_pubkey_from_contract(&contract_script).unwrap();
-
-        assert_eq!(pub_timelock, test_timelock_pubkey_1);
-
-        let mut byte = contract_script.to_bytes();
-        while byte.len() > 98 {
-            byte.pop();
-        }
-
-        let altered_contract_script = ScriptBuf::from_bytes(byte);
-
-        let test_timelock_pubkey_2 =
-            read_timelock_pubkey_from_contract(&altered_contract_script).unwrap_err();
-        let error_message = match test_timelock_pubkey_2 {
-            ProtocolError::General(msg) => msg,
-            _ => "Not the correct Path",
-        };
-
-        assert_eq!(error_message, "Contract redeemscript too short");
-    }
-    #[test]
     fn test_check_reedemscript_is_multisig() {
         let initial_redeem_script = ScriptBuf::from(
             Vec::from_hex(
@@ -1155,11 +1109,13 @@ mod test {
 
         let msg = b"0123456789abcdefghijklmnopqrstuv";
         let sig_1 = Signature {
-            signature: secp.sign_ecdsa(&Message::from_digest_slice(msg).unwrap(), &priv_1.inner),
+            signature: secp
+                .sign_ecdsa_low_r(&Message::from_digest_slice(msg).unwrap(), &priv_1.inner),
             sighash_type: EcdsaSighashType::All,
         };
         let sig_2 = Signature {
-            signature: secp.sign_ecdsa(&Message::from_digest_slice(msg).unwrap(), &priv_2.inner),
+            signature: secp
+                .sign_ecdsa_low_r(&Message::from_digest_slice(msg).unwrap(), &priv_2.inner),
             sighash_type: EcdsaSighashType::All,
         };
         let mut tx_input_1 = TxIn::default();
@@ -1287,6 +1243,8 @@ mod test {
             next_coinswap_info: vec![NextHopInfo {
                 next_hashlock_pubkey: pub_1,
                 next_multisig_pubkey: pub_2,
+                next_multisig_nonce: SecretKey::new(&mut thread_rng()),
+                next_hashlock_nonce: SecretKey::new(&mut thread_rng()),
             }],
             refund_locktime: u16::default(),
             contract_feerate: f64::default(),
@@ -1317,6 +1275,8 @@ mod test {
             next_coinswap_info: vec![NextHopInfo {
                 next_hashlock_pubkey: pub_1,
                 next_multisig_pubkey: pub_2,
+                next_multisig_nonce: SecretKey::new(&mut thread_rng()),
+                next_hashlock_nonce: SecretKey::new(&mut thread_rng()),
             }],
             refund_locktime: u16::default(),
             contract_feerate: f64::default(),

@@ -39,6 +39,7 @@ pub struct Watcher<R: Role> {
     registry: FileRegistry,
     rx_requests: StdReceiver<WatcherCommand>,
     tx_events: CbSender<WatcherEvent>,
+    nostr_relays: Vec<String>,
     _role: PhantomData<R>,
 }
 
@@ -92,12 +93,14 @@ impl<R: Role> Watcher<R> {
         registry: FileRegistry,
         rx_requests: StdReceiver<WatcherCommand>,
         tx_events: CbSender<WatcherEvent>,
+        nostr_relays: Vec<String>,
     ) -> Self {
         Self {
             backend,
             registry,
             rx_requests,
             tx_events,
+            nostr_relays,
             _role: PhantomData,
         }
     }
@@ -118,6 +121,7 @@ impl<R: Role> Watcher<R> {
 
         let discovery_shutdown = Arc::new(AtomicBool::new(false));
         let registry = self.registry.clone();
+        let nostr_relays = self.nostr_relays.clone();
         std::thread::scope(move |s| {
             let discovery_clone = discovery_shutdown.clone();
             if R::RUN_DISCOVERY {
@@ -128,6 +132,7 @@ impl<R: Role> Watcher<R> {
                         registry,
                         discovery_shutdown.clone(),
                         initial_sync_complete,
+                        &nostr_relays,
                     ) {
                         log::error!("Discovery thread failed: {:?}", e);
                     }
@@ -220,10 +225,12 @@ impl<R: Role> Watcher<R> {
             }
             BackendEvent::BlockConnected(b) => {
                 if let Ok(block) = deserialize::<Block>(&b.hash) {
-                    self.registry.save_checkpoint(Checkpoint {
-                        height: block.bip34_block_height().unwrap(),
-                        hash: block.block_hash(),
-                    });
+                    if let Ok(height) = block.bip34_block_height() {
+                        self.registry.save_checkpoint(Checkpoint {
+                            height,
+                            hash: block.block_hash(),
+                        });
+                    }
                     process_block::<R>(block, &mut self.registry);
                 }
             }

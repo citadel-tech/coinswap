@@ -1,848 +1,560 @@
-//! Collection of all message handlers for a Maker.
-//!
-//! Implements the logic for message handling based on the current connection state.
-//! Exposes the main function [handle_message] to process incoming messages and generate outgoing messages.
-//! Also includes handlers for specific messages such as contract signatures, proof of funding, hash preimage, and private key handover.
-//! Manages wallet state, incoming and outgoing swap coins, and special behaviors defined for the Maker.
-//! The file includes functions to validate and sign contract transactions, verify proof of funding, and handle unexpected recovery scenarios.
-//! Implements the core functionality for a Maker in a Bitcoin coinswap protocol.
+//! Message handlers for the Maker.
 
 use std::{sync::Arc, time::Instant};
 
-use bitcoin::{
-    hashes::Hash,
-    hex::{Case, DisplayHex},
-    secp256k1::{self, Secp256k1},
-    Amount, OutPoint, PublicKey, Transaction, Txid,
-};
+use bitcoin::{Amount, PublicKey, Transaction};
 
-use super::{
-    api::{
-        recover_from_swap, ConnectionState, ExpectedMessage, Maker, MakerBehavior,
-        MIN_CONTRACT_REACTION_TIME, TIME_RELATIVE_FEE_PCT,
-    },
-    error::MakerError,
-};
-
+use super::error::MakerError;
 use crate::{
-    maker::rpc::server::MakerRpc,
     protocol::{
-        contract::{
-            calculate_coinswap_fee, create_receivers_contract_tx, find_funding_output_index,
-            read_hashvalue_from_contract, read_pubkeys_from_multisig_redeemscript,
+        common_messages::{
+            AckSwapDetails, FidelityProof, GetOffer, MakerHello, MakerToTakerMessage, Offer,
+            ProtocolVersion, SwapDetails, TakerHello, TakerToMakerMessage,
         },
-        error::ProtocolError,
-        messages::{
-            ContractSigsAsRecvrAndSender, ContractSigsForRecvr, ContractSigsForRecvrAndSender,
-            ContractSigsForSender, HashPreimage, MakerHello, MakerToTakerMessage, MultisigPrivkey,
-            Offer, PrivKeyHandover, ProofOfFunding, ReqContractSigsForRecvr,
-            ReqContractSigsForSender, SenderContractTxInfo, TakerToMakerMessage,
-        },
-        Hash160,
+        legacy_messages::LegacyTakerMessage,
+        taproot_messages::TaprootTakerMessage,
     },
-    taker::SwapParams,
-    utill::{calculate_fee_sats, MIN_FEE_RATE, REQUIRED_CONFIRMS},
-    wallet::{ffi::SwapReport, IncomingSwapCoin, OutgoingSwapCoin, SwapCoin, WalletError},
+    wallet::swapcoin::{IncomingSwapCoin, OutgoingSwapCoin},
 };
 
-/// The Global Handle Message function. Takes in a [`Arc<Maker>`] and handles messages
-/// according to a [`ConnectionState`].
-pub(crate) fn handle_message(
-    maker: &Arc<Maker>,
-    connection_state: &mut ConnectionState,
+/// Test-only behavior overrides for the maker.
+#[cfg(feature = "integration-test")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MakerBehavior {
+    /// Normal operation (no test override).
+    #[default]
+    Normal,
+    /// Receive contract sigs and save swapcoins, but skip funding broadcast
+    /// and close the connection. Simulates last-maker misbehavior.
+    SkipFundingBroadcast,
+    /// Close connection when receiving ReqContractSigsForSender (abort2 scenarios).
+    CloseAtReqContractSigsForSender,
+    /// Close connection when receiving ProofOfFunding (abort2 scenario).
+    CloseAtProofOfFunding,
+    /// Close connection when receiving RespContractSigsForRecvrAndSender (abort3 scenario).
+    CloseAtContractSigsForRecvrAndSender,
+    /// Close connection when receiving ReqContractSigsForRecvr (abort3 scenario).
+    CloseAtContractSigsForRecvr,
+    /// Close connection when receiving PrivateKeyHandover / hash preimage (abort3 scenario).
+    CloseAtHashPreimage,
+    /// Broadcast contract transactions after setup, then close (malice scenario).
+    BroadcastContractAfterSetup,
+    /// Close connection after sending AckSwapDetails (taproot maker abort).
+    CloseAfterAckResponse,
+    /// Close connection at private key handover phase (taproot maker abort).
+    CloseAtPrivateKeyHandover,
+    /// Close connection at contract sigs exchange (taproot recovery test).
+    CloseAtContractSigsExchange,
+    /// Close connection after sweep (taproot hashlock recovery test).
+    CloseAfterSweep,
+    /// Use an invalid fidelity bond timelock (fidelity timelock violation test).
+    InvalidFidelityTimelock,
+}
+
+/// Minimum time required to react to contract broadcasts (in blocks).
+pub const MIN_CONTRACT_REACTION_TIME: u16 = 10;
+
+/// Connection state for protocol handling.
+#[derive(Debug, Clone)]
+pub struct ConnectionState {
+    /// Protocol version being used for this connection.
+    pub protocol: ProtocolVersion,
+    /// Current phase of the swap.
+    pub phase: SwapPhase,
+    /// Unique swap identifier.
+    pub swap_id: Option<String>,
+    /// Swap amount.
+    pub swap_amount: Amount,
+    /// Timelock value (Legacy: relative CSV, Taproot: absolute CLTV height).
+    pub timelock: u32,
+    /// Relative locktime offset for deterministic fee calculation.
+    pub refund_locktime_offset: u16,
+    /// Incoming swap coins (we receive).
+    pub incoming_swapcoins: Vec<IncomingSwapCoin>,
+    /// Outgoing swap coins (we send).
+    pub outgoing_swapcoins: Vec<OutgoingSwapCoin>,
+    /// Pending funding transactions (not yet broadcast).
+    pub pending_funding_txes: Vec<Transaction>,
+    /// Contract fee rate for multi-hop swap creation.
+    pub contract_feerate: f64,
+    /// Whether the funding transaction was actually broadcast to the network.
+    pub funding_broadcast: bool,
+    /// Reserved UTXOs for this swap (prevents concurrent double-spending).
+    pub reserve_utxo: Vec<bitcoin::OutPoint>,
+    /// Last activity timestamp.
+    pub last_activity: Instant,
+    /// Swap start time for duration tracking in reports.
+    pub swap_start_time: Instant,
+}
+
+/// Phases of a swap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SwapPhase {
+    /// Initial state, awaiting hello.
+    AwaitingHello,
+    /// Hello received, awaiting offer request.
+    AwaitingOfferRequest,
+    /// Offer sent, awaiting swap details.
+    AwaitingSwapDetails,
+    /// Swap details received, awaiting contract data.
+    AwaitingContractData,
+    /// Contract data received (ECDSA: awaiting signatures, Taproot: awaiting preimage).
+    AwaitingSignaturesOrPreimage,
+    /// Signatures/preimage received, awaiting private key handover.
+    AwaitingPrivateKeyHandover,
+    /// Swap completed.
+    Completed,
+}
+
+impl Default for ConnectionState {
+    fn default() -> Self {
+        ConnectionState {
+            protocol: ProtocolVersion::Legacy,
+            phase: SwapPhase::AwaitingHello,
+            swap_id: None,
+            swap_amount: Amount::ZERO,
+            timelock: 0,
+            refund_locktime_offset: 0,
+            incoming_swapcoins: Vec::new(),
+            outgoing_swapcoins: Vec::new(),
+            pending_funding_txes: Vec::new(),
+            contract_feerate: 0.0,
+            funding_broadcast: false,
+            reserve_utxo: Vec::new(),
+            last_activity: Instant::now(),
+            swap_start_time: Instant::now(),
+        }
+    }
+}
+
+impl ConnectionState {
+    /// Create a new connection state for a specific protocol version.
+    pub fn new(protocol: ProtocolVersion) -> Self {
+        ConnectionState {
+            protocol,
+            ..Default::default()
+        }
+    }
+
+    /// Update the last activity timestamp.
+    pub fn touch(&mut self) {
+        self.last_activity = Instant::now();
+    }
+
+    /// Check if the swap has timed out.
+    pub fn is_timed_out(&self, timeout_secs: u64) -> bool {
+        self.last_activity.elapsed().as_secs() > timeout_secs
+    }
+
+    /// Enforce that the current phase matches one of the expected phases.
+    pub fn expect_phase(&self, expected: &[SwapPhase]) -> Result<(), MakerError> {
+        if expected.contains(&self.phase) {
+            Ok(())
+        } else {
+            Err(MakerError::General(
+                format!(
+                    "Unexpected message in phase {:?} (expected one of {:?})",
+                    self.phase, expected
+                )
+                .leak(),
+            ))
+        }
+    }
+
+    /// Verify that the incoming message's swap_id matches the state's swap_id.
+    /// If the state has no swap_id yet (initial setup), this is a no-op.
+    pub fn check_swap_id(&self, msg_swap_id: &str) -> Result<(), MakerError> {
+        if let Some(ref expected) = self.swap_id {
+            if expected != msg_swap_id {
+                return Err(MakerError::General(
+                    format!(
+                        "Swap ID mismatch: state has '{}' but message has '{}'",
+                        expected, msg_swap_id
+                    )
+                    .leak(),
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Trait for maker operations.
+pub trait Maker: Send + Sync {
+    /// Get the network port for logging.
+    fn network_port(&self) -> u16;
+
+    /// Get the Bitcoin network.
+    fn network(&self) -> bitcoin::Network;
+
+    /// Get the tweakable keypair for swap address derivation.
+    fn get_tweakable_keypair(
+        &self,
+    ) -> Result<(bitcoin::secp256k1::SecretKey, PublicKey), MakerError>;
+
+    /// Get the highest fidelity proof.
+    fn get_fidelity_proof(&self) -> Result<FidelityProof, MakerError>;
+
+    /// Get maker configuration values.
+    fn get_config(&self) -> MakerConfig;
+
+    /// Validate swap parameters.
+    fn validate_swap_parameters(&self, details: &SwapDetails) -> Result<(), MakerError>;
+
+    /// Calculate the swap fee.
+    fn calculate_swap_fee(&self, amount: Amount, timelock: u32) -> Amount;
+
+    /// Create a funding transaction for Legacy (P2WSH) address.
+    fn create_funding_transaction(
+        &self,
+        amount: Amount,
+        address: bitcoin::Address,
+        excluded_outpoints: Option<Vec<bitcoin::OutPoint>>,
+    ) -> Result<(Transaction, u32), MakerError>;
+
+    /// Broadcast a transaction.
+    fn broadcast_transaction(&self, tx: &Transaction) -> Result<bitcoin::Txid, MakerError>;
+
+    /// Save incoming swapcoin to wallet.
+    fn save_incoming_swapcoin(&self, swapcoin: &IncomingSwapCoin) -> Result<(), MakerError>;
+
+    /// Save outgoing swapcoin to wallet.
+    fn save_outgoing_swapcoin(&self, swapcoin: &OutgoingSwapCoin) -> Result<(), MakerError>;
+
+    /// Register outpoint for watching.
+    fn register_watch_outpoint(&self, outpoint: bitcoin::OutPoint);
+
+    /// Unregister outpoint from watching (after swap completion).
+    fn unwatch_outpoint(&self, outpoint: bitcoin::OutPoint);
+
+    /// Sync wallet with Bitcoin Core and save state to disk.
+    fn sync_and_save_wallet(&self) -> Result<(), MakerError>;
+
+    /// Sweep incoming swapcoins after successful swap.
+    fn sweep_incoming_swapcoins(&self) -> Result<(), MakerError>;
+
+    /// Store connection state for persistence across connections.
+    fn store_connection_state(&self, swap_id: &str, state: &ConnectionState);
+
+    /// Retrieve stored connection state.
+    fn get_connection_state(&self, swap_id: &str) -> Option<ConnectionState>;
+
+    /// Remove connection state for a completed swap.
+    fn remove_connection_state(&self, swap_id: &str);
+
+    /// Get the data directory path for saving reports.
+    fn data_dir(&self) -> &std::path::Path;
+
+    /// Collect reserved UTXOs from all other active swaps (for concurrent double-spend prevention).
+    fn collect_excluded_utxos(&self, current_swap_id: &str) -> Vec<bitcoin::OutPoint>;
+
+    /// Get the current block height from the Bitcoin node.
+    fn get_current_height(&self) -> Result<u32, MakerError>;
+
+    /// Verify that a contract transaction is on-chain or in the mempool.
+    fn verify_contract_tx_on_chain(&self, txid: &bitcoin::Txid) -> Result<(), MakerError>;
+
+    /// Verify and sign sender's contract transactions.
+    fn verify_and_sign_sender_contract_txs(
+        &self,
+        txs_info: &[crate::protocol::legacy_messages::ContractTxInfoForSender],
+        hashvalue: &crate::protocol::Hash160,
+        locktime: u16,
+    ) -> Result<Vec<bitcoin::ecdsa::Signature>, MakerError>;
+
+    /// Verify proof of funding and return the hashvalue.
+    fn verify_proof_of_funding(
+        &self,
+        message: &crate::protocol::legacy_messages::ProofOfFunding,
+    ) -> Result<crate::protocol::Hash160, MakerError>;
+
+    /// Initialize outgoing coinswap.
+    #[allow(clippy::too_many_arguments)]
+    fn initialize_coinswap(
+        &self,
+        send_amount: Amount,
+        next_multisig_pubkeys: &[PublicKey],
+        next_hashlock_pubkeys: &[PublicKey],
+        hashvalue: crate::protocol::Hash160,
+        locktime: u16,
+        contract_feerate: f64,
+        excluded_outpoints: Option<Vec<bitcoin::OutPoint>>,
+    ) -> Result<(Vec<Transaction>, Vec<OutgoingSwapCoin>, Amount), MakerError>;
+
+    /// Find outgoing swapcoin by its multisig redeemscript.
+    fn find_outgoing_swapcoin(
+        &self,
+        multisig_redeemscript: &bitcoin::ScriptBuf,
+    ) -> Option<OutgoingSwapCoin>;
+
+    /// Get the test behavior override.
+    #[cfg(feature = "integration-test")]
+    fn behavior(&self) -> MakerBehavior;
+}
+
+/// Maker configuration values.
+#[derive(Debug, Clone)]
+pub struct MakerConfig {
+    /// Base fee in satoshis.
+    pub base_fee: u64,
+    /// Amount-relative fee percentage.
+    pub amount_relative_fee_pct: f64,
+    /// Time-relative fee percentage.
+    pub time_relative_fee_pct: f64,
+    /// Minimum swap amount.
+    pub min_swap_amount: u64,
+    /// Maximum swap amount.
+    pub max_swap_amount: u64,
+    /// Required confirmations.
+    pub required_confirms: u32,
+    /// Supported protocol versions.
+    pub supported_protocols: Vec<ProtocolVersion>,
+}
+
+/// Message handler
+pub fn handle_message<M: Maker>(
+    maker: &Arc<M>,
+    state: &mut ConnectionState,
     message: TakerToMakerMessage,
 ) -> Result<Option<MakerToTakerMessage>, MakerError> {
-    // If taker is waiting for funding confirmation, reset the timer.
-    if let TakerToMakerMessage::WaitingFundingConfirmation(id) = &message {
-        log::info!(
-            "[{}] Taker is waiting for funding confirmation. Resetting timer.",
-            maker.config.network_port
-        );
-        maker
-            .ongoing_swap_state
-            .lock()?
-            .entry(id.clone())
-            .and_modify(|(_, timer)| *timer = Instant::now());
-        return Ok(None);
+    state.touch();
+
+    log::debug!(
+        "[{}] Handling message: {:?} (phase: {:?}, protocol: {:?})",
+        Maker::network_port(maker.as_ref()),
+        message,
+        state.phase,
+        state.protocol
+    );
+
+    match message {
+        TakerToMakerMessage::TakerHello(hello) => handle_taker_hello(maker, state, hello),
+        TakerToMakerMessage::GetOffer(get_offer) => handle_get_offer(maker, state, get_offer),
+        TakerToMakerMessage::SwapDetails(details) => handle_swap_details(maker, state, details),
+
+        TakerToMakerMessage::ReqContractSigsForSender(req) => handle_legacy_dispatch(
+            maker,
+            state,
+            LegacyTakerMessage::ReqContractSigsForSender(req),
+        ),
+        TakerToMakerMessage::ProofOfFunding(pof) => {
+            handle_legacy_dispatch(maker, state, LegacyTakerMessage::ProofOfFunding(pof))
+        }
+        TakerToMakerMessage::RespContractSigsForRecvrAndSender(resp) => handle_legacy_dispatch(
+            maker,
+            state,
+            LegacyTakerMessage::RespContractSigsForRecvrAndSender(resp),
+        ),
+        TakerToMakerMessage::ReqContractSigsForRecvr(req) => handle_legacy_dispatch(
+            maker,
+            state,
+            LegacyTakerMessage::ReqContractSigsForRecvr(req),
+        ),
+        TakerToMakerMessage::LegacyPrivateKeyHandover(handover) => handle_legacy_dispatch(
+            maker,
+            state,
+            LegacyTakerMessage::PrivateKeyHandover(handover),
+        ),
+        TakerToMakerMessage::TaprootContractData(data) => {
+            handle_taproot_dispatch(maker, state, TaprootTakerMessage::ContractData(data))
+        }
+        TakerToMakerMessage::TaprootPrivateKeyHandover(handover) => handle_taproot_dispatch(
+            maker,
+            state,
+            TaprootTakerMessage::PrivateKeyHandover(handover),
+        ),
+        TakerToMakerMessage::WaitingFundingConfirmation(ref id) => {
+            log::info!(
+                "[{}] Taker is waiting for funding confirmation (swap {}). Resetting timer.",
+                maker.network_port(),
+                id
+            );
+            state.touch();
+            Ok(None)
+        }
     }
+}
 
-    let outgoing_message = match connection_state.allowed_message {
-        ExpectedMessage::TakerHello => {
-            if let TakerToMakerMessage::TakerHello(m) = message {
-                if m.protocol_version_min != 1 && m.protocol_version_max != 1 {
-                    return Err(ProtocolError::WrongMessage {
-                        expected: "Only protocol version 1 is allowed".to_string(),
-                        received: format!(
-                            "min/max version  = {}/{}",
-                            m.protocol_version_min, m.protocol_version_max
-                        ),
-                    }
-                    .into());
-                }
-                connection_state.allowed_message = ExpectedMessage::NewlyConnectedTaker;
-                let reply = MakerToTakerMessage::MakerHello(MakerHello {
-                    protocol_version_min: 1,
-                    protocol_version_max: 1,
-                });
-                Some(reply)
-            } else {
-                return Err(MakerError::UnexpectedMessage {
-                    expected: "TakerHello".to_string(),
-                    got: format!("{message}"),
-                });
-            }
-        }
-        ExpectedMessage::NewlyConnectedTaker => match message {
-            TakerToMakerMessage::ReqGiveOffer(_) => {
-                let (tweakable_point, max_size) = {
-                    let wallet_reader = maker.wallet.read()?;
-                    let max_size = wallet_reader.store.offer_maxsize;
-                    let tweakable_point = wallet_reader.get_tweakable_keypair()?.1;
-                    (tweakable_point, max_size)
-                };
-                connection_state.allowed_message = ExpectedMessage::ReqContractSigsForSender;
-                let fidelity = maker.highest_fidelity_proof.read()?;
-                let fidelity = fidelity.as_ref().expect("proof expected");
-                Some(MakerToTakerMessage::RespOffer(Box::new(Offer {
-                    base_fee: maker.config.base_fee,
-                    amount_relative_fee_pct: maker.config.amount_relative_fee_pct,
-                    time_relative_fee_pct: TIME_RELATIVE_FEE_PCT,
-                    required_confirms: REQUIRED_CONFIRMS,
-                    minimum_locktime: MIN_CONTRACT_REACTION_TIME,
-                    max_size,
-                    min_size: maker.config.min_swap_amount,
-                    tweakable_point,
-                    fidelity: fidelity.clone(),
-                })))
-            }
-            TakerToMakerMessage::ReqContractSigsForSender(message) => {
-                connection_state.allowed_message = ExpectedMessage::ProofOfFunding;
-                Some(maker.handle_req_contract_sigs_for_sender(connection_state, message)?)
-            }
-            TakerToMakerMessage::RespProofOfFunding(proof) => {
-                connection_state.allowed_message =
-                    ExpectedMessage::ProofOfFundingORContractSigsForRecvrAndSender;
-                Some(maker.handle_proof_of_funding(connection_state, proof)?)
-            }
-            TakerToMakerMessage::ReqContractSigsForRecvr(message) => {
-                connection_state.allowed_message = ExpectedMessage::HashPreimage;
-                Some(maker.handle_req_contract_sigs_for_recvr(message)?)
-            }
-            TakerToMakerMessage::RespHashPreimage(message) => {
-                connection_state.allowed_message = ExpectedMessage::PrivateKeyHandover;
-                Some(maker.handle_hash_preimage(message)?)
-            }
-            _ => {
-                log::info!("Newlyconnected taker stage message: {message:?} ");
-                return Err(MakerError::General(
-                    "Unexpected Newly Connected Taker message",
-                ));
-            }
-        },
-        ExpectedMessage::ReqContractSigsForSender => {
-            if let TakerToMakerMessage::ReqContractSigsForSender(message) = message {
-                connection_state.allowed_message = ExpectedMessage::ProofOfFunding;
-                Some(maker.handle_req_contract_sigs_for_sender(connection_state, message)?)
-            } else {
-                return Err(MakerError::UnexpectedMessage {
-                    expected: "ReqContractSigsForSender".to_string(),
-                    got: format!("{message}"),
-                });
-            }
-        }
-        ExpectedMessage::ProofOfFunding => {
-            if let TakerToMakerMessage::RespProofOfFunding(proof) = message {
-                connection_state.allowed_message =
-                    ExpectedMessage::ProofOfFundingORContractSigsForRecvrAndSender;
-                Some(maker.handle_proof_of_funding(connection_state, proof)?)
-            } else {
-                return Err(MakerError::UnexpectedMessage {
-                    expected: "Proof OF Funding".to_string(),
-                    got: format!("{message}"),
-                });
-            }
-        }
-        ExpectedMessage::ProofOfFundingORContractSigsForRecvrAndSender => {
-            match message {
-                TakerToMakerMessage::RespProofOfFunding(proof) => {
-                    connection_state.allowed_message =
-                        ExpectedMessage::ProofOfFundingORContractSigsForRecvrAndSender;
-                    Some(maker.handle_proof_of_funding(connection_state, proof)?)
-                }
-                TakerToMakerMessage::RespContractSigsForRecvrAndSender(message) => {
-                    // Nothing to send. Maker now creates and broadcasts his funding Txs
-                    connection_state.allowed_message = ExpectedMessage::ReqContractSigsForRecvr;
-                    let outgoing_swapcoins = connection_state.outgoing_swapcoins.clone();
-                    let incoming_swapcoins = connection_state.incoming_swapcoins.clone();
+/// Handle TakerHello message.
+fn handle_taker_hello<M: Maker>(
+    maker: &Arc<M>,
+    state: &mut ConnectionState,
+    _hello: TakerHello,
+) -> Result<Option<MakerToTakerMessage>, MakerError> {
+    state.expect_phase(&[SwapPhase::AwaitingHello])?;
 
-                    maker.handle_contract_sigs_for_recvr_and_sender(connection_state, message)?;
-                    if let MakerBehavior::BroadcastContractAfterSetup = maker.behavior {
-                        unexpected_recovery(maker.clone(), outgoing_swapcoins, incoming_swapcoins)?;
-                        return Err(maker.behavior.into());
-                    } else {
-                        None
-                    }
-                }
-                _ => {
-                    return Err(MakerError::General(
-                        "Expected proof of funding or sender's and receiver's contract signatures",
-                    ));
-                }
-            }
-        }
-        ExpectedMessage::ReqContractSigsForRecvr => {
-            if let TakerToMakerMessage::ReqContractSigsForRecvr(message) = message {
-                connection_state.allowed_message = ExpectedMessage::HashPreimage;
-                Some(maker.handle_req_contract_sigs_for_recvr(message)?)
-            } else {
-                return Err(MakerError::General(
-                    "Expected receiver's contract transaction",
-                ));
-            }
-        }
-        ExpectedMessage::HashPreimage => {
-            if let TakerToMakerMessage::RespHashPreimage(message) = message {
-                connection_state.allowed_message = ExpectedMessage::PrivateKeyHandover;
-                Some(maker.handle_hash_preimage(message)?)
-            } else {
-                return Err(MakerError::General("Expected hash preimage"));
-            }
-        }
-        ExpectedMessage::PrivateKeyHandover => {
-            if let TakerToMakerMessage::RespPrivKeyHandover(message) = message {
-                // Nothing to send. Successfully completed swap
-                maker.handle_private_key_handover(message)?;
-                //Successfully sweep the incoming swapcoins.
-                maker.sweep_after_successful_coinswap()?;
-                None
-            } else {
-                return Err(MakerError::General("Expected privatekey handover"));
-            }
-        }
+    log::info!(
+        "[{}] Received TakerHello",
+        Maker::network_port(maker.as_ref()),
+    );
+
+    let config = maker.get_config();
+    state.phase = SwapPhase::AwaitingOfferRequest;
+
+    log::info!(
+        "[{}] Supported protocols: {:?}",
+        Maker::network_port(maker.as_ref()),
+        config.supported_protocols
+    );
+
+    Ok(Some(MakerToTakerMessage::MakerHello(MakerHello {
+        supported_protocols: config.supported_protocols,
+    })))
+}
+
+/// Handle GetOffer message.
+fn handle_get_offer<M: Maker>(
+    maker: &Arc<M>,
+    state: &mut ConnectionState,
+    _get_offer: GetOffer,
+) -> Result<Option<MakerToTakerMessage>, MakerError> {
+    state.expect_phase(&[SwapPhase::AwaitingOfferRequest])?;
+
+    log::info!(
+        "[{}] Received GetOffer request",
+        Maker::network_port(maker.as_ref())
+    );
+
+    let (_, tweakable_point) = maker.get_tweakable_keypair()?;
+    let fidelity = maker.get_fidelity_proof()?;
+    let config = maker.get_config();
+
+    state.phase = SwapPhase::AwaitingSwapDetails;
+
+    let offer = Offer {
+        base_fee: config.base_fee,
+        amount_relative_fee_pct: config.amount_relative_fee_pct,
+        time_relative_fee_pct: config.time_relative_fee_pct,
+        required_confirms: config.required_confirms,
+        minimum_locktime: MIN_CONTRACT_REACTION_TIME,
+        max_size: config.max_swap_amount,
+        min_size: config.min_swap_amount,
+        tweakable_point,
+        fidelity,
     };
 
-    Ok(outgoing_message)
+    log::info!(
+        "[{}] Sending offer: min={}, max={}",
+        Maker::network_port(maker.as_ref()),
+        offer.min_size,
+        offer.max_size
+    );
+
+    Ok(Some(MakerToTakerMessage::Offer(Box::new(offer))))
 }
 
-impl Maker {
-    /// This is the first message handler for the Maker. It receives a [`ReqContractSigsForSender`] message,
-    /// checks the validity of contract transactions, and provides the signature for the sender side.
-    /// This will fail if the maker doesn't have enough utxos to fund the next coinswap hop, or the contract
-    /// transaction isn't valid.
-    pub(crate) fn handle_req_contract_sigs_for_sender(
-        &self,
-        connection_state: &mut ConnectionState,
-        message: ReqContractSigsForSender,
-    ) -> Result<MakerToTakerMessage, MakerError> {
-        if let MakerBehavior::CloseAtReqContractSigsForSender = self.behavior {
-            return Err(self.behavior.into());
-        }
+/// Handle SwapDetails message.
+fn handle_swap_details<M: Maker>(
+    maker: &Arc<M>,
+    state: &mut ConnectionState,
+    details: SwapDetails,
+) -> Result<Option<MakerToTakerMessage>, MakerError> {
+    state.expect_phase(&[SwapPhase::AwaitingSwapDetails])?;
 
-        // Verify and sign the contract transaction, and check the function definition for all the checks.
-        let sigs = self.verify_and_sign_contract_tx(&message)?;
+    log::info!(
+        "[{}] Received SwapDetails: amount={}, timelock={}, protocol={:?}",
+        Maker::network_port(maker.as_ref()),
+        details.amount,
+        details.timelock,
+        details.protocol_version
+    );
 
-        let funding_txids = message
-            .txs_info
-            .iter()
-            .map(|txinfo| txinfo.senders_contract_tx.input[0].previous_output.txid)
-            .collect::<Vec<_>>();
+    maker.validate_swap_parameters(&details)?;
 
-        let total_funding_amount = message.txs_info.iter().fold(0u64, |acc, txinfo| {
-            acc + txinfo.funding_input_value.to_sat()
-        });
+    state.swap_id = Some(details.id.clone());
+    state.swap_amount = details.amount;
+    state.timelock = details.timelock;
+    state.refund_locktime_offset = details.refund_locktime_offset;
+    state.protocol = details.protocol_version;
+    state.phase = SwapPhase::AwaitingContractData;
 
-        log::info!(
-            "[{}] Total Funding Amount = {} | Funding Txids = {:?}",
-            self.config.network_port,
-            Amount::from_sat(total_funding_amount),
-            funding_txids
+    maker.store_connection_state(&details.id, state);
+
+    let (_, tweakable_point) = maker.get_tweakable_keypair()?;
+
+    log::info!(
+        "[{}] Accepting swap (id: {})",
+        Maker::network_port(maker.as_ref()),
+        details.id
+    );
+
+    #[cfg(feature = "integration-test")]
+    if maker.behavior() == MakerBehavior::CloseAfterAckResponse {
+        log::warn!(
+            "[{}] Test behavior: closing after AckSwapDetails",
+            maker.network_port()
         );
-
-        // Sync wallet to get fresh UTXO state before coin selection
-        {
-            let mut wallet_write = self.wallet.write()?;
-            wallet_write.sync_and_save()?;
-            log::info!("Sync at:----handle_req_contract_sigs_for_sender----");
-        }
-
-        // Reserve UTXOs for this swap, This prevents double-spending across concurrent swaps by excluding UTXOs.
-        {
-            let required_amount = Amount::from_sat(total_funding_amount);
-            let mut ongoing_state_lock = self.ongoing_swap_state.lock()?;
-
-            let excluded_utxos = ongoing_state_lock
-                .iter()
-                .filter(|(id, _)| *id != &message.id)
-                .flat_map(|(_, (state, _))| state.reserve_utxo.clone())
-                .collect();
-            log::info!("Excluded UTXOs {:?}", excluded_utxos);
-            let wallet = self.wallet.read()?;
-            let selected_utxos =
-                wallet.coin_select(required_amount, MIN_FEE_RATE, None, Some(excluded_utxos))?;
-
-            connection_state.reserve_utxo = selected_utxos
-                .iter()
-                .map(|(utxo, _)| OutPoint::new(utxo.txid, utxo.vout))
-                .collect();
-
-            log::debug!(
-                "[{}] Reserved {} UTXOs for swap",
-                self.config.network_port,
-                connection_state.reserve_utxo.len(),
-            );
-
-            ongoing_state_lock.insert(
-                message.id.clone(),
-                (connection_state.clone(), Instant::now()),
-            );
-        }
-
-        log::info!(
-            "[{}] Inserted state for swap id: {}",
-            self.config.network_port,
-            message.id
-        );
-
-        let max_size = self.wallet.read()?.store.offer_maxsize;
-        if total_funding_amount >= self.config.min_swap_amount && total_funding_amount <= max_size {
-            Ok(MakerToTakerMessage::RespContractSigsForSender(
-                ContractSigsForSender { sigs },
-            ))
-        } else {
-            log::error!(
-                "Funding amount not within min/max limit, min {}, max {}",
-                self.config.min_swap_amount,
-                max_size
-            );
-            self.ongoing_swap_state.lock()?.remove(&message.id);
-            Err(MakerError::General("Not enough funds"))
-        }
+        return Err(MakerError::General("Test: closing after ack response"));
     }
 
-    /// Validates the [`ProofOfFunding`] message, initiate the next hop,
-    /// and create the `[ReqContractSigsAsRecvrAndSender`\] message.
-    pub(crate) fn handle_proof_of_funding(
-        &self,
-        connection_state: &mut ConnectionState,
-        message: ProofOfFunding,
-    ) -> Result<MakerToTakerMessage, MakerError> {
-        if let MakerBehavior::CloseAtProofOfFunding = self.behavior {
-            return Err(self.behavior.into());
-        }
+    Ok(Some(MakerToTakerMessage::AckSwapDetails(
+        AckSwapDetails::accept(tweakable_point),
+    )))
+}
 
-        // Basic verification of ProofOfFunding Message.
-        // Check function definition for all the checks performed.
-        let hashvalue = self.verify_proof_of_funding(&message)?;
-        log::info!(
-            "[{}] Validated Proof of Funding of receiving swap. Adding Incoming Swaps.",
-            self.config.network_port
-        );
-
-        // Import transactions and addresses into Bitcoin core's wallet.
-        // Add IncomingSwapcoin to Maker's Wallet
-        for funding_info in &message.confirmed_funding_txes {
-            let (pubkey1, pubkey2) =
-                read_pubkeys_from_multisig_redeemscript(&funding_info.multisig_redeemscript)?;
-
-            let funding_output_index = find_funding_output_index(funding_info)?;
-            let funding_output = funding_info
-                .funding_tx
-                .output
-                .get(funding_output_index as usize)
-                .expect("funding output expected at this index");
-
-            log::info!("Sync at:----handle_proof_of_funding----");
-            self.wallet.write()?.sync_and_save()?;
-
-            let receiver_contract_tx = create_receivers_contract_tx(
-                OutPoint {
-                    txid: funding_info.funding_tx.compute_txid(),
-                    vout: funding_output_index,
-                },
-                funding_output.value,
-                &funding_info.contract_redeemscript,
-            )?;
-
-            let (tweakable_privkey, _) = self.wallet.read()?.get_tweakable_keypair()?;
-            let multisig_privkey =
-                tweakable_privkey.add_tweak(&funding_info.multisig_nonce.into())?;
-
-            let multisig_pubkey = PublicKey {
-                compressed: true,
-                inner: secp256k1::PublicKey::from_secret_key(&Secp256k1::new(), &multisig_privkey),
-            };
-
-            let other_pubkey = if multisig_pubkey == pubkey1 {
-                pubkey2
-            } else {
-                pubkey1
-            };
-
-            let hashlock_privkey =
-                tweakable_privkey.add_tweak(&funding_info.hashlock_nonce.into())?;
-
-            // Taker can send the same funding transactions twice. Happens when one maker in the
-            // path fails. Only add it if it didn't already exist.
-            let incoming_swapcoin = IncomingSwapCoin::new(
-                multisig_privkey,
-                other_pubkey,
-                receiver_contract_tx.clone(),
-                funding_info.contract_redeemscript.clone(),
-                hashlock_privkey,
-                funding_output.value,
-            )?;
-            if !connection_state
-                .incoming_swapcoins
-                .contains(&incoming_swapcoin)
-            {
-                let txid = incoming_swapcoin.contract_tx.compute_txid();
-                for (vout, _) in incoming_swapcoin.contract_tx.output.iter().enumerate() {
-                    let outpoint = OutPoint {
-                        txid,
-                        vout: vout as u32,
-                    };
-                    self.watch_service.register_watch_request(outpoint);
-                }
-                connection_state.incoming_swapcoins.push(incoming_swapcoin);
-            }
-        }
-
-        // Calculate output amounts for the next hop
-        let incoming_amount = message
-            .confirmed_funding_txes
-            .iter()
-            .try_fold(0u64, |acc, fi| {
-                let index = find_funding_output_index(fi)?;
-                let txout = fi
-                    .funding_tx
-                    .output
-                    .get(index as usize)
-                    .expect("output at index expected");
-                Ok::<_, MakerError>(acc + txout.value.to_sat())
-            })?;
-
-        let calc_coinswap_fees = calculate_coinswap_fee(
-            incoming_amount,
-            message.refund_locktime,
-            self.config.base_fee,
-            self.config.amount_relative_fee_pct,
-            TIME_RELATIVE_FEE_PCT,
-        );
-
-        let total_vbytes = message
-            .confirmed_funding_txes
-            .iter()
-            .fold(0u64, |acc, info| {
-                acc + info.funding_tx.weight().to_vbytes_ceil()
-            });
-
-        let funding_tx_fees = calculate_fee_sats(total_vbytes);
-
-        // Check for overflow. If this happens, hard error.
-        // This can happen if the fee_rate for funding tx is very high and incoming_amount is very low.
-        let outgoing_amount =
-            if let Some(a) = incoming_amount.checked_sub(calc_coinswap_fees + funding_tx_fees) {
-                a
-            } else {
-                return Err(MakerError::General(
-                    "Fatal Error! Total swap fee is more than the swap amount. Failing the swap.",
-                ));
-            };
-
-        // Create outgoing coinswap of the next hop
-        let (my_funding_txes, outgoing_swapcoins, act_funding_txs_fees) = {
-            self.wallet.write()?.initalize_coinswap(
-                &SwapParams {
-                    send_amount: Amount::from_sat(outgoing_amount),
-                    maker_count: 0,
-                    manually_selected_outpoints: (!connection_state.reserve_utxo.is_empty())
-                        .then(|| connection_state.reserve_utxo.clone()),
-                },
-                &message
-                    .next_coinswap_info
-                    .iter()
-                    .map(|next_hop| next_hop.next_multisig_pubkey)
-                    .collect::<Vec<PublicKey>>(),
-                &message
-                    .next_coinswap_info
-                    .iter()
-                    .map(|next_hop| next_hop.next_hashlock_pubkey)
-                    .collect::<Vec<PublicKey>>(),
-                hashvalue,
-                message.refund_locktime,
-                message.contract_feerate,
-            )?
-        };
-
-        let act_coinswap_fees = incoming_amount
-            .checked_sub(outgoing_amount + act_funding_txs_fees.to_sat())
-            .expect("This should not overflow as we just checked above.");
-
-        log::info!(
-            "[{}] Prepared outgoing funding txs: {:?}.",
-            self.config.network_port,
-            my_funding_txes
-                .iter()
-                .map(|tx| tx.compute_txid())
-                .collect::<Vec<_>>()
-        );
-
-        log::info!(
-            "[{}] Incoming Swap Amount = {} | Outgoing Swap Amount = {} | Coinswap Fee = {} |   Refund Tx locktime (blocks) = {} | Total Funding Tx Mining Fees = {}",
-            self.config.network_port,
-            Amount::from_sat(incoming_amount),
-            Amount::from_sat(outgoing_amount),
-            Amount::from_sat(act_coinswap_fees),
-            message.refund_locktime,
-            act_funding_txs_fees,
-        );
-
-        connection_state.pending_funding_txes = my_funding_txes;
-
-        for outgoing_transactions in &outgoing_swapcoins {
-            let contract_transaction = &outgoing_transactions.contract_tx;
-            let txid = contract_transaction.compute_txid();
-            for (vout, _) in contract_transaction.output.iter().enumerate() {
-                let outpoint = OutPoint {
-                    txid,
-                    vout: vout as u32,
-                };
-                self.watch_service.register_watch_request(outpoint);
-            }
-        }
-
-        connection_state.outgoing_swapcoins = outgoing_swapcoins;
-
-        // Save things to disk after Proof of Funding is confirmed.
-        {
-            let mut wallet_writer = self.wallet.write()?;
-            for (incoming_sc, outgoing_sc) in connection_state
-                .incoming_swapcoins
-                .iter()
-                .zip(connection_state.outgoing_swapcoins.iter())
-            {
-                wallet_writer.add_incoming_swapcoin(incoming_sc);
-                wallet_writer.add_outgoing_swapcoin(outgoing_sc);
-            }
-            wallet_writer.save_to_disk()?;
-        }
-
-        // Craft ReqContractSigsAsRecvrAndSender message to send to the Taker.
-        let receivers_contract_txs = connection_state
-            .incoming_swapcoins
-            .iter()
-            .map(|isc| isc.contract_tx.clone())
-            .collect::<Vec<Transaction>>();
-
-        let senders_contract_txs_info = connection_state
-            .outgoing_swapcoins
-            .iter()
-            .map(|outgoing_swapcoin| {
-                Ok(SenderContractTxInfo {
-                    contract_tx: outgoing_swapcoin.contract_tx.clone(),
-                    timelock_pubkey: outgoing_swapcoin.get_timelock_pubkey()?,
-                    multisig_redeemscript: outgoing_swapcoin.get_multisig_redeemscript(),
-                    funding_amount: outgoing_swapcoin.funding_amount,
-                })
-            })
-            .collect::<Result<Vec<SenderContractTxInfo>, WalletError>>()?;
-
-        // Update the connection state.
-        self.ongoing_swap_state.lock()?.insert(
-            message.id.clone(),
-            (connection_state.clone(), Instant::now()),
-        );
-
-        log::info!("Connection state initialized for swap id: {}", message.id);
-
-        Ok(MakerToTakerMessage::ReqContractSigsAsRecvrAndSender(
-            ContractSigsAsRecvrAndSender {
-                receivers_contract_txs,
-                senders_contract_txs_info,
-            },
-        ))
-    }
-
-    /// Handles [`ContractSigsForRecvrAndSender`] message and updates the wallet state
-    pub(crate) fn handle_contract_sigs_for_recvr_and_sender(
-        &self,
-        connection_state: &mut ConnectionState,
-        message: ContractSigsForRecvrAndSender,
-    ) -> Result<(), MakerError> {
-        if let MakerBehavior::CloseAtContractSigsForRecvrAndSender = self.behavior {
-            return Err(self.behavior.into());
-        }
-
-        if message.receivers_sigs.len() != connection_state.incoming_swapcoins.len() {
-            return Err(MakerError::General(
-                "Invalid number of receiver's signatures",
-            ));
-        }
-        for (receivers_sig, incoming_swapcoin) in message
-            .receivers_sigs
-            .iter()
-            .zip(connection_state.incoming_swapcoins.iter_mut())
-        {
-            incoming_swapcoin.verify_contract_tx_sig(receivers_sig)?;
-            incoming_swapcoin.others_contract_sig = Some(*receivers_sig);
-        }
-
-        if message.senders_sigs.len() != connection_state.outgoing_swapcoins.len() {
-            return Err(MakerError::General("Invalid number of sender's signatures"));
-        }
-
-        for (senders_sig, outgoing_swapcoin) in message
-            .senders_sigs
-            .iter()
-            .zip(connection_state.outgoing_swapcoins.iter_mut())
-        {
-            outgoing_swapcoin.verify_contract_tx_sig(senders_sig)?;
-
-            outgoing_swapcoin.others_contract_sig = Some(*senders_sig);
-        }
-
-        {
-            let mut wallet_writer = self.wallet.write()?;
-            for (incoming_sc, outgoing_sc) in connection_state
-                .incoming_swapcoins
-                .iter()
-                .zip(connection_state.outgoing_swapcoins.iter())
-            {
-                wallet_writer.add_incoming_swapcoin(incoming_sc);
-                wallet_writer.add_outgoing_swapcoin(outgoing_sc);
-            }
-            wallet_writer.save_to_disk()?;
-        }
-
-        let mut my_funding_txids = Vec::<Txid>::new();
-        for my_funding_tx in &connection_state.pending_funding_txes {
-            let txid = self.wallet.read()?.send_tx(my_funding_tx)?;
-
-            assert_eq!(txid, my_funding_tx.compute_txid());
-            my_funding_txids.push(txid);
-        }
-        log::info!(
-            "[{}] Broadcasted funding txs: {:?}",
-            self.config.network_port,
-            my_funding_txids
-        );
-
-        // Update the connection state.
-        self.ongoing_swap_state.lock()?.insert(
-            message.id.clone(),
-            (connection_state.clone(), Instant::now()),
-        );
-
-        log::info!("Connection state timer reset for swap id: {}", message.id);
-
-        Ok(())
-    }
-
-    /// Handles [`ReqContractSigsForRecvr`] and returns a [`MakerToTakerMessage::RespContractSigsForRecvr`]
-    pub(crate) fn handle_req_contract_sigs_for_recvr(
-        &self,
-        message: ReqContractSigsForRecvr,
-    ) -> Result<MakerToTakerMessage, MakerError> {
-        if let MakerBehavior::CloseAtContractSigsForRecvr = self.behavior {
-            return Err(self.behavior.into());
-        }
-
-        let sigs = message
-            .txs
-            .iter()
-            .map(|txinfo| {
-                Ok(self
-                    .wallet
-                    .read()?
-                    .find_outgoing_swapcoin(&txinfo.multisig_redeemscript)
-                    .expect("Outgoing Swapcoin expected")
-                    .sign_contract_tx_with_my_privkey(&txinfo.contract_tx)?)
-            })
-            .collect::<Result<Vec<_>, MakerError>>()?;
-
-        Ok(MakerToTakerMessage::RespContractSigsForRecvr(
-            ContractSigsForRecvr { sigs },
-        ))
-    }
-
-    /// Handles a [`HashPreimage`] message and returns a [`MakerToTakerMessage::RespPrivKeyHandover`]
-    pub(crate) fn handle_hash_preimage(
-        &self,
-        message: HashPreimage,
-    ) -> Result<MakerToTakerMessage, MakerError> {
-        if let MakerBehavior::CloseAtHashPreimage = self.behavior {
-            return Err(self.behavior.into());
-        }
-
-        let hashvalue = Hash160::hash(&message.preimage);
-        for multisig_redeemscript in &message.senders_multisig_redeemscripts {
-            let mut wallet_write = self.wallet.write()?;
-            let incoming_swapcoin = wallet_write
-                .find_incoming_swapcoin_mut(multisig_redeemscript)
-                .expect("Incoming swapcoin expected");
-            if read_hashvalue_from_contract(&incoming_swapcoin.contract_redeemscript)? != hashvalue
-            {
-                return Err(MakerError::General("Incorrect hash preimage"));
-            }
-            incoming_swapcoin.hash_preimage = Some(message.preimage);
-        }
-
-        log::info!(
-            "[{}] received preimage for hashvalue={}",
-            self.config.network_port,
-            hashvalue
-        );
-        let mut swapcoin_private_keys = Vec::<MultisigPrivkey>::new();
-
-        // Send our privkey and mark the outgoing swapcoin as "done".
-        for multisig_redeemscript in &message.receivers_multisig_redeemscripts {
-            let mut wallet_write = self.wallet.write()?;
-            let outgoing_swapcoin = wallet_write
-                .find_outgoing_swapcoin_mut(multisig_redeemscript)
-                .expect("outgoing swapcoin expected");
-            if read_hashvalue_from_contract(&outgoing_swapcoin.contract_redeemscript)? != hashvalue
-            {
-                return Err(MakerError::General("Incorrect hash preimage"));
-            } else {
-                outgoing_swapcoin.hash_preimage.replace(message.preimage);
-            }
-
-            swapcoin_private_keys.push(MultisigPrivkey {
-                multisig_redeemscript: multisig_redeemscript.clone(),
-                key: outgoing_swapcoin.my_privkey,
-            });
-        }
-
-        let unique_id = message.preimage[0..8].to_hex_string(Case::Lower);
-        self.wallet.write()?.save_to_disk()?;
-        Ok(MakerToTakerMessage::RespPrivKeyHandover(PrivKeyHandover {
-            multisig_privkeys: swapcoin_private_keys,
-            id: unique_id,
-        }))
-    }
-
-    /// Handles [`PrivKeyHandover`] message and updates all the coinswap wallet states and stores it to disk.
-    /// This is the last step of completing a coinswap round.
-    pub(crate) fn handle_private_key_handover(
-        &self,
-        message: PrivKeyHandover,
-    ) -> Result<(), MakerError> {
-        // Mark the incoming swapcoins as "done", by adding their's privkey
-        for swapcoin_private_key in &message.multisig_privkeys {
-            self.wallet
-                .write()?
-                .find_incoming_swapcoin_mut(&swapcoin_private_key.multisig_redeemscript)
-                .expect("incoming swapcoin not found")
-                .apply_privkey(swapcoin_private_key.key)?;
-        }
-
-        // Remove only the connection state for this swap id so watchtowers are not triggered.
-        let mut conn_state = self.ongoing_swap_state.lock()?;
-
-        if let Some((conn_state_data, start_instant)) = conn_state.remove(&message.id) {
-            let network = self.wallet.read()?.store.network.to_string();
-
-            let incoming_total: u64 = conn_state_data
-                .incoming_swapcoins
-                .iter()
-                .map(|s| s.funding_amount.to_sat())
-                .sum();
-            let outgoing_total: u64 = conn_state_data
-                .outgoing_swapcoins
-                .iter()
-                .map(|s| s.funding_amount.to_sat())
-                .sum();
-
-            let incoming_txid = conn_state_data
-                .incoming_swapcoins
-                .first()
-                .map(|s| s.contract_tx.compute_txid().to_string())
-                .unwrap_or_else(|| "N/A".to_string());
-            let outgoing_txid = conn_state_data
-                .outgoing_swapcoins
-                .first()
-                .map(|s| s.contract_tx.compute_txid().to_string())
-                .unwrap_or_else(|| "N/A".to_string());
-
-            let timelock = conn_state_data
-                .outgoing_swapcoins
-                .first()
-                .and_then(|s| s.get_timelock().ok())
-                .unwrap_or(0);
-
-            let report = SwapReport::maker_success(
-                message.id.clone(),
-                start_instant,
-                incoming_total,
-                outgoing_total,
-                incoming_txid,
-                outgoing_txid,
-                timelock,
-                network,
-            );
-            report.print();
-            if let Err(e) = report.save_to_disk(self.data_dir()) {
-                log::warn!("Failed to save success report to disk: {:?}", e);
-            }
-
-            // Unwatch contract outputs
-            let unwatch_contract_outputs = |contract_tx: &Transaction| {
-                let txid = contract_tx.compute_txid();
-                for (vout, _) in contract_tx.output.iter().enumerate() {
-                    self.watch_service.unwatch(OutPoint {
-                        txid,
-                        vout: vout as u32,
-                    });
-                }
-            };
-            for swap in &conn_state_data.incoming_swapcoins {
-                unwatch_contract_outputs(&swap.contract_tx);
-            }
-            for swap in &conn_state_data.outgoing_swapcoins {
-                unwatch_contract_outputs(&swap.contract_tx);
-            }
-        }
-
-        log::info!("Sync at:----handle_private_key_handover----");
-        self.wallet.write()?.sync_and_save()?;
-
-        log::info!("Successfully Completed Coinswap");
-        Ok(())
-    }
-
-    ///sweep incoming swapcoins after successful coinswap
-    pub fn sweep_after_successful_coinswap(&self) -> Result<(), MakerError> {
-        let swept_txids = self
-            .wallet
-            .write()?
-            .sweep_incoming_swapcoins(MIN_FEE_RATE)?;
-        if !swept_txids.is_empty() {
+/// Restore connection state if this is a new/reconnected connection.
+fn restore_state_if_needed<M: Maker>(maker: &Arc<M>, state: &mut ConnectionState, swap_id: &str) {
+    if state.swap_amount == Amount::ZERO || state.outgoing_swapcoins.is_empty() {
+        if let Some(stored) = maker.get_connection_state(swap_id) {
             log::info!(
-                "✅ Successfully swept {} incoming swap coins: {:?}",
-                swept_txids.len(),
-                swept_txids
+                "[{}] Restored state for {}: amount={}, timelock={}, phase={:?}, outgoing_count={}",
+                maker.network_port(),
+                swap_id,
+                stored.swap_amount,
+                stored.timelock,
+                stored.phase,
+                stored.outgoing_swapcoins.len()
             );
+            state.swap_id = Some(swap_id.to_string());
+            state.swap_amount = stored.swap_amount;
+            state.timelock = stored.timelock;
+            state.protocol = stored.protocol;
+            state.phase = stored.phase;
+            state.incoming_swapcoins = stored.incoming_swapcoins;
+            state.outgoing_swapcoins = stored.outgoing_swapcoins;
+            state.pending_funding_txes = stored.pending_funding_txes;
+            state.funding_broadcast = stored.funding_broadcast;
+            state.contract_feerate = stored.contract_feerate;
         }
-        log::info!("Sync at:----sweep_after_successful_coinswap----");
-        Ok(())
     }
 }
 
-fn unexpected_recovery(
-    maker: Arc<Maker>,
-    outgoings: Vec<OutgoingSwapCoin>,
-    incomings: Vec<IncomingSwapCoin>,
-) -> Result<(), MakerError> {
-    // Spawn a separate thread to wait for contract maturity and broadcasting timelocked/hashlocked.
-    let maker_clone = maker.clone();
-    let handle = std::thread::Builder::new()
-        .name("Swap Recovery Thread".to_string())
-        .spawn(move || {
-            if let Err(e) = recover_from_swap(maker_clone, incomings, outgoings) {
-                log::error!("Failed to recover from swap due to: {e:?}");
-            }
-        })?;
-    maker.thread_pool.add_thread(handle);
+/// Dispatch to Legacy handlers.
+fn handle_legacy_dispatch<M: Maker>(
+    maker: &Arc<M>,
+    state: &mut ConnectionState,
+    legacy_msg: LegacyTakerMessage,
+) -> Result<Option<MakerToTakerMessage>, MakerError> {
+    let swap_id = legacy_msg.swap_id().to_string();
 
-    Ok(())
+    log::info!(
+        "[{}] Dispatching Legacy message: {} (swap_id: {})",
+        maker.network_port(),
+        legacy_msg,
+        swap_id
+    );
+
+    restore_state_if_needed(maker, state, &swap_id);
+
+    super::legacy_handlers::handle_legacy_message(maker, state, legacy_msg)
+}
+
+/// Dispatch to Taproot handlers.
+fn handle_taproot_dispatch<M: Maker>(
+    maker: &Arc<M>,
+    state: &mut ConnectionState,
+    taproot_msg: TaprootTakerMessage,
+) -> Result<Option<MakerToTakerMessage>, MakerError> {
+    let swap_id = taproot_msg.swap_id().to_string();
+
+    log::info!(
+        "[{}] Dispatching Taproot message: {:?} (swap_id: {})",
+        maker.network_port(),
+        taproot_msg,
+        swap_id
+    );
+
+    restore_state_if_needed(maker, state, &swap_id);
+
+    super::taproot_handlers::handle_taproot_message(maker, state, taproot_msg)
 }

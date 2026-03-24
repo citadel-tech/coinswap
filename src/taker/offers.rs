@@ -20,28 +20,29 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use bitcoin::hashes::Hash;
 use serde::{Deserialize, Serialize};
 use socks::Socks5Stream;
 
 use crate::{
     protocol::{
-        error::ProtocolError,
-        messages::{FidelityProof, GiveOffer, MakerToTakerMessage, Offer, TakerToMakerMessage},
-        messages2::{self, GetOffer},
-    },
-    taker::{
-        api::{
-            FIRST_CONNECT_ATTEMPTS, FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC,
-            FIRST_CONNECT_SLEEP_DELAY_SEC,
+        common_messages::{
+            FidelityProof, GetOffer as RouterGetOffer,
+            MakerToTakerMessage as RouterMakerToTakerMessage, Offer,
+            TakerHello as RouterTakerHello, TakerToMakerMessage as RouterTakerToMakerMessage,
         },
-        api2::connect_to_maker,
-        routines::handshake_maker,
+        error::ProtocolError,
     },
     utill::{read_message, send_message},
     wallet::verify_fidelity_checks,
     watch_tower::{rest_backend::BitcoinRest, service::WatchService, watcher::WatcherEvent},
 };
+
+/// Maximum number of attempts to connect to a maker.
+const FIRST_CONNECT_ATTEMPTS: u32 = 3;
+/// Timeout in seconds for each connection attempt.
+const FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC: u64 = 30;
+/// Sleep delay in milliseconds between connection retry attempts.
+const FIRST_CONNECT_SLEEP_DELAY_SEC: u64 = 1000;
 
 use super::error::TakerError;
 
@@ -72,7 +73,6 @@ const DISCOVERY_WAIT_MAX: Duration = Duration::from_secs(10);
 
 #[cfg(not(feature = "integration-test"))]
 const DISCOVERY_WAIT_MAX: Duration = Duration::from_secs(150);
-
 /// Represents an offer along with the corresponding maker address.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OfferAndAddress {
@@ -171,6 +171,20 @@ pub enum MakerProtocol {
     Legacy,
     /// Taproot
     Taproot,
+    /// Unified - supports both Legacy and Taproot
+    Unified,
+}
+
+impl MakerProtocol {
+    /// Check if this protocol supports the requested protocol.
+    /// Makers support both Legacy and Taproot.
+    pub fn supports(&self, requested: &MakerProtocol) -> bool {
+        match self {
+            MakerProtocol::Unified => true, // Unified supports both
+            MakerProtocol::Legacy => *requested == MakerProtocol::Legacy,
+            MakerProtocol::Taproot => *requested == MakerProtocol::Taproot,
+        }
+    }
 }
 
 impl fmt::Display for MakerProtocol {
@@ -178,6 +192,7 @@ impl fmt::Display for MakerProtocol {
         match self {
             MakerProtocol::Legacy => f.write_str("Legacy"),
             MakerProtocol::Taproot => f.write_str("Taproot"),
+            MakerProtocol::Unified => f.write_str("Unified"),
         }
     }
 }
@@ -389,6 +404,7 @@ impl OfferSyncService {
             .duration_since(UNIX_EPOCH)
             .unwrap_or(Duration::ZERO)
             .as_secs();
+
         if let Some(WatcherEvent::MakerAddresses { maker_addresses }) =
             self.watch_service.request_maker_address()
         {
@@ -598,13 +614,19 @@ impl OfferBook {
     }
 
     /// Gets all active (good) offers for a given protocol.
+    /// Makers are included for both Legacy and Taproot requests.
     fn active_makers(&self, protocol: &MakerProtocol) -> Vec<OfferAndAddress> {
-        let mut makers: Vec<&MakerOfferCandidate> = self.makers.iter().collect();
+        let mut makers = self.makers.clone();
         makers.sort_by(|a, b| a.address.0.port.cmp(&b.address.0.port));
         makers
-            .into_iter()
+            .iter()
             .filter(|m| m.state == MakerState::Good)
-            .filter(|m| m.protocol.as_ref() == Some(protocol))
+            .filter(|m| {
+                m.protocol
+                    .as_ref()
+                    .map(|p| p.supports(protocol))
+                    .unwrap_or(false)
+            })
             .filter_map(|m| m.as_offer_and_address())
             .collect()
     }
@@ -623,11 +645,19 @@ impl OfferBook {
     }
 
     /// Gets the list of bad makers.
+    /// Makers are included for both Legacy and Taproot requests.
     fn get_bad_makers(&self, protocol: &MakerProtocol) -> Vec<OfferAndAddress> {
-        self.makers
+        let mut makers = self.makers.clone();
+        makers.sort_by(|a, b| a.address.0.port.len().cmp(&b.address.0.port.len()));
+        makers
             .iter()
             .filter(|m| m.state == MakerState::Bad)
-            .filter(|m| m.protocol.as_ref() == Some(protocol))
+            .filter(|m| {
+                m.protocol
+                    .as_ref()
+                    .map(|p| p.supports(protocol))
+                    .unwrap_or(false)
+            })
             .filter_map(|m| m.as_offer_and_address())
             .collect()
     }
@@ -774,42 +804,20 @@ impl MakerAddress {
     }
 
     fn download_offer_auto(self, socks_port: u16) -> Result<OfferAndAddress, TakerError> {
-        match self.fetch_legacy_offer(socks_port) {
-            Ok(offer) => {
-                return Ok(OfferAndAddress {
-                    offer,
-                    address: self,
-                    state: MakerState::Good,
-                    protocol: MakerProtocol::Legacy,
-                });
-            }
-            Err(e) => {
-                log::debug!("Legacy offer fetch failed for {}: {:?}", self, e);
-            }
-        }
-
-        match self.clone().fetch_taproot_offer(socks_port) {
-            Ok(offer) => {
-                return Ok(OfferAndAddress {
-                    offer,
-                    address: self,
-                    state: MakerState::Good,
-                    protocol: MakerProtocol::Taproot,
-                });
-            }
-            Err(e) => {
-                log::debug!("Taproot offer fetch failed for {}: {:?}", self, e);
-            }
-        }
-
-        Err(TakerError::General(
-            "maker does not support legacy or taproot offer exchange".into(),
-        ))
+        let (offer, protocol) = self.fetch_offer(socks_port)?;
+        Ok(OfferAndAddress {
+            offer,
+            address: self,
+            state: MakerState::Good,
+            protocol,
+        })
     }
 
-    fn fetch_legacy_offer(&self, socks_port: u16) -> Result<Offer, TakerError> {
+    /// Download a single offer from a maker.
+    fn fetch_offer(&self, socks_port: u16) -> Result<(Offer, MakerProtocol), TakerError> {
         let maker_addr = self.to_string();
-        log::debug!("Downloading offer from {maker_addr}");
+        log::debug!("Downloading offer from maker: {}", maker_addr);
+
         let mut socket = if cfg!(feature = "integration-test") {
             TcpStream::connect(&maker_addr)?
         } else {
@@ -823,84 +831,69 @@ impl MakerAddress {
         socket.set_read_timeout(Some(Duration::from_secs(FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC)))?;
         socket.set_write_timeout(Some(Duration::from_secs(FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC)))?;
 
-        handshake_maker(&mut socket)?;
+        // Send TakerHello
+        let taker_hello = RouterTakerToMakerMessage::TakerHello(RouterTakerHello);
+        send_message(&mut socket, &taker_hello)?;
 
-        send_message(&mut socket, &TakerToMakerMessage::ReqGiveOffer(GiveOffer))?;
-
+        // Read MakerHello
         let msg_bytes = read_message(&mut socket)?;
-        let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
-        let offer = match msg {
-            MakerToTakerMessage::RespOffer(offer) => offer,
+        let msg: RouterMakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
+
+        match msg {
+            RouterMakerToTakerMessage::MakerHello(_hello) => {
+                // Maker - supports both Legacy and Taproot
+            }
             msg => {
                 return Err(ProtocolError::WrongMessage {
-                    expected: "RespOffer".to_string(),
-                    received: format!("{msg}"),
+                    expected: "MakerHello".to_string(),
+                    received: format!("{msg:?}"),
                 }
                 .into());
             }
         };
 
-        log::info!("Successfully Downloaded offer from : {maker_addr} ");
+        // Send GetOffer
+        let get_offer = RouterTakerToMakerMessage::GetOffer(RouterGetOffer);
+        send_message(&mut socket, &get_offer)?;
 
-        Ok(*offer)
-    }
+        // Read Offer
+        let offer_bytes = read_message(&mut socket)?;
+        let offer_msg: RouterMakerToTakerMessage = serde_cbor::from_slice(&offer_bytes)?;
 
-    /// Download a single offer from a taproot maker
-    fn fetch_taproot_offer(self, socks_port: u16) -> Result<Offer, TakerError> {
-        let maker_addr = self.to_string();
-        log::debug!("Downloading offer from taproot maker: {}", maker_addr);
-        let mut socket =
-            connect_to_maker(&maker_addr, socks_port, FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC)?;
-
-        let get_offer_msg = GetOffer {
-            protocol_version_min: 1,
-            protocol_version_max: 1,
-            number_of_transactions: 1,
-        };
-
-        let msg = messages2::TakerToMakerMessage::GetOffer(get_offer_msg);
-        send_message(&mut socket, &msg)?;
-
-        let response_bytes = read_message(&mut socket)?;
-
-        let response: messages2::MakerToTakerMessage = serde_cbor::from_slice(&response_bytes)?;
-
-        let taproot_offer = match response {
-            messages2::MakerToTakerMessage::RespOffer(offer) => *offer,
+        let router_offer = match offer_msg {
+            RouterMakerToTakerMessage::Offer(offer) => *offer,
             msg => {
                 return Err(ProtocolError::WrongMessage {
-                    expected: "RespOffer".to_string(),
-                    received: format!("{msg}"),
+                    expected: "Offer".to_string(),
+                    received: format!("{msg:?}"),
                 }
                 .into());
             }
         };
 
-        let offer = crate::protocol::messages::Offer {
-            base_fee: taproot_offer.base_fee,
-            amount_relative_fee_pct: taproot_offer.amount_relative_fee,
-            time_relative_fee_pct: taproot_offer.time_relative_fee,
-            required_confirms: 1, // Default value for taproot
-            minimum_locktime: taproot_offer.minimum_locktime,
-            max_size: taproot_offer.max_size,
-            min_size: taproot_offer.min_size,
-            tweakable_point: taproot_offer.tweakable_point,
-            fidelity: crate::protocol::messages::FidelityProof {
-                bond: taproot_offer.fidelity.bond,
-                cert_hash: bitcoin::hashes::sha256d::Hash::from_slice(
-                    taproot_offer.fidelity.cert_hash.as_ref(),
-                )
-                .unwrap(),
-                cert_sig: taproot_offer.fidelity.cert_sig,
+        // Convert router offer to legacy Offer format for storage
+        let offer = Offer {
+            base_fee: router_offer.base_fee,
+            amount_relative_fee_pct: router_offer.amount_relative_fee_pct,
+            time_relative_fee_pct: router_offer.time_relative_fee_pct,
+            required_confirms: router_offer.required_confirms,
+            minimum_locktime: router_offer.minimum_locktime,
+            max_size: router_offer.max_size,
+            min_size: router_offer.min_size,
+            tweakable_point: router_offer.tweakable_point,
+            fidelity: FidelityProof {
+                bond: router_offer.fidelity.bond,
+                cert_hash: router_offer.fidelity.cert_hash,
+                cert_sig: router_offer.fidelity.cert_sig,
             },
         };
 
         log::info!(
-            "Successfully downloaded offer from taproot maker: {}",
+            "Successfully downloaded offer from maker: {} (protocol: Unified)",
             maker_addr
         );
 
-        Ok(offer)
+        Ok((offer, MakerProtocol::Unified))
     }
 }
 
@@ -1004,7 +997,7 @@ mod tests {
                 .expect("next_offer_check_ts should be set after failure");
             assert!(next_ts >= now_ts);
 
-            // Backoff interval measured from 'now' grows each time (30m, 60m, 90m, ...).
+            // Backoff interval measured from 'now' grows each time.
             let backoff_from_now = next_ts.saturating_sub(now_ts);
             assert!(backoff_from_now > prev_backoff_from_now);
             prev_backoff_from_now = backoff_from_now;

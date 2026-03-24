@@ -16,7 +16,7 @@ use nostr::{
 };
 use tungstenite::Message;
 
-use crate::{maker::MakerError, protocol::messages::FidelityProof};
+use crate::{maker::MakerError, protocol::common_messages::FidelityProof};
 
 /// nostr url for coinswap
 #[cfg(not(feature = "integration-test"))]
@@ -31,7 +31,10 @@ pub const COINSWAP_KIND: u16 = 37777;
 const EXPIRATION_SECS: u64 = 86400;
 
 /// Broadcasts a fidelity bond announcement over Nostr.
-pub fn broadcast_bond_on_nostr(fidelity: FidelityProof) -> Result<(), MakerError> {
+pub fn broadcast_bond_on_nostr(
+    fidelity: FidelityProof,
+    relays: &[String],
+) -> Result<(), MakerError> {
     let outpoint = fidelity.bond.outpoint;
     let content = format!("{}:{}", outpoint.txid, outpoint.vout);
     // Kind 37777 is in the NIP-33 parameterized-replaceable range (30000..39999),
@@ -93,7 +96,7 @@ pub fn broadcast_bond_on_nostr(fidelity: FidelityProof) -> Result<(), MakerError
 
     let mut success = false;
 
-    for relay in NOSTR_RELAYS {
+    for relay in relays {
         for attempt in 1..=MAX_RETRIES {
             match broadcast_to_relay(relay, &msg) {
                 Ok(()) => {

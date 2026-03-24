@@ -1,12 +1,4 @@
-//! The Coinswap Maker Server.
-//!
-//! This module includes all server side code for the coinswap maker.
-//! The server maintains the thread pool for P2P Connection, Watchtower, Bitcoin Backend, and RPC Client Request.
-//! The server listens at two ports: 6102 for P2P, and 6103 for RPC Client requests.
-
-use crate::{maker::rpc::server::MakerRpc, protocol::messages::FidelityProof};
-use bitcoin::{absolute::LockTime, Amount};
-use bitcoind::bitcoincore_rpc::RpcApi;
+//! Coinswap Maker Server.
 
 use std::{
     io::ErrorKind,
@@ -19,384 +11,601 @@ use std::{
     time::Duration,
 };
 
-pub(crate) use super::{api::RPC_PING_INTERVAL, Maker};
-
 use crate::{
-    error::NetError,
-    maker::{
-        api::{
-            check_for_broadcasted_contracts, check_for_idle_states,
-            restore_broadcasted_contracts_on_reboot, ConnectionState,
-            FIDELITY_BOND_UPDATE_INTERVAL, SWAP_LIQUIDITY_CHECK_INTERVAL,
-        },
-        handlers::handle_message,
-        rpc::start_rpc_server,
-    },
+    maker::rpc::server::MakerRpc,
     nostr_coinswap::broadcast_bond_on_nostr,
-    protocol::messages::TakerToMakerMessage,
-    utill::{read_message, send_message, HEART_BEAT_INTERVAL, MIN_FEE_RATE},
-    wallet::{AddressType, WalletError},
+    protocol::common_messages::{FidelityProof, MakerToTakerMessage, TakerToMakerMessage},
+    wallet::SwapReport,
 };
 
-use crate::maker::error::MakerError;
+use super::{
+    api::MakerServer,
+    error::MakerError,
+    handlers::{handle_message, ConnectionState, Maker},
+};
 
-/// Fetches the Maker
-/// Depending upon ConnectionType and test/prod environment, different maker address are returned.
-/// Return the Maker address
-fn network_bootstrap(maker: Arc<Maker>) -> Result<String, MakerError> {
+/// Heartbeat interval for connections.
+pub const HEART_BEAT_INTERVAL: Duration = Duration::from_secs(3);
+
+/// Idle connection timeout (production).
+#[cfg(not(feature = "integration-test"))]
+pub const IDLE_CONNECTION_TIMEOUT: Duration = Duration::from_secs(900);
+
+/// Idle connection timeout (testing).
+#[cfg(feature = "integration-test")]
+pub const IDLE_CONNECTION_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Fidelity bond update interval (testing): 30 seconds.
+#[cfg(feature = "integration-test")]
+const FIDELITY_BOND_UPDATE_INTERVAL: Duration = Duration::from_secs(30);
+
+/// Fidelity bond update interval (production): 600 seconds (~1 block).
+#[cfg(not(feature = "integration-test"))]
+const FIDELITY_BOND_UPDATE_INTERVAL: Duration = Duration::from_secs(600);
+
+/// Start the maker server.
+pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
+    log::info!("[{}] Starting maker server", maker.config.network_port);
+
     let maker_port = maker.config.network_port;
-    let maker_address = {
-        if cfg!(feature = "integration-test") {
-            // Always clearnet in integration tests
-            format!("127.0.0.1:{maker_port}")
-        } else {
-            // Always Tor otherwise
-            let maker_hostname = maker.get_tor_hostname()?;
-            format!("{maker_hostname}:{maker_port}")
-        }
+    let maker_address = if cfg!(feature = "integration-test") {
+        format!("127.0.0.1:{maker_port}")
+    } else {
+        let maker_hostname = maker.get_tor_hostname()?;
+        format!("{maker_hostname}:{maker_port}")
     };
 
-    maker
-        .as_ref()
-        .track_and_update_unconfirmed_fidelity_bonds()?;
+    log::info!(
+        "[{}] Setting up fidelity bond...",
+        maker.config.network_port
+    );
+    let fidelity_proof = maker.setup_fidelity_bond(&maker_address)?;
 
-    manage_fidelity_bonds(maker, &maker_address, true)?;
+    spawn_nostr_broadcast_thread(&maker, fidelity_proof)?;
 
-    Ok(maker_address)
-}
+    log::info!("[{}] Checking swap liquidity...", maker.config.network_port);
+    maker.check_swap_liquidity()?;
 
-/// Manages the maker's fidelity bonds and ensures the server is updated with the latest bond proof and maker address.
-///
-/// It performs the following operations:
-/// 1. Redeems all expired fidelity bonds in the maker's wallet, if any are found.
-/// 2. Creates a new fidelity bond if no valid bonds remain after redemption.
-fn manage_fidelity_bonds(
-    maker: Arc<Maker>,
-    maker_addr: &str,
-    spawn_nostr: bool,
-) -> Result<(), MakerError> {
-    maker
-        .wallet
-        .write()?
-        .redeem_expired_fidelity_bonds(AddressType::P2WPKH)?;
+    // Check for unfinished swapcoins from a previous run and start recovery.
+    {
+        let (inc, out) = maker
+            .wallet
+            .read()
+            .map_err(|_| MakerError::General("Failed to lock wallet"))?
+            .find_unfinished_swapcoins();
+        if !inc.is_empty() || !out.is_empty() {
+            log::info!(
+                "[{}] Incomplete swaps detected on startup: {} incoming, {} outgoing. Starting recovery.",
+                maker.config.network_port,
+                inc.len(),
+                out.len()
+            );
 
-    setup_fidelity_bond(maker.as_ref(), maker_addr)?;
-
-    if spawn_nostr {
-        spawn_nostr_broadcast_task(maker)?;
+            let swap_id = format!("reboot-recovery-{}", super::swap_tracker::now_secs());
+            let maker_clone = Arc::clone(&maker);
+            let handle = thread::Builder::new()
+                .name(format!("reboot-recovery-{}", maker.config.network_port))
+                .spawn(move || {
+                    if let Err(e) = recover_from_swap(maker_clone, swap_id.clone(), inc, out) {
+                        log::error!("Reboot recovery failed for {}: {:?}", swap_id, e);
+                    }
+                })
+                .map_err(MakerError::IO)?;
+            maker.thread_pool.add_thread(handle);
+        }
     }
 
+    {
+        let wallet = maker
+            .wallet
+            .read()
+            .map_err(|_| MakerError::General("Failed to lock wallet"))?;
+        log::info!(
+            "[{}] Bitcoin Network: {}",
+            maker.config.network_port,
+            wallet.store.network
+        );
+        log::info!(
+            "[{}] Spendable Wallet Balance: {}",
+            maker.config.network_port,
+            wallet.get_balances().map_err(MakerError::Wallet)?.spendable
+        );
+    }
+
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, maker.config.network_port))
+        .map_err(MakerError::IO)?;
+    listener.set_nonblocking(true).map_err(MakerError::IO)?;
+
+    maker.is_setup_complete.store(true, Relaxed);
+    log::info!(
+        "[{}] Server setup complete! Listening on port {}",
+        maker.config.network_port,
+        maker.config.network_port
+    );
+
+    // Spawn RPC server thread for maker-cli operations
+    let maker_rpc = Arc::clone(&maker);
+    let rpc_handle = thread::Builder::new()
+        .name("rpc-server".to_string())
+        .spawn(move || {
+            if let Err(e) = crate::maker::rpc::server::start_rpc_server(maker_rpc) {
+                log::error!("RPC server error: {:?}", e);
+            }
+        })
+        .map_err(MakerError::IO)?;
+    maker.thread_pool.add_thread(rpc_handle);
+
+    // Spawn idle state checker thread for recovery
+    let maker_clone = Arc::clone(&maker);
+    let idle_handle = thread::Builder::new()
+        .name("idle-checker".to_string())
+        .spawn(move || {
+            if let Err(e) = check_for_idle_states(maker_clone) {
+                log::error!("Idle state checker error: {:?}", e);
+            }
+        })
+        .map_err(MakerError::IO)?;
+    maker.thread_pool.add_thread(idle_handle);
+
+    // Spawn fidelity bond renewal thread
+    let maker_fidelity = Arc::clone(&maker);
+    let maker_addr_fidelity = maker_address.clone();
+    let fidelity_handle = thread::Builder::new()
+        .name("fidelity-renewal".to_string())
+        .spawn(move || {
+            if let Err(e) = fidelity_renewal_loop(maker_fidelity, &maker_addr_fidelity) {
+                log::error!("Fidelity renewal loop error: {:?}", e);
+            }
+        })
+        .map_err(MakerError::IO)?;
+    maker.thread_pool.add_thread(fidelity_handle);
+
+    while !maker.is_shutdown() {
+        match listener.accept() {
+            Ok((stream, addr)) => {
+                log::info!(
+                    "[{}] New connection from {}",
+                    maker.config.network_port,
+                    addr
+                );
+
+                let maker_clone = Arc::clone(&maker);
+                thread::Builder::new()
+                    .name(format!("connection-{}", addr))
+                    .spawn(move || {
+                        if let Err(e) = handle_connection(maker_clone, stream) {
+                            log::error!("Connection error: {:?}", e);
+                        }
+                    })
+                    .map_err(MakerError::IO)?;
+            }
+            Err(e) if e.kind() == ErrorKind::WouldBlock => {
+                // No connection waiting, sleep briefly
+                sleep(Duration::from_millis(100));
+            }
+            Err(e) => {
+                log::error!("[{}] Accept error: {}", maker.config.network_port, e);
+            }
+        }
+    }
+
+    log::info!("[{}] Server shutting down...", maker.config.network_port);
+
+    maker.watch_service.shutdown();
+    maker.thread_pool.join_all_threads()?;
+
+    log::info!(
+        "[{}] Sync at:----Shutdown wallet----",
+        maker.config.network_port
+    );
+    maker
+        .wallet
+        .write()
+        .map_err(|_| MakerError::General("Failed to lock wallet"))?
+        .sync_and_save()
+        .map_err(MakerError::Wallet)?;
+
+    log::info!("[{}] Server shutdown complete", maker.config.network_port);
+
     Ok(())
 }
 
-fn spawn_nostr_broadcast_task(maker: Arc<Maker>) -> Result<(), MakerError> {
-    log::info!("Spawning nostr background task for maker");
-    let maker_clone = maker.clone();
+/// Spawn a background thread for nostr bond announcements.
+fn spawn_nostr_broadcast_thread(
+    maker: &Arc<MakerServer>,
+    fidelity: FidelityProof,
+) -> Result<(), MakerError> {
+    log::info!(
+        "[{}] Spawning nostr background task",
+        maker.config.network_port
+    );
+
+    let maker_clone = Arc::clone(maker);
+    let relays = maker.nostr_relays.clone();
+
     let handle = thread::Builder::new()
-        .name("nostr-event-thread".to_string())
+        .name("nostr-thread".to_string())
         .spawn(move || {
-            let interval = Duration::from_secs(30 * 60);
-            let mut elapsed = interval;
+            // Initial broadcast
+            if let Err(e) = broadcast_bond_on_nostr(fidelity.clone(), &relays) {
+                log::warn!("Initial nostr broadcast failed: {:?}", e);
+            }
+
+            let interval = Duration::from_secs(30 * 60); // 30 minutes
+            let tick = Duration::from_secs(2);
+            let mut elapsed = Duration::ZERO;
 
             while !maker_clone.shutdown.load(Ordering::Acquire) {
-                if elapsed >= interval {
-                    let fidelity = match maker_clone.highest_fidelity_proof.read() {
-                        Ok(guard) => guard.clone(),
-                        Err(e) => {
-                            log::error!("Failed to read highest_fidelity_proof: {:?}", e);
-                            return;
-                        }
-                    };
+                thread::sleep(tick);
+                elapsed += tick;
 
-                    match fidelity {
-                        Some(proof) => {
-                            if let Err(e) = broadcast_bond_on_nostr(proof) {
-                                log::warn!("nostr broadcast failed: {:?}", e);
-                            }
-                        }
-                        None => {
-                            log::warn!("No fidelity proof available for nostr broadcast");
-                        }
-                    }
-
-                    elapsed = Duration::ZERO;
+                if elapsed < interval {
+                    continue;
                 }
 
-                thread::sleep(HEART_BEAT_INTERVAL);
-                elapsed += HEART_BEAT_INTERVAL;
+                elapsed = Duration::ZERO;
+
+                log::debug!("Re-pinging nostr relays with bond announcement");
+
+                if let Err(e) = broadcast_bond_on_nostr(fidelity.clone(), &relays) {
+                    log::warn!("Nostr re-ping failed: {:?}", e);
+                }
             }
 
-            log::info!("nostr background task stopped");
-        })?;
+            log::info!("Nostr background task stopped");
+        })
+        .map_err(MakerError::IO)?;
 
     maker.thread_pool.add_thread(handle);
+
     Ok(())
 }
 
-/// Ensures the wallet has a valid fidelity bond. If no active bond exists, it creates a new one.
-///
-/// ### NOTE ON VALID FIDELITY BOND:
-/// A valid fidelity bond is one that has not expired, been redeemed, or spent.
-///
-/// ## Returns:
-/// - The highest **FidelityProof**, proving ownership of the highest valid fidelity bond, the maker has.
-fn setup_fidelity_bond(maker: &Maker, maker_address: &str) -> Result<FidelityProof, MakerError> {
-    let highest_index = maker.get_wallet().read()?.get_highest_fidelity_index()?;
-    let mut proof = maker.highest_fidelity_proof.write()?;
+/// Handle a single connection.
+fn handle_connection(maker: Arc<MakerServer>, stream: TcpStream) -> Result<(), MakerError> {
+    stream.set_nonblocking(false).map_err(MakerError::IO)?;
+    stream
+        .set_read_timeout(Some(IDLE_CONNECTION_TIMEOUT))
+        .map_err(MakerError::IO)?;
 
-    if let Some(i) = highest_index {
-        let wallet_read = maker.get_wallet().read()?;
-        let bond = wallet_read.store.fidelity_bond.get(&i).unwrap().clone();
-        let current_height = wallet_read
-            .rpc
-            .get_block_count()
-            .map_err(WalletError::Rpc)? as u32;
-        let bond_value = wallet_read.calculate_bond_value(&bond)?.to_sat();
-        drop(wallet_read);
+    let mut state = ConnectionState::default();
 
-        let highest_proof = maker
-            .get_wallet()
-            .read()?
-            .generate_fidelity_proof(i, maker_address)?;
+    log::debug!(
+        "[{}] Starting connection handler",
+        maker.config.network_port
+    );
 
-        log::info!(
-            "Highest bond at outpoint {} | index {} | Amount {:?} sats | Remaining Timelock for expiry : {:?} Blocks | Current Bond Value : {:?} sats",
-            highest_proof.bond.outpoint,
-            i,
-            bond.amount.to_sat(),
-            bond.lock_time.to_consensus_u32() - current_height,
-            bond_value
-        );
-
-        *proof = Some(highest_proof);
-    } else {
-        log::info!("No active Fidelity Bonds found. Creating one.");
-
-        let amount = Amount::from_sat(maker.config.fidelity_amount);
-
-        log::info!("Fidelity value chosen = {:?} sats", amount.to_sat());
-
-        let current_height = maker
-            .get_wallet()
-            .read()?
-            .rpc
-            .get_block_count()
-            .map_err(WalletError::Rpc)? as u32;
-
-        // Set 950 blocks locktime for test
-        let locktime = if cfg!(feature = "integration-test") {
-            LockTime::from_height(current_height + 950).map_err(WalletError::Locktime)?
-        } else {
-            LockTime::from_height(maker.config.fidelity_timelock + current_height)
-                .map_err(WalletError::Locktime)?
-        };
-
-        log::info!(
-            "Fidelity timelock {:?} blocks",
-            locktime.to_consensus_u32() - current_height
-        );
-
-        let sleep_increment = 10;
-        let mut sleep_multiplier = 0;
-
-        while !maker.shutdown.load(Relaxed) {
-            sleep_multiplier += 1;
-            // sync the wallet
-            log::info!("Sync at:----setup_fidelity_bond----");
-            maker.get_wallet().write()?.sync_and_save()?;
-
-            let fidelity_result = maker.get_wallet().write()?.create_fidelity(
-                amount,
-                locktime,
-                Some(maker_address),
-                MIN_FEE_RATE,
-                AddressType::P2WPKH,
-            );
-
-            match fidelity_result {
-                // Wait for sufficient funds to create fidelity bond.
-                // Hard error if fidelity still can't be created.
-                Err(e) => {
-                    if let WalletError::InsufficientFund {
-                        available,
-                        required,
-                    } = e
-                    {
-                        log::warn!("Insufficient fund to create fidelity bond.");
-                        let amount = required - available;
-                        let addr = maker
-                            .get_wallet()
-                            .write()?
-                            .get_next_external_address(AddressType::P2WPKH)?;
-
-                        log::info!("Send at least {:.8} BTC to {:?} | If you send extra, that will be added to your wallet balance", Amount::from_sat(amount).to_btc(), addr);
-
-                        let total_sleep = sleep_increment * sleep_multiplier.min(10 * 60);
-                        log::info!("Next sync in {total_sleep:?} secs");
-                        thread::sleep(Duration::from_secs(total_sleep));
-                    } else {
-                        log::error!(
-                            "[{}] Fidelity Bond Creation failed: {:?}. Shutting Down Maker server",
-                            maker.config.network_port,
-                            e
-                        );
-                        return Err(e.into());
-                    }
-                }
-                Ok(i) => {
-                    log::info!(
-                        "[{}] Successfully created fidelity bond",
-                        maker.config.network_port
-                    );
-                    let highest_proof = maker
-                        .get_wallet()
-                        .read()?
-                        .generate_fidelity_proof(i, maker_address)?;
-
-                    *proof = Some(highest_proof);
-
-                    // sync and save the wallet data to disk
-                    log::info!(" Sync at end:----setup_fidelity_bond----");
-                    maker.get_wallet().write()?.sync_and_save()?;
-                    break;
-                }
-            }
-        }
-    };
-
-    Ok(proof
-        .clone()
-        .expect("Fidelity Proof must exist after creating a bond"))
-}
-
-/// Checks if the maker has enough liquidity for swaps.
-/// If funds are below the minimum required, it repeatedly prompts the user to add more
-/// until the liquidity is sufficient.
-fn check_swap_liquidity(maker: &Maker) -> Result<(), MakerError> {
-    let sleep_incremental = 10;
-    let mut sleep_duration = 0;
-    while !maker.shutdown.load(Relaxed) {
-        {
-            log::info!("Sync at:----check_swap_liquidity----");
-            let mut wallet = maker.get_wallet().write()?;
-            wallet.sync_and_save()?;
-            wallet.refresh_offer_maxsize_cache()?;
-        }
-        let offer_max_size = maker.get_wallet().read()?.store.offer_maxsize;
-        let min_required = maker.config.min_swap_amount;
-        if offer_max_size < min_required {
-            let addr = maker
-                .get_wallet()
-                .write()?
-                .get_next_external_address(AddressType::P2WPKH)?;
-            log::warn!(
-                "[{}] Low Swap Liquidity | Min: {} sats | Available: {} sats. Add funds to {:?}",
-                maker.config.network_port,
-                min_required,
-                offer_max_size,
-                addr,
-            );
-
-            sleep_duration = (sleep_duration + sleep_incremental).min(10 * 60); // Capped at 1 Block interval
-            log::info!("Next sync in {sleep_duration:?} secs");
-            thread::sleep(Duration::from_secs(sleep_duration));
-        } else {
+    loop {
+        // Check for shutdown
+        if maker.is_shutdown() {
             log::info!(
-                "[{}] Swap Liquidity ready: {} sats | Min: {} sats | Listening for requests.",
-                maker.config.network_port,
-                offer_max_size,
-                min_required
+                "[{}] Shutdown requested, closing connection",
+                maker.config.network_port
             );
             break;
         }
-    }
 
-    Ok(())
-}
+        if state.is_timed_out(IDLE_CONNECTION_TIMEOUT.as_secs()) {
+            log::info!("[{}] Connection timed out", maker.config.network_port);
+            break;
+        }
 
-/// Continuously checks if the Bitcoin Core RPC connection is live.
-fn check_connection_with_core(maker: &Maker) -> Result<(), MakerError> {
-    let mut rcp_ping_success = true;
-    while !maker.shutdown.load(Relaxed) {
-        if let Err(e) = maker.wallet.read()?.rpc.get_blockchain_info() {
-            log::error!(
-                "[{}] RPC Connection failed | Error: {} | Reattempting...",
+        let message = match read_message(&stream) {
+            Ok(msg) => msg,
+            Err(e) => {
+                log::debug!(
+                    "[{}] Read error (may be normal disconnect): {:?}",
+                    maker.config.network_port,
+                    e
+                );
+                break;
+            }
+        };
+
+        log::debug!(
+            "[{}] Received message: {:?}",
+            maker.config.network_port,
+            message
+        );
+
+        let response = match handle_message(&maker, &mut state, message) {
+            Ok(resp) => resp,
+            Err(e) => {
+                log::error!("[{}] Handler error: {:?}", maker.config.network_port, e);
+                // Some errors are recoverable, some are not
+                break;
+            }
+        };
+
+        if let Some(response) = response {
+            log::debug!(
+                "[{}] Sending response: {:?}",
                 maker.config.network_port,
-                e
+                response
             );
-            rcp_ping_success = false;
-        } else {
-            if !rcp_ping_success {
-                log::info!(
-                    "[{}] Bitcoin Core RPC connection is live.",
-                    maker.config.network_port
+
+            if let Err(e) = send_message(&stream, &response) {
+                log::error!(
+                    "[{}] Failed to send response: {:?}",
+                    maker.config.network_port,
+                    e
+                );
+                break;
+            }
+        }
+
+        if state.phase == super::handlers::SwapPhase::Completed {
+            log::info!(
+                "[{}] Swap completed, sweeping incoming swapcoins",
+                maker.config.network_port
+            );
+            if let Err(e) = maker.sweep_incoming_swapcoins() {
+                log::error!(
+                    "[{}] Failed to sweep incoming swapcoins: {:?}",
+                    maker.config.network_port,
+                    e
                 );
             }
 
+            // Sync wallet after sweep to update UTXO cache.
+            if let Err(e) = maker.sync_and_save_wallet() {
+                log::error!(
+                    "[{}] Failed to sync wallet after sweep: {:?}",
+                    maker.config.network_port,
+                    e
+                );
+            }
+
+            // Unwatch all contract outputs now that the swap is complete.
+            for incoming in &state.incoming_swapcoins {
+                let txid = incoming.contract_tx.compute_txid();
+                for (vout, _) in incoming.contract_tx.output.iter().enumerate() {
+                    maker.unwatch_outpoint(bitcoin::OutPoint {
+                        txid,
+                        vout: vout as u32,
+                    });
+                }
+            }
+            for outgoing in &state.outgoing_swapcoins {
+                let txid = outgoing.contract_tx.compute_txid();
+                for (vout, _) in outgoing.contract_tx.output.iter().enumerate() {
+                    maker.unwatch_outpoint(bitcoin::OutPoint {
+                        txid,
+                        vout: vout as u32,
+                    });
+                }
+            }
+
+            if let Some(ref swap_id) = state.swap_id {
+                maker.remove_connection_state(swap_id);
+            }
+            break;
+        }
+    }
+
+    log::debug!(
+        "[{}] Connection handler finished",
+        maker.config.network_port
+    );
+
+    Ok(())
+}
+
+/// Background thread that checks for idle swap states and spawns recovery.
+fn check_for_idle_states(maker: Arc<MakerServer>) -> Result<(), MakerError> {
+    use super::swap_tracker::{now_secs, MakerRecoveryState, MakerSwapPhase, MakerSwapRecord};
+
+    loop {
+        if maker.is_shutdown() {
             break;
         }
 
-        thread::sleep(HEART_BEAT_INTERVAL);
+        let idle_swaps = maker.drain_idle_swaps(IDLE_CONNECTION_TIMEOUT);
+
+        for idle in idle_swaps {
+            log::error!(
+                "[{}] Potential dropped connection from taker. Swap {} idle. Recovering from swap",
+                maker.config.network_port,
+                idle.swap_id
+            );
+
+            // Create a tracker record for this dropped swap.
+            let now = now_secs();
+            let record = MakerSwapRecord {
+                swap_id: idle.swap_id.clone(),
+                protocol: idle.protocol,
+                phase: MakerSwapPhase::TakerDropped,
+                swap_amount_sat: idle.swap_amount_sat,
+                incoming_count: idle.incoming_swapcoins.len(),
+                outgoing_count: idle.outgoing_swapcoins.len(),
+                funding_broadcast: idle.funding_broadcast,
+                recovery: MakerRecoveryState::default(),
+                created_at: now,
+                updated_at: now,
+            };
+
+            if let Err(e) = maker.swap_tracker.lock().unwrap().save_record(&record) {
+                log::error!("Failed to save swap tracker record: {:?}", e);
+            }
+
+            let swap_id = idle.swap_id.clone();
+            let maker_clone = Arc::clone(&maker);
+            let handle = thread::Builder::new()
+                .name(format!("swap-recovery-{}", swap_id))
+                .spawn(move || {
+                    if let Err(e) = recover_from_swap(
+                        maker_clone,
+                        idle.swap_id,
+                        idle.incoming_swapcoins,
+                        idle.outgoing_swapcoins,
+                    ) {
+                        log::error!("Failed to recover from swap {}: {:?}", swap_id, e);
+                    }
+                })
+                .map_err(MakerError::IO)?;
+            maker.thread_pool.add_thread(handle);
+        }
+
+        sleep(HEART_BEAT_INTERVAL);
     }
 
     Ok(())
 }
 
-/// Handle a single client connection.
-fn handle_client(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(), MakerError> {
-    stream.set_nonblocking(false)?; // Block this thread until message is read.
+/// Periodically check for expired fidelity bonds and renew them.
+fn fidelity_renewal_loop(maker: Arc<MakerServer>, maker_address: &str) -> Result<(), MakerError> {
+    use crate::wallet::AddressType;
 
-    let mut connection_state = ConnectionState::default();
+    let tick = Duration::from_secs(2);
+    let mut elapsed = Duration::ZERO;
 
-    while !maker.shutdown.load(Relaxed) {
-        let mut bytes = Vec::new();
-        match read_message(stream) {
-            Ok(b) => bytes = b,
-            Err(e) => {
-                if let NetError::IO(e) = e {
-                    if e.kind() == ErrorKind::UnexpectedEof {
-                        log::info!("[{}] Connection ended.", maker.config.network_port);
-                        break;
-                    } else {
-                        // For any other errors, report them
-                        log::error!("[{}] Net Error: {}", maker.config.network_port, e);
-                        continue;
+    while !maker.is_shutdown() {
+        sleep(tick);
+        elapsed += tick;
+
+        if elapsed < FIDELITY_BOND_UPDATE_INTERVAL {
+            continue;
+        }
+        elapsed = Duration::ZERO;
+
+        // Skip renewal check if a swap is in progress
+        if maker.has_ongoing_swaps() {
+            continue;
+        }
+
+        log::debug!(
+            "[{}] Checking fidelity bond status...",
+            maker.config.network_port
+        );
+
+        // Redeem any expired bonds
+        if let Err(e) = maker
+            .wallet
+            .write()
+            .map_err(|_| MakerError::General("Failed to lock wallet"))?
+            .redeem_expired_fidelity_bonds(AddressType::P2WPKH)
+        {
+            log::warn!(
+                "[{}] Failed to redeem expired fidelity bonds: {:?}",
+                maker.config.network_port,
+                e
+            );
+            continue;
+        }
+
+        // Re-run setup to create new bond if needed
+        if let Err(e) = maker.setup_fidelity_bond(maker_address) {
+            log::warn!(
+                "[{}] Fidelity bond renewal failed: {:?}",
+                maker.config.network_port,
+                e
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// Minimum witness items for a hashlock spend (signature + preimage).
+const MIN_WITNESS_ITEM_FOR_HASHLOCK: usize = 2;
+
+/// Preimage length in bytes.
+const PREIMAGE_LEN: usize = 32;
+
+/// Check the watch tower for spends on outgoing contract outputs, extract
+/// preimages from hashlock spends, and update incoming swapcoins in the wallet.
+fn check_for_preimage_via_watchtower(
+    maker: &MakerServer,
+    outgoing_swapcoins: &[crate::wallet::swapcoin::OutgoingSwapCoin],
+    incoming_swapcoins: &[crate::wallet::swapcoin::IncomingSwapCoin],
+) -> Result<(), MakerError> {
+    use bitcoin::hashes::Hash;
+    use std::{collections::HashSet, convert::TryFrom};
+
+    let mut seen_outpoints = HashSet::new();
+    let mut preimages: Vec<[u8; 32]> = Vec::new();
+
+    // Query the watch tower for spends on each outgoing contract output.
+    for outgoing in outgoing_swapcoins {
+        let contract_txid = outgoing.contract_tx.compute_txid();
+        for (vout, _) in outgoing.contract_tx.output.iter().enumerate() {
+            let outpoint = bitcoin::OutPoint {
+                txid: contract_txid,
+                vout: vout as u32,
+            };
+            maker.watch_service.watch_request(outpoint);
+
+            if let Some(crate::watch_tower::watcher::WatcherEvent::UtxoSpent {
+                spending_tx: Some(spending_tx),
+                ..
+            }) = maker.watch_service.wait_for_event()
+            {
+                // Extract preimages from the spending transaction's witnesses.
+                for input in &spending_tx.input {
+                    let op = (input.previous_output.txid, input.previous_output.vout);
+                    if seen_outpoints.insert(op)
+                        && input.witness.len() >= MIN_WITNESS_ITEM_FOR_HASHLOCK
+                        && input.witness[1].len() == PREIMAGE_LEN
+                    {
+                        if let Ok(preimage) = <[u8; 32]>::try_from(&input.witness[1][..]) {
+                            preimages.push(preimage);
+                        }
                     }
                 }
             }
         }
-        let taker_msg = serde_cbor::from_slice::<TakerToMakerMessage>(&bytes)?;
+    }
 
-        log::info!("[{}] <=== {}", maker.config.network_port, taker_msg);
+    if preimages.is_empty() {
+        return Ok(());
+    }
 
-        let reply = handle_message(maker, &mut connection_state, taker_msg);
+    log::info!(
+        "[{}] Extracted {} preimage(s) from on-chain hashlock spends",
+        maker.config.network_port,
+        preimages.len()
+    );
 
-        match reply {
-            Ok(reply) => {
-                if let Some(message) = reply {
-                    log::info!("[{}] ===> {} ", maker.config.network_port, message);
-                    if let Err(e) = send_message(stream, &message) {
-                        log::error!("Closing due to IO error in sending message: {e:?}");
-                        continue;
-                    }
-                } else {
-                    continue;
-                }
-            }
-            Err(err) => {
-                match &err {
-                    MakerError::SpecialBehaviour(sp) => {
-                        log::error!(
-                            "[{}] Maker Special Behavior Triggered Disconnection : {:?}",
+    // Apply extracted preimages to incoming swapcoins in the wallet.
+    let mut wallet = maker
+        .wallet
+        .write()
+        .map_err(|_| MakerError::General("Failed to lock wallet"))?;
+
+    for incoming in incoming_swapcoins {
+        // The wallet stores incoming swapcoins keyed by contract txid, not swap_id.
+        let wallet_key = incoming.contract_tx.compute_txid().to_string();
+
+        for preimage in &preimages {
+            // Verify the preimage matches the incoming swapcoin's hashlock.
+            let matches = if let Some(redeemscript) = incoming.contract_redeemscript() {
+                // Legacy: uses OP_HASH160 with 20-byte hash
+                let hash: bitcoin::hashes::hash160::Hash = bitcoin::hashes::Hash::hash(preimage);
+                crate::protocol::contract::read_hashvalue_from_contract(redeemscript)
+                    .map(|h| h == hash)
+                    .unwrap_or(false)
+            } else {
+                // Taproot: uses OP_SHA256 with 32-byte hash
+                // Script format: OP_SHA256 OP_PUSHBYTES_32 <32-byte hash> OP_EQUALVERIFY ...
+                let sha256_hash: [u8; 32] =
+                    bitcoin::hashes::sha256::Hash::hash(preimage).to_byte_array();
+                incoming
+                    .hashlock_script()
+                    .map(|script| {
+                        let bytes = script.as_bytes();
+                        bytes.len() >= 34 && bytes[2..34] == sha256_hash
+                    })
+                    .unwrap_or(false)
+            };
+
+            if matches {
+                if let Some(swapcoin) = wallet.find_incoming_swapcoin_mut(&wallet_key) {
+                    if swapcoin.hash_preimage.is_none() {
+                        swapcoin.set_preimage(*preimage);
+                        log::info!(
+                            "[{}] Applied extracted preimage to incoming swapcoin {}",
                             maker.config.network_port,
-                            sp
-                        );
-                    }
-                    e => {
-                        log::error!(
-                            "[{}] Internal message handling error occurred: {:?}",
-                            maker.config.network_port,
-                            e
+                            wallet_key
                         );
                     }
                 }
@@ -405,178 +614,373 @@ fn handle_client(maker: &Arc<Maker>, stream: &mut TcpStream) -> Result<(), Maker
         }
     }
 
+    wallet.save_to_disk().map_err(MakerError::Wallet)?;
+
     Ok(())
 }
 
-/// Starts the Maker server and manages its core operations.
+/// Update the Maker swap tracker with the given closure.
 ///
-/// This function initializes network connections, sets up the wallet with fidelity bonds,  
-/// and spawns essential threads for:  
-/// - Checking for idle client connections.  
-/// - Detecting and handling broadcasted contract transactions.  
-/// - Running an RPC server for communication with `maker-cli`.  
+/// Locks the tracker, applies `f` to the record matching `swap_id`, then flushes.
+fn update_tracker(
+    maker: &MakerServer,
+    swap_id: &str,
+    f: impl FnOnce(&mut super::swap_tracker::MakerSwapRecord),
+) {
+    let mut tracker = maker.swap_tracker.lock().unwrap();
+    if let Some(record) = tracker.get_record_mut(swap_id) {
+        f(record);
+        record.updated_at = super::swap_tracker::now_secs();
+        let cloned = record.clone();
+        if let Err(e) = tracker.save_record(&cloned) {
+            log::error!("Failed to flush swap tracker: {:?}", e);
+        }
+    }
+}
+
+/// Recover maker funds after taker drops.
 ///
-/// The server continuously listens for incoming P2P client connections.
-/// It performs periodic checks to ensure liquidity availability, update fidelity bonds,  
-/// and maintain backend connectivity while avoiding interruptions during active swaps.  
-///
-/// The server continues to run until a shutdown signal is detected, at which point
-/// it performs cleanup tasks, such as sync and saving wallet data, joining all threads, etc.
-pub fn start_maker_server(maker: Arc<Maker>) -> Result<(), MakerError> {
-    log::info!("Starting Maker Server");
+/// Two recovery paths are tried in a loop:
+/// 1. **Hashlock** (incoming swapcoins): If the taker (or another party) spends
+///    our outgoing contract output via hashlock, the preimage is revealed on-chain.
+///    We extract it via the watch tower and sweep our incoming swapcoins.
+/// 2. **Timelock** (outgoing swapcoins): After the timelock expires, we reclaim
+///    our outgoing funds via the timelock spending path.
+fn recover_from_swap(
+    maker: Arc<MakerServer>,
+    swap_id: String,
+    incoming_swapcoins: Vec<crate::wallet::swapcoin::IncomingSwapCoin>,
+    outgoing_swapcoins: Vec<crate::wallet::swapcoin::OutgoingSwapCoin>,
+) -> Result<(), MakerError> {
+    use super::swap_tracker::{MakerRecoveryPhase, MakerSwapPhase};
+    use bitcoind::bitcoincore_rpc::RpcApi;
 
-    // Setup the wallet with fidelity bond.
-    let maker_addr = network_bootstrap(maker.clone())?;
+    // For Taproot, get_timelock() returns an absolute CLTV height.
+    // For Legacy, it returns a relative CSV offset — but Legacy recovery
+    // uses wallet-level methods that handle CSV internally, so we only
+    // need the absolute value here for the monitoring loop.
+    let timelock_expiry = outgoing_swapcoins
+        .first()
+        .and_then(|o| o.get_timelock())
+        .ok_or(MakerError::General("missing timelock on outgoing swapcoin"))?;
 
-    // Tracks the elapsed time in heartbeat intervals to schedule periodic checks and avoid redundant executions.
-    let mut interval_tracker = 0;
+    let start_height = maker
+        .wallet
+        .read()
+        .map_err(|_| MakerError::General("Failed to lock wallet"))?
+        .rpc
+        .get_block_count()
+        .map_err(crate::wallet::WalletError::Rpc)? as u32;
 
-    check_swap_liquidity(maker.as_ref())?;
+    log::info!(
+        "[{}] recover_from_swap started | height={} timelock_expiry={} | incoming={} outgoing={}",
+        maker.config.network_port,
+        start_height,
+        timelock_expiry,
+        incoming_swapcoins.len(),
+        outgoing_swapcoins.len()
+    );
 
-    // HEART_BEAT_INTERVAL secs are added to prevent redundant checks for swap liquidity immediately after the Maker server starts.
-    // This ensures these functions are not executed twice in quick succession.
-    interval_tracker += HEART_BEAT_INTERVAL.as_secs() as u32;
-
-    let network_port = maker.config.network_port;
-
+    // Check if funding was ever broadcast. If not, there is nothing on-chain
+    // to recover — discard the swapcoins and exit immediately.
     {
-        let wallet = maker.get_wallet().read()?;
-        log::info!(
-            "[{}] Bitcoin Network: {}",
-            network_port,
-            wallet.store.network
-        );
-        log::info!(
-            "[{}] Spendable Wallet Balance: {}",
-            network_port,
-            wallet.get_balances()?.spendable
-        );
+        let funding_broadcast = maker
+            .swap_tracker
+            .lock()
+            .unwrap()
+            .get_record(&swap_id)
+            .map(|r| r.funding_broadcast)
+            .unwrap_or(false);
+
+        if !funding_broadcast {
+            log::info!(
+                "[{}] Funding was never broadcast for swap {} — nothing to recover. Discarding swapcoins.",
+                maker.config.network_port,
+                swap_id
+            );
+
+            {
+                let mut wallet = maker
+                    .wallet
+                    .write()
+                    .map_err(|_| MakerError::General("Failed to lock wallet"))?;
+                for outgoing in &outgoing_swapcoins {
+                    let key = outgoing.contract_tx.compute_txid().to_string();
+                    wallet.remove_outgoing_swapcoin(&key);
+                }
+                for incoming in &incoming_swapcoins {
+                    let key = incoming.contract_tx.compute_txid().to_string();
+                    wallet.remove_incoming_swapcoin(&key);
+                }
+                wallet.save_to_disk().map_err(MakerError::Wallet)?;
+            }
+
+            update_tracker(&maker, &swap_id, |r| {
+                r.phase = MakerSwapPhase::Recovered;
+                r.recovery.phase = MakerRecoveryPhase::CleanedUp;
+            });
+
+            #[cfg(feature = "integration-test")]
+            maker.shutdown.store(true, Relaxed);
+            return Ok(());
+        }
     }
 
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, maker.config.network_port))
-        .map_err(NetError::IO)?;
-    listener.set_nonblocking(true)?; // Needed to not block a thread waiting for incoming connection.
+    // Tracker: Recovering + Monitoring
+    update_tracker(&maker, &swap_id, |r| {
+        r.phase = MakerSwapPhase::Recovering;
+        r.recovery.phase = MakerRecoveryPhase::Monitoring;
+    });
 
-    if !maker.shutdown.load(Relaxed) {
-        // 1. Idle Client connection checker thread.
-        // This threads check idleness of peer in live swaps.
-        // And takes recovery measures if the peer seems to have disappeared in middle of a swap.
-        let maker_clone = maker.clone();
-        let idle_conn_check_thread = thread::Builder::new()
-            .name("Idle Client Checker Thread".to_string())
-            .spawn(move || {
-                log::info!("[{network_port}] Spawning Client connection status checker thread");
-                if let Err(e) = check_for_idle_states(maker_clone.clone()) {
-                    log::error!("Failed checking client's idle state {e:?}");
-                    maker_clone.shutdown.store(true, Relaxed);
-                }
-            })?;
-        maker.thread_pool.add_thread(idle_conn_check_thread);
+    // NOTE: Do NOT re-register outgoing contract outputs here.
+    // They were already registered with the watch tower during swap setup
+    // (in legacy_handlers / taproot_handlers). Re-registering would overwrite
+    // the registry entry and lose any recorded `spent_tx` from on-chain
+    // hashlock spends that the watcher already captured.
 
-        // 2. Watchtower thread.
-        // This thread checks for broadcasted contract transactions, which usually means a violation of the protocol.
-        // When a contract transaction is detected in mempool it will attempt recovery.
-        // This can get triggered even when contracts of adjacent hops are published. Implying the whole swap route is disrupted.
-        let maker_clone = maker.clone();
-        let contract_watcher_thread = thread::Builder::new()
-            .name("Contract Watcher Thread".to_string())
-            .spawn(move || {
-                log::info!("[{network_port}] Spawning contract-watcher thread");
-                if let Err(e) = check_for_broadcasted_contracts(maker_clone.clone()) {
-                    maker_clone.shutdown.store(true, Relaxed);
-                    log::error!("Failed checking broadcasted contracts {e:?}");
-                }
-            })?;
-        maker.thread_pool.add_thread(contract_watcher_thread);
+    while !maker.is_shutdown() {
+        // --- Hashlock path: check if preimages are available ---
+        check_for_preimage_via_watchtower(&maker, &outgoing_swapcoins, &incoming_swapcoins)?;
 
-        // 3: The RPC server thread.
-        // User for responding back to `maker-cli` apps.
-        let maker_clone = maker.clone();
-        let rpc_thread = thread::Builder::new()
-            .name("RPC Thread".to_string())
-            .spawn(move || {
-                log::info!("[{network_port}] Spawning RPC server thread");
-                match start_rpc_server(maker_clone.clone()) {
-                    Ok(_) => (),
-                    Err(e) => {
-                        log::error!("Failed starting rpc server {e:?}");
-                        maker_clone.shutdown.store(true, Relaxed);
-                    }
-                }
-            })?;
-
-        maker.thread_pool.add_thread(rpc_thread);
-
-        sleep(HEART_BEAT_INTERVAL); // wait for 1 beat, to complete spawns of all the threads.
-
-        // Check if recovery is needed.
-        let (inc, out) = maker.wallet.read()?.find_unfinished_swapcoins();
-        if !inc.is_empty() || !out.is_empty() {
-            log::info!("Incomplete swaps detected in the wallet. Starting recovery");
-            restore_broadcasted_contracts_on_reboot(&maker)?;
-        }
-
-        maker.is_setup_complete.store(true, Relaxed);
-        log::info!("[{}] Server Setup completed!! Use maker-cli to operate the server and the internal wallet.", maker.config.network_port);
-    }
-
-    while !maker.shutdown.load(Relaxed) {
-        if interval_tracker.is_multiple_of(RPC_PING_INTERVAL) {
-            check_connection_with_core(maker.as_ref())?;
-        }
-
-        // Perform fidelity bond and liquidity checks only when no coinswap is in progress.
-        // This prevents the server from getting blocked while creating a new bond or waiting
-        // for additional funds, which could otherwise interrupt an ongoing swap.
-        // Running these checks during an active swap might cause the maker to stop responding,
-        // potentially aborting the swap.
-        if maker.ongoing_swap_state.lock()?.is_empty() {
-            if interval_tracker.is_multiple_of(FIDELITY_BOND_UPDATE_INTERVAL) {
-                manage_fidelity_bonds(maker.clone(), &maker_addr, false)?;
-                interval_tracker = 0;
-            }
-
-            if interval_tracker.is_multiple_of(SWAP_LIQUIDITY_CHECK_INTERVAL) {
-                check_swap_liquidity(maker.as_ref())?;
-            }
-        }
-        match listener.accept() {
-            Ok((mut stream, _)) => {
-                log::info!("[{network_port}] Received incoming connection");
-
-                if let Err(e) = handle_client(&maker, &mut stream) {
-                    log::error!("[{network_port}] Error Handling client request {e:?}");
-                }
-            }
-
-            Err(e) => {
-                if e.kind() != ErrorKind::WouldBlock {
-                    log::error!("[{network_port}] Error accepting incoming connection: {e:?}");
-                }
-            }
+        // Check if all incoming swapcoins now have preimages
+        let all_preimages_known = {
+            let wallet = maker
+                .wallet
+                .read()
+                .map_err(|_| MakerError::General("Failed to lock wallet"))?;
+            incoming_swapcoins.iter().all(|incoming| {
+                // Wallet stores incoming swapcoins keyed by contract txid.
+                let key = incoming.contract_tx.compute_txid().to_string();
+                wallet
+                    .find_incoming_swapcoin(&key)
+                    .is_some_and(|s| s.is_preimage_known())
+            })
         };
 
-        // Increment **interval_tracker** only if no coinswap is in progress or if no pending
-        // swap liquidity and fidelity bond checks are due. This ensures these checks are
-        // not skipped due to an ongoing coinswap and are performed once it completes.
-        if maker.ongoing_swap_state.lock()?.is_empty()
-            || !interval_tracker.is_multiple_of(SWAP_LIQUIDITY_CHECK_INTERVAL)
-            || !interval_tracker.is_multiple_of(FIDELITY_BOND_UPDATE_INTERVAL)
-        {
-            interval_tracker += HEART_BEAT_INTERVAL.as_secs() as u32;
+        if all_preimages_known && !incoming_swapcoins.is_empty() {
+            log::info!(
+                "[{}] All preimages known, recovering via hashlock path",
+                maker.config.network_port
+            );
+
+            maker
+                .wallet
+                .write()
+                .map_err(|_| MakerError::General("Failed to lock wallet"))?
+                .sync_and_save()
+                .map_err(MakerError::Wallet)?;
+
+            let swept = maker
+                .wallet
+                .write()
+                .map_err(|_| MakerError::General("Failed to lock wallet"))?
+                .sweep_incoming_swapcoins(crate::utill::MIN_FEE_RATE)
+                .map_err(MakerError::Wallet)?;
+
+            if !swept.is_empty() {
+                log::info!(
+                    "[{}] Recovered {} incoming swapcoins via hashlock",
+                    maker.config.network_port,
+                    swept.resolved.len()
+                );
+
+                // Tracker: HashlockRecovered
+                let swept_txids: Vec<_> = swept.resolved.iter().map(|(_, txid)| *txid).collect();
+                update_tracker(&maker, &swap_id, |r| {
+                    r.recovery.incoming_swept = swept_txids;
+                    r.recovery.phase = MakerRecoveryPhase::HashlockRecovered;
+                });
+
+                // Clean up outgoing swapcoins — their funding was spent by
+                // someone else (hashlock), so they are no longer recoverable
+                // via timelock. Remove them from the wallet store.
+                {
+                    let mut wallet = maker
+                        .wallet
+                        .write()
+                        .map_err(|_| MakerError::General("Failed to lock wallet"))?;
+                    for outgoing in &outgoing_swapcoins {
+                        // Wallet stores outgoing swapcoins keyed by contract txid.
+                        let key = outgoing.contract_tx.compute_txid().to_string();
+                        wallet.remove_outgoing_swapcoin(&key);
+                    }
+                    wallet.save_to_disk().map_err(MakerError::Wallet)?;
+                }
+
+                // Tracker: Recovered + CleanedUp
+                update_tracker(&maker, &swap_id, |r| {
+                    r.phase = MakerSwapPhase::Recovered;
+                    r.recovery.phase = MakerRecoveryPhase::CleanedUp;
+                });
+
+                // Emit hashlock recovery reports
+                let network = maker
+                    .wallet
+                    .read()
+                    .map(|w| w.store.network.to_string())
+                    .unwrap_or_default();
+                for (contract_txid, spending_txid) in &swept.resolved {
+                    let amount = incoming_swapcoins
+                        .iter()
+                        .find(|s| s.contract_tx.compute_txid() == *contract_txid)
+                        .map(|s| s.funding_amount.to_sat())
+                        .unwrap_or(0);
+                    let report = SwapReport::maker_recovery(
+                        format!("recovery_hashlock_{}", contract_txid),
+                        "hashlock",
+                        amount,
+                        0,
+                        contract_txid.to_string(),
+                        "N/A".to_string(),
+                        spending_txid.to_string(),
+                        0,
+                        network.clone(),
+                    );
+                    report.print();
+                    let _ = report.save_to_disk(&maker.data_dir);
+                }
+
+                #[cfg(feature = "integration-test")]
+                maker.shutdown.store(true, Relaxed);
+                return Ok(());
+            }
+        }
+
+        // --- Timelock path: reclaim outgoing after timelock expires ---
+        let current_height = maker
+            .wallet
+            .read()
+            .map_err(|_| MakerError::General("Failed to lock wallet"))?
+            .rpc
+            .get_block_count()
+            .map_err(crate::wallet::WalletError::Rpc)? as u32;
+
+        if current_height >= timelock_expiry {
+            log::info!(
+                "[{}] Timelock expired at {} (expiry={}), recovering via timelock path",
+                maker.config.network_port,
+                current_height,
+                timelock_expiry
+            );
+
+            // Tracker: TimelockWaiting
+            update_tracker(&maker, &swap_id, |r| {
+                r.recovery.phase = MakerRecoveryPhase::TimelockWaiting;
+            });
+
+            log::info!("Sync at:----recover_from_swap timelock----");
+            maker
+                .wallet
+                .write()
+                .map_err(|_| MakerError::General("Failed to lock wallet"))?
+                .sync_and_save()
+                .map_err(MakerError::Wallet)?;
+
+            let recovered = maker
+                .wallet
+                .write()
+                .map_err(|_| MakerError::General("Failed to lock wallet"))?
+                .recover_timelocked_swapcoins(crate::utill::MIN_FEE_RATE)
+                .map_err(MakerError::Wallet)?;
+
+            if !recovered.is_empty() {
+                log::info!(
+                    "[{}] Recovered {} outgoing swapcoins via timelock",
+                    maker.config.network_port,
+                    recovered.len()
+                );
+
+                // Tracker: TimelockRecovered → Recovered + CleanedUp
+                let recovered_txids: Vec<_> =
+                    recovered.resolved.iter().map(|(_, txid)| *txid).collect();
+                update_tracker(&maker, &swap_id, |r| {
+                    r.recovery.outgoing_recovered = recovered_txids;
+                    r.recovery.phase = MakerRecoveryPhase::TimelockRecovered;
+                });
+                update_tracker(&maker, &swap_id, |r| {
+                    r.phase = MakerSwapPhase::Recovered;
+                    r.recovery.phase = MakerRecoveryPhase::CleanedUp;
+                });
+
+                // Emit timelock recovery reports
+                let network = maker
+                    .wallet
+                    .read()
+                    .map(|w| w.store.network.to_string())
+                    .unwrap_or_default();
+                for (contract_txid, spending_txid) in &recovered.resolved {
+                    let out = outgoing_swapcoins
+                        .iter()
+                        .find(|s| s.contract_tx.compute_txid() == *contract_txid);
+                    let amount = out.map(|s| s.funding_amount.to_sat()).unwrap_or(0);
+                    let timelock = out.and_then(|s| s.get_timelock()).unwrap_or(0);
+                    let report = SwapReport::maker_recovery(
+                        format!("recovery_timelock_{}", contract_txid),
+                        "timelock",
+                        0,
+                        amount,
+                        "N/A".to_string(),
+                        contract_txid.to_string(),
+                        spending_txid.to_string(),
+                        timelock as u16,
+                        network.clone(),
+                    );
+                    report.print();
+                    let _ = report.save_to_disk(&maker.data_dir);
+                }
+
+                #[cfg(feature = "integration-test")]
+                maker.shutdown.store(true, Relaxed);
+                return Ok(());
+            }
         }
 
         sleep(HEART_BEAT_INTERVAL);
     }
 
-    log::info!("[{network_port}] Maker is shutting down.");
+    Ok(())
+}
 
-    maker.watch_service.shutdown();
+/// Read a message from a stream.
+fn read_message(stream: &TcpStream) -> Result<TakerToMakerMessage, MakerError> {
+    let mut len_buf = [0u8; 4];
+    use std::io::Read;
 
-    maker.thread_pool.join_all_threads()?;
+    let mut stream_ref = stream;
+    stream_ref
+        .read_exact(&mut len_buf)
+        .map_err(MakerError::IO)?;
 
-    log::info!("sync at:----Shutdown wallet----");
-    maker.get_wallet().write()?.sync_and_save()?;
-    log::info!("Maker Server is shut down successfully.");
+    let len = u32::from_be_bytes(len_buf) as usize;
+
+    if len > 10 * 1024 * 1024 {
+        return Err(MakerError::General("Message too large"));
+    }
+
+    let mut buf = vec![0u8; len];
+    stream_ref.read_exact(&mut buf).map_err(MakerError::IO)?;
+
+    let message: TakerToMakerMessage = serde_cbor::from_slice(&buf)
+        .map_err(|_| MakerError::General("Failed to deserialize message"))?;
+
+    Ok(message)
+}
+
+/// Send a message to a stream.
+fn send_message(stream: &TcpStream, message: &MakerToTakerMessage) -> Result<(), MakerError> {
+    let buf = serde_cbor::to_vec(message)
+        .map_err(|_| MakerError::General("Failed to serialize message"))?;
+
+    let len = buf.len() as u32;
+    use std::io::Write;
+
+    let mut stream_ref = stream;
+    stream_ref
+        .write_all(&len.to_be_bytes())
+        .map_err(MakerError::IO)?;
+
+    stream_ref.write_all(&buf).map_err(MakerError::IO)?;
+    stream_ref.flush().map_err(MakerError::IO)?;
+
     Ok(())
 }

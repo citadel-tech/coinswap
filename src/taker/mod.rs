@@ -4,15 +4,21 @@
 //! simple request-response servers. The Taker handles all the necessary communications between one or many makers to route the swap across various makers. Description of
 //! protocol workflow is described in the [protocol between takers and makers](https://github.com/citadel-tech/Coinswap-Protocol-Specification/blob/main/v1/3_protocol-flow.md)
 
-pub mod api;
-/// Taker API 2.0 - Taproot-based coinswap implementation
-pub mod api2;
 mod config;
 pub mod error;
 pub mod offers;
-mod routines;
 
-pub use self::api::TakerBehavior;
-pub use api::{SwapParams, Taker};
-pub use api2::Taker as TaprootTaker;
+pub mod api;
+mod background_services;
+mod legacy_swap;
+mod legacy_verification;
+pub mod swap_tracker;
+mod taproot_swap;
+mod taproot_verification;
+
 pub use config::TakerConfig;
+
+#[cfg(feature = "integration-test")]
+pub use api::TakerBehavior;
+pub use api::{MakerFeeInfo, SwapParams, SwapSummary, Taker, TakerInitConfig};
+pub use offers::{format_state, MakerOfferCandidate, MakerProtocol, MakerState, OfferBook};

@@ -13,16 +13,22 @@ use std::{
 };
 
 use crate::{
-    maker::Maker,
     wallet::RPCConfig,
     watch_tower::{
         registry_storage::FileRegistry,
         rest_backend::BitcoinRest,
-        watcher::{Watcher, WatcherCommand, WatcherEvent},
+        watcher::{Role, Watcher, WatcherCommand, WatcherEvent},
         watcher_error::WatcherError,
         zmq_backend::ZmqBackend,
     },
 };
+
+/// Marker type for the Maker role in the watchtower.
+pub struct MakerRole;
+
+impl Role for MakerRole {
+    const RUN_DISCOVERY: bool = false;
+}
 
 /// Client-facing service for sending watcher commands and receiving events.
 #[derive(Clone)]
@@ -85,8 +91,8 @@ pub fn start_maker_watch_service(
 ) -> Result<WatchService, WatcherError> {
     // Backends
     let backend = ZmqBackend::new(zmq_addr);
-    let rest_backend = BitcoinRest::new(rpc_config.clone())?;
-    let blockchain_info = rest_backend.get_blockchain_info()?;
+    let rpc_backend = BitcoinRest::new(rpc_config.clone())?;
+    let blockchain_info = rpc_backend.get_blockchain_info()?;
 
     // Registry
     let file_registry = data_dir
@@ -100,7 +106,8 @@ pub fn start_maker_watch_service(
 
     // Watcher
     let rpc_config_watcher = rpc_config.clone();
-    let mut watcher = Watcher::<Maker>::new(backend, registry, rx_requests, tx_events);
+    let mut watcher =
+        Watcher::<MakerRole>::new(backend, registry, rx_requests, tx_events, Vec::new());
 
     // Makers don't run discovery, so pass an already-complete flag.
     thread::Builder::new()

@@ -15,6 +15,11 @@ struct FeeOptimizationResult {
 const MIN_TARGET_CHUNKS: usize = 2;
 pub const MAX_SPLITS: usize = 5;
 
+/// Minimum viable change chunk size (in sats).
+/// Change chunks below this will likely fall under dust after fee subtraction and randomized variance.
+/// Derived from: P2WPKH dust (294) + estimated max per-chunk fee (~300) = ~594, rounded up.
+const MIN_CHANGE_CHUNK: u64 = 600;
+
 impl Wallet {
     /// Performs simple fee optimization based on the number of selected inputs and target chunks, change chunks
     fn simple_fee_optimization(
@@ -132,6 +137,13 @@ impl Wallet {
             for num_change_chunks in 1..=max_splits {
                 let mean_target = target / num_target_chunks as u64;
                 let mean_change = target_change / num_change_chunks as u64;
+
+                // Skip splits where change chunks would be too small to survive
+                // fee subtraction and randomized variance without falling below dust.
+                if mean_change < MIN_CHANGE_CHUNK {
+                    continue;
+                }
+
                 let diff = mean_target.abs_diff(mean_change);
                 let max_avg = mean_target.max(mean_change) as f64;
                 let relative_diff = diff as f64 / max_avg;

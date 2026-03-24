@@ -1,60 +1,48 @@
-//! The Taker API.
-//!
-//! This module describes the main [`Taker`] structure and all other associated data sets related to a coinswap round.
-//! This includes the main protocol workflow and all the subroutines that are called sequentially.
-//!
-//! [Taker::do_coinswap] is the main routine running all other subroutines. Follow the white rabbit from here.
-//!
+//! Taker API for both Legacy (ECDSA) and Taproot (MuSig2) protocols.
+
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
+    convert::TryFrom,
     net::TcpStream,
     path::PathBuf,
-    sync::{atomic::AtomicBool, mpsc, Arc},
-    thread::{self, sleep},
+    sync::{atomic::AtomicBool, mpsc, Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard},
+    thread,
     time::{Duration, Instant},
 };
 
-use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, RpcApi};
-
-use socks::Socks5Stream;
+pub(crate) use super::swap_tracker::SwapPhase;
+use super::swap_tracker::{
+    now_secs, ContractOutcome, ContractResolution, ExchangeProgress, FinalizationProgress,
+    LegacyExchangeProgress, MakerProgress, RecoveryState, SerializableSecretKey, SwapRecord,
+    SwapTracker, TaprootExchangeProgress,
+};
 
 use bitcoin::{
-    consensus::encode::deserialize,
     hashes::{hash160::Hash as Hash160, Hash},
-    hex::{Case, DisplayHex},
+    hex::DisplayHex,
     secp256k1::{
         rand::{rngs::OsRng, RngCore},
         SecretKey,
     },
-    Amount, BlockHash, OutPoint, PublicKey, ScriptBuf, Transaction, Txid,
+    Amount, OutPoint, PublicKey, Txid,
 };
+use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, RpcApi};
+use socks::Socks5Stream;
 
-use super::{
-    error::TakerError,
-    offers::{MakerAddress, OfferAndAddress},
-    routines::*,
-};
 use crate::{
+    nostr_coinswap::NOSTR_RELAYS,
     protocol::{
-        contract::calculate_coinswap_fee,
-        error::ProtocolError,
-        messages::{
-            ContractSigsAsRecvrAndSender, ContractSigsForRecvr, ContractSigsForRecvrAndSender,
-            ContractSigsForSender, FundingTxInfo, MultisigPrivkey, Preimage, PrivKeyHandover,
-            TakerToMakerMessage,
+        common_messages::{
+            GetOffer, MakerToTakerMessage, Offer, PrivateKeyHandover, ProtocolVersion, SwapDetails,
+            SwapPrivkey, TakerHello, TakerToMakerMessage,
         },
+        contract::calculate_pubkey_from_nonce,
     },
-    taker::{
-        config::TakerConfig,
-        offers::{
-            format_state, MakerOfferCandidate, MakerProtocol, OfferBook, OfferBookHandle,
-            OfferSyncHandle, OfferSyncService,
-        },
-    },
-    utill::*,
+    utill::{check_tor_status, generate_maker_keys, get_taker_dir, read_message, send_message},
     wallet::{
-        ffi::MakerFeeInfo, IncomingSwapCoin, OutgoingSwapCoin, RPCConfig, SwapCoin, SwapReport,
-        SwapStatus, Wallet, WalletError, WatchOnlySwapCoin,
+        swapcoin::{IncomingSwapCoin, OutgoingSwapCoin, WatchOnlySwapCoin},
+        MakerFeeInfo as ReportMakerFeeInfo, RPCConfig, RecoveryOutcome, SwapReport, SwapStatus,
+        Wallet,
     },
     watch_tower::{
         registry_storage::FileRegistry,
@@ -65,608 +53,2078 @@ use crate::{
     },
 };
 
-// Default values for Taker configurations
-pub(crate) const REFUND_LOCKTIME: u16 = 20;
+use super::{
+    background_services::{BreachDetector, RecoveryLoop},
+    config::TakerConfig,
+    error::TakerError,
+    offers::{
+        MakerAddress, MakerProtocol, OfferAndAddress, OfferBook, OfferBookHandle, OfferSyncHandle,
+        OfferSyncService,
+    },
+};
+
+/// Connection type for the taker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnectionType {
+    /// Direct TCP connection.
+    Clearnet,
+    /// Connection through Tor SOCKS proxy.
+    Tor,
+}
+
+/// Timeout for connecting to makers.
+pub const CONNECT_TIMEOUT_SECS: u64 = 30;
+
+/// Base refund locktime (in blocks) for the innermost hop.
+///
+/// In integration tests the idle-connection timeout fires after ~200 blocks
+/// (60 s at 10 blocks / 3 s).  The base must exceed that so makers have time
+/// to detect the drop and sweep via hashlock before the outer timelocks expire.
+#[cfg(not(feature = "integration-test"))]
+pub(crate) const REFUND_LOCKTIME_BASE: u16 = 20;
+#[cfg(feature = "integration-test")]
+pub(crate) const REFUND_LOCKTIME_BASE: u16 = 150;
+
+/// Locktime increment per hop in the swap route.
+#[cfg(not(feature = "integration-test"))]
 pub(crate) const REFUND_LOCKTIME_STEP: u16 = 20;
-pub(crate) const FIRST_CONNECT_ATTEMPTS: u32 = 2;
-pub(crate) const FIRST_CONNECT_SLEEP_DELAY_SEC: u64 = 500;
-pub(crate) const FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC: u64 = 30;
+#[cfg(feature = "integration-test")]
+pub(crate) const REFUND_LOCKTIME_STEP: u16 = 75;
 
-// Tries reconnection by variable delay.
-// First 10 attempts at 1 sec interval.
-// Next 5 attempts by 30 sec interval.
-// This is useful to cater for random network failure.
-pub(crate) const RECONNECT_ATTEMPTS: u32 = 10;
-pub(crate) const RECONNECT_SHORT_SLEEP_DELAY: u64 = 1;
-pub(crate) const RECONNECT_LONG_SLEEP_DELAY: u64 = 5;
-pub(crate) const SHORT_LONG_SLEEP_DELAY_TRANSITION: u32 = 30;
-pub(crate) const TCP_TIMEOUT_SECONDS: u64 = 300;
+/// Maximum number of finalization retry attempts before triggering recovery.
+#[cfg(not(feature = "integration-test"))]
+const MAX_FINALIZE_RETRIES: u32 = 3;
+#[cfg(feature = "integration-test")]
+const MAX_FINALIZE_RETRIES: u32 = 2;
 
-/// Swap specific parameters. These are user's policy and can differ among swaps.
-/// SwapParams govern the criteria to find suitable set of makers from the offerbook.
-///
-/// If no maker matches with a given SwapParam, that coinswap round will fail.
-#[derive(Debug, Default, Clone)]
-pub struct SwapParams {
-    /// Total Amount to Swap.
-    pub send_amount: Amount,
-    /// How many hops.
-    pub maker_count: usize,
-    /// User selected UTXOs
-    pub manually_selected_outpoints: Option<Vec<OutPoint>>,
-}
+/// Delay between finalization retry attempts.
+#[cfg(not(feature = "integration-test"))]
+const FINALIZE_RETRY_DELAY: Duration = Duration::from_secs(15);
+#[cfg(feature = "integration-test")]
+const FINALIZE_RETRY_DELAY: Duration = Duration::from_secs(5);
 
-// Defines the Taker's position in the current ongoing swap.
-#[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Clone)]
-enum TakerPosition {
-    #[default]
-    /// Taker is the First Peer of the swap (Sender Side)
-    FirstPeer,
-    /// Swap Happening between Makers, Taker is in WatchOnly mode.
-    WatchOnly,
-    /// Taker is the last peer of the swap (Receiver Side)
-    LastPeer,
-}
+/// Maximum number of blocks between consecutive hop confirmations.
+/// If a maker's funding confirms more than this many blocks after the previous
+/// hop, the relative timelock staggering may be compromised (legacy CSV only).
+/// In integration tests, blocks are mined in rapid batches so the gap is larger.
+#[cfg(not(feature = "integration-test"))]
+pub(crate) const CONFIRMATION_HEIGHT_TOLERANCE: u32 = 6;
+#[cfg(feature = "integration-test")]
+pub(crate) const CONFIRMATION_HEIGHT_TOLERANCE: u32 = 50;
 
-/// The Swap State defining a current ongoing swap. This structure is managed by the Taker while
-/// performing a swap. Various data are appended into the lists and are only read from the last entry as the
-/// swap progresses. This ensures the swap state is always consistent.
-///
-/// These states can be used to recover from a failed swap round.
-#[derive(Default, Clone)]
-struct OngoingSwapState {
-    /// SwapParams used in current swap round.
-    pub(crate) swap_params: SwapParams,
-    /// List of all the suitable makers for the current swap round.
-    pub(crate) suitable_makers: Vec<OfferAndAddress>,
-    /// SwapCoins going out from the Taker.
-    pub(crate) outgoing_swapcoins: Vec<OutgoingSwapCoin>,
-    /// SwapCoins between Makers.
-    pub(crate) watchonly_swapcoins: Vec<Vec<WatchOnlySwapCoin>>,
-    /// SwapCoins received by the Taker.
-    pub(crate) incoming_swapcoins: Vec<IncomingSwapCoin>,
-    /// Information regarding all the swap participants (Makers).
-    /// The last entry at the end of the swap round will be the Taker, as it's the last peer.
-    pub(crate) peer_infos: Vec<NextPeerInfo>,
-    /// List of funding transactions with optional merkleproofs.
-    pub(crate) funding_txs: Vec<(Vec<Transaction>, Vec<String>)>,
-    /// The preimage being used for this coinswap round.
-    pub(crate) active_preimage: Preimage,
-    /// Enum defining the position of the Taker at each steps of a multihop swap.
-    pub(crate) taker_position: TakerPosition,
-    /// Unique ID for a swap
-    pub(crate) id: String,
-}
+/// Margin multiplier applied to the computed maker fee when verifying amounts.
+/// Accounts for mining transaction fees and rounding. For example, 1.5 means the
+/// actual deduction may be up to 50% more than the advertised maker fee.
+pub(crate) const FEE_VERIFICATION_MARGIN: f64 = 1.5;
 
-/// Information for the next maker in the hop.
+/// Taker configuration.
 #[derive(Debug, Clone)]
-struct NextPeerInfo {
-    peer: OfferAndAddress,
-    multisig_pubkeys: Vec<PublicKey>,
-    multisig_nonces: Vec<SecretKey>,
-    hashlock_nonces: Vec<SecretKey>,
-    contract_reedemscripts: Vec<ScriptBuf>,
+pub struct TakerInitConfig {
+    /// Data directory path.
+    pub data_dir: Option<PathBuf>,
+    /// Wallet file name.
+    pub wallet_file_name: Option<String>,
+    /// RPC configuration for Bitcoin Core.
+    pub rpc_config: Option<RPCConfig>,
+    /// Tor control port (optional).
+    pub control_port: Option<u16>,
+    /// Tor authentication password (optional).
+    pub tor_auth_password: Option<String>,
+    /// SOCKS port for Tor.
+    pub socks_port: u16,
+    /// ZMQ address for transaction monitoring.
+    pub zmq_addr: String,
+    /// Wallet password (optional).
+    pub password: Option<String>,
+    /// Connection type (Tor or Clearnet).
+    pub connection_type: ConnectionType,
+    /// Nostr relay URLs for maker discovery.
+    pub nostr_relays: Vec<String>,
 }
 
-/// Enum representing different behaviors of the Taker in a coinswap protocol.
-#[derive(PartialEq, Eq, PartialOrd, Ord)]
-pub enum TakerBehavior {
-    /// No special behavior.
-    Normal,
-    /// This depicts the behavior when the taker drops connections after the full coinswap setup.
-    DropConnectionAfterFullSetup,
-    /// Behavior to broadcast the contract after the full coinswap setup.
-    BroadcastContractAfterFullSetup,
+impl Default for TakerInitConfig {
+    fn default() -> Self {
+        TakerInitConfig {
+            data_dir: None,
+            wallet_file_name: None,
+            rpc_config: None,
+            control_port: None,
+            tor_auth_password: None,
+            socks_port: 9050,
+            zmq_addr: "tcp://127.0.0.1:28332".to_string(),
+            password: None,
+            connection_type: ConnectionType::Tor,
+            nostr_relays: NOSTR_RELAYS.iter().map(|s| s.to_string()).collect(),
+        }
+    }
 }
 
-/// The Taker structure that performs bulk of the coinswap protocol. Taker connects
-/// to multiple Makers and send protocol messages sequentially to them. The communication
-///
-/// sequence and corresponding SwapCoin infos are stored in `ongoing_swap_state`.
+impl TakerInitConfig {
+    /// Set the data directory.
+    pub fn with_data_dir(mut self, path: PathBuf) -> Self {
+        self.data_dir = Some(path);
+        self
+    }
+
+    /// Set the wallet file name.
+    pub fn with_wallet_name(mut self, name: String) -> Self {
+        self.wallet_file_name = Some(name);
+        self
+    }
+
+    /// Set the RPC configuration.
+    pub fn with_rpc_config(mut self, rpc_config: RPCConfig) -> Self {
+        self.rpc_config = Some(rpc_config);
+        self
+    }
+
+    /// Set the ZMQ address.
+    pub fn with_zmq_addr(mut self, addr: String) -> Self {
+        self.zmq_addr = addr;
+        self
+    }
+
+    /// Set the Nostr relay URLs.
+    pub fn with_nostr_relays(mut self, relays: Vec<String>) -> Self {
+        self.nostr_relays = relays;
+        self
+    }
+}
+
+/// Swap parameters.
+#[derive(Debug, Clone, Default)]
+pub struct SwapParams {
+    /// Protocol version to use for this swap.
+    pub protocol: ProtocolVersion,
+    /// Total amount to swap.
+    pub send_amount: Amount,
+    /// Number of makers (hops) to use.
+    pub maker_count: usize,
+    /// Number of transaction splits (Taproot only, defaults to 1 for Legacy).
+    pub tx_count: u32,
+    /// Required confirmations for funding transactions.
+    pub required_confirms: u32,
+    /// User-selected UTXOs (optional).
+    pub manually_selected_outpoints: Option<Vec<OutPoint>>,
+    /// Manually specified maker addresses (optional). When set, these makers
+    /// are used instead of auto-discovery from the offerbook.
+    pub preferred_makers: Option<Vec<String>>,
+}
+
+impl SwapParams {
+    /// Create new swap parameters.
+    pub fn new(protocol: ProtocolVersion, send_amount: Amount, maker_count: usize) -> Self {
+        SwapParams {
+            protocol,
+            send_amount,
+            maker_count,
+            tx_count: 1,
+            required_confirms: 1,
+            manually_selected_outpoints: None,
+            preferred_makers: None,
+        }
+    }
+
+    /// Set the number of transaction splits.
+    pub fn with_tx_count(mut self, tx_count: u32) -> Self {
+        self.tx_count = tx_count;
+        self
+    }
+
+    /// Set the required confirmations.
+    pub fn with_required_confirms(mut self, confirms: u32) -> Self {
+        self.required_confirms = confirms;
+        self
+    }
+
+    /// Set manual UTXO selection.
+    pub fn with_utxos(mut self, outpoints: Vec<OutPoint>) -> Self {
+        self.manually_selected_outpoints = Some(outpoints);
+        self
+    }
+
+    /// Set preferred maker addresses (e.g. `"host:port"` strings).
+    /// When set, these makers are used directly instead of auto-discovery.
+    pub fn with_preferred_makers(mut self, makers: Vec<String>) -> Self {
+        self.preferred_makers = Some(makers);
+        self
+    }
+}
+
+/// Per-maker fee breakdown returned in SwapSummary.
+#[derive(Debug, Clone)]
+pub struct MakerFeeInfo {
+    /// Maker's network address.
+    pub address: String,
+    /// Protocol version negotiated with this maker.
+    pub protocol: ProtocolVersion,
+    /// Base fee in satoshis.
+    pub base_fee: u64,
+    /// Percentage fee relative to swap amount.
+    pub amount_relative_fee_pct: f64,
+    /// Percentage fee for time-locked funds.
+    pub time_relative_fee_pct: f64,
+    /// Locktime (blocks) for this hop.
+    pub locktime: u16,
+    /// Estimated fee for this hop in satoshis.
+    pub estimated_fee_sats: u64,
+}
+
+/// Summary returned after the prepare phase, before the user commits funds.
+#[derive(Debug, Clone)]
+pub struct SwapSummary {
+    /// Unique swap ID (use this to call `start_coinswap`).
+    pub swap_id: String,
+    /// Protocol version.
+    pub protocol: ProtocolVersion,
+    /// Amount the taker is sending.
+    pub send_amount: Amount,
+    /// Per-maker fee breakdown (one entry per hop, in route order).
+    pub makers: Vec<MakerFeeInfo>,
+    /// Total estimated fees across all hops.
+    pub total_estimated_fee: Amount,
+    /// Estimated amount the taker will receive after all fees.
+    pub estimated_receive_amount: Amount,
+}
+
+/// State for an ongoing swap.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct OngoingSwapState {
+    /// Unique swap ID.
+    pub(crate) id: String,
+    /// The hash preimage for this swap.
+    pub(crate) preimage: [u8; 32],
+    /// Swap parameters.
+    pub(crate) params: SwapParams,
+    /// Selected makers for this swap.
+    pub(crate) makers: Vec<MakerConnection>,
+    /// Outgoing swapcoins (our side of the swap).
+    pub(crate) outgoing_swapcoins: Vec<OutgoingSwapCoin>,
+    /// Incoming swapcoins (receiving side of the swap).
+    pub(crate) incoming_swapcoins: Vec<IncomingSwapCoin>,
+    /// Watch-only swapcoins for intermediate hops (between makers).
+    pub(crate) watchonly_swapcoins: Vec<WatchOnlySwapCoin>,
+    /// Multisig nonces for each outgoing swapcoin (Legacy only, used in ProofOfFunding).
+    /// Empty for Taproot swaps.
+    pub(crate) multisig_nonces: Vec<SecretKey>,
+    /// Hashlock nonces for each outgoing swapcoin (used in ProofOfFunding).
+    pub(crate) hashlock_nonces: Vec<SecretKey>,
+    /// Spare maker addresses available to substitute if a selected maker rejects during negotiation.
+    pub(crate) spare_makers: Vec<MakerAddress>,
+    /// Current phase of the swap lifecycle.
+    pub(crate) phase: SwapPhase,
+    /// Reference block height captured during negotiation for consistent Taproot CLTV timelocks.
+    /// Taproot uses absolute heights, so all timelock calculations must use the same base height.
+    pub(crate) reference_height: Option<u32>,
+}
+
+/// Connection state for a maker in the swap route.
+#[derive(Debug, Clone)]
+pub(crate) struct MakerConnection {
+    /// Maker's network address.
+    pub(crate) address: MakerAddress,
+    /// Protocol version negotiated with this maker.
+    pub(crate) protocol: ProtocolVersion,
+    /// Tweakable point for this swap.
+    pub(crate) tweakable_point: Option<PublicKey>,
+    /// Maker's offer (fee schedule), if known from offerbook discovery.
+    pub(crate) offer: Option<Offer>,
+    /// The timelock value sent to this maker in `SwapDetails`.
+    /// For Legacy this is a relative CSV offset; for Taproot an absolute CLTV height.
+    pub(crate) negotiated_timelock: u32,
+    /// Protocol-specific exchange progress milestones.
+    pub(crate) exchange: ExchangeProgress,
+    /// Shared finalization milestones (preimage, privkey exchange).
+    pub(crate) finalization: FinalizationProgress,
+}
+
+impl MakerConnection {
+    /// Get mutable reference to Legacy exchange progress.
+    pub(crate) fn legacy_exchange_mut(
+        &mut self,
+    ) -> Result<&mut LegacyExchangeProgress, TakerError> {
+        match &mut self.exchange {
+            ExchangeProgress::Legacy(ref mut l) => Ok(l),
+            _ => Err(TakerError::General(
+                "Expected Legacy exchange progress".to_string(),
+            )),
+        }
+    }
+
+    /// Get mutable reference to Taproot exchange progress.
+    pub(crate) fn taproot_exchange_mut(
+        &mut self,
+    ) -> Result<&mut TaprootExchangeProgress, TakerError> {
+        match &mut self.exchange {
+            ExchangeProgress::Taproot(ref mut t) => Ok(t),
+            _ => Err(TakerError::General(
+                "Expected Taproot exchange progress".to_string(),
+            )),
+        }
+    }
+}
+
+impl Taker {
+    /// Compute the minimum expected output amount for a specific maker hop.
+    ///
+    /// Accounts for cumulative fees from all previous hops so that each maker's
+    /// output is compared against the correct input amount (not the original
+    /// `send_amount`).
+    ///
+    /// Returns `None` if any maker along the route (up to and including `maker_idx`)
+    /// has no stored offer.
+    ///
+    /// Fee formula: `total_fee = base_fee + (amount * amt_pct)/100 + (amount * locktime * time_pct)/100`
+    /// TODO: Use fee estimation here
+    pub(crate) fn min_expected_amount_for_hop(&self, maker_idx: usize) -> Option<Amount> {
+        let swap = self.swap_state().ok()?;
+        let send_amount = swap.params.send_amount;
+        let maker_count = swap.makers.len();
+
+        // Iteratively compute the amount reaching each hop after deducting fees.
+        let mut amount_sats = send_amount.to_sat() as f64;
+        for i in 0..=maker_idx {
+            let offer = swap.makers[i].offer.as_ref()?;
+            let locktime =
+                REFUND_LOCKTIME_BASE + REFUND_LOCKTIME_STEP * (maker_count - i - 1) as u16;
+            let fee = offer.base_fee as f64
+                + (amount_sats * offer.amount_relative_fee_pct) / 100.0
+                + (amount_sats * locktime as f64 * offer.time_relative_fee_pct) / 100.0;
+            let fee_with_margin = fee * FEE_VERIFICATION_MARGIN;
+            amount_sats = (amount_sats - fee_with_margin).max(0.0);
+        }
+
+        Some(Amount::from_sat(amount_sats as u64))
+    }
+}
+
+/// Taker client.
 pub struct Taker {
-    wallet: Wallet,
-    /// Taker configuration with refund, connection, and sleep settings.
-    pub config: TakerConfig,
-    offerbook: OfferBookHandle,
-    ongoing_swap_state: OngoingSwapState,
-    #[cfg(feature = "integration-test")]
-    behavior: TakerBehavior,
-    /// iyiib
-    pub watch_service: WatchService,
+    /// Configuration.
+    pub(crate) config: TakerInitConfig,
+    /// Wallet for managing funds.
+    pub(crate) wallet: Arc<RwLock<Wallet>>,
+    /// Offer book for managing maker offers.
+    pub(crate) offerbook: OfferBookHandle,
+    /// Watch service for transaction monitoring.
+    pub(crate) watch_service: WatchService,
+    /// Handle for offer sync background service.
     offer_sync_handle: OfferSyncHandle,
+    /// Ongoing swap state (`None` when no swap is active).
+    pub(crate) ongoing_swap: Option<OngoingSwapState>,
+    /// Persistent swap tracker for crash-resilient recovery.
+    pub(crate) swap_tracker: Arc<Mutex<SwapTracker>>,
+    /// Background recovery loop (active when incomplete swap recovery is in progress).
+    recovery_loop: Option<RecoveryLoop>,
+    /// Breach detector for legacy swaps (monitors funding outpoints for adversarial contract broadcasts).
+    pub(crate) breach_detector: Option<BreachDetector>,
+    /// Test behavior.
+    #[cfg(feature = "integration-test")]
+    pub behavior: TakerBehavior,
 }
 
 impl Drop for Taker {
     fn drop(&mut self) {
         log::info!("Shutting down taker.");
-        self.offerbook.persist().unwrap();
-        log::info!("shutting the offer sync background job");
+        // Flush any pending swap state before shutdown
+        if let Some(swap) = &self.ongoing_swap {
+            if let Ok(record) = self.persist_build_record(swap) {
+                if let Err(e) = self.swap_tracker.lock().unwrap().save_record(&record) {
+                    log::error!("Failed to flush swap tracker on shutdown: {:?}", e);
+                }
+            }
+        }
+        // Shut down background recovery loop (if running)
+        if let Some(recovery) = self.recovery_loop.take() {
+            log::info!("Shutting down recovery loop");
+            drop(recovery);
+        }
+        // Shut down breach detector (if running)
+        if let Some(detector) = self.breach_detector.take() {
+            log::info!("Shutting down breach detector");
+            detector.stop();
+        }
+        if let Err(e) = self.offerbook.persist() {
+            log::error!("Failed to persist offerbook: {:?}", e);
+        }
+        log::info!("Shutting down offer sync background job");
         self.offer_sync_handle.shutdown();
-        log::info!("shutting the watch service background job");
+        log::info!("Shutting down watch service background job");
         self.watch_service.shutdown();
-        log::info!("offerbook data saved to disk.");
-        self.wallet.save_to_disk().unwrap();
+        log::info!("Offerbook data saved to disk.");
+        if let Ok(wallet) = self.wallet.write() {
+            if let Err(e) = wallet.save_to_disk() {
+                log::error!("Failed to save wallet: {:?}", e);
+            }
+        }
         log::info!("Wallet data saved to disk.");
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+impl Role for Taker {
+    const RUN_DISCOVERY: bool = true;
+}
+
 impl Taker {
-    // ######## MAIN PUBLIC INTERFACE ############
+    /// Acquire a read lock on the wallet.
+    pub(crate) fn read_wallet(&self) -> Result<RwLockReadGuard<'_, Wallet>, TakerError> {
+        self.wallet
+            .read()
+            .map_err(|_| TakerError::General("Failed to lock wallet".to_string()))
+    }
 
-    ///  Initializes a Taker structure.
+    /// Acquire a write lock on the wallet.
+    pub(crate) fn write_wallet(&self) -> Result<RwLockWriteGuard<'_, Wallet>, TakerError> {
+        self.wallet
+            .write()
+            .map_err(|_| TakerError::General("Failed to lock wallet".to_string()))
+    }
+
+    /// Get a shared reference to the ongoing swap state.
+    pub(crate) fn swap_state(&self) -> Result<&OngoingSwapState, TakerError> {
+        self.ongoing_swap
+            .as_ref()
+            .ok_or_else(|| TakerError::General("No active swap".to_string()))
+    }
+
+    /// Get a mutable reference to the ongoing swap state.
+    pub(crate) fn swap_state_mut(&mut self) -> Result<&mut OngoingSwapState, TakerError> {
+        self.ongoing_swap
+            .as_mut()
+            .ok_or_else(|| TakerError::General("No active swap".to_string()))
+    }
+
+    /// Initialize a new taker.
+    pub fn init(config: TakerInitConfig) -> Result<Self, TakerError> {
+        let data_dir = config.data_dir.clone().unwrap_or_else(get_taker_dir);
+        std::fs::create_dir_all(&data_dir)?;
+
+        let (wallet, rpc_config) = Self::init_wallet(&config, &data_dir)?;
+        let (watch_service, initial_discovery_complete) =
+            Self::init_watch_service(&config, &rpc_config, &data_dir)?;
+        Self::init_taker_config(&config, &data_dir)?;
+        let offerbook = OfferBookHandle::load_or_create(&data_dir)?;
+        let offer_sync_handle = Self::init_offer_sync(
+            &offerbook,
+            &watch_service,
+            config.socks_port,
+            rpc_config,
+            initial_discovery_complete,
+        )?;
+        let swap_tracker = Arc::new(Mutex::new(SwapTracker::load_or_create(&data_dir)?));
+        swap_tracker.lock().unwrap().cleanup_incomplete();
+
+        let mut taker = Taker {
+            config,
+            wallet: Arc::new(RwLock::new(wallet)),
+            offerbook,
+            watch_service,
+            offer_sync_handle,
+            ongoing_swap: None,
+            swap_tracker,
+            recovery_loop: None,
+            breach_detector: None,
+            #[cfg(feature = "integration-test")]
+            behavior: TakerBehavior::Normal,
+        };
+
+        taker.init_recover_wallet();
+        Ok(taker)
+    }
+
+    /// Called on startup to recover funds from incomplete swaps.
     ///
-    /// This function sets up a Taker instance with configurable parameters.
-    /// It handles the initialization of data directories, wallet files, and RPC configurations.
-    ///
-    /// ### Parameters:
-    /// - `data_dir`:
-    ///   - `Some(value)`: Use the specified directory for storing data.
-    ///   - `None`: Use the default data directory (e.g., for Linux: `~/.coinswap/taker`).
-    /// - `wallet_file_name`:
-    ///   - `Some(value)`: Attempt to load a wallet file named `value`. If it does not exist, a new wallet with the given name will be created.
-    ///   - `None`: Create a new wallet file with the default name `taker-wallet`.
-    /// - If `rpc_config` = `None`: Use the default [`RPCConfig`]
-    pub fn init(
-        data_dir: Option<PathBuf>,
-        wallet_file_name: Option<String>,
-        rpc_config: Option<RPCConfig>,
-        #[cfg(feature = "integration-test")] behavior: TakerBehavior,
-        control_port: Option<u16>,
-        tor_auth_password: Option<String>,
-        zmq_addr: String,
-        password: Option<String>,
-    ) -> Result<Taker, TakerError> {
-        // Get provided data directory or the default data directory.
-        let data_dir = data_dir.unwrap_or(get_taker_dir());
-        let wallets_dir = data_dir.join("wallets");
+    /// Sweeps incoming swapcoins (hashlock path), recovers timelocked outgoing
+    /// swapcoins, and spawns a background RecoveryLoop for any remaining
+    /// unresolved contracts.
+    fn init_recover_wallet(&mut self) {
+        log::info!("Checking wallet for unresolved swap contracts...");
 
-        // Use the provided name or default to `taker-wallet` if not specified.
-        let wallet_file_name = wallet_file_name.unwrap_or_else(|| "taker-wallet".to_string());
-        let wallet_path = wallets_dir.join(&wallet_file_name);
+        // Wallet-driven recovery: sweep incoming + recover timelocked
+        let has_remaining = match self.write_wallet() {
+            Ok(mut wallet) => {
+                match wallet.sweep_incoming_swapcoins(2.0) {
+                    Ok(ref swept) if !swept.is_empty() => {
+                        log::info!(
+                            "Startup recovery: swept {} incoming swapcoins",
+                            swept.resolved.len()
+                        );
+                    }
+                    Ok(_) => {}
+                    Err(e) => log::warn!("Startup incoming sweep failed: {:?}", e),
+                }
 
-        let mut rpc_config = rpc_config.unwrap_or_default();
-        rpc_config.wallet_name = wallet_file_name;
+                match wallet.recover_timelocked_swapcoins(2.0) {
+                    Ok(ref recovered) if !recovered.is_empty() => {
+                        log::info!(
+                            "Startup recovery: recovered {} timelocked outgoing swapcoins",
+                            recovered.len()
+                        );
+                    }
+                    Ok(_) => {}
+                    Err(e) => log::warn!("Startup timelock recovery failed: {:?}", e),
+                }
 
-        let backend = ZmqBackend::new(&zmq_addr);
-        let rest_backend = BitcoinRest::new(rpc_config.clone())?;
-        let blockchain_info = rest_backend.get_blockchain_info()?;
+                let has_contracts = !wallet.outgoing_contract_outpoints().is_empty()
+                    || !wallet.incoming_contract_outpoints().is_empty();
+                drop(wallet);
+                has_contracts
+            }
+            Err(e) => {
+                log::warn!("Startup recovery: failed to lock wallet: {:?}", e);
+                false
+            }
+        };
+
+        if has_remaining {
+            let data_dir = self.config.data_dir.clone().unwrap_or_else(get_taker_dir);
+            self.recovery_loop = Some(RecoveryLoop::start(
+                self.wallet.clone(),
+                self.swap_tracker.clone(),
+                data_dir,
+            ));
+        }
+    }
+
+    /// Set up the wallet from config and return it with the resolved RPC config.
+    fn init_wallet(
+        config: &TakerInitConfig,
+        data_dir: &std::path::Path,
+    ) -> Result<(Wallet, RPCConfig), TakerError> {
+        let wallet_file_name = config
+            .wallet_file_name
+            .clone()
+            .unwrap_or_else(|| "taker-wallet".to_string());
+
+        let mut rpc_config = config
+            .rpc_config
+            .clone()
+            .ok_or_else(|| TakerError::General("RPC configuration is required".to_string()))?;
+        rpc_config.wallet_name = wallet_file_name.clone();
+
+        let wallet_path = data_dir.join("wallets").join(&wallet_file_name);
+        let wallet =
+            Wallet::load_or_init_wallet(&wallet_path, &rpc_config, config.password.clone())?;
+
+        Ok((wallet, rpc_config))
+    }
+
+    /// Initialize the ZMQ-backed watch service and spawn the watcher thread.
+    /// Returns the watch service and the initial-discovery-complete flag set by Nostr EOSE.
+    fn init_watch_service(
+        config: &TakerInitConfig,
+        rpc_config: &RPCConfig,
+        data_dir: &std::path::Path,
+    ) -> Result<(WatchService, Arc<AtomicBool>), TakerError> {
+        let backend = ZmqBackend::new(&config.zmq_addr);
+        let rpc_backend = BitcoinRest::new(rpc_config.clone())?;
+        let blockchain_info = rpc_backend.get_blockchain_info()?;
         let file_registry = data_dir
             .join(".taker_watcher")
             .join(blockchain_info.chain.to_string());
         let registry = FileRegistry::load(file_registry);
+
         let (tx_requests, rx_requests) = mpsc::channel();
         let (tx_events, rx_responses) = crossbeam_channel::unbounded();
         let rpc_config_watcher = rpc_config.clone();
 
-        let mut watcher = Watcher::<Taker>::new(backend, registry, rx_requests, tx_events);
         let initial_sync_complete = Arc::new(AtomicBool::new(false));
-        let initial_sync_complete_watcher = initial_sync_complete.clone();
-        _ = thread::Builder::new()
+        let initial_sync_clone = initial_sync_complete.clone();
+
+        let nostr_relays = config.nostr_relays.clone();
+        let mut watcher =
+            Watcher::<Taker>::new(backend, registry, rx_requests, tx_events, nostr_relays);
+        let _ = thread::Builder::new()
             .name("Watcher thread".to_string())
-            .spawn(move || watcher.run(rpc_config_watcher, initial_sync_complete_watcher));
+            .spawn(move || watcher.run(rpc_config_watcher, initial_sync_clone));
 
-        let watch_service = WatchService::new(tx_requests, rx_responses);
+        Ok((
+            WatchService::new(tx_requests, rx_responses),
+            initial_sync_complete,
+        ))
+    }
 
-        let wallet = Wallet::load_or_init_wallet(&wallet_path, &rpc_config, password)?;
+    /// Load/merge taker config and check Tor status.
+    fn init_taker_config(
+        config: &TakerInitConfig,
+        data_dir: &std::path::Path,
+    ) -> Result<(), TakerError> {
+        let mut taker_config = TakerConfig::new(Some(&data_dir.join("config.toml")))?;
 
-        // If config file doesn't exist, default config will be loaded.
-        let mut config = TakerConfig::new(Some(&data_dir.join("config.toml")))?;
-
-        if let Some(control_port) = control_port {
-            config.control_port = control_port;
+        if let Some(control_port) = config.control_port {
+            taker_config.control_port = control_port;
         }
 
-        if let Some(tor_auth_password) = tor_auth_password {
-            config.tor_auth_password = tor_auth_password;
+        if let Some(ref tor_auth_password) = config.tor_auth_password {
+            taker_config.tor_auth_password = tor_auth_password.clone();
         }
 
-        if !cfg!(feature = "integration-test") {
-            check_tor_status(config.control_port, config.tor_auth_password.as_str())?;
+        if !cfg!(feature = "integration-test") && config.connection_type == ConnectionType::Tor {
+            check_tor_status(
+                taker_config.control_port,
+                taker_config.tor_auth_password.as_str(),
+            )?;
         }
 
-        config.write_to_file(&data_dir.join("config.toml"))?;
+        taker_config.write_to_file(&data_dir.join("config.toml"))?;
+        Ok(())
+    }
 
-        let offerbook = OfferBookHandle::load_or_create(&data_dir)?;
-
-        let offer_sync_handle = OfferSyncService::new(
+    /// Start the background offer sync service.
+    fn init_offer_sync(
+        offerbook: &OfferBookHandle,
+        watch_service: &WatchService,
+        socks_port: u16,
+        rpc_config: RPCConfig,
+        initial_discovery_complete: Arc<AtomicBool>,
+    ) -> Result<OfferSyncHandle, TakerError> {
+        let rest_backend = BitcoinRest::new(rpc_config)?;
+        Ok(OfferSyncService::new(
             offerbook.clone(),
             watch_service.clone(),
-            config.socks_port,
+            socks_port,
             rest_backend,
-            initial_sync_complete,
+            initial_discovery_complete,
         )
-        .start();
-
-        Ok(Self {
-            wallet,
-            config,
-            offerbook,
-            ongoing_swap_state: OngoingSwapState::default(),
-            #[cfg(feature = "integration-test")]
-            behavior,
-            watch_service,
-            offer_sync_handle,
-        })
+        .start())
     }
 
-    /// Restores a wallet from a backup file using the given configuration.
-    ///
-    /// This is a convenience wrapper around [`Wallet::restore_interactive`] that constructs the
-    /// wallet path from optional inputs.
-    ///
-    /// # Behavior
-    ///
-    /// Constructs the full wallet path as:
-    /// `{data_dir_or_default}/wallets/{wallet_file_name_or_default}`
-    ///
-    /// Then calls [`Wallet::restore_interactive`] with the resolved backup file path, RPC config,
-    /// and destination wallet path.
-    pub fn restore_wallet(
-        data_dir: Option<PathBuf>,
-        wallet_file_name: Option<String>,
-        rpc_config: Option<RPCConfig>,
-        backup_file: &String,
-    ) {
-        let backup_file_path = PathBuf::from(backup_file);
-        let restored_wallet_filename = wallet_file_name.unwrap_or("".to_string()); //Empty string to use wallet_file_name inside the backup
-
-        let restored_wallet_path = data_dir
-            .clone()
-            .unwrap_or(get_taker_dir())
-            .join("wallets")
-            .join(restored_wallet_filename);
-
-        Wallet::restore_interactive(
-            &backup_file_path,
-            &rpc_config.unwrap_or_default(),
-            &restored_wallet_path,
-        );
-    }
-
-    /// Get wallet
-    pub fn get_wallet(&self) -> &Wallet {
+    /// Get reference to the wallet.
+    pub fn get_wallet(&self) -> &Arc<RwLock<Wallet>> {
         &self.wallet
     }
 
-    /// Get mutable reference to wallet
-    pub fn get_wallet_mut(&mut self) -> &mut Wallet {
-        &mut self.wallet
+    /// Log the current swap tracker state at INFO level.
+    pub fn log_tracker_state(&self) {
+        self.swap_tracker.lock().unwrap().log_state();
     }
 
-    ///  Does the coinswap process
-    pub fn do_coinswap(
-        &mut self,
-        swap_params: SwapParams,
-    ) -> Result<Option<SwapReport>, TakerError> {
-        self.send_coinswap(swap_params)
+    /// Check whether the background recovery loop has completed.
+    /// Returns `true` if no recovery is needed or if all contracts are resolved.
+    pub fn is_recovery_complete(&self) -> bool {
+        match &self.recovery_loop {
+            Some(loop_) => loop_.is_complete(),
+            None => true,
+        }
     }
 
-    /// Perform a coinswap round with given [`SwapParams`]. The Taker will try to perform swap with makers
-    /// in it's [`OfferBook`] sequentially as per the maker_count given in swap params.
-    /// If [`SwapParams`] doesn't fit suitably with any available offers, or not enough makers
-    /// respond back, the swap round will fail.
+    /// Prepare a coinswap: discover makers, negotiate, and return a summary.
     ///
-    /// Depending upon the failure situation, Taker will automatically try to recover from failed swaps
-    /// by executing the contract txs. If that fails too for any reason, user should manually call the [Taker::recover_from_swap].
-    ///
-    /// If that fails too. Open an issue at [our github](https://github.com/citadel-tech/coinswap/issues)
-    pub(crate) fn send_coinswap(
-        &mut self,
-        swap_params: SwapParams,
-    ) -> Result<Option<SwapReport>, TakerError> {
-        let swap_start_time = std::time::Instant::now();
-        let initial_utxoset: Vec<ListUnspentResultEntry> =
-            self.wallet.list_all_utxo().cloned().collect();
-        self.ongoing_swap_state.swap_params = swap_params.clone();
-
-        // Check if we have enough balance - try regular first, then swap
-        let balances = self.wallet.get_balances()?;
-        let estimated_fee = Amount::from_sat(calculate_fee_sats(200));
-        let required = swap_params.send_amount + estimated_fee;
-
-        // Try regular balance first
-        if balances.regular >= required {
-            log::info!("Using regular UTXOs for coinswap");
-        }
-        // If regular insufficient, try swap balance
-        else if balances.swap >= required {
-            log::info!("Using swap UTXOs for coinswap");
-        }
-        // If both insufficient, error with regular balance (consistent with wallet)
-        else {
-            let err = WalletError::InsufficientFund {
-                available: balances.regular.to_sat(),
-                required: required.to_sat(),
-            };
-            log::error!("Not enough balance to do swap : {err:?}");
-            return Err(err.into());
-        }
-
-        // Error early if there aren't enough suitable makers for the given amount
-        let suitable_makers = self.find_suitable_makers();
-        if swap_params.maker_count > suitable_makers.len() {
-            log::error!(
-                "Not enough suitable makers for the requested amount. Required {}, available {}",
-                swap_params.maker_count,
-                suitable_makers.len()
-            );
-            return Err(TakerError::NotEnoughMakersInOfferBook);
-        }
-
+    /// No funds are committed. The caller reviews the summary and then calls
+    /// `start_coinswap` with the returned `swap_id` to execute.
+    pub fn prepare_coinswap(&mut self, params: SwapParams) -> Result<SwapSummary, TakerError> {
         log::info!(
-            "Found {} suitable makers for this swap round",
-            suitable_makers.len()
+            "Preparing coinswap: amount={}, makers={}, protocol={:?}",
+            params.send_amount,
+            params.maker_count,
+            params.protocol
         );
-        self.ongoing_swap_state.suitable_makers = suitable_makers;
 
-        // Error early if less than 2 makers.
-        if swap_params.maker_count < 2 {
-            log::error!("Cannot swap with less than 2 makers");
-            return Err(ProtocolError::General("Swap maker count < 2").into());
+        let available = self.read_wallet()?.get_balances()?.spendable;
+        let required = params.send_amount + Amount::from_sat(10000);
+        if available < required {
+            return Err(TakerError::General(format!(
+                "Insufficient balance: available={}, required={}",
+                available, required
+            )));
         }
 
-        // Generate new random preimage and initiate the first hop.
         let mut preimage = [0u8; 32];
         OsRng.fill_bytes(&mut preimage);
 
-        let unique_id = preimage[0..8].to_hex_string(Case::Lower);
+        let swap_id = Hash160::hash(&preimage)[0..8].to_lower_hex_string();
+        log::info!("Preparing coinswap with id: {}", swap_id);
 
-        log::info!("Initiating coinswap with id : {unique_id}");
+        let send_amount = params.send_amount;
+        let maker_count = params.maker_count;
 
-        self.ongoing_swap_state.active_preimage = preimage;
-        self.ongoing_swap_state.id = unique_id;
+        self.ongoing_swap = Some(OngoingSwapState {
+            id: swap_id.clone(),
+            preimage,
+            params,
+            makers: Vec::new(),
+            outgoing_swapcoins: Vec::new(),
+            incoming_swapcoins: Vec::new(),
+            watchonly_swapcoins: Vec::new(),
+            multisig_nonces: Vec::new(),
+            hashlock_nonces: Vec::new(),
+            spare_makers: Vec::new(),
+            phase: SwapPhase::MakersDiscovered,
+            reference_height: None,
+        });
 
-        // Try first hop. Abort if error happens.
-        if let Err(e) = self.init_first_hop() {
-            log::error!("Could not initiate first hop: {e:?}");
-            self.generate_swap_report(
-                &self.ongoing_swap_state.clone(),
-                swap_start_time,
-                &initial_utxoset,
-                SwapStatus::Failed,
-                Some(format!("{e:?}")),
-            )?;
-            self.recover_from_swap()?;
-            return Err(e);
-        }
-
-        // Iterate until `maker_count` numbers of Makers are found and initiate swap between them sequentially.
-        for maker_index in 0..self.ongoing_swap_state.swap_params.maker_count {
-            if maker_index == 0 {
-                self.ongoing_swap_state.taker_position = TakerPosition::FirstPeer;
-            } else if maker_index == self.ongoing_swap_state.swap_params.maker_count - 1 {
-                self.ongoing_swap_state.taker_position = TakerPosition::LastPeer;
-            } else {
-                self.ongoing_swap_state.taker_position = TakerPosition::WatchOnly;
-            }
-
-            // Refund lock time decreases by `refund_locktime_step` for each hop.
-            let maker_refund_locktime = REFUND_LOCKTIME
-                + REFUND_LOCKTIME_STEP
-                    * (self.ongoing_swap_state.swap_params.maker_count - maker_index - 1) as u16;
-
-            let funding_tx_infos = self.funding_info_for_next_maker();
-
-            // Attempt to initiate the next hop of the swap. If anything goes wrong, abort immediately.
-            // If succeeded, collect the funding_outpoints and multisig_reedemscripts of the next hop.
-            // If error then aborts from current swap. Ban the Peer.
-            let (funding_outpoints, multisig_reedemscripts) =
-                match self.send_sigs_init_next_hop(maker_refund_locktime, &funding_tx_infos) {
-                    Ok((next_peer_info, contract_sigs)) => {
-                        self.ongoing_swap_state.peer_infos.push(next_peer_info);
-                        let multisig_reedemscripts = contract_sigs
-                            .senders_contract_txs_info
-                            .iter()
-                            .map(|senders_contract_tx_info| {
-                                senders_contract_tx_info.multisig_redeemscript.clone()
-                            })
-                            .collect::<Vec<_>>();
-                        let funding_outpoints = contract_sigs
-                            .senders_contract_txs_info
-                            .iter()
-                            .map(|senders_contract_tx_info| {
-                                senders_contract_tx_info.contract_tx.input[0].previous_output
-                            })
-                            .collect::<Vec<OutPoint>>();
-
-                        (funding_outpoints, multisig_reedemscripts)
-                    }
-                    Err(e) => {
-                        log::error!("Could not initiate next hop. Error : {e:?}");
-                        log::warn!("Starting recovery from existing swap");
-                        self.generate_swap_report(
-                            &self.ongoing_swap_state.clone(),
-                            swap_start_time,
-                            &initial_utxoset,
-                            SwapStatus::Failed,
-                            Some(format!("{e:?}")),
-                        )?;
-                        self.recover_from_swap()?;
-                        return Ok(None);
-                    }
-                };
-
-            // Watch for both expected and unexpected transactions.
-            // This errors in two cases.
-            // TakerError::ContractsBroadcasted and TakerError::FundingTxWaitTimeOut.
-            // For all cases, abort from swap immediately.
-            // For the timeout case also ban the Peer.
-            let txids_to_watch = funding_outpoints.iter().map(|op| op.txid).collect();
-            match self.watch_for_txs(&txids_to_watch) {
-                Ok(r) => self.ongoing_swap_state.funding_txs.push(r),
-                Err(e) => {
-                    log::error!("Error: {e:?}");
-                    log::warn!("Starting recovery from existing swap");
-                    if let TakerError::FundingTxWaitTimeOut = e {
-                        let bad_maker = &self.ongoing_swap_state.peer_infos[maker_index].peer;
-                        self.offerbook.add_bad_maker(bad_maker);
-                    }
-                    self.generate_swap_report(
-                        &self.ongoing_swap_state.clone(),
-                        swap_start_time,
-                        &initial_utxoset,
-                        SwapStatus::Failed,
-                        Some(format!("{e:?}")),
-                    )?;
-                    self.recover_from_swap()?;
-                    return Ok(None);
-                }
-            }
-
-            // For the last hop, initiate the incoming swapcoins, and request the sigs for it.
-            if self.ongoing_swap_state.taker_position == TakerPosition::LastPeer {
-                let incoming_swapcoins =
-                    self.create_incoming_swapcoins(multisig_reedemscripts, funding_outpoints)?;
-                log::debug!("Incoming Swapcoins: {incoming_swapcoins:?}");
-                self.ongoing_swap_state.incoming_swapcoins = incoming_swapcoins;
-                match self.request_sigs_for_incoming_swap() {
-                    Ok(_) => (),
-                    Err(e) => {
-                        log::error!("Incoming SwapCoin Generation failed : {e:?}");
-                        log::warn!("Starting recovery from existing swap");
-                        self.generate_swap_report(
-                            &self.ongoing_swap_state.clone(),
-                            swap_start_time,
-                            &initial_utxoset,
-                            SwapStatus::Failed,
-                            Some(format!("{e:?}")),
-                        )?;
-                        self.recover_from_swap()?;
-                        return Ok(None);
-                    }
-                }
-            }
-        } // Contract establishment completed.
+        self.discover_makers()?;
+        self.persist_swap(SwapPhase::MakersDiscovered)?;
 
         #[cfg(feature = "integration-test")]
-        {
-            if self.behavior == TakerBehavior::DropConnectionAfterFullSetup {
-                log::error!("Dropping Swap Process after full setup");
-                return Ok(None);
-            }
+        if self.behavior == TakerBehavior::CloseEarly {
+            log::warn!("Test behavior: closing early after maker selection");
+            return Err(TakerError::General(
+                "Test: Closing early after maker selection".to_string(),
+            ));
+        }
 
-            if self.behavior == TakerBehavior::BroadcastContractAfterFullSetup {
-                log::error!("Special Behavior BroadcastContractAfterFullSetup");
-                self.recover_from_swap()?;
-                return Ok(None);
+        self.negotiate_swap_details()?;
+        self.persist_swap(SwapPhase::Negotiated)?;
+
+        // Build the summary from negotiated state.
+        let swap = self.swap_state()?;
+        let protocol = swap.params.protocol;
+        let mut maker_fees = Vec::with_capacity(maker_count);
+        let mut amount_sats = send_amount.to_sat() as f64;
+
+        for (i, mc) in swap.makers.iter().enumerate() {
+            let locktime =
+                REFUND_LOCKTIME_BASE + REFUND_LOCKTIME_STEP * (maker_count - i - 1) as u16;
+
+            let (base_fee, amt_pct, time_pct) = match &mc.offer {
+                Some(offer) => (
+                    offer.base_fee,
+                    offer.amount_relative_fee_pct,
+                    offer.time_relative_fee_pct,
+                ),
+                None => (0, 0.0, 0.0),
+            };
+
+            let fee = base_fee as f64
+                + (amount_sats * amt_pct) / 100.0
+                + (amount_sats * locktime as f64 * time_pct) / 100.0;
+            let fee_sats = fee.ceil() as u64;
+
+            maker_fees.push(MakerFeeInfo {
+                address: mc.address.to_string(),
+                protocol: mc.protocol,
+                base_fee,
+                amount_relative_fee_pct: amt_pct,
+                time_relative_fee_pct: time_pct,
+                locktime,
+                estimated_fee_sats: fee_sats,
+            });
+
+            amount_sats = (amount_sats - fee).max(0.0);
+        }
+
+        let total_fee_sats: u64 = maker_fees.iter().map(|m| m.estimated_fee_sats).sum();
+        let estimated_receive = send_amount
+            .checked_sub(Amount::from_sat(total_fee_sats))
+            .unwrap_or(Amount::ZERO);
+
+        let summary = SwapSummary {
+            swap_id,
+            protocol,
+            send_amount,
+            makers: maker_fees,
+            total_estimated_fee: Amount::from_sat(total_fee_sats),
+            estimated_receive_amount: estimated_receive,
+        };
+
+        log::info!(
+            "Swap prepared: id={}, estimated_fee={}, estimated_receive={}",
+            summary.swap_id,
+            summary.total_estimated_fee,
+            summary.estimated_receive_amount
+        );
+
+        Ok(summary)
+    }
+
+    /// Execute a prepared coinswap. Call after reviewing the `SwapSummary`
+    /// from `prepare_coinswap`.
+    ///
+    /// Commits funds on-chain: creates funding transactions, exchanges
+    /// contracts with makers, finalizes, and sweeps.
+    pub fn start_coinswap(&mut self, swap_id: &str) -> Result<SwapReport, TakerError> {
+        let swap_start_time = Instant::now();
+
+        // Verify the swap_id matches the prepared swap.
+        let current_id = self.swap_state()?.id.clone();
+        if current_id != swap_id {
+            return Err(TakerError::General(format!(
+                "No prepared swap with id '{}' (current: '{}')",
+                swap_id, current_id
+            )));
+        }
+
+        let initial_utxos = self.read_wallet()?.list_all_utxo();
+
+        log::info!("Starting coinswap execution for id: {}", swap_id);
+
+        self.funding_initialize()?;
+
+        // SP3: Persist after funding initialization (outgoing txids created).
+        self.persist_swap(SwapPhase::FundingCreated)?;
+
+        // Protocol-specific execution with phase-aware recovery triggers.
+        let protocol = self.swap_state()?.params.protocol;
+
+        match protocol {
+            ProtocolVersion::Legacy => {
+                let mut exchange_result = self.exchange_legacy();
+
+                // Pre-funding spare substitution: if exchange failed before any
+                // funding was broadcast (phase < FundsBroadcast), try substituting
+                // the first maker with a spare and retrying from scratch.
+                while let Err(ref _e) = exchange_result {
+                    let phase = self
+                        .swap_state()
+                        .map(|s| s.phase)
+                        .unwrap_or(SwapPhase::MakersDiscovered);
+                    if phase < SwapPhase::FundsBroadcast {
+                        if let Some(spare) = {
+                            let swap = self.swap_state_mut()?;
+                            swap.spare_makers.pop()
+                        } {
+                            log::warn!(
+                                "Pre-funding exchange failure, substituting maker 0 with spare"
+                            );
+                            if let Err(sub_err) = self.substitute_and_negotiate_spare(0, spare) {
+                                log::error!("Failed to negotiate with spare: {:?}", sub_err);
+                                break;
+                            }
+                            if let Err(fund_err) = self.funding_reinitialize() {
+                                log::error!("Failed to reinitialize funding: {:?}", fund_err);
+                                break;
+                            }
+                            self.persist_swap(SwapPhase::FundingCreated)?;
+                            exchange_result = self.exchange_legacy();
+                            continue;
+                        }
+                    }
+                    break;
+                }
+
+                match exchange_result {
+                    Ok(()) => {}
+                    Err(e) => {
+                        log::error!("Legacy contract exchange failed: {:?}", e);
+                        self.emit_failure_report(&initial_utxos, swap_start_time, &e);
+                        let phase = self
+                            .swap_state()
+                            .map(|s| s.phase)
+                            .unwrap_or(SwapPhase::MakersDiscovered);
+                        if phase >= SwapPhase::FundsBroadcast {
+                            log::warn!("Funding txs were broadcast, triggering recovery");
+                            self.persist_failure(phase, &e);
+                            if let Err(re) = self.recover_active_swap() {
+                                log::error!("Recovery failed: {:?}", re);
+                            }
+                        } else {
+                            log::info!("No funds on-chain — safe to abort");
+                            let _ = self.swap_tracker.lock().unwrap().remove_record(
+                                &self.swap_state().map(|s| s.id.clone()).unwrap_or_default(),
+                            );
+                            self.ongoing_swap = None;
+                        }
+                        return Err(e);
+                    }
+                }
+            }
+            ProtocolVersion::Taproot => match self.exchange_taproot() {
+                Ok(()) => {}
+                Err(e) => {
+                    log::error!("Taproot exchange failed: {:?}", e);
+                    self.emit_failure_report(&initial_utxos, swap_start_time, &e);
+                    let phase = self
+                        .swap_state()
+                        .map(|s| s.phase)
+                        .unwrap_or(SwapPhase::MakersDiscovered);
+                    if phase >= SwapPhase::FundsBroadcast {
+                        log::warn!("Funds were broadcast, triggering recovery");
+                        self.persist_failure(phase, &e);
+                        if let Err(re) = self.recover_active_swap() {
+                            log::error!("Recovery failed: {:?}", re);
+                        }
+                    } else {
+                        log::info!("No funds on-chain — safe to abort");
+                        let _ = self.swap_tracker.lock().unwrap().remove_record(
+                            &self.swap_state().map(|s| s.id.clone()).unwrap_or_default(),
+                        );
+                        self.ongoing_swap = None;
+                    }
+                    return Err(e);
+                }
+            },
+        }
+
+        #[cfg(feature = "integration-test")]
+        if self.behavior == TakerBehavior::BroadcastContractAfterFullSetup {
+            log::warn!("Test behavior: broadcasting contract txs after full setup, then closing");
+            // Broadcast outgoing contract transactions to trigger recovery paths
+            let wallet = self.read_wallet()?;
+            for outgoing in &self.swap_state()?.outgoing_swapcoins {
+                let _ = wallet.send_tx(&outgoing.contract_tx);
+            }
+            drop(wallet);
+            let phase = self
+                .swap_state()
+                .map(|s| s.phase)
+                .unwrap_or(SwapPhase::FundsBroadcast);
+            let err = TakerError::General("Test: broadcast contract after full setup".to_string());
+            self.persist_failure(phase, &err);
+            return Err(err);
+        }
+
+        #[cfg(feature = "integration-test")]
+        if self.behavior == TakerBehavior::DropAfterFundsBroadcast {
+            log::warn!("Test behavior: dropping after contract exchange");
+            let phase = self
+                .swap_state()
+                .map(|s| s.phase)
+                .unwrap_or(SwapPhase::FundsBroadcast);
+            let err = TakerError::General("Test: dropped after contract exchange".to_string());
+            self.persist_failure(phase, &err);
+            if let Err(re) = self.recover_active_swap() {
+                log::error!("Recovery failed: {:?}", re);
+            }
+            return Err(err);
+        }
+
+        self.finalize_persist_incoming()?;
+
+        // SP7: Finalization starts.
+        self.persist_swap(SwapPhase::Finalizing)?;
+
+        match self.finalize_with_retry() {
+            Ok(()) => {}
+            Err(e) => {
+                log::error!("Finalization failed after retries: {:?}", e);
+                self.emit_failure_report(&initial_utxos, swap_start_time, &e);
+                self.persist_failure(SwapPhase::Finalizing, &e);
+                if let Err(re) = self.recover_active_swap() {
+                    log::error!("Recovery failed: {:?}", re);
+                }
+                return Err(e);
             }
         }
 
-        match self.settle_all_swaps() {
-            Ok(_) => {
-                log::info!(
-                    "Swaps settled successfully. Sweeping the coins and reseting everything."
+        // Finalization succeeded — stop breach detector.
+        if let Some(detector) = self.breach_detector.take() {
+            detector.stop();
+        }
+
+        // Success path: sweep + report (shared by both protocols)
+        let swap_id_owned = swap_id.to_string();
+        let swept = {
+            let mut wallet = self.write_wallet()?;
+            let swept = wallet.sweep_incoming_swapcoins(2.0)?;
+            log::info!("Swept {} incoming swapcoins", swept.resolved.len());
+            wallet.sync_and_save()?;
+            swept
+        };
+
+        self.populate_success_outcomes(&swap_id_owned, &swept)?;
+
+        {
+            let swap_id_for_cleanup = self.swap_state()?.id.clone();
+            let mut wallet = self.write_wallet()?;
+            let outgoing_keys = wallet.outgoing_keys_for_swap(&swap_id_for_cleanup);
+            for key in &outgoing_keys {
+                wallet.remove_outgoing_swapcoin(key);
+            }
+            wallet.remove_watchonly_swapcoins(&swap_id_for_cleanup);
+            wallet.save_to_disk()?;
+        }
+
+        self.persist_swap(SwapPhase::Completed)?;
+
+        // Generate, save, and return the SwapReport
+        let report =
+            self.generate_swap_report(&initial_utxos, swap_start_time, SwapStatus::Success, None)?;
+
+        log::info!("Coinswap completed successfully: {:?}", report);
+        Ok(report)
+    }
+
+    /// Discover and select makers for the swap.
+    ///
+    /// If `preferred_makers` is set in swap params, those addresses are used
+    /// directly (no offerbook lookup). Otherwise, makers are auto-selected
+    /// from the offerbook.
+    fn discover_makers(&mut self) -> Result<(), TakerError> {
+        let swap = self.swap_state()?;
+        let maker_count = swap.params.maker_count;
+        let send_amount = swap.params.send_amount;
+        let protocol = swap.params.protocol;
+        let preferred = swap.params.preferred_makers.clone();
+
+        log::info!("Discovering makers for {} hops...", maker_count);
+
+        // If preferred makers are specified, use them directly.
+        let (selected_makers, spares) = if let Some(addrs) = preferred {
+            let parsed: Vec<MakerAddress> = addrs
+                .iter()
+                .filter_map(|s| match MakerAddress::try_from(s.clone()) {
+                    Ok(addr) => Some(addr),
+                    Err(e) => {
+                        log::warn!("Invalid maker address '{}': {:?}", s, e);
+                        None
+                    }
+                })
+                .collect();
+
+            if parsed.len() < maker_count {
+                return Err(TakerError::General(format!(
+                    "Not enough valid preferred makers. Required: {}, Parsed: {}",
+                    maker_count,
+                    parsed.len()
+                )));
+            }
+
+            let mut addrs = parsed;
+            let spare_addrs = addrs.split_off(maker_count);
+            let makers: Vec<MakerConnection> = addrs
+                .into_iter()
+                .map(|address| {
+                    let exchange = match protocol {
+                        ProtocolVersion::Legacy => {
+                            ExchangeProgress::Legacy(LegacyExchangeProgress::default())
+                        }
+                        ProtocolVersion::Taproot => {
+                            ExchangeProgress::Taproot(TaprootExchangeProgress::default())
+                        }
+                    };
+                    MakerConnection {
+                        address,
+                        protocol,
+                        tweakable_point: None,
+                        offer: None,
+                        negotiated_timelock: 0,
+                        exchange,
+                        finalization: FinalizationProgress::default(),
+                    }
+                })
+                .collect();
+            (makers, spare_addrs)
+        } else {
+            // Auto-select from offerbook.
+            let maker_protocol = match protocol {
+                ProtocolVersion::Legacy => MakerProtocol::Legacy,
+                ProtocolVersion::Taproot => MakerProtocol::Taproot,
+            };
+
+            // Wait for the initial offer sync to complete before selecting makers.
+            // Without this, we may see only a subset of available makers and miss
+            // spares that are still being discovered asynchronously.
+            log::info!("Waiting for offer sync to complete...");
+            if let Err(e) = self.offer_sync_handle.sync_and_wait() {
+                log::warn!("Offer sync wait failed: {:?}", e);
+            }
+
+            let available_makers = self.offerbook.active_makers(&maker_protocol);
+
+            if available_makers.is_empty() {
+                return Err(TakerError::NotEnoughMakersInOfferBook);
+            }
+
+            let suitable_makers: Vec<OfferAndAddress> = available_makers
+                .into_iter()
+                .filter(|maker| {
+                    let min_ok = send_amount.to_sat() >= maker.offer.min_size;
+                    let max_ok = send_amount.to_sat() <= maker.offer.max_size;
+                    min_ok && max_ok
+                })
+                .collect();
+
+            if suitable_makers.len() < maker_count {
+                log::error!(
+                    "Not enough suitable makers. Required: {}, Available: {}",
+                    maker_count,
+                    suitable_makers.len()
                 );
-                let prereset_swapstate = &self.ongoing_swap_state.clone();
-                self.save_and_reset_swap_round()?;
-                // Sweep incoming swapcoins after successful swap completion
-                log::info!("Sweeping completed incoming swap coins...");
-                let swept_txids = self.wallet.sweep_incoming_swapcoins(MIN_FEE_RATE)?;
-                if !swept_txids.is_empty() {
+                return Err(TakerError::NotEnoughMakersInOfferBook);
+            }
+
+            let spare_count = suitable_makers.len().saturating_sub(maker_count).min(2);
+            let total_select = maker_count + spare_count;
+
+            let mut selected: Vec<OfferAndAddress> =
+                suitable_makers.into_iter().take(total_select).collect();
+
+            let spare_oas = selected.split_off(maker_count);
+            let spare_addrs: Vec<MakerAddress> =
+                spare_oas.into_iter().map(|oa| oa.address).collect();
+            let makers: Vec<MakerConnection> = selected
+                .into_iter()
+                .map(|oa| {
+                    let exchange = match protocol {
+                        ProtocolVersion::Legacy => {
+                            ExchangeProgress::Legacy(LegacyExchangeProgress::default())
+                        }
+                        ProtocolVersion::Taproot => {
+                            ExchangeProgress::Taproot(TaprootExchangeProgress::default())
+                        }
+                    };
+                    MakerConnection {
+                        address: oa.address,
+                        protocol,
+                        tweakable_point: None,
+                        offer: None,
+                        negotiated_timelock: 0,
+                        exchange,
+                        finalization: FinalizationProgress::default(),
+                    }
+                })
+                .collect();
+            (makers, spare_addrs)
+        };
+
+        log::info!(
+            "Selected {} makers (+ {} spares): {}",
+            selected_makers.len(),
+            spares.len(),
+            selected_makers
+                .iter()
+                .enumerate()
+                .map(|(i, m)| format!("#{} {}", i + 1, m.address))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+
+        let swap = self.swap_state_mut()?;
+        swap.makers = selected_makers;
+        swap.spare_makers = spares;
+        Ok(())
+    }
+
+    /// Negotiate swap details with each maker, substituting spare makers on failure.
+    fn negotiate_swap_details(&mut self) -> Result<(), TakerError> {
+        log::info!("Negotiating swap details with makers...");
+
+        let swap = self.swap_state()?;
+        let maker_count = swap.params.maker_count;
+        let swap_id = swap.id.clone();
+        let send_amount = swap.params.send_amount;
+        let tx_count = swap.params.tx_count;
+        let protocol = swap.params.protocol;
+
+        // Get reference height once for consistent absolute timelocks (Taproot).
+        // Store it in swap state so funding_create_taproot uses the same height.
+        let reference_height =
+            {
+                let wallet = self.read_wallet()?;
+                wallet.rpc.get_block_count().map_err(|e| {
+                    TakerError::General(format!("Failed to get block count: {:?}", e))
+                })? as u32
+            };
+        self.swap_state_mut()?.reference_height = Some(reference_height);
+
+        let mut i = 0;
+        while i < maker_count {
+            let result = self.negotiate_with_maker(
+                i,
+                &swap_id,
+                send_amount,
+                tx_count,
+                maker_count,
+                reference_height,
+            );
+
+            match result {
+                Ok(()) => {
+                    i += 1;
+                }
+                Err(e) => {
+                    log::warn!("Maker {} failed during negotiation: {:?}", i, e);
+
+                    let spare = self.swap_state_mut()?.spare_makers.pop();
+                    if let Some(spare_addr) = spare {
+                        log::info!("Substituting maker {} with spare at {}", i, spare_addr);
+                        let exchange = match protocol {
+                            ProtocolVersion::Legacy => {
+                                ExchangeProgress::Legacy(LegacyExchangeProgress::default())
+                            }
+                            ProtocolVersion::Taproot => {
+                                ExchangeProgress::Taproot(TaprootExchangeProgress::default())
+                            }
+                        };
+                        let replacement = MakerConnection {
+                            address: spare_addr,
+                            protocol,
+                            tweakable_point: None,
+                            offer: None,
+                            negotiated_timelock: 0,
+                            exchange,
+                            finalization: FinalizationProgress::default(),
+                        };
+                        self.swap_state_mut()?.makers[i] = replacement;
+                        // Don't increment i — retry with the replacement
+                    } else {
+                        return Err(TakerError::General(format!(
+                            "Maker {} failed and no spare makers available: {:?}",
+                            i, e
+                        )));
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Negotiate swap details with a single maker at the given route index.
+    fn negotiate_with_maker(
+        &mut self,
+        maker_idx: usize,
+        swap_id: &str,
+        send_amount: Amount,
+        tx_count: u32,
+        maker_count: usize,
+        reference_height: u32,
+    ) -> Result<(), TakerError> {
+        let maker_address = self.swap_state()?.makers[maker_idx].address.to_string();
+        log::info!("Connecting to maker {} at {}", maker_idx, maker_address);
+
+        let mut stream = self.net_connect(&maker_address)?;
+
+        let negotiated_protocol = self.net_handshake(&mut stream)?;
+        log::info!("Handshake complete, protocol: {:?}", negotiated_protocol);
+
+        // Fetch the maker's offer before proposing swap details.
+        // This gives us the fee schedule for amount verification later.
+        send_message(&mut stream, &TakerToMakerMessage::GetOffer(GetOffer))?;
+        let offer_bytes = read_message(&mut stream)?;
+        let offer_msg: MakerToTakerMessage = serde_cbor::from_slice(&offer_bytes)?;
+        match offer_msg {
+            MakerToTakerMessage::Offer(offer) => {
+                log::info!(
+                    "Received offer from maker {}: base_fee={}, amt_pct={}, time_pct={}",
+                    maker_idx,
+                    offer.base_fee,
+                    offer.amount_relative_fee_pct,
+                    offer.time_relative_fee_pct
+                );
+                Self::validate_offer(&offer, maker_idx, send_amount)?;
+                self.swap_state_mut()?.makers[maker_idx].offer = Some(*offer);
+            }
+            other => {
+                return Err(TakerError::General(format!(
+                    "Expected Offer from maker {}, got {:?}",
+                    maker_idx, other
+                )));
+            }
+        }
+
+        let refund_locktime_offset =
+            REFUND_LOCKTIME_BASE + REFUND_LOCKTIME_STEP * (maker_count - maker_idx - 1) as u16;
+
+        // Legacy: send relative offset (CSV). Taproot: send absolute height (CLTV).
+        let timelock = if negotiated_protocol == ProtocolVersion::Taproot {
+            reference_height + refund_locktime_offset as u32
+        } else {
+            refund_locktime_offset as u32
+        };
+
+        let swap_details = SwapDetails {
+            id: swap_id.to_string(),
+            protocol_version: negotiated_protocol,
+            amount: send_amount,
+            tx_count,
+            timelock,
+            refund_locktime_offset,
+        };
+
+        send_message(&mut stream, &TakerToMakerMessage::SwapDetails(swap_details))?;
+
+        let msg_bytes = read_message(&mut stream)?;
+        let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
+
+        match msg {
+            MakerToTakerMessage::AckSwapDetails(ack) => {
+                if let Some(tweakable_point) = ack.tweakable_point {
+                    let swap = self.swap_state_mut()?;
+                    swap.makers[maker_idx].tweakable_point = Some(tweakable_point);
+                    swap.makers[maker_idx].protocol = negotiated_protocol;
+                    swap.makers[maker_idx].negotiated_timelock = timelock;
+                    log::info!("Maker {} accepted swap with tweakable point", maker_idx);
+
+                    #[cfg(feature = "integration-test")]
+                    if self.behavior == TakerBehavior::CloseAtAckResponse {
+                        log::warn!(
+                            "Test behavior: closing after receiving AckSwapDetails from maker {}",
+                            maker_idx
+                        );
+                        return Err(TakerError::General(
+                            "Test: closing at ack response".to_string(),
+                        ));
+                    }
+
+                    Ok(())
+                } else {
+                    Err(TakerError::General(format!(
+                        "Maker {} rejected swap",
+                        maker_idx
+                    )))
+                }
+            }
+            _ => Err(TakerError::General(format!(
+                "Unexpected message from maker {}: expected AckSwapDetails",
+                maker_idx
+            ))),
+        }
+    }
+
+    /// Validate a maker's offer for fee sanity and size limits.
+    fn validate_offer(
+        offer: &Offer,
+        maker_idx: usize,
+        send_amount: Amount,
+    ) -> Result<(), TakerError> {
+        // Fee percentage sanity: must be finite and non-negative, and < 100%
+        if offer.amount_relative_fee_pct.is_nan()
+            || offer.amount_relative_fee_pct.is_infinite()
+            || offer.amount_relative_fee_pct < 0.0
+            || offer.amount_relative_fee_pct >= 100.0
+        {
+            return Err(TakerError::General(format!(
+                "Maker {} offer has invalid amount_relative_fee_pct: {}",
+                maker_idx, offer.amount_relative_fee_pct
+            )));
+        }
+        if offer.time_relative_fee_pct.is_nan()
+            || offer.time_relative_fee_pct.is_infinite()
+            || offer.time_relative_fee_pct < 0.0
+            || offer.time_relative_fee_pct >= 100.0
+        {
+            return Err(TakerError::General(format!(
+                "Maker {} offer has invalid time_relative_fee_pct: {}",
+                maker_idx, offer.time_relative_fee_pct
+            )));
+        }
+
+        // Base fee must not exceed the send amount (that would consume everything)
+        if offer.base_fee > send_amount.to_sat() {
+            return Err(TakerError::General(format!(
+                "Maker {} offer base_fee ({} sats) exceeds send amount ({} sats)",
+                maker_idx,
+                offer.base_fee,
+                send_amount.to_sat()
+            )));
+        }
+
+        // Size limits must be consistent
+        if offer.min_size > offer.max_size {
+            return Err(TakerError::General(format!(
+                "Maker {} offer has min_size ({}) > max_size ({})",
+                maker_idx, offer.min_size, offer.max_size
+            )));
+        }
+
+        // Send amount must fall within the maker's accepted range
+        let send_sats = send_amount.to_sat();
+        if send_sats < offer.min_size {
+            return Err(TakerError::General(format!(
+                "Send amount ({} sats) is below maker {} min_size ({} sats)",
+                send_sats, maker_idx, offer.min_size
+            )));
+        }
+        if send_sats > offer.max_size {
+            return Err(TakerError::General(format!(
+                "Send amount ({} sats) exceeds maker {} max_size ({} sats)",
+                send_sats, maker_idx, offer.max_size
+            )));
+        }
+
+        Ok(())
+    }
+
+    /// Substitute a maker at the given route index with a spare, then negotiate with it.
+    ///
+    /// This is used during exchange when a maker fails mid-protocol. The spare address
+    /// is placed at `target_idx`, and the standard negotiation handshake (offer, swap
+    /// details, ack) is performed to populate its `tweakable_point` and `offer`.
+    pub(crate) fn substitute_and_negotiate_spare(
+        &mut self,
+        target_idx: usize,
+        spare_addr: MakerAddress,
+    ) -> Result<(), TakerError> {
+        log::info!(
+            "Substituting maker {} with spare at {}",
+            target_idx,
+            spare_addr
+        );
+
+        let protocol = self.swap_state()?.params.protocol;
+        let exchange = match protocol {
+            ProtocolVersion::Legacy => ExchangeProgress::Legacy(LegacyExchangeProgress::default()),
+            ProtocolVersion::Taproot => {
+                ExchangeProgress::Taproot(TaprootExchangeProgress::default())
+            }
+        };
+        let replacement = MakerConnection {
+            address: spare_addr,
+            protocol,
+            tweakable_point: None,
+            offer: None,
+            negotiated_timelock: 0,
+            exchange,
+            finalization: FinalizationProgress::default(),
+        };
+        self.swap_state_mut()?.makers[target_idx] = replacement;
+
+        // Negotiate with the spare maker.
+        let swap_id = self.swap_state()?.id.clone();
+        let send_amount = self.swap_state()?.params.send_amount;
+        let tx_count = self.swap_state()?.params.tx_count;
+        let maker_count = self.swap_state()?.params.maker_count;
+        let reference_height =
+            {
+                let wallet = self.read_wallet()?;
+                wallet.rpc.get_block_count().map_err(|e| {
+                    TakerError::General(format!("Failed to get block count: {:?}", e))
+                })? as u32
+            };
+        self.swap_state_mut()?.reference_height = Some(reference_height);
+        self.negotiate_with_maker(
+            target_idx,
+            &swap_id,
+            send_amount,
+            tx_count,
+            maker_count,
+            reference_height,
+        )
+    }
+
+    /// Re-initialize funding after substituting the first maker.
+    ///
+    /// Clears old outgoing swapcoins from the wallet and swap state, then creates
+    /// new funding transactions using the new first maker's tweakable point.
+    pub(crate) fn funding_reinitialize(&mut self) -> Result<(), TakerError> {
+        log::info!("Re-initializing funding after maker substitution");
+
+        // Remove old outgoing swapcoins from wallet.
+        let swap_id = self.swap_state()?.id.clone();
+        {
+            let mut wallet = self.write_wallet()?;
+            let old_keys = wallet.outgoing_keys_for_swap(&swap_id);
+            for key in &old_keys {
+                wallet.remove_outgoing_swapcoin(key);
+            }
+            wallet.save_to_disk()?;
+        }
+
+        // Clear outgoing swapcoins from swap state.
+        self.swap_state_mut()?.outgoing_swapcoins.clear();
+
+        // Re-create funding with the new first maker.
+        self.funding_initialize()
+    }
+
+    /// Initialize swap funding by creating outgoing swapcoins.
+    fn funding_initialize(&mut self) -> Result<(), TakerError> {
+        log::info!("Initializing swap funding...");
+
+        let swap = self.swap_state()?;
+
+        let first_maker = swap
+            .makers
+            .first()
+            .ok_or_else(|| TakerError::General("No makers in swap route".to_string()))?;
+
+        let tweakable_point = first_maker.tweakable_point.ok_or_else(|| {
+            TakerError::General("First maker missing tweakable point".to_string())
+        })?;
+
+        let protocol = first_maker.protocol;
+
+        let maker_count = swap.params.maker_count;
+        let refund_locktime_offset =
+            REFUND_LOCKTIME_BASE + REFUND_LOCKTIME_STEP * maker_count as u16;
+
+        let hashvalue = Hash160::hash(&swap.preimage);
+        let preimage = swap.preimage;
+        let send_amount = swap.params.send_amount;
+        let swap_id = swap.id.clone();
+        let manually_selected_outpoints = swap.params.manually_selected_outpoints.clone();
+        let reference_height = swap.reference_height;
+
+        let (multisig_pubkeys, multisig_nonces, hashlock_pubkeys, hashlock_nonces) =
+            generate_maker_keys(&tweakable_point, 1)?;
+
+        // For Taproot, generate hashlock nonces for ALL hops (one per maker)
+        // and derive the tweaked hashlock pubkey for the first hop.
+        let (taproot_hashlock_nonces, taproot_hashlock_pubkey) =
+            if protocol == ProtocolVersion::Taproot {
+                let nonces: Vec<SecretKey> = (0..maker_count)
+                    .map(|_| SecretKey::new(&mut OsRng))
+                    .collect();
+                let pubkey = calculate_pubkey_from_nonce(&tweakable_point, &nonces[0])?;
+                (Some(nonces), Some(pubkey))
+            } else {
+                (None, None)
+            };
+
+        {
+            let swap = self.swap_state_mut()?;
+            // Multisig nonces are only used by Legacy for ProofOfFunding recovery.
+            // Taproot uses a single aggregated key, so these are not needed.
+            if protocol == ProtocolVersion::Legacy {
+                swap.multisig_nonces = multisig_nonces;
+            }
+            if let Some(ref nonces) = taproot_hashlock_nonces {
+                swap.hashlock_nonces = nonces.clone();
+            } else {
+                swap.hashlock_nonces = hashlock_nonces;
+            }
+        }
+
+        let mut wallet = self.write_wallet()?;
+
+        let network = wallet.store.network;
+
+        let swapcoins = match protocol {
+            ProtocolVersion::Legacy => Self::funding_create_legacy(
+                &mut wallet,
+                &multisig_pubkeys,
+                &hashlock_pubkeys,
+                hashvalue,
+                refund_locktime_offset,
+                send_amount,
+                &swap_id,
+                network,
+                manually_selected_outpoints,
+            )?,
+            ProtocolVersion::Taproot => Self::funding_create_taproot(
+                &mut wallet,
+                &[tweakable_point],
+                &[taproot_hashlock_pubkey.expect("taproot hashlock pubkey must be set")],
+                preimage,
+                refund_locktime_offset,
+                send_amount,
+                &swap_id,
+                network,
+                manually_selected_outpoints,
+                reference_height,
+            )?,
+        };
+
+        for swapcoin in &swapcoins {
+            wallet.add_outgoing_swapcoin(swapcoin);
+        }
+
+        wallet.save_to_disk()?;
+        drop(wallet);
+
+        let swap = self.swap_state_mut()?;
+        let num_swapcoins = swapcoins.len();
+        swap.outgoing_swapcoins = swapcoins;
+
+        log::info!("Created {} outgoing swapcoins for funding", num_swapcoins);
+        Ok(())
+    }
+
+    /// Perform handshake with a maker and verify protocol support.
+    pub(crate) fn net_handshake(
+        &self,
+        stream: &mut TcpStream,
+    ) -> Result<ProtocolVersion, TakerError> {
+        // Send TakerHello
+        send_message(stream, &TakerToMakerMessage::TakerHello(TakerHello))?;
+
+        let msg_bytes = read_message(stream)?;
+        let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
+
+        match msg {
+            MakerToTakerMessage::MakerHello(maker_hello) => {
+                let desired = self.swap_state()?.params.protocol;
+                if maker_hello.supported_protocols.contains(&desired) {
+                    Ok(desired)
+                } else {
+                    Err(TakerError::General(format!(
+                        "Maker does not support {:?}. Supported: {:?}",
+                        desired, maker_hello.supported_protocols
+                    )))
+                }
+            }
+            _ => Err(TakerError::General(
+                "Expected MakerHello response".to_string(),
+            )),
+        }
+    }
+
+    /// Connect to a maker using either direct connection or Tor proxy.
+    pub(crate) fn net_connect(&self, address: &str) -> Result<TcpStream, TakerError> {
+        log::debug!("Connecting to maker at {}", address);
+        let timeout = Duration::from_secs(CONNECT_TIMEOUT_SECS);
+
+        let connection_type = if cfg!(feature = "integration-test") {
+            ConnectionType::Clearnet
+        } else {
+            self.config.connection_type
+        };
+
+        let socket = match connection_type {
+            ConnectionType::Clearnet => TcpStream::connect(address).map_err(|e| {
+                TakerError::General(format!("Failed to connect to {}: {}", address, e))
+            })?,
+            ConnectionType::Tor => {
+                let socks_addr = format!("127.0.0.1:{}", self.config.socks_port);
+                Socks5Stream::connect(socks_addr.as_str(), address)
+                    .map_err(|e| {
+                        TakerError::General(format!(
+                            "Failed to connect to {} via Tor: {}",
+                            address, e
+                        ))
+                    })?
+                    .into_inner()
+            }
+        };
+
+        socket
+            .set_read_timeout(Some(timeout))
+            .and_then(|_| socket.set_write_timeout(Some(timeout)))
+            .map_err(|e| TakerError::General(format!("Failed to set socket timeout: {}", e)))?;
+
+        Ok(socket)
+    }
+
+    /// Wait for transactions to reach the required number of confirmations.
+    ///
+    /// Returns the highest block height at which any of the transactions was
+    /// confirmed (i.e. `current_height - confirmations + 1`). Returns 0 if
+    /// `required_confirms` is 0 or `txids` is empty.
+    pub(crate) fn net_wait_for_confirmation(
+        &self,
+        txids: &[Txid],
+        breach_detector: Option<&BreachDetector>,
+    ) -> Result<u32, TakerError> {
+        let required_confirms = self.swap_state()?.params.required_confirms;
+        if required_confirms == 0 || txids.is_empty() {
+            return Ok(0);
+        }
+
+        log::info!(
+            "Waiting for {} confirmation(s) on {} transaction(s)...",
+            required_confirms,
+            txids.len()
+        );
+
+        let start = Instant::now();
+        let timeout = if cfg!(feature = "integration-test") {
+            Duration::from_secs(120)
+        } else {
+            Duration::from_secs(600)
+        };
+
+        loop {
+            let mut all_confirmed = true;
+            let mut max_confirm_height: u32 = 0;
+
+            {
+                let wallet = self.read_wallet()?;
+                let current_height = wallet.rpc.get_block_count().map_err(|e| {
+                    TakerError::General(format!("Failed to get block count: {:?}", e))
+                })? as u32;
+                for txid in txids {
+                    match wallet.rpc.get_raw_transaction_info(txid, None) {
+                        Ok(tx_info) => {
+                            let confirms = tx_info.confirmations.unwrap_or(0);
+                            if confirms < required_confirms {
+                                log::debug!(
+                                    "Tx {} has {} confirmations (need {})",
+                                    txid,
+                                    confirms,
+                                    required_confirms
+                                );
+                                all_confirmed = false;
+                            } else {
+                                // confirmation height = current - confirms + 1
+                                let confirm_height = current_height.saturating_sub(confirms) + 1;
+                                max_confirm_height = max_confirm_height.max(confirm_height);
+                            }
+                        }
+                        Err(e) => {
+                            log::debug!("Error getting tx info for {}: {:?}", txid, e);
+                            all_confirmed = false;
+                        }
+                    }
+                }
+            }
+
+            if all_confirmed {
+                log::info!(
+                    "All transactions confirmed (latest at height {})",
+                    max_confirm_height
+                );
+                return Ok(max_confirm_height);
+            }
+
+            // Check for adversarial contract activity via the background detector thread.
+            if let Some(detector) = breach_detector {
+                if detector.is_breached() {
+                    log::warn!("Breach detected by background detector — aborting wait");
+                    return Err(TakerError::ContractsBroadcasted(vec![]));
+                }
+            }
+
+            if start.elapsed() > timeout {
+                return Err(TakerError::FundingTxWaitTimeOut);
+            }
+
+            thread::sleep(Duration::from_secs(5));
+        }
+    }
+
+    /// Finalize the swap by exchanging private keys with all makers.
+    fn finalize_swap(&mut self) -> Result<(), TakerError> {
+        log::info!("Finalizing swap...");
+
+        self.finalize_exchange_privkeys()?;
+
+        self.persist_swap(SwapPhase::PrivkeysForwarded)?;
+
+        self.finalize_persist_incoming()?;
+
+        log::info!("Swap finalized successfully");
+        Ok(())
+    }
+
+    /// Attempt finalization with retries between attempts.
+    fn finalize_with_retry(&mut self) -> Result<(), TakerError> {
+        for attempt in 1..=MAX_FINALIZE_RETRIES {
+            match self.finalize_swap() {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    log::warn!(
+                        "Finalization attempt {}/{} failed: {:?}",
+                        attempt,
+                        MAX_FINALIZE_RETRIES,
+                        e
+                    );
+
+                    if self
+                        .breach_detector
+                        .as_ref()
+                        .is_some_and(|d| d.is_breached())
+                    {
+                        log::error!(
+                            "Contract broadcast detected during finalization — aborting retries"
+                        );
+                        return Err(TakerError::General(
+                            "Contract broadcast detected during finalization".to_string(),
+                        ));
+                    }
+
+                    if attempt < MAX_FINALIZE_RETRIES {
+                        log::info!("Retrying in {:?}...", FINALIZE_RETRY_DELAY);
+                        thread::sleep(FINALIZE_RETRY_DELAY);
+                    } else {
+                        return Err(e);
+                    }
+                }
+            }
+        }
+        unreachable!()
+    }
+
+    /// Exchange private keys with all makers in forward order.
+    /// Each maker receives the privkey for their incoming contract and
+    /// responds with their outgoing privkey.
+    fn finalize_exchange_privkeys(&mut self) -> Result<(), TakerError> {
+        let swap = self.swap_state()?;
+        let num_makers = swap.makers.len();
+        let protocol = swap.params.protocol;
+        let swap_id = swap.id.clone();
+
+        // Start with the taker's own outgoing privkey (for Maker[0]'s incoming)
+        let mut current_privkey = swap
+            .outgoing_swapcoins
+            .first()
+            .and_then(|sc| sc.my_privkey)
+            .ok_or_else(|| TakerError::General("No outgoing privkey".to_string()))?;
+
+        for i in 0..num_makers {
+            let maker_address = self.swap_state()?.makers[i].address.to_string();
+            let mut stream = self.net_connect(&maker_address)?;
+
+            self.net_handshake(&mut stream)?;
+
+            log::info!("Sending privkey to maker {} and awaiting response", i);
+
+            let msg = Self::msg_build_handover(protocol, swap_id.clone(), current_privkey);
+            send_message(&mut stream, &msg)?;
+
+            let msg_bytes = read_message(&mut stream)?;
+            let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
+
+            let received_privkey = match msg {
+                MakerToTakerMessage::LegacyPrivateKeyHandover(handover)
+                | MakerToTakerMessage::TaprootPrivateKeyHandover(handover) => {
+                    log::info!("Received private key from maker {}", i);
+                    handover.privkeys.first().map(|p| p.key).ok_or_else(|| {
+                        TakerError::General(format!("Empty privkey response from maker {}", i))
+                    })?
+                }
+                _ => {
+                    return Err(TakerError::General(format!(
+                        "Unexpected response from maker {}: expected PrivateKeyHandover",
+                        i
+                    )));
+                }
+            };
+
+            self.swap_state_mut()?.makers[i]
+                .finalization
+                .privkey_received = true;
+            self.swap_state_mut()?.makers[i]
+                .finalization
+                .privkey_forwarded = true;
+
+            // For the last maker: validate and set their privkey on taker's incoming swapcoin.
+            // Derive the public key from the received private key and verify it matches
+            // the expected other_pubkey on the incoming swapcoin, preventing a malicious
+            // maker from sending a garbage key that would make funds unspendable.
+            if i == num_makers - 1 {
+                if let Some(incoming) = self.swap_state_mut()?.incoming_swapcoins.last_mut() {
+                    let secp = bitcoin::secp256k1::Secp256k1::new();
+                    let derived_pubkey = PublicKey {
+                        compressed: true,
+                        inner: bitcoin::secp256k1::PublicKey::from_secret_key(
+                            &secp,
+                            &received_privkey,
+                        ),
+                    };
+                    if let Some(expected_pubkey) = incoming.other_pubkey {
+                        if derived_pubkey != expected_pubkey {
+                            return Err(TakerError::General(format!(
+                                "Last maker {} sent incorrect private key: derived pubkey {} \
+                                 does not match expected {}",
+                                i, derived_pubkey, expected_pubkey
+                            )));
+                        }
+                    }
+                    incoming.set_other_privkey(received_privkey);
                     log::info!(
-                        "Successfully swept {} incoming swap coins: {:?}",
-                        swept_txids.len(),
-                        swept_txids
+                        "Validated and set taker's incoming swapcoin other_privkey from last maker ({})",
+                        i
                     );
                 }
-
-                // Generate post-swap report
-                let swap_report = Some(self.generate_swap_report(
-                    prereset_swapstate,
-                    swap_start_time,
-                    &initial_utxoset,
-                    SwapStatus::Success,
-                    None,
-                )?);
-                log::info!("Successfully Completed Coinswap.");
-                Ok(swap_report)
             }
-            Err(e) => {
-                log::error!("Swap Settlement Failed : {e:?}");
-                log::warn!("Starting recovery from existing swap");
-                self.generate_swap_report(
-                    &self.ongoing_swap_state.clone(),
-                    swap_start_time,
-                    &initial_utxoset,
-                    SwapStatus::Failed,
-                    Some(format!("{e:?}")),
-                )?;
-                self.recover_from_swap()?;
-                Ok(None)
+
+            current_privkey = received_privkey;
+        }
+
+        Ok(())
+    }
+
+    /// Persist the taker's incoming swapcoins to the wallet.
+    /// Preimage is already stamped at swapcoin creation time.
+    fn finalize_persist_incoming(&mut self) -> Result<(), TakerError> {
+        let mut wallet = self.write_wallet()?;
+        if let Some(incoming) = self.swap_state()?.incoming_swapcoins.last() {
+            wallet.add_incoming_swapcoin(incoming);
+        }
+
+        wallet.save_to_disk()?;
+        Ok(())
+    }
+
+    /// Create a protocol-appropriate private key handover message.
+    fn msg_build_handover(
+        protocol: ProtocolVersion,
+        swap_id: String,
+        privkey: SecretKey,
+    ) -> TakerToMakerMessage {
+        let handover = PrivateKeyHandover {
+            id: swap_id,
+            privkeys: vec![SwapPrivkey {
+                identifier: bitcoin::ScriptBuf::new(),
+                key: privkey,
+            }],
+        };
+        match protocol {
+            ProtocolVersion::Legacy => TakerToMakerMessage::LegacyPrivateKeyHandover(handover),
+            ProtocolVersion::Taproot => TakerToMakerMessage::TaprootPrivateKeyHandover(handover),
+        }
+    }
+
+    /// Build a `SwapRecord` from the current `OngoingSwapState`.
+    fn persist_build_record(&self, swap: &OngoingSwapState) -> Result<SwapRecord, TakerError> {
+        let now = now_secs();
+        Ok(SwapRecord {
+            swap_id: swap.id.clone(),
+            preimage: swap.preimage,
+            protocol: swap.params.protocol,
+            send_amount_sat: swap.params.send_amount.to_sat(),
+            maker_count: swap.params.maker_count,
+            phase: swap.phase,
+            failed_at_phase: None,
+            failure_reason: None,
+            makers: swap
+                .makers
+                .iter()
+                .map(|m| MakerProgress {
+                    address: m.address.to_string(),
+                    negotiated: m.tweakable_point.is_some(),
+                    exchange: m.exchange.clone(),
+                    finalization: m.finalization.clone(),
+                })
+                .collect(),
+            outgoing_contract_txids: swap
+                .outgoing_swapcoins
+                .iter()
+                .map(|sc| sc.contract_tx.compute_txid())
+                .collect(),
+            incoming_contract_txids: swap
+                .incoming_swapcoins
+                .iter()
+                .map(|sc| sc.contract_tx.compute_txid())
+                .collect(),
+            watchonly_contract_txids: swap
+                .watchonly_swapcoins
+                .iter()
+                .map(|sc| sc.contract_tx.compute_txid())
+                .collect(),
+            recovery: RecoveryState::default(),
+            multisig_nonces: swap
+                .multisig_nonces
+                .iter()
+                .map(|k| SerializableSecretKey::from(*k))
+                .collect(),
+            hashlock_nonces: swap
+                .hashlock_nonces
+                .iter()
+                .map(|k| SerializableSecretKey::from(*k))
+                .collect(),
+            created_at: now,
+            updated_at: now,
+        })
+    }
+
+    /// Flush the current swap state to the tracker on disk.
+    ///
+    /// Sets the swap phase and rebuilds the full record from `OngoingSwapState`
+    /// so that maker progress, txids, and nonces stay up-to-date. Preserves
+    /// `created_at` and `recovery` from any existing record.
+    pub(crate) fn persist_swap(&mut self, phase: SwapPhase) -> Result<(), TakerError> {
+        let swap = self.swap_state_mut()?;
+        swap.phase = phase;
+
+        // Snapshot preserved fields from any existing record.
+        let swap_id = self.swap_state()?.id.clone();
+        let tracker_guard = self.swap_tracker.lock().unwrap();
+        let existing = tracker_guard.get_record(&swap_id);
+        let created_at = existing.map(|r| r.created_at);
+        let recovery = existing.map(|r| r.recovery.clone());
+        let failed_at = existing.and_then(|r| r.failed_at_phase);
+        let failure_reason = existing.and_then(|r| r.failure_reason.clone());
+        drop(tracker_guard);
+
+        // Build full record from current live state.
+        let swap_ref = self.swap_state()?;
+        let mut record = self.persist_build_record(swap_ref)?;
+
+        // Restore preserved fields so we don't lose recovery progress or timestamps.
+        if let Some(ts) = created_at {
+            record.created_at = ts;
+        }
+        if let Some(rec) = recovery {
+            record.recovery = rec;
+        }
+        if let Some(fat) = failed_at {
+            record.failed_at_phase = Some(fat);
+        }
+        if let Some(reason) = failure_reason {
+            record.failure_reason = Some(reason);
+        }
+
+        self.swap_tracker.lock().unwrap().save_record(&record)
+    }
+
+    /// Flush the current swap state to disk without changing the phase.
+    pub(crate) fn persist_progress(&mut self) -> Result<(), TakerError> {
+        let phase = self.swap_state()?.phase;
+        self.persist_swap(phase)
+    }
+
+    /// Persist a swap failure (SP-ERR) with the phase at which failure occurred.
+    fn persist_failure(&mut self, failed_at: SwapPhase, error: &TakerError) {
+        if let Ok(swap) = self.swap_state() {
+            let swap_id = swap.id.clone();
+            if let Ok(mut record) = self.persist_build_record(swap) {
+                record.phase = SwapPhase::Failed;
+                record.failed_at_phase = Some(failed_at);
+                record.failure_reason = Some(format!("{:?}", error));
+                // Preserve existing recovery state if resuming
+                if let Some(existing) = self.swap_tracker.lock().unwrap().get_record(&swap_id) {
+                    record.recovery = existing.recovery.clone();
+                    record.created_at = existing.created_at;
+                }
+                record.updated_at = now_secs();
+                if let Err(e) = self.swap_tracker.lock().unwrap().save_record(&record) {
+                    log::error!("Failed to persist swap failure: {:?}", e);
+                }
             }
         }
     }
 
+    /// Generate a detailed swap report for audit trail (matches master's `generate_swap_report`).
+    ///
+    /// Computes UTXO diffs, per-maker fee breakdown, contract txids, and funding txids.
+    /// Prints the report to console and saves a JSON file to `{data_dir}/swap_reports/`.
     fn generate_swap_report(
         &self,
-        prereset_swapstate: &OngoingSwapState,
-        start_time: std::time::Instant,
         initial_utxos: &[ListUnspentResultEntry],
+        start_time: Instant,
         status: SwapStatus,
         error_message: Option<String>,
     ) -> Result<SwapReport, TakerError> {
-        let swap_state = &prereset_swapstate;
-
+        let swap = self.swap_state()?;
         let swap_duration = start_time.elapsed();
 
-        let all_regular_utxo = self
-            .wallet
-            .list_descriptor_utxo_spend_info()
-            .map(|(utxo, _)| utxo.clone())
-            .collect::<Vec<_>>();
+        let wallet = self.read_wallet()?;
 
-        let initial_outpoints = initial_utxos
+        // UTXO tracking: compute consumed inputs and new outputs
+        let all_regular_utxo = wallet.list_descriptor_utxo_spend_info();
+
+        let initial_outpoints: HashSet<OutPoint> = initial_utxos
             .iter()
             .map(|utxo| OutPoint {
                 txid: utxo.txid,
                 vout: utxo.vout,
             })
-            .collect::<HashSet<_>>();
+            .collect();
 
-        let current_outpoints = all_regular_utxo
+        let current_outpoints: HashSet<OutPoint> = all_regular_utxo
             .iter()
-            .map(|utxo| OutPoint {
+            .map(|(utxo, _)| OutPoint {
                 txid: utxo.txid,
                 vout: utxo.vout,
             })
-            .collect::<HashSet<_>>();
+            .collect();
 
-        // Present in initial set but not in current set (destroyed)
-        let input_utxos = initial_utxos
+        // Input UTXOs consumed by the swap (present initially, absent now)
+        let input_utxos: Vec<u64> = initial_utxos
             .iter()
             .filter(|utxo| {
-                let initial_outpoint = OutPoint {
+                !current_outpoints.contains(&OutPoint {
                     txid: utxo.txid,
                     vout: utxo.vout,
-                };
-                !current_outpoints.contains(&initial_outpoint)
+                })
             })
             .map(|utxo| utxo.amount.to_sat())
-            .collect::<Vec<u64>>();
+            .collect();
 
-        let output_regular_utxos = all_regular_utxo
+        // New regular UTXOs created (present now, absent initially)
+        let output_regular_utxos: Vec<&(ListUnspentResultEntry, _)> = all_regular_utxo
             .iter()
-            .filter(|utxo| {
-                let final_outpoint = OutPoint {
+            .filter(|(utxo, _)| {
+                !initial_outpoints.contains(&OutPoint {
                     txid: utxo.txid,
                     vout: utxo.vout,
-                };
-                !initial_outpoints.contains(&final_outpoint)
+                })
             })
-            .collect::<Vec<_>>();
+            .collect();
 
-        // Present in current set but not in initial regular set (created)
-        let output_change_amounts = output_regular_utxos
+        let output_change_amounts: Vec<u64> = output_regular_utxos
             .iter()
-            .map(|utxo| utxo.amount.to_sat())
-            .collect::<Vec<u64>>();
+            .map(|(utxo, _)| utxo.amount.to_sat())
+            .collect();
 
-        let network = self.wallet.store.network;
+        let network = wallet.store.network;
 
-        let output_swap_utxos = self
-            .wallet
+        let output_swap_utxos: Vec<(u64, String)> = wallet
             .list_swept_incoming_swap_utxos()
+            .iter()
             .map(|(utxo, _)| {
                 let address = utxo
                     .address
@@ -676,16 +2134,16 @@ impl Taker {
                     .unwrap_or_else(|| "Unknown".to_string());
                 (utxo.amount.to_sat(), address)
             })
-            .collect::<Vec<(u64, String)>>();
+            .collect();
 
-        let output_swap_amounts = output_swap_utxos
+        let output_swap_amounts: Vec<u64> = output_swap_utxos
             .iter()
             .map(|(amount, _)| *amount)
-            .collect::<Vec<u64>>();
+            .collect();
 
-        let output_change_utxos = output_regular_utxos
+        let output_change_utxos: Vec<(u64, String)> = output_regular_utxos
             .iter()
-            .map(|utxo| {
+            .map(|(utxo, _)| {
                 let address = utxo
                     .address
                     .as_ref()
@@ -694,70 +2152,71 @@ impl Taker {
                     .unwrap_or_else(|| "Unknown".to_string());
                 (utxo.amount.to_sat(), address)
             })
-            .collect::<Vec<(u64, String)>>();
+            .collect();
 
         let output_utxos = [output_change_amounts.clone(), output_swap_amounts.clone()].concat();
+        let total_input_amount: u64 = input_utxos.iter().sum();
+        let total_output_amount: u64 = output_utxos.iter().sum();
 
-        let total_input_amount = input_utxos.iter().sum::<u64>();
-        let total_output_amount = output_utxos.iter().sum::<u64>();
-
-        let maker_addresses = swap_state
-            .peer_infos
+        // Maker addresses
+        let maker_count = swap.params.maker_count;
+        let maker_addresses: Vec<String> = swap
+            .makers
             .iter()
-            .take(swap_state.swap_params.maker_count)
-            .map(|peer_info| peer_info.peer.address.to_string())
-            .collect::<Vec<_>>();
+            .take(maker_count)
+            .map(|m| m.address.to_string())
+            .collect();
 
-        let funding_txids = swap_state
-            .funding_txs
-            .iter()
-            .map(|(txs, _)| {
-                txs.iter()
-                    .map(|tx| tx.compute_txid().to_string())
-                    .collect::<Vec<_>>()
-            })
-            .collect::<Vec<_>>();
+        // Funding txids from outgoing swapcoins
+        let funding_txids: Vec<Vec<String>> = if !swap.outgoing_swapcoins.is_empty() {
+            vec![swap
+                .outgoing_swapcoins
+                .iter()
+                .filter_map(|sc| {
+                    sc.funding_tx
+                        .as_ref()
+                        .map(|tx| tx.compute_txid().to_string())
+                })
+                .collect()]
+        } else {
+            vec![]
+        };
 
-        // Peer_infos is maker_count (only makers participated in swap) + 1 (the last is the taker's info),
-        // so cap at maker_count to avoid double-counting, or else
-        // it will give an underflow error when the last entry is included.
+        // Per-maker fee breakdown (same algorithm as master)
         let mut maker_fee_info = Vec::new();
-        let mut temp_target_amount = swap_state.swap_params.send_amount.to_sat();
-        let completed_hops = swap_state
-            .peer_infos
-            .len()
-            .min(swap_state.swap_params.maker_count);
-        log::info!(
-            "Calculating fees for peer info : {} and maker count: {}",
-            swap_state.peer_infos.len(),
-            swap_state.swap_params.maker_count
-        );
-        let total_maker_fees = (0..completed_hops)
-            .map(|maker_index| {
-                let maker_refund_locktime = REFUND_LOCKTIME
-                    + REFUND_LOCKTIME_STEP
-                        * (swap_state.swap_params.maker_count - maker_index - 1) as u16;
+        let mut temp_target_amount = swap.params.send_amount.to_sat();
+        let completed_hops = swap.makers.len().min(maker_count);
 
-                let base_fee = swap_state.peer_infos[maker_index].peer.offer.base_fee as f64;
-                let amount_rel_fee = (swap_state.peer_infos[maker_index]
-                    .peer
-                    .offer
-                    .amount_relative_fee_pct
-                    * temp_target_amount as f64)
-                    / 100.0;
-                let time_rel_fee = (swap_state.peer_infos[maker_index]
-                    .peer
-                    .offer
-                    .time_relative_fee_pct
-                    * maker_refund_locktime as f64
-                    * temp_target_amount as f64)
-                    / 100.0;
+        log::info!(
+            "Calculating fees for {} makers, maker count: {}",
+            swap.makers.len(),
+            maker_count,
+        );
+
+        let total_maker_fees: u64 = (0..completed_hops)
+            .map(|maker_index| {
+                let maker_refund_locktime = REFUND_LOCKTIME_BASE
+                    + REFUND_LOCKTIME_STEP * (maker_count - maker_index - 1) as u16;
+
+                let (base_fee, amount_rel_fee, time_rel_fee) = if let Some(offer) =
+                    swap.makers[maker_index].offer.as_ref()
+                {
+                    let bf = offer.base_fee as f64;
+                    let arf = (offer.amount_relative_fee_pct * temp_target_amount as f64) / 100.0;
+                    let trf = (offer.time_relative_fee_pct
+                        * maker_refund_locktime as f64
+                        * temp_target_amount as f64)
+                        / 100.0;
+                    (bf, arf, trf)
+                } else {
+                    (0.0, 0.0, 0.0)
+                };
 
                 let total_maker_fee = base_fee + amount_rel_fee + time_rel_fee;
 
-                maker_fee_info.push(MakerFeeInfo {
+                maker_fee_info.push(ReportMakerFeeInfo {
                     maker_index,
-                    maker_address: swap_state.peer_infos[maker_index].peer.address.to_string(),
+                    maker_address: swap.makers[maker_index].address.to_string(),
                     base_fee,
                     amount_relative_fee: amount_rel_fee,
                     time_relative_fee: time_rel_fee,
@@ -771,13 +2230,12 @@ impl Taker {
 
         let total_fee = total_input_amount.saturating_sub(total_output_amount);
         let mining_fee = total_fee.saturating_sub(total_maker_fees);
-        let fee_percentage =
-            (total_fee as f64 / swap_state.swap_params.send_amount.to_sat() as f64) * 100.0;
+        let fee_percentage = (total_fee as f64 / swap.params.send_amount.to_sat() as f64) * 100.0;
 
-        let outgoing_contract_txid = if !swap_state.outgoing_swapcoins.is_empty() {
+        // Contract txids
+        let outgoing_contract_txid = if !swap.outgoing_swapcoins.is_empty() {
             Some(
-                swap_state
-                    .outgoing_swapcoins
+                swap.outgoing_swapcoins
                     .iter()
                     .map(|sc| sc.contract_tx.compute_txid().to_string())
                     .collect::<Vec<_>>()
@@ -787,10 +2245,9 @@ impl Taker {
             None
         };
 
-        let incoming_contract_txid = if !swap_state.incoming_swapcoins.is_empty() {
+        let incoming_contract_txid = if !swap.incoming_swapcoins.is_empty() {
             Some(
-                swap_state
-                    .incoming_swapcoins
+                swap.incoming_swapcoins
                     .iter()
                     .map(|sc| sc.contract_tx.compute_txid().to_string())
                     .collect::<Vec<_>>()
@@ -802,12 +2259,12 @@ impl Taker {
 
         let report = SwapReport::taker_report(SwapReport {
             status,
-            swap_id: swap_state.id.clone(),
+            swap_id: swap.id.clone(),
             swap_duration_seconds: swap_duration.as_secs_f64(),
-            outgoing_amount: swap_state.swap_params.send_amount.to_sat(),
+            outgoing_amount: swap.params.send_amount.to_sat(),
             incoming_amount: total_output_amount,
             fee_paid_or_earned: -(total_fee as i64),
-            makers_count: Some(swap_state.swap_params.maker_count),
+            makers_count: Some(maker_count),
             maker_addresses,
             funding_txids,
             total_maker_fees,
@@ -827,1610 +2284,191 @@ impl Taker {
         });
 
         report.print();
-        let _ = report.save_to_disk(&get_taker_dir()).map_err(|e| {
-            log::warn!("Failed to save taker swap report to disk: {:?}", e);
-        });
+        let data_dir = self.config.data_dir.clone().unwrap_or_else(get_taker_dir);
+        if let Err(e) = report.save_to_disk(&data_dir) {
+            log::warn!("Failed to save taker swap report: {:?}", e);
+        }
 
         Ok(report)
     }
 
-    // ######## PROTOCOL SUBROUTINES ############
-
-    /// Initiate the first coinswap hop. Makers are selected from the [`OfferBook`], and round will
-    /// fail if no suitable makers are found.
-    /// Creates and stores the [`OutgoingSwapCoin`] into [`OngoingSwapState`], and also saves it into the [`Wallet`] file.
-    fn init_first_hop(&mut self) -> Result<(), TakerError> {
-        log::info!("Initializing First Hop.");
-        // Set the Taker Position state
-        self.ongoing_swap_state.taker_position = TakerPosition::FirstPeer;
-
-        // Locktime to be used for this swap.
-        let swap_locktime = REFUND_LOCKTIME
-            + REFUND_LOCKTIME_STEP * self.ongoing_swap_state.swap_params.maker_count as u16;
-
-        // Loop until we find a live maker who responded to our signature request.
-        let (maker, funding_txs) = loop {
-            let maker = self.choose_next_maker()?.clone();
-            log::info!("Choosing next maker: {}", maker.address);
-            let (multisig_pubkeys, multisig_nonces, hashlock_pubkeys, hashlock_nonces) =
-                generate_maker_keys(&maker.offer.tweakable_point, 1)?;
-            let (funding_txs, mut outgoing_swapcoins, _) = self.wallet.initalize_coinswap(
-                &self.ongoing_swap_state.swap_params,
-                &multisig_pubkeys,
-                &hashlock_pubkeys,
-                self.get_preimage_hash(),
-                swap_locktime,
-                MIN_FEE_RATE,
-            )?;
-
-            let contract_reedemscripts = outgoing_swapcoins
-                .iter()
-                .map(|swapcoin| swapcoin.contract_redeemscript.clone())
-                .collect();
-
-            // Request for Sender's Signatures
-            let contract_sigs = match self.req_sigs_for_sender(
-                &maker.address,
-                &outgoing_swapcoins,
-                &multisig_nonces,
-                &hashlock_nonces,
-                swap_locktime,
-            ) {
-                Ok(contract_sigs) => contract_sigs,
-                Err(e) => {
-                    // Bad maker, mark it, and try next one.
-                    self.offerbook.add_bad_maker(&maker);
-                    log::error!(
-                        "Failed to obtain sender's contract signatures from first_maker {}: {:?}",
-                        maker.address,
-                        e
-                    );
-                    continue;
-                }
-            };
-
-            // // Maker has returned a valid signature, save all the data in memory,
-            // // and persist in disk.
-            self.ongoing_swap_state.peer_infos.push(NextPeerInfo {
-                peer: maker.clone(),
-                multisig_pubkeys,
-                multisig_nonces,
-                hashlock_nonces,
-                contract_reedemscripts,
-            });
-
-            contract_sigs
-                .sigs
-                .iter()
-                .zip(outgoing_swapcoins.iter_mut())
-                .for_each(|(sig, outgoing_swapcoin)| {
-                    outgoing_swapcoin.others_contract_sig = Some(*sig);
-                });
-
-            for outgoing_swapcoin in &outgoing_swapcoins {
-                self.wallet.add_outgoing_swapcoin(outgoing_swapcoin);
-            }
-            self.wallet.save_to_disk()?;
-
-            self.ongoing_swap_state.outgoing_swapcoins = outgoing_swapcoins;
-
-            break (maker, funding_txs);
-        };
-
-        log::debug!(
-            "Outgoing SwapCoins: {:?}",
-            self.ongoing_swap_state.outgoing_swapcoins
-        );
-
-        // Broadcast and wait for funding txs to confirm
-        let funding_txids = funding_txs
-            .iter()
-            .map(|tx| {
-                let txid = self.wallet.send_tx(tx)?;
-                log::info!("Broadcasted Funding tx. txid: {txid}");
-                assert_eq!(txid, tx.compute_txid());
-                Ok(txid)
-            })
-            .collect::<Result<_, TakerError>>()?;
-
-        // Watch for the funding transactions to be confirmed.
-        // This errors in two cases.
-        // TakerError::ContractsBroadcasted and TakerError::FundingTxWaitTimeOut.
-        // For all cases, abort from swap immediately.
-        // For the contract-broadcasted case also ban the Peer.
-        match self.watch_for_txs(&funding_txids) {
-            Ok(stuffs) => {
-                self.ongoing_swap_state.funding_txs.push(stuffs);
-            }
-            Err(e) => {
-                if let TakerError::ContractsBroadcasted(_) = e {
-                    self.offerbook.add_bad_maker(&maker);
-                }
-                return Err(e);
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Return a list of confirmed funding txs with their corresponding merkle proofs.
-    /// Errors if any watching contract txs have been broadcasted during the time too.
-    /// The error contanis the list of broadcasted contract [`Txid`]s.
-    fn watch_for_txs(
+    /// Emit a failure report for the current swap (best-effort, does not propagate errors).
+    fn emit_failure_report(
         &self,
-        funding_txids: &Vec<Txid>,
-    ) -> Result<(Vec<Transaction>, Vec<String>), TakerError> {
-        let mut txid_tx_map = HashMap::<Txid, Transaction>::new();
-        let mut txid_blockhash_map = HashMap::<Txid, BlockHash>::new();
-
-        // Find next maker's details
-        let required_confirmations =
-            if self.ongoing_swap_state.taker_position == TakerPosition::LastPeer {
-                REQUIRED_CONFIRMS
-            } else {
-                self.ongoing_swap_state
-                    .peer_infos
-                    .last()
-                    .map(|npi| npi.peer.offer.required_confirms)
-                    .expect("Maker information expected in swap state")
-            };
-
-        let maker_addrs = self
-            .ongoing_swap_state
-            .peer_infos
-            .iter()
-            .map(|npi| npi.peer.address.clone())
-            .collect::<HashSet<_>>();
-
-        log::info!("Waiting for funding transaction confirmation. Txids : {funding_txids:?}");
-
-        // Wait for this much time for txs to appear in mempool.
-        let mempool_wait_timeout = if cfg!(feature = "integration-test") {
-            10u64 // 10 secs for the tests
-        } else {
-            60 * 5 // 5mins for production
-        };
-
-        // Check for funding confirmation at this frequency
-        let sleep_interval = if cfg!(feature = "integration-test") {
-            1u64 // 1 secs for the tests
-        } else {
-            30 // 30 secs for production
-        };
-
-        let start_time = Instant::now();
-
-        loop {
-            // Abort if any of the contract transaction is broadcasted
-            let contracts_broadcasted = self.check_for_broadcasted_contract_txes();
-            if !contracts_broadcasted.is_empty() {
-                log::error!(
-                    "Fatal! Contract txs broadcasted by makers. Txids : {contracts_broadcasted:?}"
-                );
-                return Err(TakerError::ContractsBroadcasted(contracts_broadcasted));
-            }
-
-            // Check for each funding transactions if they are confirmed
-            for txid in funding_txids {
-                if txid_tx_map.contains_key(txid) {
-                    continue;
-                }
-                let gettx = match self.wallet.rpc.get_raw_transaction_info(txid, None) {
-                    Ok(r) => r,
-                    // Transaction haven't arrived in our mempool, keep looping.
-                    Err(_e) => {
-                        let elapsed = start_time.elapsed().as_secs();
-                        log::info!("Waiting for funding tx to appear in mempool | {elapsed} secs");
-                        if elapsed > mempool_wait_timeout {
-                            log::error!("Timed out waiting for funding tx to appear in mempool. | No tx seen in {elapsed} secs");
-                            return Err(TakerError::FundingTxWaitTimeOut);
-                        }
-                        continue;
-                    }
-                };
-
-                // log that its waiting for confirmation.
-                if gettx.confirmations.is_none() {
-                    let elapsed = start_time.elapsed().as_secs();
-                    log::info!(
-                        "Funding tx Seen in Mempool. Waiting for confirmation for {elapsed} secs",
-                    );
-
-                    // Send wait-notif to all makers
-                    for addr in &maker_addrs {
-                        // Ignore transient network error and retry in next loop.
-                        // It's safe to ignore the error here, because if the maker is actually offline, the swap will fail in the later stages.
-                        if let Err(e) = self.send_to_maker(
-                            addr,
-                            TakerToMakerMessage::WaitingFundingConfirmation(
-                                self.ongoing_swap_state.id.clone(),
-                            ),
-                        ) {
-                            log::error!("error sending wait-notif to maker {addr} | {e:?}");
-                        }
-                    }
-                }
-
-                // handle confirmations
-                if gettx.confirmations >= Some(required_confirmations) {
-                    txid_tx_map.insert(
-                        *txid,
-                        deserialize::<Transaction>(&gettx.hex).map_err(WalletError::from)?,
-                    );
-                    txid_blockhash_map.insert(*txid, gettx.blockhash.expect("Blockhash expected"));
-                    log::info!("Tx {txid} | Confirmed at {required_confirmations}");
-                }
-            }
-            if txid_tx_map.len() == funding_txids.len() {
-                let txes = funding_txids
-                    .iter()
-                    .map(|txid| {
-                        txid_tx_map
-                            .get(txid)
-                            .expect("txid expected in the map")
-                            .clone()
-                    })
-                    .collect::<Vec<Transaction>>();
-                let merkleproofs = funding_txids
-                    .iter()
-                    .map(|&txid| {
-                        self.wallet
-                            .rpc
-                            .get_tx_out_proof(
-                                &[txid],
-                                Some(
-                                    txid_blockhash_map
-                                        .get(&txid)
-                                        .expect("txid expected in the map"),
-                                ),
-                            )
-                            .map(|gettxoutproof_result| gettxoutproof_result.to_lower_hex_string())
-                    })
-                    .collect::<Result<Vec<String>, _>>()
-                    .map_err(WalletError::from)?;
-                return Ok((txes, merkleproofs));
-            }
-            sleep(Duration::from_secs(sleep_interval));
-        }
-    }
-
-    /// Create [`FundingTxInfo`] for the "next_maker". Next maker is the last stored [`NextPeerInfo`] in the swp state.
-    /// All other data from the swap state's last entries are collected and a [`FundingTxInfo`] protocol message data is generated.
-    fn funding_info_for_next_maker(&self) -> Vec<FundingTxInfo> {
-        // Get the redeemscripts.
-        let (this_maker_multisig_redeemscripts, this_maker_contract_redeemscripts) =
-            if self.ongoing_swap_state.taker_position == TakerPosition::FirstPeer {
-                (
-                    self.ongoing_swap_state
-                        .outgoing_swapcoins
-                        .iter()
-                        .map(|s| s.get_multisig_redeemscript())
-                        .collect::<Vec<_>>(),
-                    self.ongoing_swap_state
-                        .outgoing_swapcoins
-                        .iter()
-                        .map(|s| s.get_contract_redeemscript())
-                        .collect::<Vec<_>>(),
-                )
-            } else {
-                (
-                    self.ongoing_swap_state
-                        .watchonly_swapcoins
-                        .last()
-                        .expect("swapcoin expected")
-                        .iter()
-                        .map(|s| s.get_multisig_redeemscript())
-                        .collect::<Vec<_>>(),
-                    self.ongoing_swap_state
-                        .watchonly_swapcoins
-                        .last()
-                        .expect("swapcoin expected")
-                        .iter()
-                        .map(|s| s.get_contract_redeemscript())
-                        .collect::<Vec<_>>(),
-                )
-            };
-
-        // Get the nonces.
-        let maker_multisig_nonces = self
-            .ongoing_swap_state
-            .peer_infos
-            .last()
-            .expect("maker should exist")
-            .multisig_nonces
-            .iter();
-        let maker_hashlock_nonces = self
-            .ongoing_swap_state
-            .peer_infos
-            .last()
-            .expect("maker should exist")
-            .hashlock_nonces
-            .iter();
-
-        // Get the funding txs and merkle proofs.
-        let (funding_txs, funding_txs_merkleproof) = self
-            .ongoing_swap_state
-            .funding_txs
-            .last()
-            .expect("funding txs should be known");
-
-        let funding_tx_infos = funding_txs
-            .iter()
-            .zip(funding_txs_merkleproof.iter())
-            .zip(this_maker_multisig_redeemscripts.iter())
-            .zip(maker_multisig_nonces)
-            .zip(this_maker_contract_redeemscripts.iter())
-            .zip(maker_hashlock_nonces)
-            .map(
-                |(
-                    (
-                        (
-                            (
-                                (funding_tx, funding_tx_merkle_proof),
-                                this_maker_multisig_reedeemscript,
-                            ),
-                            maker_multisig_nonce,
-                        ),
-                        this_maker_contract_reedemscript,
-                    ),
-                    maker_hashlock_nonce,
-                )| {
-                    FundingTxInfo {
-                        funding_tx: funding_tx.clone(),
-                        funding_tx_merkleproof: funding_tx_merkle_proof.clone(),
-                        multisig_redeemscript: this_maker_multisig_reedeemscript.clone(),
-                        multisig_nonce: *maker_multisig_nonce,
-                        contract_redeemscript: this_maker_contract_reedemscript.clone(),
-                        hashlock_nonce: *maker_hashlock_nonce,
-                    }
-                },
-            )
-            .collect::<Vec<_>>();
-
-        funding_tx_infos
-    }
-
-    /// Send signatures to a maker, and initiate the next hop of the swap by finding a new maker.
-    /// If no suitable makers are found in [`OfferBook`], next swap will not initiate and the swap round will fail.
-    fn send_sigs_init_next_hop(
-        &mut self,
-        maker_refund_locktime: u16,
-        funding_tx_infos: &[FundingTxInfo],
-    ) -> Result<(NextPeerInfo, ContractSigsAsRecvrAndSender), TakerError> {
-        // Configurable reconnection attempts for testing
-        let reconnect_attempts = if cfg!(feature = "integration-test") {
-            10
-        } else {
-            RECONNECT_ATTEMPTS
-        };
-
-        // Custom sleep delay for testing.
-        let sleep_delay = if cfg!(feature = "integration-test") {
-            1
-        } else {
-            RECONNECT_SHORT_SLEEP_DELAY
-        };
-
-        let mut ii = 0;
-
-        let maker_oa = self
-            .ongoing_swap_state
-            .peer_infos
-            .last()
-            .expect("at least one active maker expected")
-            .peer
-            .clone();
-
-        loop {
-            ii += 1;
-            match self.send_sigs_init_next_hop_once(maker_refund_locktime, funding_tx_infos) {
-                Ok(ret) => return Ok(ret),
-                Err(e) => {
-                    // If we already know there are no more suitable makers, then no point in trying to reconnect, just abort.
-                    if matches!(e, TakerError::NotEnoughMakersInOfferBook) {
-                        log::error!("No more suitable makers in offerbook to try for next hop. Aborting swap.");
-                        return Err(e);
-                    }
-                    log::error!(
-                        "Failed to connect to maker {} to send signatures and init next hop, \
-                            reattempting {} of {} | error={:?}",
-                        &maker_oa.address,
-                        ii,
-                        reconnect_attempts,
-                        e
-                    );
-                    if ii <= reconnect_attempts {
-                        sleep(Duration::from_secs(
-                            if ii <= SHORT_LONG_SLEEP_DELAY_TRANSITION {
-                                sleep_delay
-                            } else {
-                                RECONNECT_LONG_SLEEP_DELAY
-                            },
-                        ));
-                        continue;
-                    } else {
-                        self.offerbook.add_bad_maker(&maker_oa);
-                        return Err(e);
-                    }
-                }
-            }
-        }
-    }
-
-    /// Single attempt to send signatures and initiate next hop.
-    fn send_sigs_init_next_hop_once(
-        &mut self,
-        maker_refund_locktime: u16,
-        funding_tx_infos: &[FundingTxInfo],
-    ) -> Result<(NextPeerInfo, ContractSigsAsRecvrAndSender), TakerError> {
-        let this_maker = &self
-            .ongoing_swap_state
-            .peer_infos
-            .last()
-            .expect("at least one active maker expected")
-            .peer;
-
-        let previous_maker = self.ongoing_swap_state.peer_infos.iter().rev().nth(1);
-
-        log::info!(
-            "Connecting to {} | Send Sigs Init Next Hop",
-            this_maker.address
-        );
-        let address = this_maker.address.to_string();
-        let mut socket = if cfg!(feature = "integration-test") {
-            TcpStream::connect(address)?
-        } else {
-            Socks5Stream::connect(
-                format!("127.0.0.1:{}", self.config.socks_port).as_str(),
-                address.as_str(),
-            )?
-            .into_inner()
-        };
-
-        let reconnect_timeout = Duration::from_secs(TCP_TIMEOUT_SECONDS);
-
-        socket.set_read_timeout(Some(reconnect_timeout))?;
-        socket.set_write_timeout(Some(reconnect_timeout))?;
-
-        handshake_maker(&mut socket)?;
-        let mut next_maker = this_maker.clone();
-        let (
-            next_peer_multisig_pubkeys,
-            next_peer_multisig_keys_or_nonces,
-            next_peer_hashlock_keys_or_nonces,
-            contract_sigs_as_recvr_sender,
-            next_swap_contract_redeemscripts,
-            senders_sigs,
-        ) = loop {
-            //loop to help error handling, allowing us to keep trying new makers until
-            //we find one for which our request is successful, or until we run out of makers
-            let (
-                next_peer_multisig_pubkeys,
-                next_peer_multisig_keys_or_nonces,
-                next_peer_hashlock_pubkeys,
-                next_peer_hashlock_keys_or_nonces,
-            ) = if self.ongoing_swap_state.taker_position == TakerPosition::LastPeer {
-                let (my_recv_ms_pubkey, my_recv_ms_nonce) = generate_keypair();
-                let (my_recv_hashlock_pubkey, my_recv_hashlock_nonce) = generate_keypair();
-                (
-                    vec![my_recv_ms_pubkey],
-                    vec![my_recv_ms_nonce],
-                    vec![my_recv_hashlock_pubkey],
-                    vec![my_recv_hashlock_nonce],
-                )
-            } else {
-                next_maker = self.choose_next_maker()?.clone();
-                //next_maker is only ever accessed when the next peer is a maker, not a taker
-                //i.e. if its ever used when is_taker_next_peer == true, then thats a bug
-                generate_maker_keys(&next_maker.offer.tweakable_point, 1)?
-            };
-
-            let this_maker_contract_txs =
-                if self.ongoing_swap_state.taker_position == TakerPosition::FirstPeer {
-                    self.ongoing_swap_state
-                        .outgoing_swapcoins
-                        .iter()
-                        .map(|os| os.get_contract_tx())
-                        .collect::<Vec<_>>()
-                } else {
-                    self.ongoing_swap_state
-                        .watchonly_swapcoins
-                        .last()
-                        .expect("at least one outgoing swpcoin expected")
-                        .iter()
-                        .map(|wos| wos.get_contract_tx())
-                        .collect()
-                };
-
-            log::info!("===> ProofOfFunding | {}", this_maker.address);
-
-            let funding_txids = funding_tx_infos
-                .iter()
-                .map(|fi| fi.funding_tx.compute_txid())
-                .collect::<Vec<_>>();
-
-            log::info!("Fundix Txids: {funding_txids:?}");
-
-            // Struct for information related to the next peer
-            let next_maker_info = NextMakerInfo {
-                next_peer_multisig_pubkeys: next_peer_multisig_pubkeys.clone(),
-                next_peer_hashlock_pubkeys: next_peer_hashlock_pubkeys.clone(),
-            };
-
-            let this_maker_info = ThisMakerInfo {
-                this_maker: this_maker.clone(),
-                funding_tx_infos: funding_tx_infos.to_vec(),
-                this_maker_contract_txs,
-                this_maker_refund_locktime: maker_refund_locktime,
-            };
-
-            let (contract_sigs_as_recvr_sender, next_swap_contract_redeemscripts) =
-                send_proof_of_funding_and_init_next_hop(
-                    &mut socket,
-                    this_maker_info,
-                    next_maker_info,
-                    self.get_preimage_hash(),
-                    self.ongoing_swap_state.id.clone(),
-                )?;
-            log::info!(
-                "<=== ReqContractSigsAsRecvrAndSender | {}",
-                this_maker.address
-            );
-
-            // If This Maker is the Sender, and we (the Taker) are the Receiver (Last Hop). We provide the Sender's Contact Tx Sigs.
-            let senders_sigs = if self.ongoing_swap_state.taker_position == TakerPosition::LastPeer
-            {
-                log::info!("Taker is next peer. Signing Sender's Contract Txs");
-                // Sign the seder's contract transactions with our multisig privkey.
-                next_peer_multisig_keys_or_nonces
-                    .iter()
-                    .zip(
-                        contract_sigs_as_recvr_sender
-                            .senders_contract_txs_info
-                            .iter(),
-                    )
-                    .map(
-                        |(my_receiving_multisig_privkey, senders_contract_tx_info)| {
-                            crate::protocol::contract::sign_contract_tx(
-                                &senders_contract_tx_info.contract_tx,
-                                &senders_contract_tx_info.multisig_redeemscript,
-                                senders_contract_tx_info.funding_amount,
-                                my_receiving_multisig_privkey,
-                            )
-                        },
-                    )
-                    .collect::<Result<Vec<_>, _>>()?
-            } else {
-                // If Next Maker is the Receiver, and This Maker is The Sender, Request Sender's Contract Tx Sig to Next Maker.
-                let watchonly_swapcoins = self.create_watch_only_swapcoins(
-                    &contract_sigs_as_recvr_sender,
-                    &next_peer_multisig_pubkeys,
-                    &next_swap_contract_redeemscripts,
-                )?;
-                let sigs = match self.req_sigs_for_sender(
-                    &next_maker.address,
-                    &watchonly_swapcoins,
-                    &next_peer_multisig_keys_or_nonces,
-                    &next_peer_hashlock_keys_or_nonces,
-                    maker_refund_locktime,
-                ) {
-                    Ok(r) => r,
-                    Err(e) => {
-                        log::error!(
-                            "Failed to obtain sender's contract signature from the next maker {} | {:?}",
-                            next_maker.address,
-                            e
-                        );
-                        self.offerbook.add_bad_maker(&next_maker);
-                        continue; //go back to the start of the loop and try another maker
-                    }
-                };
-                self.ongoing_swap_state
-                    .watchonly_swapcoins
-                    .push(watchonly_swapcoins);
-                sigs.sigs
-            };
-            break (
-                next_peer_multisig_pubkeys,
-                next_peer_multisig_keys_or_nonces,
-                next_peer_hashlock_keys_or_nonces,
-                contract_sigs_as_recvr_sender,
-                next_swap_contract_redeemscripts,
-                senders_sigs,
-            );
-        };
-
-        // If This Maker is the Reciver, and We (The Taker) are the Sender (First Hop), Sign the Contract Tx.
-        let receivers_sigs = if self.ongoing_swap_state.taker_position == TakerPosition::FirstPeer {
-            log::info!("Taker is previous peer. Signing Receivers Contract Txs");
-            // Sign the receiver's contract using our `OutgoingSwapCoin`.
-            contract_sigs_as_recvr_sender
-                .receivers_contract_txs
-                .iter()
-                .zip(self.ongoing_swap_state.outgoing_swapcoins.iter())
-                .map(|(receivers_contract_tx, outgoing_swapcoin)| {
-                    outgoing_swapcoin.sign_contract_tx_with_my_privkey(receivers_contract_tx)
-                })
-                .collect::<Result<Vec<_>, _>>()?
-        } else {
-            // If Next Maker is the Receiver, and Previous Maker is the Sender, request Previous Maker to sign the Reciever's Contract Tx.
-            let previous_maker = previous_maker.expect("Previous Maker should always exists");
-            let previous_maker_addr = &previous_maker.peer.address;
-            let previous_maker_watchonly_swapcoins =
-                if self.ongoing_swap_state.taker_position == TakerPosition::LastPeer {
-                    self.ongoing_swap_state
-                        .watchonly_swapcoins
-                        .last()
-                        .expect("swapcoin expected")
-                } else {
-                    //if the next peer is a maker not a taker, then that maker's swapcoins are last
-                    &self.ongoing_swap_state.watchonly_swapcoins
-                        [self.ongoing_swap_state.watchonly_swapcoins.len() - 2]
-                };
-
-            match self.req_sigs_for_recvr(
-                previous_maker_addr,
-                previous_maker_watchonly_swapcoins,
-                &contract_sigs_as_recvr_sender.receivers_contract_txs,
-            ) {
-                Ok(s) => s.sigs,
-                Err(e) => {
-                    log::error!(
-                        "Could not get Receiver's signatures from maker {}: {e:?}",
-                        previous_maker.peer.address
-                    );
-                    self.offerbook.add_bad_maker(&previous_maker.peer);
-                    return Err(e);
-                }
-            }
-        };
-        log::info!(
-            "===> RespContractSigsForRecvrAndSender | {}",
-            this_maker.address
-        );
-        let id = self.ongoing_swap_state.id.clone();
-        send_message(
-            &mut socket,
-            &TakerToMakerMessage::RespContractSigsForRecvrAndSender(
-                ContractSigsForRecvrAndSender {
-                    receivers_sigs,
-                    senders_sigs,
-                    id,
-                },
-            ),
-        )?;
-
-        let next_swap_info = NextPeerInfo {
-            peer: next_maker.clone(),
-            multisig_pubkeys: next_peer_multisig_pubkeys,
-            multisig_nonces: next_peer_multisig_keys_or_nonces,
-            hashlock_nonces: next_peer_hashlock_keys_or_nonces,
-            contract_reedemscripts: next_swap_contract_redeemscripts,
-        };
-        Ok((next_swap_info, contract_sigs_as_recvr_sender))
-    }
-
-    /// Create [`WatchOnlySwapCoin`] for the current Maker.
-    pub(crate) fn create_watch_only_swapcoins(
-        &self,
-        contract_sigs_as_recvr_and_sender: &ContractSigsAsRecvrAndSender,
-        next_peer_multisig_pubkeys: &[PublicKey],
-        next_swap_contract_redeemscripts: &[ScriptBuf],
-    ) -> Result<Vec<WatchOnlySwapCoin>, TakerError> {
-        let next_swapcoins = contract_sigs_as_recvr_and_sender
-            .senders_contract_txs_info
-            .iter()
-            .zip(next_peer_multisig_pubkeys.iter())
-            .zip(next_swap_contract_redeemscripts.iter())
-            .map(
-                |((senders_contract_tx_info, &maker_multisig_pubkey), contract_redeemscript)| {
-                    WatchOnlySwapCoin::new(
-                        &senders_contract_tx_info.multisig_redeemscript,
-                        maker_multisig_pubkey,
-                        senders_contract_tx_info.contract_tx.clone(),
-                        contract_redeemscript.clone(),
-                        senders_contract_tx_info.funding_amount,
-                    )
-                },
-            )
-            .collect::<Result<Vec<WatchOnlySwapCoin>, _>>()?;
-        for swapcoin in &next_swapcoins {
-            self.wallet
-                .import_watchonly_redeemscript(&swapcoin.get_multisig_redeemscript())?;
-        }
-        Ok(next_swapcoins)
-    }
-
-    /// Create the [`IncomingSwapCoin`] for this round. The Taker is always the "next_peer" here
-    /// and the sender side is the laste Maker in the route.
-    fn create_incoming_swapcoins(
-        &mut self,
-        multisig_redeemscripts: Vec<ScriptBuf>,
-        funding_outpoints: Vec<OutPoint>,
-    ) -> Result<Vec<IncomingSwapCoin>, TakerError> {
-        let (funding_txs, funding_txs_merkleproofs) = self
-            .ongoing_swap_state
-            .funding_txs
-            .last()
-            .expect("funding transactions expected");
-
-        let last_makers_funding_tx_values = funding_txs
-            .iter()
-            .zip(multisig_redeemscripts.iter())
-            .map(|(makers_funding_tx, multisig_redeemscript)| {
-                let multisig_spk = redeemscript_to_scriptpubkey(multisig_redeemscript)?;
-                let index = makers_funding_tx
-                    .output
-                    .iter()
-                    .enumerate()
-                    .find(|(_i, o)| o.script_pubkey == multisig_spk)
-                    .map(|(index, _)| index)
-                    .expect("funding txout output doesn't match with mutlsig scriptpubkey");
-                Ok(makers_funding_tx
-                    .output
-                    .get(index)
-                    .expect("output expected at that index")
-                    .value)
-            })
-            .collect::<Result<Vec<_>, TakerError>>()?;
-
-        let my_receivers_contract_txes = funding_outpoints
-            .iter()
-            .zip(last_makers_funding_tx_values.iter())
-            .zip(
-                self.ongoing_swap_state
-                    .peer_infos
-                    .last()
-                    .expect("expected")
-                    .contract_reedemscripts
-                    .iter(),
-            )
-            .map(
-                |(
-                    (&previous_funding_output, &maker_funding_tx_value),
-                    next_contract_redeemscript,
-                )| {
-                    crate::protocol::contract::create_receivers_contract_tx(
-                        previous_funding_output,
-                        maker_funding_tx_value,
-                        next_contract_redeemscript,
-                    )
-                },
-            )
-            .collect::<Result<Vec<Transaction>, _>>()?;
-
-        let mut incoming_swapcoins = Vec::<IncomingSwapCoin>::new();
-        let next_swap_info = self
-            .ongoing_swap_state
-            .peer_infos
-            .last()
-            .expect("next swap info expected");
-        for (
-            (
-                (
-                    (
-                        (
-                            (
-                                (
-                                    (multisig_redeemscript, &maker_funded_multisig_pubkey),
-                                    &maker_funded_multisig_privkey,
-                                ),
-                                my_receivers_contract_tx,
-                            ),
-                            next_contract_redeemscript,
-                        ),
-                        &hashlock_privkey,
-                    ),
-                    &maker_funding_tx_value,
-                ),
-                _,
-            ),
-            _,
-        ) in multisig_redeemscripts
-            .iter()
-            .zip(next_swap_info.multisig_pubkeys.iter())
-            .zip(next_swap_info.multisig_nonces.iter())
-            .zip(my_receivers_contract_txes.iter())
-            .zip(next_swap_info.contract_reedemscripts.iter())
-            .zip(next_swap_info.hashlock_nonces.iter())
-            .zip(last_makers_funding_tx_values.iter())
-            .zip(funding_txs.iter())
-            .zip(funding_txs_merkleproofs.iter())
-        {
-            let (o_ms_pubkey1, o_ms_pubkey2) =
-                crate::protocol::contract::read_pubkeys_from_multisig_redeemscript(
-                    multisig_redeemscript,
-                )?;
-            let maker_funded_other_multisig_pubkey = if o_ms_pubkey1 == maker_funded_multisig_pubkey
-            {
-                o_ms_pubkey2
-            } else {
-                if o_ms_pubkey2 != maker_funded_multisig_pubkey {
-                    return Err(ProtocolError::General("maker-funded multisig doesnt match").into());
-                }
-                o_ms_pubkey1
-            };
-
-            self.wallet.sync_and_save()?;
-
-            let mut incoming_swapcoin = IncomingSwapCoin::new(
-                maker_funded_multisig_privkey,
-                maker_funded_other_multisig_pubkey,
-                my_receivers_contract_tx.clone(),
-                next_contract_redeemscript.clone(),
-                hashlock_privkey,
-                maker_funding_tx_value,
-            )?;
-            incoming_swapcoin.hash_preimage = Some(self.ongoing_swap_state.active_preimage);
-            incoming_swapcoins.push(incoming_swapcoin);
-        }
-
-        Ok(incoming_swapcoins)
-    }
-
-    /// Request signatures for the [`IncomingSwapCoin`] from the last maker of the swap round.
-    fn request_sigs_for_incoming_swap(&mut self) -> Result<(), TakerError> {
-        // Intermediate hops completed. Perform the last receiving hop.
-        let last_maker = self
-            .ongoing_swap_state
-            .peer_infos
-            .iter()
-            .rev()
-            .nth(1)
-            .expect("previous maker expected")
-            .peer
-            .clone();
-        let receiver_contract_sig = match self.req_sigs_for_recvr(
-            &last_maker.address,
-            &self.ongoing_swap_state.incoming_swapcoins,
-            &self
-                .ongoing_swap_state
-                .incoming_swapcoins
-                .iter()
-                .map(|swapcoin| swapcoin.contract_tx.clone())
-                .collect::<Vec<Transaction>>(),
+        initial_utxos: &[ListUnspentResultEntry],
+        start_time: Instant,
+        error: &TakerError,
+    ) {
+        if let Err(e) = self.generate_swap_report(
+            initial_utxos,
+            start_time,
+            SwapStatus::Failed,
+            Some(format!("{:?}", error)),
         ) {
-            Ok(s) => s,
-            Err(e) => {
-                log::warn!("Banning Maker : {}", last_maker.address);
-                self.offerbook.add_bad_maker(&last_maker);
-                return Err(e);
-            }
-        };
-        for (incoming_swapcoin, &receiver_contract_sig) in self
-            .ongoing_swap_state
-            .incoming_swapcoins
-            .iter_mut()
-            .zip(receiver_contract_sig.sigs.iter())
-        {
-            incoming_swapcoin.others_contract_sig = Some(receiver_contract_sig);
+            log::warn!("Failed to generate failure report: {:?}", e);
         }
-        for incoming_swapcoin in &self.ongoing_swap_state.incoming_swapcoins {
-            self.wallet.add_incoming_swapcoin(incoming_swapcoin);
-        }
+    }
 
-        self.wallet.save_to_disk()?;
+    /// Recover from a failed swap by persisting swapcoins to wallet and
+    /// spawning a background `RecoveryLoop` for sweep/timelock recovery.
+    ///
+    /// All recovery attempts, per-contract outcome tracking, phase transitions,
+    /// and wallet cleanup are handled by the `RecoveryLoop`.
+    pub fn recover_active_swap(&mut self) -> Result<(), TakerError> {
+        log::warn!("Starting swap recovery...");
+
+        let swap_id = if let Some(ref swap) = self.ongoing_swap {
+            let id = swap.id.clone();
+            let mut wallet = self.write_wallet()?;
+            for outgoing in &swap.outgoing_swapcoins {
+                wallet.add_outgoing_swapcoin(outgoing);
+            }
+            if let Some(incoming) = swap.incoming_swapcoins.last() {
+                wallet.add_incoming_swapcoin(incoming);
+            }
+            wallet.save_to_disk()?;
+            id
+        } else {
+            // Cross-session recovery: get swap_id from persisted swapcoins
+            let wallet = self.read_wallet()?;
+            let (incoming, outgoing) = wallet.find_unfinished_swapcoins();
+            drop(wallet);
+            outgoing
+                .first()
+                .and_then(|sc| sc.swap_id.clone())
+                .or_else(|| incoming.first().and_then(|sc| sc.swap_id.clone()))
+                .ok_or_else(|| {
+                    TakerError::General("No persisted swapcoins found for recovery".to_string())
+                })?
+        };
+
+        self.swap_tracker
+            .lock()
+            .unwrap()
+            .update_and_save(&swap_id, |record| {
+                record.phase = SwapPhase::Failed;
+            })?;
+
+        self.ongoing_swap = None;
+
+        log::info!("Spawning recovery loop for swap {}", swap_id);
+        let data_dir = self.config.data_dir.clone().unwrap_or_else(get_taker_dir);
+        self.recovery_loop = Some(RecoveryLoop::start(
+            self.wallet.clone(),
+            self.swap_tracker.clone(),
+            data_dir,
+        ));
 
         Ok(())
     }
 
-    /// Request signatures for sender side of the swap.
-    /// Keep trying until `first_connect_attempts` limit, with time delay of `first_connect_sleep_delay_sec`.
-    fn req_sigs_for_sender<S: SwapCoin>(
-        &self,
-        maker_address: &MakerAddress,
-        outgoing_swapcoins: &[S],
-        maker_multisig_nonces: &[SecretKey],
-        maker_hashlock_nonces: &[SecretKey],
-        locktime: u16,
-    ) -> Result<ContractSigsForSender, TakerError> {
-        let reconnect_time_out = Duration::from_secs(FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC);
-        // Configurable reconnection attempts for testing
-        let first_connect_attempts = if cfg!(feature = "integration-test") {
-            10
-        } else {
-            FIRST_CONNECT_ATTEMPTS
-        };
-
-        // Custom sleep delay for testing.
-        let sleep_delay = if cfg!(feature = "integration-test") {
-            1
-        } else {
-            FIRST_CONNECT_SLEEP_DELAY_SEC
-        };
-
-        let mut ii = 0;
-
-        let maker_addr_str = maker_address.to_string();
-
-        let mut socket = if cfg!(feature = "integration-test") {
-            TcpStream::connect(maker_addr_str.clone())?
-        } else {
-            Socks5Stream::connect(
-                format!("127.0.0.1:{}", self.config.socks_port).as_str(),
-                &*maker_addr_str,
-            )?
-            .into_inner()
-        };
-
-        socket.set_read_timeout(Some(reconnect_time_out))?;
-        socket.set_write_timeout(Some(reconnect_time_out))?;
-
-        loop {
-            ii += 1;
-            log::info!("===> ReqContractSigsForSender | {maker_addr_str}");
-            match req_sigs_for_sender_once(
-                &mut socket,
-                outgoing_swapcoins,
-                maker_multisig_nonces,
-                maker_hashlock_nonces,
-                locktime,
-                self.ongoing_swap_state.id.clone(),
-            ) {
-                Ok(ret) => {
-                    return {
-                        log::info!("<=== RespContractSigsForSender | {maker_addr_str}");
-                        Ok(ret)
-                    }
-                }
-                Err(e) => {
-                    log::warn!(
-                        "Failed to connect to maker {} to request signatures for receiver, \
-                                reattempting {} of {} | error={:?}",
-                        &maker_addr_str,
-                        ii,
-                        first_connect_attempts,
-                        e
-                    );
-                    if ii <= first_connect_attempts {
-                        sleep(Duration::from_secs(
-                            if ii <= SHORT_LONG_SLEEP_DELAY_TRANSITION {
-                                sleep_delay
-                            } else {
-                                RECONNECT_LONG_SLEEP_DELAY
-                            },
-                        ));
-                        continue;
-                    } else {
-                        log::warn!(
-                            "Failed to connect to maker {} to request signatures for receiver, \
-                                    reattempt limit exceeded",
-                            &maker_addr_str,
-                        );
-                        return Err(e);
-                    }
-                }
-            }
-        }
-    }
-
-    /// Request signatures for receiver side of the swap.
-    /// Keep trying until `reconnect_attempts` limit, with a time delay.
-    /// The time delay transitions from `reconnect_short_slepp_delay` to `reconnect_locg_sleep_delay`,
-    /// after `short_long_sleep_delay_transition` time.
-    fn req_sigs_for_recvr<S: SwapCoin>(
-        &self,
-        maker_address: &MakerAddress,
-        incoming_swapcoins: &[S],
-        receivers_contract_txes: &[Transaction],
-    ) -> Result<ContractSigsForRecvr, TakerError> {
-        let reconnect_time_out = Duration::from_secs(TCP_TIMEOUT_SECONDS);
-
-        // Configurable reconnection attempts for testing
-        let reconnect_attempts = if cfg!(feature = "integration-test") {
-            10
-        } else {
-            RECONNECT_ATTEMPTS
-        };
-
-        // Custom sleep delay for testing.
-        let sleep_delay = if cfg!(feature = "integration-test") {
-            1
-        } else {
-            RECONNECT_SHORT_SLEEP_DELAY
-        };
-
-        let mut ii = 0;
-
-        let maker_addr_str = maker_address.to_string();
-        let mut socket = if cfg!(feature = "integration-test") {
-            TcpStream::connect(maker_addr_str.clone())?
-        } else {
-            Socks5Stream::connect(
-                format!("127.0.0.1:{}", self.config.socks_port).as_str(),
-                &*maker_addr_str,
-            )?
-            .into_inner()
-        };
-
-        socket.set_read_timeout(Some(reconnect_time_out))?;
-        socket.set_write_timeout(Some(reconnect_time_out))?;
-
-        loop {
-            ii += 1;
-            log::info!("===> ReqContractSigsForRecvr | {maker_addr_str}");
-            match req_sigs_for_recvr_once(&mut socket, incoming_swapcoins, receivers_contract_txes)
-            {
-                Ok(ret) => {
-                    log::info!("<=== RespContractSigsForRecvr | {maker_addr_str}");
-                    return Ok(ret);
-                }
-                Err(e) => {
-                    log::warn!(
-                        "Failed to connect to maker {} to request signatures for receiver, \
-                                reattempting, {} of {} |  error={:?}",
-                        &maker_addr_str,
-                        ii,
-                        reconnect_attempts,
-                        e
-                    );
-                    if ii <= reconnect_attempts {
-                        sleep(Duration::from_secs(
-                            if ii <= SHORT_LONG_SLEEP_DELAY_TRANSITION {
-                                sleep_delay
-                            } else {
-                                RECONNECT_LONG_SLEEP_DELAY
-                            },
-                        ));
-                        continue;
-                    } else {
-                        log::warn!(
-                            "Failed to connect to maker {} to request signatures for receiver, \
-                                    reattempt limit exceeded",
-                            &maker_addr_str,
-                        );
-                        return Err(e);
-                    }
-                }
-            }
-        }
-    }
-
-    /// Settle all the ongoing swaps. This routine sends the hash preimage to all the makers.
-    /// Pass around the Maker's multisig privatekeys. Saves all the data in wallet file. This marks
-    /// the ends of swap round.
-    fn settle_all_swaps(&mut self) -> Result<(), TakerError> {
-        let mut outgoing_privkeys: Vec<MultisigPrivkey> = Vec::new();
-
-        // Because the last peer info is the Taker, we take upto (0..n-1), where n = peer_info.len()
-        let maker_addresses = self.ongoing_swap_state.peer_infos
-            [0..self.ongoing_swap_state.peer_infos.len() - 1]
-            .iter()
-            .map(|si| si.peer.clone())
-            .collect::<Vec<_>>();
-
-        for (index, maker_address) in maker_addresses.iter().enumerate() {
-            if index == 0 {
-                self.ongoing_swap_state.taker_position = TakerPosition::FirstPeer;
-            } else if index == (self.ongoing_swap_state.swap_params.maker_count - 1) {
-                self.ongoing_swap_state.taker_position = TakerPosition::LastPeer;
-            } else {
-                self.ongoing_swap_state.taker_position = TakerPosition::WatchOnly;
-            }
-
-            let senders_multisig_redeemscripts =
-                if self.ongoing_swap_state.taker_position == TakerPosition::FirstPeer {
-                    self.ongoing_swap_state
-                        .outgoing_swapcoins
-                        .iter()
-                        .map(|sc| sc.get_multisig_redeemscript())
-                        .collect::<Vec<_>>()
-                } else {
-                    self.ongoing_swap_state
-                        .watchonly_swapcoins
-                        .get(index - 1)
-                        .expect("Watchonly coins expected")
-                        .iter()
-                        .map(|sc| sc.get_multisig_redeemscript())
-                        .collect::<Vec<_>>()
-                };
-            let receivers_multisig_redeemscripts =
-                if self.ongoing_swap_state.taker_position == TakerPosition::LastPeer {
-                    self.ongoing_swap_state
-                        .incoming_swapcoins
-                        .iter()
-                        .map(|sc| sc.get_multisig_redeemscript())
-                        .collect::<Vec<_>>()
-                } else {
-                    self.ongoing_swap_state
-                        .watchonly_swapcoins
-                        .get(index)
-                        .expect("watchonly coins expected")
-                        .iter()
-                        .map(|sc| sc.get_multisig_redeemscript())
-                        .collect::<Vec<_>>()
-                };
-
-            let mut ii = 0;
-
-            // Configurable reconnection attempts for testing
-            let reconnect_attempts = if cfg!(feature = "integration-test") {
-                10
-            } else {
-                RECONNECT_ATTEMPTS
-            };
-
-            // Custom sleep delay for testing.
-            let sleep_delay = if cfg!(feature = "integration-test") {
-                1
-            } else {
-                RECONNECT_SHORT_SLEEP_DELAY
-            };
-
-            loop {
-                ii += 1;
-                match self.settle_one_coinswap(
-                    &maker_address.address,
-                    index,
-                    &mut outgoing_privkeys,
-                    &senders_multisig_redeemscripts,
-                    &receivers_multisig_redeemscripts,
-                ) {
-                    Ok(()) => break,
-                    Err(e) => {
-                        log::warn!(
-                            "Failed to connect to maker {} to settle coinswap, \
-                                    reattempting {} of {} error={:?}",
-                            &maker_address.address,
-                            ii,
-                            reconnect_attempts,
-                            e
-                        );
-                        if ii <= reconnect_attempts {
-                            sleep(Duration::from_secs(
-                                if ii <= SHORT_LONG_SLEEP_DELAY_TRANSITION {
-                                    sleep_delay
-                                } else {
-                                    RECONNECT_LONG_SLEEP_DELAY
-                                },
-                            ));
-                            continue;
-                        } else {
-                            log::error!(
-                                "Failed to connect to maker {} to settle coinswap, \
-                                        reattempt limit exceeded",
-                                &maker_address.address,
-                            );
-                            self.offerbook.add_bad_maker(maker_address);
-                            return Err(e);
-                        }
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// Setlle one swap. This is recursively called for all the makers.
-    fn settle_one_coinswap(
+    /// Populate per-contract outcomes for a successful swap.
+    ///
+    /// On success, all contracts resolve cooperatively:
+    /// - Incoming: `KeyPath` (swept via key-path using maker's privkey)
+    /// - Outgoing: `KeyPath` (maker claimed via key-path using our privkey)
+    /// - Watchonly: `KeyPath` (makers exchanged privkeys and spent cooperatively)
+    fn populate_success_outcomes(
         &mut self,
-        maker_address: &MakerAddress,
-        index: usize,
-        outgoing_privkeys: &mut Vec<MultisigPrivkey>,
-        senders_multisig_redeemscripts: &[ScriptBuf],
-        receivers_multisig_redeemscripts: &[ScriptBuf],
+        swap_id: &str,
+        swept: &RecoveryOutcome,
     ) -> Result<(), TakerError> {
-        let maker_addr_str = maker_address.to_string();
-        let mut socket = if cfg!(feature = "integration-test") {
-            TcpStream::connect(maker_addr_str.clone())?
-        } else {
-            Socks5Stream::connect(
-                format!("127.0.0.1:{}", self.config.socks_port).as_str(),
-                &*maker_addr_str,
-            )?
-            .into_inner()
-        };
+        let mut incoming_outcomes = Vec::new();
+        let mut outgoing_outcomes = Vec::new();
+        let mut watchonly_outcomes = Vec::new();
 
-        socket.set_read_timeout(Some(Duration::from_secs(TCP_TIMEOUT_SECONDS)))?;
-        socket.set_write_timeout(Some(Duration::from_secs(TCP_TIMEOUT_SECONDS)))?;
-        handshake_maker(&mut socket)?;
-
-        log::info!("===> HashPreimage | {maker_address}");
-        let maker_private_key_handover = send_hash_preimage_and_get_private_keys(
-            &mut socket,
-            senders_multisig_redeemscripts,
-            receivers_multisig_redeemscripts,
-            &self.ongoing_swap_state.active_preimage,
-        )?;
-        log::info!("<=== PrivateKeyHandover | {maker_address}");
-
-        let privkeys_reply = if self.ongoing_swap_state.taker_position == TakerPosition::FirstPeer {
-            self.ongoing_swap_state
-                .outgoing_swapcoins
-                .iter()
-                .map(|outgoing_swapcoin| MultisigPrivkey {
-                    multisig_redeemscript: outgoing_swapcoin.get_multisig_redeemscript(),
-                    key: outgoing_swapcoin.my_privkey,
-                })
-                .collect::<Vec<MultisigPrivkey>>()
-        } else {
-            assert!(!outgoing_privkeys.is_empty());
-            let reply = outgoing_privkeys.clone();
-            *outgoing_privkeys = Vec::new();
-            reply
-        };
-        (if self.ongoing_swap_state.taker_position == TakerPosition::LastPeer {
-            check_and_apply_maker_private_keys(
-                &mut self.ongoing_swap_state.incoming_swapcoins,
-                &maker_private_key_handover.multisig_privkeys,
-            )
-        } else {
-            let ret = check_and_apply_maker_private_keys(
-                self.ongoing_swap_state
-                    .watchonly_swapcoins
-                    .get_mut(index)
-                    .expect("watchonly coins expected"),
-                &maker_private_key_handover.multisig_privkeys,
-            );
-            *outgoing_privkeys = maker_private_key_handover.multisig_privkeys;
-            ret
-        })?;
-        log::info!("===> PrivateKeyHandover | {maker_address}");
-        send_message(
-            &mut socket,
-            &TakerToMakerMessage::RespPrivKeyHandover(PrivKeyHandover {
-                multisig_privkeys: privkeys_reply,
-                id: self.ongoing_swap_state.id.clone(),
-            }),
-        )?;
-        Ok(())
-    }
-
-    // ######## UTILITY AND HELPERS ############
-
-    /// Choose a suitable **untried** maker address from the offerbook that fits the swap params.
-    fn choose_next_maker(&self) -> Result<&OfferAndAddress, TakerError> {
-        let send_amount = self.ongoing_swap_state.swap_params.send_amount;
-        if send_amount == Amount::ZERO {
-            return Err(TakerError::SendAmountNotSet);
+        // Incoming contracts were swept cooperatively (key-path spend)
+        for (contract_txid, spending_txid) in &swept.resolved {
+            incoming_outcomes.push(ContractOutcome {
+                contract_txid: *contract_txid,
+                resolution: ContractResolution::KeyPath,
+                spending_txid: Some(*spending_txid),
+            });
         }
 
-        // Ensure that we don't select a maker we are already swaping with.
-        self.ongoing_swap_state
-            .suitable_makers
-            .iter()
-            .find(|oa| {
-                !self
-                    .ongoing_swap_state
-                    .peer_infos
-                    .iter()
-                    .map(|pi| &pi.peer)
-                    .any(|noa| noa == *oa)
-                    && !self.offerbook.is_bad_maker(oa)
-            })
-            .ok_or(TakerError::NotEnoughMakersInOfferBook)
-    }
-
-    /// Get the [`Preimage`] of the ongoing swap. If no swap is in progress will return a `[0u8; 32]`.
-    fn get_preimage(&self) -> &Preimage {
-        &self.ongoing_swap_state.active_preimage
-    }
-
-    /// Get the [`Preimage`] hash for the ongoing swap. If no swap is in progress will return `hash160([0u8; 32])`.
-    fn get_preimage_hash(&self) -> Hash160 {
-        Hash160::hash(self.get_preimage())
-    }
-
-    /// Clear the [`OngoingSwapState`].
-    fn clear_ongoing_swaps(&mut self) {
-        self.ongoing_swap_state = OngoingSwapState::default();
-    }
-
-    /// Get all the bad makers
-    pub fn get_bad_makers(&self) -> Vec<OfferAndAddress> {
-        self.offerbook.get_bad_makers(&MakerProtocol::Legacy)
-    }
-
-    /// Save all the finalized swap data and reset the [`OngoingSwapState`].
-    fn save_and_reset_swap_round(&mut self) -> Result<(), TakerError> {
-        // Mark incoiming swapcoins as done
-        for incoming_swapcoin in &self.ongoing_swap_state.incoming_swapcoins {
-            self.wallet
-                .find_incoming_swapcoin_mut(&incoming_swapcoin.get_multisig_redeemscript())
-                .expect("Incoming swapcoin expeted")
-                .other_privkey = incoming_swapcoin.other_privkey;
-            let contract_txid = incoming_swapcoin.contract_tx.compute_txid();
-            for (vout, _) in incoming_swapcoin.contract_tx.output.iter().enumerate() {
-                let outpoint = OutPoint {
-                    txid: contract_txid,
-                    vout: vout as u32,
-                };
-                self.watch_service.unwatch(outpoint);
+        // Outgoing + watchonly contracts resolved via key-path
+        if let Ok(swap) = self.swap_state() {
+            for sc in &swap.outgoing_swapcoins {
+                outgoing_outcomes.push(ContractOutcome {
+                    contract_txid: sc.contract_tx.compute_txid(),
+                    resolution: ContractResolution::KeyPath,
+                    spending_txid: None, // Maker's spending tx not tracked by us
+                });
+            }
+            for sc in &swap.watchonly_swapcoins {
+                watchonly_outcomes.push(ContractOutcome {
+                    contract_txid: sc.contract_tx.compute_txid(),
+                    resolution: ContractResolution::KeyPath,
+                    spending_txid: None,
+                });
             }
         }
 
-        // Mark outgoing swapcoins as done.
-        for outgoing_swapcoins in &self.ongoing_swap_state.outgoing_swapcoins {
-            self.wallet
-                .find_outgoing_swapcoin_mut(&outgoing_swapcoins.get_multisig_redeemscript())
-                .expect("Outgoing swapcoin expected")
-                .hash_preimage = Some(self.ongoing_swap_state.active_preimage);
-            let contract_txid = outgoing_swapcoins.contract_tx.compute_txid();
-            for (vout, _) in outgoing_swapcoins.contract_tx.output.iter().enumerate() {
-                let outpoint = OutPoint {
-                    txid: contract_txid,
-                    vout: vout as u32,
-                };
-                self.watch_service.unwatch(outpoint);
-            }
-        }
-
-        self.wallet.sync_and_save()?;
-
-        self.clear_ongoing_swaps();
+        self.swap_tracker
+            .lock()
+            .unwrap()
+            .update_and_save(swap_id, |r| {
+                r.recovery.incoming = incoming_outcomes;
+                r.recovery.outgoing = outgoing_outcomes;
+                r.recovery.watchonly = watchonly_outcomes;
+            })?;
 
         Ok(())
     }
 
-    /// Checks if any contreact transactions have been broadcasted.
-    /// Returns the txid list of all the broadcasted contract transaction.
-    /// Empty vector if nothing is nothing is broadcasted. (usual case).
-    pub(crate) fn check_for_broadcasted_contract_txes(&self) -> Vec<Txid> {
-        let contract_txids = self
-            .ongoing_swap_state
-            .incoming_swapcoins
-            .iter()
-            .map(|sc| sc.contract_tx.compute_txid())
-            .chain(
-                self.ongoing_swap_state
-                    .outgoing_swapcoins
-                    .iter()
-                    .map(|sc| sc.contract_tx.compute_txid()),
-            )
-            .chain(
-                self.ongoing_swap_state
-                    .watchonly_swapcoins
-                    .iter()
-                    .flatten()
-                    .map(|sc| sc.contract_tx.compute_txid()),
-            )
-            .collect::<Vec<_>>();
+    // ── CLI helper methods ──────────────────────────────────────────────
 
-        let seen_txids = contract_txids
-            .iter()
-            .filter(|txid| self.wallet.rpc.get_raw_transaction_info(txid, None).is_ok())
-            .cloned()
-            .collect::<Vec<Txid>>();
-
-        seen_txids
-    }
-
-    /// Recover from a bad swap
-    pub fn recover_from_swap(&mut self) -> Result<(), TakerError> {
-        let recovery_start = std::time::Instant::now();
-        let (incomings, outgoings) = self.wallet.find_unfinished_swapcoins();
-        let mut hashlock_recovery_txids: Vec<String> = Vec::new();
-        let mut timelock_recovery_txids: Vec<String> = Vec::new();
-
-        // First try to spend the hashlock contracts.
-        // If fails, then try to spend the timelock contracts.
-        if let Ok(incoming_infos) = self
-            .get_wallet_mut()
-            .broadcast_incoming_contracts(incomings)
-        {
-            log::info!(
-                "Incoming swapcoins are unspent. Trying to recover the incoming swapcoins first."
-            );
-            // Start the loop to keep checking for the hashlock contract to broadcast and spend from the contract asap.
-            loop {
-                //spend from the hashlock contract.
-                let hashlock_broadcasted = self
-                    .wallet
-                    .spend_from_hashlock_contract(&incoming_infos, &self.watch_service)?;
-
-                // If Everything is broadcasted i.e. [`spend_from_hashlock_contract`] works fine,then clear the connectionstate and break the loop
-                log::info!(
-                    "{} incoming contracts detected | {} hashlock txs broadcasted.",
-                    incoming_infos.len(),
-                    hashlock_broadcasted.len()
-                );
-                if hashlock_broadcasted.len() == incoming_infos.len() {
-                    log::info!("All incoming contracts redeemed. Cleared ongoing swap state");
-                    hashlock_recovery_txids = hashlock_broadcasted
-                        .into_iter()
-                        .map(|tx| tx.compute_txid().to_string())
-                        .collect();
-                    self.clear_ongoing_swaps();
-                    break;
-                }
-                std::thread::sleep(BLOCK_DELAY);
-            }
-        } else {
-            log::info!(
-                "Incoming swapcoins are already spent or empty. Trying to recover the outgoing swapcoins."
-            );
-            let outgoing_infos = self
-                .get_wallet_mut()
-                .broadcast_outgoing_contracts(outgoings)?;
-
-            // Start the loop to keep checking for timelock maturity, and spend from the contract asap.
-            loop {
-                // Break early if nothing to broadcast.
-                // This happens only when init_first_hop() fails at `NotEnoughMakersInOfferBook`
-                if outgoing_infos.is_empty() {
-                    break;
-                }
-                let timelock_broadcasted = self
-                    .wallet
-                    .spend_from_timelock_contract(&outgoing_infos, &self.watch_service)?;
-
-                // Everything is broadcasted. Clear the connectionstate and break the loop
-                log::info!(
-                    "{} outgoing contracts detected | {} timelock txs broadcasted.",
-                    outgoing_infos.len(),
-                    timelock_broadcasted.len()
-                );
-                if timelock_broadcasted.len() == outgoing_infos.len() {
-                    log::info!("All outgoing contracts redeemed. Cleared ongoing swap state");
-                    timelock_recovery_txids = timelock_broadcasted
-                        .into_iter()
-                        .map(|tx| tx.compute_txid().to_string())
-                        .collect();
-                    self.clear_ongoing_swaps();
-                    break;
-                }
-
-                // Block wait time is varied between prod. and test builds.
-                let block_wait_time = if cfg!(feature = "integration-test") {
-                    Duration::from_secs(10)
-                } else {
-                    Duration::from_secs(10 * 60)
-                };
-                std::thread::sleep(block_wait_time);
-            }
-        }
-
-        let duration = recovery_start.elapsed().as_secs_f64();
-        if !hashlock_recovery_txids.is_empty() || !timelock_recovery_txids.is_empty() {
-            let (status, txids) = if !hashlock_recovery_txids.is_empty() {
-                (SwapStatus::RecoveryHashlock, &hashlock_recovery_txids)
-            } else {
-                (SwapStatus::RecoveryTimelock, &timelock_recovery_txids)
-            };
-            let data_dir = get_taker_dir();
-            SwapReport::emit_taker_recovery_report(
-                &data_dir,
-                self.ongoing_swap_state.id.clone(),
-                self.wallet.store.network.to_string(),
-                self.ongoing_swap_state.swap_params.send_amount.to_sat(),
-                status,
-                txids,
-                duration,
-            );
-        }
-        log::info!("Recovery completed.");
-        Ok(())
-    }
-
-    /// Returns the OfferBook.
-    pub fn fetch_offers(&mut self) -> Result<OfferBook, TakerError> {
+    /// Returns the current offerbook snapshot.
+    pub fn fetch_offers(&self) -> Result<OfferBook, TakerError> {
         Ok(self.offerbook.snapshot())
     }
 
-    /// Send any message to a maker
-    fn send_to_maker(
-        &self,
-        maker_addr: &MakerAddress,
-        msg: TakerToMakerMessage,
-    ) -> Result<(), TakerError> {
-        // Notify the maker that we are waiting for funding confirmation
-        let address = maker_addr.to_string();
-        let mut socket = if cfg!(feature = "integration-test") {
-            TcpStream::connect(address.clone())?
-        } else {
-            Socks5Stream::connect(
-                format!("127.0.0.1:{}", self.config.socks_port).as_str(),
-                address.as_str(),
-            )?
-            .into_inner()
-        };
-
-        let reconnect_timeout = Duration::from_secs(TCP_TIMEOUT_SECONDS);
-
-        socket.set_write_timeout(Some(reconnect_timeout))?;
-
-        send_message(&mut socket, &msg)?;
-        log::info!("===> {msg} | {maker_addr}");
-
-        Ok(())
-    }
-
-    /// Displays a maker offer candidate in a human-readable format.
-    /// If the maker does not yet have an offer, a partial view is shown.
-    pub fn display_offer(&self, candidate: &MakerOfferCandidate) -> Result<String, TakerError> {
-        let header = format!(
-            r#"
-    Maker
-    ─────
-    Address        : {address}
-    Protocol       : {protocol}
-    State          : {state}
-    "#,
-            address = candidate.address,
-            protocol = candidate
-                .protocol
-                .as_ref()
-                .map(ToString::to_string)
-                .unwrap_or_else(|| "Unknown".into()),
-            state = format_state(&candidate.state),
-        );
-
-        // If no offer yet, return early with partial info
-        let Some(offer) = &candidate.offer else {
-            return Ok(header);
-        };
-
-        let bond = &offer.fidelity.bond;
-        let bond_value = self.get_wallet().calculate_bond_value(bond)?;
-
-        Ok(format!(
-            r#"{header}
-
-    Offer
-    ─────
-    Base Fee       : {base_fee}
-    Amount Fee %   : {amount_fee:.4}
-    Time Fee %     : {time_fee:.4}
-
-    Limits
-    ──────
-    Min Size       : {min_size}
-    Max Size       : {max_size}
-    Required Conf. : {confirms}
-    Min Locktime   : {locktime}
-
-    Fidelity Bond
-    ─────────────
-    Outpoint       : {outpoint}
-    Value          : {bond_value}
-    Expiry         : {expiry}
-    "#,
-            header = header.trim_end(),
-            base_fee = offer.base_fee,
-            amount_fee = offer.amount_relative_fee_pct,
-            time_fee = offer.time_relative_fee_pct,
-            min_size = offer.min_size,
-            max_size = offer.max_size,
-            confirms = offer.required_confirms,
-            locktime = offer.minimum_locktime,
-            outpoint = bond.outpoint,
-            bond_value = bond_value,
-            expiry = bond.lock_time,
-        ))
-    }
-
-    /// Gets all good makers that can handle a specific amount.
-    /// Filters makers based on their min_size and max_size limits.
-    fn find_suitable_makers(&self) -> Vec<OfferAndAddress> {
-        let swap_amount = self.ongoing_swap_state.swap_params.send_amount;
-        let max_refund_locktime =
-            REFUND_LOCKTIME * (self.ongoing_swap_state.swap_params.maker_count + 1) as u16;
-        self.offerbook
-            .active_makers(&MakerProtocol::Legacy)
-            .into_iter()
-            .filter(|oa| {
-                let maker_fee = calculate_coinswap_fee(
-                    swap_amount.to_sat(),
-                    max_refund_locktime,
-                    oa.offer.base_fee,
-                    oa.offer.amount_relative_fee_pct,
-                    oa.offer.time_relative_fee_pct,
-                );
-                let min_size_with_fee = bitcoin::Amount::from_sat(
-                    oa.offer.min_size + maker_fee + 500, /* Estimated mining fee */
-                );
-                swap_amount >= min_size_with_fee
-                    && swap_amount <= bitcoin::Amount::from_sat(oa.offer.max_size)
-            })
-            .collect()
-    }
-
-    /// Trigger a manual offerbook sync and block until it completes.
+    /// Triggers a manual offerbook sync and blocks until it completes.
     pub fn sync_offerbook_and_wait(&self) -> Result<(), TakerError> {
         self.offer_sync_handle.sync_and_wait()
     }
+
+    /// Restore a wallet from a backup file (static — no taker instance needed).
+    pub fn restore_wallet(
+        data_dir: Option<PathBuf>,
+        wallet_file_name: Option<String>,
+        rpc_config: Option<RPCConfig>,
+        backup_file: &String,
+    ) {
+        let backup_file_path = PathBuf::from(backup_file);
+        let restored_wallet_filename = wallet_file_name.unwrap_or_default();
+
+        let restored_wallet_path = data_dir
+            .unwrap_or_else(get_taker_dir)
+            .join("wallets")
+            .join(restored_wallet_filename);
+
+        Wallet::restore_interactive(
+            &backup_file_path,
+            &rpc_config.unwrap_or_default(),
+            &restored_wallet_path,
+        );
+    }
 }
 
-impl Role for Taker {
-    const RUN_DISCOVERY: bool = true;
+/// Taker behavior for testing.
+#[cfg(feature = "integration-test")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TakerBehavior {
+    /// Normal behavior.
+    #[default]
+    Normal,
+    /// Close connection early (after maker selection).
+    CloseEarly,
+    /// Drop after funds/contracts are broadcast but before finalization.
+    /// Simulates a taker crash after funds are on-chain.
+    DropAfterFundsBroadcast,
+    /// Broadcast contract transactions after full setup, then close (malice scenario).
+    BroadcastContractAfterFullSetup,
+    /// Close connection after receiving AckSwapDetails (taproot taker abort).
+    CloseAtAckResponse,
+    /// Close connection when sending sender's contract data (taproot taker abort).
+    CloseAtSendersContract,
+    /// Close connection when receiving maker's contract data response (taproot taker abort).
+    CloseAtSendersContractFromMaker,
 }

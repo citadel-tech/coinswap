@@ -4,7 +4,7 @@ use bitcoin::{
     hashes::Hash,
     key::{rand::thread_rng, Keypair},
     secp256k1::{Secp256k1, SecretKey},
-    Amount, FeeRate, PublicKey, ScriptBuf, Transaction, WitnessProgram, WitnessVersion,
+    Amount, FeeRate, PublicKey, ScriptBuf, WitnessProgram, WitnessVersion,
 };
 use bitcoind::bitcoincore_rpc::json::ListUnspentResultEntry;
 use crossterm::{
@@ -40,10 +40,8 @@ static LOGGER: OnceLock<()> = OnceLock::new();
 
 use crate::{
     error::NetError,
-    protocol::{
-        contract::derive_maker_pubkey_and_nonce, error::ProtocolError, messages::MultisigPrivkey,
-    },
-    wallet::{SwapCoin, UTXOSpendInfo, WalletError},
+    protocol::{contract::derive_maker_pubkey_and_nonce, error::ProtocolError},
+    wallet::{UTXOSpendInfo, WalletError},
 };
 
 const INPUT_CHARSET: &str =
@@ -54,22 +52,8 @@ const MASK_LOW_35_BITS: u64 = 0x7ffffffff;
 const SHIFT_FOR_C0: u64 = 35;
 const CHECKSUM_FINAL_XOR_VALUE: u64 = 1;
 
-///Contract Metadata type
-/// Purpose of each fields-:
-///    1- ScriptBuf- It contains incoming or outgoing swapcoins redeemscript.
-///    2- Transaction- It contains either hashlock or timelock contract txn
-///    3- u16 - It contains timelock value for timelock contract
-///    4- Transaction- It contains timelock_spend/hashlock_spend transaction
-pub type ContractMetadata = Vec<((ScriptBuf, Transaction), (u16, Transaction))>;
-
 /// Global heartbeat interval used during waiting periods in critical situations.
 pub(crate) const HEART_BEAT_INTERVAL: Duration = Duration::from_secs(3);
-
-pub(crate) const BLOCK_DELAY: Duration = if cfg!(feature = "integration-test") {
-    Duration::from_secs(10) // 10 secs delay for tests
-} else {
-    Duration::from_secs(10 * 60) // 10 mins delay for production
-};
 
 /// Number of confirmation required funding transaction.
 pub const REQUIRED_CONFIRMS: u32 = 1;
@@ -94,7 +78,7 @@ fn get_data_dir() -> PathBuf {
 }
 
 /// Get the Maker Directory
-pub(crate) fn get_maker_dir() -> PathBuf {
+pub fn get_maker_dir() -> PathBuf {
     get_data_dir().join("maker")
 }
 
@@ -159,7 +143,7 @@ pub fn setup_taker_logger(filter: LevelFilter, is_stdout: bool, datadir: Option<
     });
 }
 
-/// Sets up the logger for the maker component.
+/// Sets up the logger for the Maker component.
 ///
 /// This method initializes the logging configuration for the maker, directing logs to both
 /// the console and a file. It sets the `RUST_LOG` environment variable to provide default
@@ -241,17 +225,6 @@ pub fn read_message(reader: &mut TcpStream) -> Result<Vec<u8>, NetError> {
         }
     }
     Ok(buffer)
-}
-
-/// Apply the maker's privatekey to swapcoins, and check it's the correct privkey for corresponding pubkey.
-pub(crate) fn check_and_apply_maker_private_keys<S: SwapCoin>(
-    swapcoins: &mut [S],
-    swapcoin_private_keys: &[MultisigPrivkey],
-) -> Result<(), WalletError> {
-    for (swapcoin, swapcoin_private_key) in swapcoins.iter_mut().zip(swapcoin_private_keys.iter()) {
-        swapcoin.apply_privkey(swapcoin_private_key.key)?;
-    }
-    Ok(())
 }
 
 /// Generate The Maker's Multisig and HashLock keys and respective nonce values.
@@ -983,7 +956,7 @@ mod tests {
         PubkeyHash,
     };
 
-    use crate::protocol::messages::{MakerHello, MakerToTakerMessage};
+    use crate::protocol::common_messages::{MakerHello, MakerToTakerMessage, ProtocolVersion};
 
     use super::*;
 
@@ -993,8 +966,7 @@ mod tests {
         let address = listener.local_addr().unwrap();
 
         let message = MakerToTakerMessage::MakerHello(MakerHello {
-            protocol_version_min: 1,
-            protocol_version_max: 100,
+            supported_protocols: vec![ProtocolVersion::Legacy, ProtocolVersion::Taproot],
         });
 
         thread::spawn(move || {
@@ -1003,7 +975,11 @@ mod tests {
             let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes).unwrap();
 
             if let MakerToTakerMessage::MakerHello(hello) = msg {
-                assert!(hello.protocol_version_min == 1 && hello.protocol_version_max == 100);
+                assert_eq!(hello.supported_protocols.len(), 2);
+                assert!(hello.supported_protocols.contains(&ProtocolVersion::Legacy));
+                assert!(hello
+                    .supported_protocols
+                    .contains(&ProtocolVersion::Taproot));
             } else {
                 panic!(
                     "Received Wrong Message: Expected MakerHello variant, Got: {:?}",

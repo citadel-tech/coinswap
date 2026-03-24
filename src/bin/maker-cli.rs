@@ -66,7 +66,7 @@ enum Commands {
     Stop,
     /// Show all the fidelity bonds, current and previous, with an (index, {bond_proof, is_spent}) tuple.
     ShowFidelity,
-    /// Sync the maker wallet with the current blockchain state.
+    /// Sync the Maker wallet with the current blockchain state.
     SyncWallet,
 }
 
