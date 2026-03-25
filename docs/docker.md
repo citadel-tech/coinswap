@@ -1,6 +1,6 @@
 # Coinswap Docker
 
-A dockerized version  of the **Complete Coinswap Backend**.
+A dockerized version of the **Complete Coinswap Backend**.
 
 The Docker spawns multiple containers, with Mutinynet, Tor, makerd, maker-cli, and taker configured to communicate with each other.
 
