@@ -397,7 +397,7 @@ impl Wallet {
         Ok(wallet)
     }
 
-    /// Update the existing file. Error if path does not exist.
+    /// Persist wallet data to disk, creating missing parent directories and file as needed.
     pub(crate) fn save_to_disk(&self) -> Result<(), WalletError> {
         self.store
             .write_to_disk(&self.wallet_file_path, &self.store_enc_material)

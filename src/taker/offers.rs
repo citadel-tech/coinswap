@@ -664,6 +664,10 @@ impl OfferBook {
 
     /// Load existing file, updates it, writes it back (create if path doesn't exist).
     fn write_to_disk(&self, path: &Path) -> Result<(), TakerError> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
         // Truncate to avoid leaving stale bytes if the JSON becomes shorter.
         let offerdata_file = std::fs::OpenOptions::new()
             .create(true)
