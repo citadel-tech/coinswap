@@ -47,6 +47,19 @@ const FIDELITY_BOND_UPDATE_INTERVAL: Duration = Duration::from_secs(600);
 pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
     log::info!("[{}] Starting maker server", maker.config.network_port);
 
+    let listener = match TcpListener::bind(("127.0.0.1", maker.config.network_port)) {
+        Ok(l) => l,
+        Err(e) => {
+            log::warn!(
+                "Failed to bind network port {}: {}. Fidelity bond funds may be locked to this port.",
+                maker.config.network_port,
+                e
+            );
+            return Err(MakerError::IO(e));
+        }
+    };
+    listener.set_nonblocking(true).map_err(MakerError::IO)?;
+
     let maker_port = maker.config.network_port;
     let maker_address = if cfg!(feature = "integration-test") {
         format!("127.0.0.1:{maker_port}")
@@ -111,10 +124,6 @@ pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
             wallet.get_balances().map_err(MakerError::Wallet)?.spendable
         );
     }
-
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, maker.config.network_port))
-        .map_err(MakerError::IO)?;
-    listener.set_nonblocking(true).map_err(MakerError::IO)?;
 
     maker.is_setup_complete.store(true, Relaxed);
     log::info!(
@@ -983,4 +992,27 @@ fn send_message(stream: &TcpStream, message: &MakerToTakerMessage) -> Result<(),
     stream_ref.flush().map_err(MakerError::IO)?;
 
     Ok(())
+}
+
+/// Retry with different ports if not availabe
+pub fn bind_port_retry(port: u16) -> Result<(TcpListener, u16), MakerError> {
+    let mut current_port = port + 2;
+    const MAX_PORT: u16 = 62000;
+
+    while current_port < MAX_PORT {
+        match TcpListener::bind((Ipv4Addr::LOCALHOST, current_port)) {
+            Ok(l) => return Ok((l, current_port)),
+            Err(e) if e.kind() == ErrorKind::AddrInUse => {
+                log::info!("Port {} in use, trying {}", current_port, current_port + 2);
+                current_port += 2;
+            }
+            Err(e) => {
+                log::error!("Failed to bind port {}: {}", current_port, e);
+                return Err(MakerError::IO(e));
+            }
+        }
+    }
+    Err(MakerError::General(
+        "No available ports found in valid range",
+    ))
 }

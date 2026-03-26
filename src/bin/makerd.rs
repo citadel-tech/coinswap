@@ -1,7 +1,7 @@
 use bitcoind::bitcoincore_rpc::Auth;
 use clap::Parser;
 use coinswap::{
-    maker::{start_server, MakerError, MakerServer, MakerServerConfig},
+    maker::{bind_port_retry, start_server, MakerError, MakerServer, MakerServerConfig},
     utill::{parse_proxy_auth, setup_maker_logger},
     wallet::RPCConfig,
 };
@@ -88,6 +88,14 @@ fn main() -> Result<(), MakerError> {
     config.password = args.password;
     if let Some(tor_auth) = args.tor_auth {
         config.tor_auth_password = tor_auth;
+    }
+
+    // First run: discover available port and save to config
+    const DEFAULT_NETWORK_PORT: u16 = 6102;
+    if config.network_port == DEFAULT_NETWORK_PORT {
+        let (_, port) = bind_port_retry(config.network_port)?;
+        config.network_port = port;
+        config.write_to_file(&config_path)?;
     }
 
     let maker = Arc::new(MakerServer::init(config)?);
