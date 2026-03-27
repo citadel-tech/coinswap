@@ -25,6 +25,10 @@ Functioning, minimal-viable binaries and libraries to perform a trustless, p2p [
 
 - **GUI Coinswap Client available for testing**: [Taker App](https://github.com/citadel-tech/taker-app)
 
+- **GUI Maker Manager available**: [Maker Dashboard](https://github.com/citadel-tech/maker-dasboard)
+
+- **New Coinswap website is up**: [All Coinswap-related details](https://citadel-tech.github.io/website/)
+
 - **One-Click Deployment for Coinswap maker server available here**: [Coinswap Docker](./docs/docker.md)  
 
 ## ⚠️ Warning
@@ -32,7 +36,7 @@ This library is currently under development and is in an experimental stage. **M
 
 # About
 
-Coinswap is a trustless, self-custodial [atomic swap](https://bitcoinops.org/en/topics/coinswap/) protocol built on Bitcoin. Unlike existing solutions that rely on centralized servers as [single points of failure](https://en.wikipedia.org/wiki/Single_point_of_failure), Coinswap's marketplace is seeded in the Bitcoin blockchain itself — no central host required, anyone with a Bitcoin node can participate.
+Coinswap is a trustless, self-custodial [atomic swap](https://bitcoinops.org/en/topics/coinswap/) protocol built on Bitcoin. Unlike existing solutions that rely on centralized servers as [single points of failure](https://en.wikipedia.org/wiki/Single_point_of_failure), Coinswap's marketplace is seeded in the Bitcoin blockchain itself — no central host required, anyone with a Bitcoin node can participate. For a deeper dive into the protocol, see the [Coinswap website](https://citadel-tech.github.io/website/).
 
 **Sybil resistance** is achieved through [Fidelity Bonds](https://github.com/JoinMarket-Org/joinmarket-clientserver/blob/master/docs/fidelity-bonds.md): time-locked UTXOs that make Sybil attacks economically costly while simultaneously bootstrapping the marketplace on-chain.
 
@@ -48,7 +52,7 @@ The project extends Chris Belcher's [teleport-transactions](https://github.com/b
 
 For protocol-level details, see the [Coinswap Protocol Specifications](https://github.com/citadel-tech/Coinswap-Protocol-Specification).
 
-For questions about the repo, it's recommended to use [Deepwiki](https://deepwiki.com/citadel-tech/coinswap).
+For an in-depth exploration of the repository, it's recommended to use [Deep Wiki](https://deepwiki.com/citadel-tech/coinswap).
 
 # Components
 
@@ -175,4 +179,3 @@ Dev community: [Matrix](https://matrix.to/#/#citadel-foss:matrix.org)
 Dev discussions predominantly happen via FOSS best practices, and by using Github as the major community forum.
 
 The Issues, PRs and Discussions are where all the hard lifting is happening.
-
