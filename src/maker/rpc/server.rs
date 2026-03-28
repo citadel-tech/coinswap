@@ -1,6 +1,6 @@
 use std::{
     io::ErrorKind,
-    net::TcpStream,
+    net::{TcpListener, TcpStream},
     sync::{
         atomic::{AtomicBool, Ordering::Relaxed},
         Arc,
@@ -13,10 +13,7 @@ use bitcoin::{Address, Amount};
 
 use super::messages::RpcMsgReq;
 use crate::{
-    maker::{
-        api::MakerServerConfig, error::MakerError, rpc::messages::RpcMsgResp,
-        server::bind_port_retry,
-    },
+    maker::{api::MakerServerConfig, error::MakerError, rpc::messages::RpcMsgResp},
     utill::{read_message, send_message, TorError, HEART_BEAT_INTERVAL, UTXO},
     wallet::{AddressType, Destination, Wallet},
 };
@@ -161,12 +158,12 @@ fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result
 
 pub(crate) fn start_rpc_server<M: MakerRpc>(maker: Arc<M>) -> Result<(), MakerError> {
     let rpc_port = maker.config().rpc_port;
-    let (listener, bound_port) = bind_port_retry(rpc_port - 2)?;
-    let rpc_socket = format!("127.0.0.1:{bound_port}");
+    let listener = TcpListener::bind(("127.0.0.1", rpc_port))?;
+    let rpc_socket = format!("127.0.0.1:{rpc_port}");
     let listener = Arc::new(listener);
     log::info!(
         "[{}] RPC socket binding successful at {}",
-        bound_port,
+        rpc_port,
         rpc_socket
     );
 

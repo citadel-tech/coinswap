@@ -98,6 +98,11 @@ fn main() -> Result<(), MakerError> {
         config.write_to_file(&config_path)?;
     }
 
+    // Discover and save RPC port to config
+    let (_, rpc_port) = bind_port_retry(config.rpc_port - 2)?;
+    config.rpc_port = rpc_port;
+    config.write_to_file(&config_path)?;
+
     let maker = Arc::new(MakerServer::init(config)?);
     start_server(maker)?;
 
