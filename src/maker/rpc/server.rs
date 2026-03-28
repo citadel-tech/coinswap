@@ -1,6 +1,6 @@
 use std::{
     io::ErrorKind,
-    net::{TcpListener, TcpStream},
+    net::TcpStream,
     sync::{
         atomic::{AtomicBool, Ordering::Relaxed},
         Arc,
@@ -25,6 +25,7 @@ pub trait MakerRpc {
     fn config(&self) -> &MakerServerConfig;
     fn shutdown(&self) -> &AtomicBool;
     fn get_tor_hostname(&self) -> Result<String, TorError>;
+    fn take_rpc_listener(&self) -> Option<std::net::TcpListener>;
 }
 
 fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result<(), MakerError> {
@@ -159,7 +160,10 @@ fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result
 pub(crate) fn start_rpc_server<M: MakerRpc>(maker: Arc<M>) -> Result<(), MakerError> {
     let rpc_port = maker.config().rpc_port;
     let rpc_socket = format!("127.0.0.1:{rpc_port}");
-    let listener = Arc::new(TcpListener::bind(&rpc_socket)?);
+    let listener_from_maker = maker
+        .take_rpc_listener()
+        .expect("RPC listener should be reserved");
+    let listener = Arc::new(listener_from_maker);
     log::info!(
         "[{}] RPC socket binding successful at {}",
         maker.config().network_port,
