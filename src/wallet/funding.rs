@@ -175,7 +175,7 @@ impl Wallet {
                 Destination::Multi {
                     outputs: vec![(destinations[0].clone(), coinswap_amount)],
                     op_return_data: None,
-                    change_address_type: AddressType::P2WPKH,
+                    change_address_type: AddressType::P2TR,
                 }
             } else {
                 Destination::MultiDynamic(coinswap_amount, destinations)
@@ -258,7 +258,7 @@ impl Wallet {
                 let destination = Destination::Multi {
                     outputs,
                     op_return_data: None,
-                    change_address_type: AddressType::P2WPKH,
+                    change_address_type: AddressType::P2TR,
                 };
 
                 // Creates and Signs Transactions via the spend_coins API

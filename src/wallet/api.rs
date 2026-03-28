@@ -893,12 +893,8 @@ impl Wallet {
             WalletError::General("Insufficient funds for recovery fee".to_string())
         })?;
 
-        let address_type = match swapcoin.protocol {
-            crate::protocol::ProtocolVersion::Legacy => crate::wallet::AddressType::P2WPKH,
-            crate::protocol::ProtocolVersion::Taproot => crate::wallet::AddressType::P2TR,
-        };
         let recovery_address = self
-            .get_next_internal_addresses(1, address_type)?
+            .get_next_internal_addresses(1, AddressType::P2TR)?
             .into_iter()
             .next()
             .ok_or_else(|| WalletError::General("Failed to get recovery address".to_string()))?;
@@ -1865,7 +1861,7 @@ impl Wallet {
         manually_selected_outpoints: Option<Vec<OutPoint>>,
         excluded_outpoints: Option<Vec<OutPoint>>,
     ) -> Result<Vec<(ListUnspentResultEntry, UTXOSpendInfo)>, WalletError> {
-        // P2WPKH Breaks down as:
+        // P2TR input weight breakdown:
         // Non-witness data (multiplied by 4):
         // - Previous txid (32 bytes) * 4     = 128 WU
         // - Prev vout (4 bytes) * 4          = 16 WU
@@ -1876,20 +1872,19 @@ impl Wallet {
 
         // Witness data (counted as-is):
         // - Num witness elements (1 byte)    = 1 WU
-        // - DER signature (~72 bytes)        = 72 WU
-        // - Pubkey (33 bytes)                = 33 WU
-        // Subtotal witness:                  = 106 WU
+        // - Schnorr signature (64 bytes)     = 64 WU
+        // Subtotal witness:                  = 65 WU
 
-        // Total: 164 + 106 = 270 WU
-        // Adding 2 bytes as a buffer : 270 + 2 = 272 WU
-        const P2WPKH_INPUT_WEIGHT: u64 = 272; // Total weight units
+        // Total: 164 + 65 = 229 WU
+        // Adding 2 bytes as a buffer : 229 + 2 = 231 WU
+        const P2TR_INPUT_WEIGHT: u64 = 231; // Total weight units
 
-        // P2WPKH script-pubkey size:
-        // - OP_0 (1 byte)
-        // - OP_PUSH_20 (1 byte)
-        // - 20-byte pubkey hash
-        // Total: 22 bytes
-        const P2WPKH_SPK_SIZE: usize = 22;
+        // P2TR script-pubkey size:
+        // - OP_1 (1 byte)
+        // - OP_PUSH_32 (1 byte)
+        // - 32-byte x-only pubkey
+        // Total: 34 bytes
+        const P2TR_SPK_SIZE: usize = 34;
         const LONG_TERM_FEERATE: f32 = 10.0;
 
         // Base transaction weight constants
@@ -1907,12 +1902,12 @@ impl Wallet {
         // Assumes a typical transaction with 2 inputs(or manually selected inputs) and 2 outputs (target + change)
         // This is used for early fee estimation before actual coin selection
         let estimated_tx_weight = if manually_selected_outpoints.is_some() {
-            (manually_selected_outpoints.iter().len() as u64 * P2WPKH_INPUT_WEIGHT)
+            (manually_selected_outpoints.iter().len() as u64 * P2TR_INPUT_WEIGHT)
                 + TX_BASE_WEIGHT
                 + CHANGE_OUTPUT_WEIGHT
                 + TARGET_OUTPUT_WEIGHT
         } else {
-            (2 * P2WPKH_INPUT_WEIGHT) + TX_BASE_WEIGHT + CHANGE_OUTPUT_WEIGHT + TARGET_OUTPUT_WEIGHT
+            (2 * P2TR_INPUT_WEIGHT) + TX_BASE_WEIGHT + CHANGE_OUTPUT_WEIGHT + TARGET_OUTPUT_WEIGHT
         };
 
         // Convert weight units to virtual bytes for fee calculation
@@ -1923,10 +1918,10 @@ impl Wallet {
         // Weight = bytes * 4 for non-witness data = 164 WU
         const INPUT_BASE_WEIGHT: u64 = (32 + 4 + 4 + 1) * 4;
 
-        // P2WPKH output weight: Amount(8) + VarInt(1) + script_pubkey(22) = 31 bytes
+        // P2TR output weight: Amount(8) + VarInt(1) + script_pubkey(34) = 43 bytes
         // weight = bytes * 4
-        const TARGET_OUTPUT_WEIGHT: u64 = (Amount::SIZE as u64 + 1 + P2WPKH_SPK_SIZE as u64) * 4; // 124 WU
-        const CHANGE_OUTPUT_WEIGHT: u64 = (Amount::SIZE as u64 + 1 + P2WPKH_SPK_SIZE as u64) * 4; // 124 WU
+        const TARGET_OUTPUT_WEIGHT: u64 = (Amount::SIZE as u64 + 1 + P2TR_SPK_SIZE as u64) * 4; // 172 WU
+        const CHANGE_OUTPUT_WEIGHT: u64 = (Amount::SIZE as u64 + 1 + P2TR_SPK_SIZE as u64) * 4; // 172 WU
 
         let locked_utxos = self.list_lock_unspent()?;
         let excluded: std::collections::HashSet<OutPoint> =
@@ -2025,7 +2020,7 @@ impl Wallet {
         let change_weight = Weight::from_wu(CHANGE_OUTPUT_WEIGHT);
         let cost_of_change = {
             let creation_cost = calculate_fee(change_weight.to_vbytes_ceil(), feerate as f32)?;
-            let future_spending_cost = calculate_fee(P2WPKH_INPUT_WEIGHT / 4, LONG_TERM_FEERATE)?;
+            let future_spending_cost = calculate_fee(P2TR_INPUT_WEIGHT / 4, LONG_TERM_FEERATE)?;
             creation_cost + future_spending_cost
         };
 
@@ -2097,12 +2092,16 @@ impl Wallet {
             }
 
             // Separate addresses with multiple UTXOs from addresses with a single UTXO
-            let (mut grouped_addresses, single_addresses): (Vec<_>, Vec<_>) = address_groups
+            let (mut grouped_addresses, mut single_addresses): (Vec<_>, Vec<_>) = address_groups
                 .into_values()
                 .partition(|group| group.len() > 1);
 
             // Sort reused addresses by total value
             grouped_addresses
+                .sort_by_key(|group| group.iter().map(|(u, _)| u.amount.to_sat()).sum::<u64>());
+
+            // Sort single-UTXO addresses by amount for deterministic coin selection.
+            single_addresses
                 .sort_by_key(|group| group.iter().map(|(u, _)| u.amount.to_sat()).sum::<u64>());
 
             // Insert manual UTXOs at the front if they exist
@@ -2557,11 +2556,8 @@ impl Wallet {
             }
 
             // Get next internal address for receiving the swept funds
-            let address_type = match swapcoin.protocol {
-                crate::protocol::ProtocolVersion::Legacy => AddressType::P2WPKH,
-                crate::protocol::ProtocolVersion::Taproot => AddressType::P2TR,
-            };
-            let internal_address = self.get_next_internal_addresses(1, address_type)?[0].clone();
+            let internal_address =
+                self.get_next_internal_addresses(1, AddressType::P2TR)?[0].clone();
 
             log::info!(
                 "Sweeping incoming swap coin {} (utxo: {}:{}) to internal address {}",

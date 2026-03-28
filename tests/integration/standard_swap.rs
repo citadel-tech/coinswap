@@ -37,7 +37,7 @@ fn test_standard_coinswap() {
         bitcoind,
         3,
         Amount::from_btc(0.05).unwrap(),
-        AddressType::P2WPKH,
+        AddressType::P2TR,
     );
 
     // Fund the makers with 4 UTXOs of 0.05 BTC each
@@ -46,7 +46,7 @@ fn test_standard_coinswap() {
         bitcoind,
         4,
         Amount::from_btc(0.05).unwrap(),
-        AddressType::P2WPKH,
+        AddressType::P2TR,
     );
 
     // Start the maker server threads
@@ -122,7 +122,7 @@ fn test_standard_coinswap() {
 
     assert_eq!(
         taker_balances.regular.to_sat(),
-        14499696,
+        14499692,
         "Taker regular balance mismatch"
     );
     assert_eq!(
@@ -145,7 +145,7 @@ fn test_standard_coinswap() {
 
     assert_eq!(
         balance_diff.to_sat(),
-        4726,
+        4730,
         "Taker spendable balance change mismatch"
     );
 
@@ -164,7 +164,7 @@ fn test_standard_coinswap() {
             balances.spendable,
         );
 
-        let expected_regular = [14501444u64, 14503316][i];
+        let expected_regular = [14501458u64, 14503330][i];
         let expected_swap = [499700u64, 497450][i];
         assert_eq!(
             balances.regular.to_sat(),
@@ -193,7 +193,7 @@ fn test_standard_coinswap() {
 
         info!("Maker {} fee earned: {} sats", i, maker_fee.to_sat());
 
-        let expected_fee = [1646u64, 1268][i];
+        let expected_fee = [1642u64, 1264][i];
         assert_eq!(
             maker_fee.to_sat(),
             expected_fee,

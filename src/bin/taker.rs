@@ -330,7 +330,7 @@ fn main() -> Result<(), TakerError> {
         }
         Commands::GetNewAddress => {
             let mut wallet = taker.get_wallet().write().unwrap();
-            let address = wallet.get_next_external_address(AddressType::P2WPKH)?;
+            let address = wallet.get_next_external_address(AddressType::P2TR)?;
             println!("{address:?}");
         }
         Commands::SendToAddress {
@@ -364,7 +364,7 @@ fn main() -> Result<(), TakerError> {
             let destination = Destination::Multi {
                 outputs,
                 op_return_data: None,
-                change_address_type: AddressType::P2WPKH,
+                change_address_type: AddressType::P2TR,
             };
 
             let tx = wallet.spend_from_wallet(

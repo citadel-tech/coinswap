@@ -82,7 +82,7 @@ fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result
             let new_address = maker
                 .wallet()
                 .write()?
-                .get_next_external_address(AddressType::P2WPKH)?;
+                .get_next_external_address(AddressType::P2TR)?;
             RpcMsgResp::NewAddressResp(new_address.to_string())
         }
         RpcMsgReq::SendToAddress {
@@ -98,7 +98,7 @@ fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result
             let destination = Destination::Multi {
                 outputs,
                 op_return_data: None,
-                change_address_type: AddressType::P2WPKH,
+                change_address_type: AddressType::P2TR,
             };
 
             let coins_to_send = maker

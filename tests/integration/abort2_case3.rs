@@ -45,13 +45,13 @@ fn maker_abort2_case3() {
     let bitcoind = &test_framework.bitcoind;
     let taker = takers.get_mut(0).unwrap();
 
-    // Fund the taker with 3 UTXOs of 0.05 BTC each (P2WPKH for Legacy)
+    // Fund the taker with 3 UTXOs of 0.05 BTC each (P2TR for Legacy)
     let taker_original_balance = fund_taker(
         taker,
         bitcoind,
         3,
         Amount::from_btc(0.05).unwrap(),
-        AddressType::P2WPKH,
+        AddressType::P2TR,
     );
 
     // Fund the makers with 4 UTXOs of 0.05 BTC each
@@ -60,7 +60,7 @@ fn maker_abort2_case3() {
         bitcoind,
         4,
         Amount::from_btc(0.05).unwrap(),
-        AddressType::P2WPKH,
+        AddressType::P2TR,
     );
 
     // Start the maker server threads
@@ -181,7 +181,7 @@ fn maker_abort2_case3() {
 
     assert_eq!(
         taker_balances.regular.to_sat(),
-        14999096,
+        14999092,
         "Taker regular balance mismatch"
     );
     assert_eq!(
@@ -209,7 +209,7 @@ fn maker_abort2_case3() {
 
     assert_eq!(
         balance_diff.to_sat(),
-        904,
+        908,
         "Taker spendable balance change mismatch"
     );
 
@@ -224,7 +224,7 @@ fn maker_abort2_case3() {
             i, original, maker_balances.spendable,
         );
 
-        let expected_regular = [14998594u64, 14999498][i];
+        let expected_regular = [14998608u64, 14999516][i];
         assert_eq!(
             maker_balances.regular.to_sat(),
             expected_regular,

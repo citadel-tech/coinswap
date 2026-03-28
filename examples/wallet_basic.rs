@@ -95,9 +95,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Wallet synced with blockchain");
 
     // Fund the wallet for demonstration
-    let funding_address = wallet
-        .get_next_external_address(AddressType::P2WPKH)
-        .unwrap();
+    let funding_address = wallet.get_next_external_address(AddressType::P2TR).unwrap();
     let fund_amount = Amount::from_btc(0.05).unwrap();
     let _txid = bitcoind
         .client
@@ -173,11 +171,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Generate addresses
     println!("\nAddress Generation:");
-    let external_address = wallet
-        .get_next_external_address(AddressType::P2WPKH)
-        .unwrap();
+    let external_address = wallet.get_next_external_address(AddressType::P2TR).unwrap();
     let internal_addresses = wallet
-        .get_next_internal_addresses(2, AddressType::P2WPKH)
+        .get_next_internal_addresses(2, AddressType::P2TR)
         .unwrap();
     println!("  External (receiving): {external_address}");
     println!(

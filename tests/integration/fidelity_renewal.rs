@@ -32,7 +32,7 @@ fn test_fidelity_auto_renewal() {
         bitcoind,
         4,
         Amount::from_btc(0.20).unwrap(),
-        AddressType::P2WPKH,
+        AddressType::P2TR,
     );
 
     // Start the Maker server

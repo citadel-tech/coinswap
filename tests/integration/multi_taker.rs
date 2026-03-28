@@ -1,7 +1,7 @@
 //! Integration test for multi-taker concurrent coinswap.
 //!
 //! Setup: 2 takers with Normal behavior, 2 makers with Normal behavior.
-//! Protocol: Legacy (ECDSA), AddressType::P2WPKH.
+//! Protocol: Legacy (ECDSA), AddressType::P2TR.
 //! Both takers run swaps sequentially through the same pair of makers.
 
 use bitcoin::Amount;
@@ -31,13 +31,13 @@ fn test_multi_taker_coinswap() {
 
     let bitcoind = &test_framework.bitcoind;
 
-    // Fund both takers with 3 UTXOs of 0.05 BTC each (P2WPKH for Legacy)
+    // Fund both takers with 3 UTXOs of 0.05 BTC each (P2TR for Legacy)
     let taker1_original_balance = fund_taker(
         &takers[0],
         bitcoind,
         3,
         Amount::from_btc(0.05).unwrap(),
-        AddressType::P2WPKH,
+        AddressType::P2TR,
     );
 
     let taker2_original_balance = fund_taker(
@@ -45,7 +45,7 @@ fn test_multi_taker_coinswap() {
         bitcoind,
         3,
         Amount::from_btc(0.05).unwrap(),
-        AddressType::P2WPKH,
+        AddressType::P2TR,
     );
 
     // Fund the makers with 4 UTXOs of 0.05 BTC each
@@ -54,7 +54,7 @@ fn test_multi_taker_coinswap() {
         bitcoind,
         4,
         Amount::from_btc(0.05).unwrap(),
-        AddressType::P2WPKH,
+        AddressType::P2TR,
     );
 
     // Start the maker server threads
@@ -178,7 +178,7 @@ fn test_multi_taker_coinswap() {
 
     assert_eq!(
         taker1_balances_after.spendable.to_sat(),
-        14995274,
+        14995270,
         "Taker 1 spendable balance mismatch"
     );
     assert_eq!(
@@ -187,7 +187,7 @@ fn test_multi_taker_coinswap() {
         "Taker 1 contract balance mismatch"
     );
     assert_eq!(taker1_balances_after.fidelity, Amount::ZERO);
-    assert_eq!(balance_diff1.to_sat(), 4726, "Taker 1 fee paid mismatch");
+    assert_eq!(balance_diff1.to_sat(), 4730, "Taker 1 fee paid mismatch");
 
     // ---- Verify Taker 2 ----
     let taker2_balances_after = takers[1]
@@ -206,7 +206,7 @@ fn test_multi_taker_coinswap() {
 
     assert_eq!(
         taker2_balances_after.spendable.to_sat(),
-        14995274,
+        14995270,
         "Taker 2 spendable balance mismatch"
     );
     assert_eq!(
@@ -215,7 +215,7 @@ fn test_multi_taker_coinswap() {
         "Taker 2 contract balance mismatch"
     );
     assert_eq!(taker2_balances_after.fidelity, Amount::ZERO);
-    assert_eq!(balance_diff2.to_sat(), 4726, "Taker 2 fee paid mismatch");
+    assert_eq!(balance_diff2.to_sat(), 4730, "Taker 2 fee paid mismatch");
 
     // ---- Verify Makers earned fees ----
     for (i, (maker, original_spendable)) in makers.iter().zip(maker_spendable_balance).enumerate() {
@@ -233,7 +233,7 @@ fn test_multi_taker_coinswap() {
             "Maker {} regular balance mismatch",
             i
         );
-        let expected_swap = [5002790u64, 5002034][i];
+        let expected_swap = [5002800u64, 5002044][i];
         assert_eq!(
             balances.swap.to_sat(),
             expected_swap,
@@ -255,7 +255,7 @@ fn test_multi_taker_coinswap() {
 
         info!("Maker {} fee earned: {} sats", i, maker_fee.to_sat());
 
-        let expected_fee = [3292u64, 2536][i];
+        let expected_fee = [3284u64, 2528][i];
         assert_eq!(
             maker_fee.to_sat(),
             expected_fee,

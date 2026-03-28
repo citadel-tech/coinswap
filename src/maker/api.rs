@@ -573,7 +573,7 @@ impl MakerServer {
                         locktime,
                         Some(maker_address),
                         MIN_FEE_RATE,
-                        AddressType::P2WPKH,
+                        AddressType::P2TR,
                     );
 
                 match fidelity_result {
@@ -589,7 +589,7 @@ impl MakerServer {
                                 .wallet
                                 .write()
                                 .map_err(|_| MakerError::General("Failed to lock wallet"))?
-                                .get_next_external_address(AddressType::P2WPKH)
+                                .get_next_external_address(AddressType::P2TR)
                                 .map_err(MakerError::Wallet)?;
 
                             log::info!(
@@ -671,7 +671,7 @@ impl MakerServer {
             .wallet
             .write()
             .map_err(|_| MakerError::General("Failed to lock wallet"))?
-            .get_next_external_address(AddressType::P2WPKH)
+            .get_next_external_address(AddressType::P2TR)
             .map_err(MakerError::Wallet)?;
 
         while !self.shutdown.load(Ordering::Relaxed) {

@@ -108,7 +108,7 @@ fn test_address_grouping_behavior() {
                 .wallet
                 .write()
                 .unwrap()
-                .get_next_external_address(AddressType::P2WPKH)
+                .get_next_external_address(AddressType::P2TR)
                 .unwrap()
         });
 
@@ -218,7 +218,7 @@ fn test_separated_utxo_coin_selection() {
         bitcoind,
         6,
         Amount::from_btc(0.1).unwrap(),
-        AddressType::P2WPKH,
+        AddressType::P2TR,
     ); // 60M sats total
 
     fund_makers(
@@ -226,7 +226,7 @@ fn test_separated_utxo_coin_selection() {
         bitcoind,
         6,
         Amount::from_btc(0.1).unwrap(),
-        AddressType::P2WPKH,
+        AddressType::P2TR,
     ); // 60M sats total
 
     // Start the Maker Servers
@@ -348,7 +348,7 @@ fn test_separated_utxo_coin_selection() {
             } => {
                 println!("Correctly failed with InsufficientFund");
                 println!("   Available: {available} sats, Required: {required} sats");
-                assert_eq!(*required, target_3.to_sat() + 416); // Should include 416 sats estimated fee
+                assert_eq!(*required, target_3.to_sat() + 424); // Should include 424 sats estimated fee
                 assert_eq!(*available, balances.swap.to_sat());
                 println!("Confirmed: Only swap balance reported in insufficient funds error");
             }
@@ -368,7 +368,7 @@ fn test_separated_utxo_coin_selection() {
         bitcoind,
         1,
         Amount::from_sat(30000000),
-        AddressType::P2WPKH,
+        AddressType::P2TR,
     );
 
     // Generate blocks to confirm
@@ -428,7 +428,7 @@ fn test_manual_coinselection() {
             .get_wallet()
             .write()
             .unwrap()
-            .get_next_external_address(AddressType::P2WPKH)
+            .get_next_external_address(AddressType::P2TR)
             .unwrap();
         send_to_address(bitcoind, &addr, Amount::from_sat(amount));
         generate_blocks(bitcoind, 1);
@@ -440,7 +440,7 @@ fn test_manual_coinselection() {
         bitcoind,
         3,
         Amount::from_btc(0.05).unwrap(),
-        AddressType::P2WPKH,
+        AddressType::P2TR,
     );
 
     let maker_threads = makers
