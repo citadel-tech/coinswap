@@ -186,7 +186,7 @@ Taker_Spending_Transaction:
 ```
 
 ### Sighash Calculation
-Each pair of parties must calculate identical sighash for their respective spending transaction:
+Each pair of parties must calculate an identical sighash for their respective spending transaction:
 
 ```rust
 // Example: Taker and Maker1 calculating sighash for taker's spending tx

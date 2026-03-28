@@ -110,7 +110,7 @@ cd coinswap
 cargo build --release
 ```
 
-After compilation, you will get the binaries in the `` folder.
+After compilation, you will get the binaries in the `target/release` folder.
 
 ### Install Binaries (Optional)
 Install the necessary binaries on your system:

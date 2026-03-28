@@ -50,7 +50,7 @@ See the Pull Request section below.
 ### Prerequisites
 - Rust (see [`rust-toolchain.toml`](rust-toolchain.toml))
 - [Mutinynet](./docs/bitcoind.md) (fully synced, preferably in regtest or mutinynet)
-- [Tor with right configurations](./docs/tor.md)
+- [Tor with the correct configuration](./docs/tor.md)
 - `build-essential`, `automake`, `libtool`, `protobuf-compiler` (on Ubuntu/Debian)
 
 ### Recommended: One-Click Docker Stack

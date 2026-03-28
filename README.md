@@ -53,7 +53,7 @@ For questions about the repo, it's recommended to use [Deepwiki](https://deepwik
 # Components
 
 ## Crate Binaries
-The crate compiles into following binaries.
+The crate compiles into the following binaries.
 
 **`makerd`**: Coinswap maker server daemon for swap providers. Requires continuous uptime and Bitcoin Core RPC connection. [Demo](./docs/makerd.md)
 
@@ -63,7 +63,7 @@ The crate compiles into following binaries.
 
 ## Dockers
 
-**Coinswap Docker**: A complete coinswap stack with pre configured, bitcoind, tor, makerd, maker-cli and taker apps. Useful for one-click-setup. [See the guide](./docs/docker.md) 
+**Coinswap Docker**: A complete coinswap stack with pre-configured bitcoind, tor, makerd, maker-cli and taker apps. Useful for one-click-setup. [See the guide](./docs/docker.md)
 
 ## Apps
 **`taker-app(beta)`**: a GUI swap client to perform Coinswaps. [Build from source](https://github.com/citadel-tech/taker-app) 
@@ -77,11 +77,11 @@ Following dependencies are needed to compile the crate.
 ```shell
 sudo apt install build-essential automake libtool protobuf-compiler
 ```
-To run all the coinswap apps the two more systems are needed.
+To run all the coinswap apps, two more systems are needed:
 
 **Bitcoin**: A fully synced bitcoin node with required configurations. Follow the [bitcoind setup guide](./docs/bitcoind.md) for full details.
 
-**Tor**: Tor is Required for all network communications. Download from torproject.org for your OS. Bitcoin Core automatically detects Tor and creates anonymous services. See the [Tor guide](./docs/tor.md) for configuration details.
+**Tor**: Tor is required for all network communications. Download from torproject.org for your OS. Bitcoin Core automatically detects Tor and creates anonymous services. See the [Tor guide](./docs/tor.md) for configuration details.
 
 ## Build and Install
 

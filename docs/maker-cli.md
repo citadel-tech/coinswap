@@ -34,7 +34,7 @@ coinswap 0.1.0
 Developers at Citadel-Tech
 A simple command line app to operate the makerd server.
 
-The app works as a RPC client for makerd, useful to access the server, retrieve information, and
+The app works as an RPC client for makerd, useful to access the server, retrieve information, and
 manage server operations.
 
 For more detailed usage information, please refer:
@@ -169,7 +169,7 @@ $ ./maker-cli show-tor-address
 <maker's tor_address>
 ```
 
-This shows the server tor address, which is our maker server's identity on the Tor network.
+This shows the server's Tor address, which is our maker server's identity on the Tor network.
 
 ---
 
@@ -254,7 +254,7 @@ $ ./maker-cli get-balances
 
 This command shows the total wallet balances of different categories:
 
-- **contract**: All live contract transaction balance locked in timelocks. If you see value in this field, you have unfinished or malfinished swaps. You can claim them back with recover command
+- **contract**: All live contract transaction balance locked in timelocks. If you see value in this field, you have unfinished or malfinished swaps. You can claim them back with the recover command
 - **fidelity**: All coins locked in fidelity bonds
 - **regular**: All single signature regular wallet coins (seed balance)
 - **spendable**: Spendable amount in wallet (regular + swap balance)
@@ -304,7 +304,7 @@ $ ./maker-cli get-balances
 ```
 
 > **IMPORTANT:**  
-> We need to manually check UTXOs and their balances using the `list-utxo` and `get-balances` commands respectively.
+> We need to manually check UTXOs and their balances using the `list-utxo` and `get-balances` commands, respectively.
 > The `list-utxo` command returns all UTXOs present in the maker wallet, including the fidelity UTXOs.
 > The `get-balances` command returns the total wallet balances of different categories, including normal UTXOs, swap UTXOs, contract UTXOs, fidelity UTXOs, and spendable UTXOs (normal + swap UTXOs).
 
@@ -433,7 +433,7 @@ $ ./maker-cli sync-wallet
 success
 ```
 
-This syncs the maker wallet with current blockchain state. On `makerd`, we will see:
+This syncs the maker wallet with the current blockchain state. On `makerd`, we will see:
 
 ```bash
 INFO coinswap::maker::rpc::server - Starting wallet sync.

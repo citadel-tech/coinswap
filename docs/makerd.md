@@ -106,9 +106,9 @@ coinswap 0.1.2
 Developers at Citadel-Tech
 Coinswap Maker Server
 
-The server requires a Bitcoin Core RPC connection running in Testnet4. It requires some starting
-balance, around 50,000 sats for Fidelity + Swap Liquidity (suggested 50,000 sats). So topup with at
-least 0.001 BTC to start all the node processses. Suggested [faucet
+The server requires a Bitcoin Core RPC connection running in Testnet4. It requires a starting
+balance, around 50,000 sats for Fidelity + Swap Liquidity (suggested 50,000 sats). So top up with at
+least 0.001 BTC to start all the node processes. Suggested [faucet
 here] http://xjw3jlepdy35ydwpjuptdbu3y74gyeagcjbuyq7xals2njjxrze6kxid.onion/
 
 All server processes will start after the fidelity bond transaction is confirmed. This may take some
@@ -117,7 +117,7 @@ requests. As it performs swaps for clients, it keeps earning fees.
 
 The server is operated with the maker-cli app, for all basic wallet related operations.
 
-For more detailed usage information, please refer the [Maker
+For more detailed usage information, please refer to the [Maker
 Doc] https://github.com/citadel-tech/coinswap/blob/master/docs/makerd.md
 
 This is early beta, and there are known and unknown bugs. Please report issues in the [Project Issue
@@ -183,7 +183,7 @@ To start `makerd`, run the following command:
 $ ./makerd -a user:password -r 127.0.0.1:38332
 ```
 
-This will launch `makerd` and connect it to the Bitcoin RPC core running on its rpc port, using the default data directory for `maker` located at `$HOME/.coinswap/maker`.
+This will launch `makerd` and connect it to the Bitcoin RPC core running on its RPC port, using the default data directory for `maker` located at `$HOME/.coinswap/maker`.
 
 **What happens next:**
 
@@ -238,7 +238,7 @@ This will launch `makerd` and connect it to the Bitcoin RPC core running on its 
   INFO coinswap::maker::server - Fidelity Tx fee = 1000 sats
   ```
 
-  > **Note**: Currently the transaction fee for the fidelity bond is hardcoded at `1000 sats`. This approach of directly considering `fee` not `fee rate` will be improved in v0.1.1 milestones.
+  > **Note**: Currently, the transaction fee for the fidelity bond is hardcoded at `1000 sats`. This approach of directly considering `fee` not `fee rate` will be improved in v0.1.1 milestones.
 
 - **Funding Requirements**: If creating a new fidelity bond and the maker wallet is empty, you'll need to fund it with at least `0.00051000 BTC` to cover the fidelity amount and transaction fee. To fund the wallet, you can use [this faucet](http://s2ncekhezyo2tkwtftti3aiukfpqmxidatjrdqmwie6xnf2dfggyscad.onion/)(open in Tor browser).
   We suggest taking `0.01 BTC` testcoins as the extra amount will be used in doing wallet related operations in [maker-cli demo](./maker-cli.md)
