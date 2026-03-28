@@ -67,9 +67,9 @@ RUSTDOCFLAGS="-D warnings" cargo +nightly doc --all-features --document-private-
 ## Useful Test Entry Points
 
 - `cargo test --test integration standard_swap --features integration-test -- --nocapture`
-- `cargo test --test taproot_swap --features integration-test -- --nocapture`
-- `cargo test --test abort1 --features integration-test -- --nocapture`
-- `cargo test --test taproot_timelock_recovery --features integration-test -- --nocapture`
+- `cargo test --test integration taproot_swap --features integration-test -- --nocapture`
+- `cargo test --test integration abort1 --features integration-test -- --nocapture`
+- `cargo test --test integration taproot_timelock_recovery --features integration-test -- --nocapture`
 
 ## Contribution Notes
 
