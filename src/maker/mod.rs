@@ -32,7 +32,7 @@ pub use api::{MakerServer, MakerServerConfig};
 pub use handlers::{
     handle_message, ConnectionState, Maker as MakerTrait, MakerConfig as HandlerConfig, SwapPhase,
 };
-pub use server::start_server;
+pub use server::{bind_port_retry, start_server};
 pub use swap_tracker::MakerSwapTracker;
 
 pub use legacy_handlers::handle_legacy_message;

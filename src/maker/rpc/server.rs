@@ -158,11 +158,12 @@ fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result
 
 pub(crate) fn start_rpc_server<M: MakerRpc>(maker: Arc<M>) -> Result<(), MakerError> {
     let rpc_port = maker.config().rpc_port;
+    let listener = TcpListener::bind(("127.0.0.1", rpc_port))?;
     let rpc_socket = format!("127.0.0.1:{rpc_port}");
-    let listener = Arc::new(TcpListener::bind(&rpc_socket)?);
+    let listener = Arc::new(listener);
     log::info!(
         "[{}] RPC socket binding successful at {}",
-        maker.config().network_port,
+        rpc_port,
         rpc_socket
     );
 
