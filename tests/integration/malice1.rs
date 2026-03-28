@@ -44,13 +44,13 @@ fn test_malice1_taker_broadcast_contract() {
     let bitcoind = &test_framework.bitcoind;
     let taker = takers.get_mut(0).unwrap();
 
-    // Fund the taker with 3 UTXOs of 0.05 BTC each (P2WPKH for Legacy)
+    // Fund the taker with 3 UTXOs of 0.05 BTC each (P2TR for Legacy)
     let taker_original_balance = fund_taker(
         taker,
         bitcoind,
         3,
         Amount::from_btc(0.05).unwrap(),
-        AddressType::P2WPKH,
+        AddressType::P2TR,
     );
 
     // Fund the makers with 4 UTXOs of 0.05 BTC each
@@ -59,7 +59,7 @@ fn test_malice1_taker_broadcast_contract() {
         bitcoind,
         4,
         Amount::from_btc(0.05).unwrap(),
-        AddressType::P2WPKH,
+        AddressType::P2TR,
     );
 
     // Start the maker server threads
@@ -132,7 +132,7 @@ fn test_malice1_taker_broadcast_contract() {
             maker_balances.contract,
             maker_balances.spendable,
         );
-        let expected_regular = [14998594u64, 14998594][i];
+        let expected_regular = [14998608u64, 14998608][i];
         assert_eq!(
             maker_balances.regular.to_sat(),
             expected_regular,

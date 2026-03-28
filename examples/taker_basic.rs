@@ -118,9 +118,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("\nFunding wallet with test coins...");
 
             let mut wallet = taker.get_wallet().write().unwrap();
-            let funding_address = wallet
-                .get_next_external_address(AddressType::P2WPKH)
-                .unwrap();
+            let funding_address = wallet.get_next_external_address(AddressType::P2TR).unwrap();
 
             // Send coins from bitcoind to the taker wallet
             let fund_amount = Amount::from_btc(0.01).unwrap();
@@ -156,16 +154,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Generate a new receiving address
     {
         let mut wallet = taker.get_wallet().write().unwrap();
-        let new_address = wallet
-            .get_next_external_address(AddressType::P2WPKH)
-            .unwrap();
+        let new_address = wallet.get_next_external_address(AddressType::P2TR).unwrap();
         println!("\nGenerated new receiving address: {}", new_address);
 
         // Demonstrate sending coins (send small amount to ourselves)
         println!("\nDemonstrating send functionality:");
         let send_amount = Amount::from_btc(0.001).unwrap();
         let internal_address = wallet
-            .get_next_internal_addresses(1, AddressType::P2WPKH)
+            .get_next_internal_addresses(1, AddressType::P2TR)
             .unwrap()[0]
             .clone();
 

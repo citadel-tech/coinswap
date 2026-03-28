@@ -55,7 +55,7 @@ fn test_fidelity() {
         bitcoind,
         1,
         Amount::from_btc(0.04).unwrap(),
-        AddressType::P2WPKH,
+        AddressType::P2TR,
     );
 
     let maker_clone = maker.clone();
@@ -66,11 +66,11 @@ fn test_fidelity() {
     thread::sleep(Duration::from_secs(6));
 
     let log_path = format!("{}/taker/debug.log", test_framework.temp_dir.display());
-    test_framework.assert_log("Send at least 0.01000416 BTC to", &log_path);
+    test_framework.assert_log("Send at least 0.01000424 BTC to", &log_path);
 
     log::info!("Adding sufficient funds for fidelity bond creation");
     // Provide the Maker with more funds.
-    fund_makers(&makers, bitcoind, 1, Amount::ONE_BTC, AddressType::P2WPKH);
+    fund_makers(&makers, bitcoind, 1, Amount::ONE_BTC, AddressType::P2TR);
 
     // Wait for the Maker to complete setup (fidelity bond creation + confirmation).
     // The API's wait_for_tx_confirmation has a 10s polling interval, so
@@ -139,7 +139,7 @@ fn test_fidelity() {
                     .unwrap(),
                 None,
                 MIN_FEE_RATE,
-                AddressType::P2WPKH,
+                AddressType::P2TR,
             )
             .unwrap();
         let conf_height = maker
@@ -177,7 +177,7 @@ fn test_fidelity() {
         let balances = wallet_read.get_balances().unwrap();
 
         assert_eq!(balances.fidelity.to_sat(), 13000000);
-        assert_eq!(balances.regular.to_sat(), 90999330);
+        assert_eq!(balances.regular.to_sat(), 90999322);
     }
 
     log::info!("Waiting for fidelity bonds to mature and testing redemption");
@@ -199,7 +199,7 @@ fn test_fidelity() {
                 log::info!("First Fidelity Bond is matured. Sending redemption transaction");
 
                 wallet_write
-                    .redeem_fidelity(0, MIN_FEE_RATE, AddressType::P2WPKH)
+                    .redeem_fidelity(0, MIN_FEE_RATE, AddressType::P2TR)
                     .unwrap();
 
                 log::info!("First Fidelity Bond is successfully redeemed");
@@ -215,7 +215,7 @@ fn test_fidelity() {
                 log::info!("Second Fidelity Bond is matured. Sending redemption transaction");
 
                 wallet_write
-                    .redeem_fidelity(1, MIN_FEE_RATE, AddressType::P2WPKH)
+                    .redeem_fidelity(1, MIN_FEE_RATE, AddressType::P2TR)
                     .unwrap();
 
                 log::info!("Second Fidelity Bond is successfully redeemed");
@@ -249,7 +249,7 @@ fn test_fidelity() {
         let balances = wallet_read.get_balances().unwrap();
 
         assert_eq!(balances.fidelity.to_sat(), 0);
-        assert_eq!(balances.regular.to_sat(), 103998886);
+        assert_eq!(balances.regular.to_sat(), 103998830);
     }
 
     thread::sleep(Duration::from_secs(10));
@@ -286,7 +286,7 @@ fn test_fidelity_spending() {
         bitcoind,
         1,
         Amount::from_btc(2.0).unwrap(),
-        AddressType::P2WPKH,
+        AddressType::P2TR,
     );
 
     // Create fidelity bond
@@ -304,7 +304,7 @@ fn test_fidelity_spending() {
                 LockTime::from_height(short_timelock_height).unwrap(),
                 None,
                 MIN_FEE_RATE,
-                AddressType::P2WPKH,
+                AddressType::P2TR,
             )
             .unwrap();
         let conf_height = maker
@@ -420,7 +420,7 @@ fn test_fidelity_spending() {
                 let destination = Destination::Multi {
                     outputs: vec![(external_addr, Amount::from_sat(REGULAR_TX_AMOUNT))],
                     op_return_data: None,
-                    change_address_type: AddressType::P2WPKH,
+                    change_address_type: AddressType::P2TR,
                 };
                 match wallet.spend_from_wallet(MIN_FEE_RATE, destination, &selected_utxos) {
                     Ok(tx) => Ok(Some(tx)),
@@ -458,7 +458,7 @@ fn test_fidelity_spending() {
     {
         let mut wallet = maker.wallet.write().unwrap();
         wallet
-            .redeem_fidelity(fidelity_index, MIN_FEE_RATE, AddressType::P2WPKH)
+            .redeem_fidelity(fidelity_index, MIN_FEE_RATE, AddressType::P2TR)
             .unwrap();
     }
 
@@ -508,7 +508,7 @@ fn test_fidelity_spending() {
                     .unwrap(),
                 None,
                 MIN_FEE_RATE,
-                AddressType::P2WPKH,
+                AddressType::P2TR,
             )
             .unwrap();
         let conf_height = maker

@@ -127,19 +127,15 @@ fn test_low_swap_liquidity() {
 
 fn drain_maker_liquidity_after_fidelity(maker: &Arc<MakerServer>, bitcoind: &bitcoind::BitcoinD) {
     use bitcoin::{
-        key::CompressedPublicKey,
         secp256k1::{rand::rngs::OsRng, Secp256k1, SecretKey},
-        Address, Network, PublicKey,
+        Address, Network,
     };
     use bitcoind::bitcoincore_rpc::RpcApi;
-    use std::convert::TryFrom;
 
     let secp = Secp256k1::new();
-    let pubkey = SecretKey::new(&mut OsRng).public_key(&secp);
-    let addr = Address::p2wpkh(
-        &CompressedPublicKey::try_from(PublicKey::new(pubkey)).unwrap(),
-        Network::Regtest,
-    );
+    let keypair = bitcoin::key::Keypair::from_secret_key(&secp, &SecretKey::new(&mut OsRng));
+    let (xonly, _) = keypair.x_only_public_key();
+    let addr = Address::p2tr(&secp, xonly, None, Network::Regtest);
     let coins = maker
         .wallet
         .read()

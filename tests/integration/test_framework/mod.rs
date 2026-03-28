@@ -347,7 +347,7 @@ pub fn verify_maker_pre_swap_balances(makers: &[Arc<MakerServer>]) -> Vec<Amount
         // Regular balance after fidelity bond creation
         let regular = balances.regular.to_sat();
         assert!(
-            regular == 14999498 || regular == 14999540,
+            regular == 14999516,
             "Maker regular balance check after fidelity bond creation: {}",
             regular
         );

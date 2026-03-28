@@ -72,7 +72,7 @@ fn test_repeated_manual_sync_is_bounded() {
         bitcoind,
         3,
         Amount::from_btc(0.05).unwrap(),
-        AddressType::P2WPKH,
+        AddressType::P2TR,
     );
 
     // Spawn makers in stages: 2, 1, 3, 5
@@ -140,7 +140,7 @@ fn test_nostr_cursor_persisted_for_local_relay() {
         bitcoind,
         3,
         Amount::from_btc(0.05).unwrap(),
-        AddressType::P2WPKH,
+        AddressType::P2TR,
     );
 
     let maker_threads = spawn_makers(&makers);
@@ -208,7 +208,7 @@ fn test_nostr_cursor_is_monotonic_for_local_relay() {
         bitcoind,
         3,
         Amount::from_btc(0.05).unwrap(),
-        AddressType::P2WPKH,
+        AddressType::P2TR,
     );
 
     let maker_threads = spawn_makers(&makers);

@@ -408,7 +408,7 @@ impl Wallet {
                 }
 
                 let internal_spks = self
-                    .get_next_internal_addresses(change_chunks.len() as u32, AddressType::P2WPKH)?;
+                    .get_next_internal_addresses(change_chunks.len() as u32, AddressType::P2TR)?;
 
                 // Add dummy changes to calculate the final weight of the transactions.
                 let mut tx_wchange = tx.clone();

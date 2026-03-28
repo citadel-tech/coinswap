@@ -1,7 +1,7 @@
 //! Integration test for concurrent taker coinswap with limited maker liquidity.
 //!
 //! Setup: 2 takers with Normal behavior, 2 makers with Normal behavior.
-//! Protocol: Legacy (ECDSA), AddressType::P2WPKH.
+//! Protocol: Legacy (ECDSA), AddressType::P2TR.
 //! Both takers run swaps concurrently via `thread::scope`.
 //! Makers have limited liquidity (only enough for ~1 swap), so one taker
 //! should succeed and the other should fail due to insufficient funds.
@@ -43,13 +43,13 @@ fn test_concurrent_takers_legacy() {
 
     let bitcoind = &test_framework.bitcoind;
 
-    // Fund both takers with 3 UTXOs of 0.05 BTC each (P2WPKH for Legacy)
+    // Fund both takers with 3 UTXOs of 0.05 BTC each (P2TR for Legacy)
     let taker1_original_balance = fund_taker(
         &takers[0],
         bitcoind,
         3,
         Amount::from_btc(0.05).unwrap(),
-        AddressType::P2WPKH,
+        AddressType::P2TR,
     );
 
     let taker2_original_balance = fund_taker(
@@ -57,7 +57,7 @@ fn test_concurrent_takers_legacy() {
         bitcoind,
         3,
         Amount::from_btc(0.05).unwrap(),
-        AddressType::P2WPKH,
+        AddressType::P2TR,
     );
 
     // Fund makers with LIMITED liquidity: only 2 UTXOs of 0.05 BTC each
@@ -67,7 +67,7 @@ fn test_concurrent_takers_legacy() {
         bitcoind,
         2,
         Amount::from_btc(0.05).unwrap(),
-        AddressType::P2WPKH,
+        AddressType::P2TR,
     );
 
     // Start the maker server threads

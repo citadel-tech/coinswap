@@ -154,7 +154,7 @@ impl Wallet {
         let destination = Destination::Multi {
             outputs,
             op_return_data: None,
-            change_address_type: AddressType::P2WPKH,
+            change_address_type: AddressType::P2TR,
         };
 
         let tx = self.spend_from_wallet(

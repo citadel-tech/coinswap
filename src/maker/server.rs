@@ -483,7 +483,7 @@ fn fidelity_renewal_loop(maker: Arc<MakerServer>, maker_address: &str) -> Result
             .wallet
             .write()
             .map_err(|_| MakerError::General("Failed to lock wallet"))?
-            .redeem_expired_fidelity_bonds(AddressType::P2WPKH)
+            .redeem_expired_fidelity_bonds(AddressType::P2TR)
         {
             log::warn!(
                 "[{}] Failed to redeem expired fidelity bonds: {:?}",
