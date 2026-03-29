@@ -16,7 +16,7 @@ Functioning, minimal-viable binaries and libraries to perform a trustless, p2p [
 
 </div>
 
-## 🚨 Release Announcement
+## 🚨 Announcement
 
 **Coinswap `v0.2.1` is now released.**
 
@@ -29,13 +29,13 @@ See the [full `v0.2.1` release notes](https://github.com/citadel-tech/coinswap/r
 - [Taker App](https://github.com/citadel-tech/taker-app)
 - [Coinswap Website](https://citadel-tech.github.io/website/)
 
-## Previous Announcements
+## Previous
 
 Earlier project announcements are retained here for reference:
 
 | Announcement | Reference |
 | --- | --- |
-| Coinswap Protocol V2 with Taproot-MuSig2 is live | [See specifications](https://github.com/citadel-tech/Coinswap-Protocol-Specification/tree/main/v2) |
+| Coinswap Protocol V2 with Taproot-MuSig2 is live | [See specifications](https://github.com/citadel-tech/Coinswap-Protocol-Specification/tree/main/v2%20protocol) |
 | Public Coinswap marketplace is available on Mutinynet | [Mutinynet branch](https://github.com/benthecarman/bitcoin/tree/mutinynet-inq-29), [block explorer](https://mutinynet.com/mining), [faucet](https://faucet.mutinynet.com/) |
 | One-click deployment for a Coinswap maker server is available | [Coinswap Docker](./docs/docker.md) |
 
@@ -44,7 +44,9 @@ This library is currently under development and is in an experimental stage. **M
 
 # About
 
-Coinswap is a trustless, self-custodial [atomic swap](https://bitcoinops.org/en/topics/coinswap/) protocol built on Bitcoin. Unlike existing solutions that rely on centralized servers as [single points of failure](https://en.wikipedia.org/wiki/Single_point_of_failure), Coinswap's marketplace is seeded in the Bitcoin blockchain itself — no central host required, anyone with a Bitcoin node can participate. For a deeper dive into the protocol, see the [Coinswap website](https://citadel-tech.github.io/website/).
+Coinswap is a trustless, self-custodial [atomic swap](https://bitcoinops.org/en/topics/coinswap/) protocol built on Bitcoin. Unlike existing solutions that rely on centralized servers as [single points of failure](https://en.wikipedia.org/wiki/Single_point_of_failure), Coinswap's marketplace is seeded in the Bitcoin blockchain itself — no central host required, anyone with a Bitcoin node can participate. 
+
+For a quicker dive into the idea, see the [**Website**](https://citadel-tech.github.io/website/).
 
 **Sybil resistance** is achieved through [Fidelity Bonds](https://github.com/JoinMarket-Org/joinmarket-clientserver/blob/master/docs/fidelity-bonds.md): time-locked UTXOs that make Sybil attacks economically costly while simultaneously bootstrapping the marketplace on-chain.
 
