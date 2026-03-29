@@ -16,23 +16,37 @@ Functioning, minimal-viable binaries and libraries to perform a trustless, p2p [
 
 </div>
 
-## 🚨 Announcements
- - **Coinswap Protocol V2 with Taproot-Musig2 is NOW LIVE!** : [See Specifications](https://github.com/citadel-tech/Coinswap-Protocol-Specification/tree/main/v2)
-  
- - **Public Coinswap Marketplace Available On** [Mutinynet](https://github.com/benthecarman/bitcoin/tree/mutinynet-inq-29).
-   - **Block Explorer:** [Mutinynet's mempool.space](https://mutinynet.com/mining)
-   - **Faucet:** [Mutinynet's Faucet](https://faucet.mutinynet.com/)
+## 🚨 Announcement
 
-- **GUI Coinswap Client available for testing**: [Taker App](https://github.com/citadel-tech/taker-app)
+**Coinswap `v0.2.1` is now released.**
 
-- **One-Click Deployment for Coinswap maker server available here**: [Coinswap Docker](./docs/docker.md)  
+See the [full `v0.2.1` release notes](https://github.com/citadel-tech/coinswap/releases/tag/v0.2.1) and the [core changelog](https://github.com/citadel-tech/coinswap/compare/v0.2.0...v0.2.1).
+
+### What's New in `v0.2.1`
+
+- Unified Legacy and Taproot protocol support in the core library, making downstream applications easier to maintain and extend.
+- [Maker Dashboard](https://github.com/citadel-tech/maker-dashboard)
+- [Taker App](https://github.com/citadel-tech/taker-app)
+- [Coinswap Website](https://citadel-tech.github.io/website/)
+
+## Previous
+
+Earlier project announcements are retained here for reference:
+
+| Announcement | Reference |
+| --- | --- |
+| Coinswap Protocol V2 with Taproot-MuSig2 is live | [See specifications](https://github.com/citadel-tech/Coinswap-Protocol-Specification/tree/main/v2%20protocol) |
+| Public Coinswap marketplace is available on Mutinynet | [Mutinynet branch](https://github.com/benthecarman/bitcoin/tree/mutinynet-inq-29), [block explorer](https://mutinynet.com/mining), [faucet](https://faucet.mutinynet.com/) |
+| One-click deployment for a Coinswap maker server is available | [Coinswap Docker](./docs/docker.md) |
 
 ## ⚠️ Warning
 This library is currently under development and is in an experimental stage. **Mainnet use is NOT recommended.**
 
 # About
 
-Coinswap is a trustless, self-custodial [atomic swap](https://bitcoinops.org/en/topics/coinswap/) protocol built on Bitcoin. Unlike existing solutions that rely on centralized servers as [single points of failure](https://en.wikipedia.org/wiki/Single_point_of_failure), Coinswap's marketplace is seeded in the Bitcoin blockchain itself — no central host required, anyone with a Bitcoin node can participate.
+Coinswap is a trustless, self-custodial [atomic swap](https://bitcoinops.org/en/topics/coinswap/) protocol built on Bitcoin. Unlike existing solutions that rely on centralized servers as [single points of failure](https://en.wikipedia.org/wiki/Single_point_of_failure), Coinswap's marketplace is seeded in the Bitcoin blockchain itself — no central host required, anyone with a Bitcoin node can participate. 
+
+For a quicker dive into the idea, see the [**Website**](https://citadel-tech.github.io/website/).
 
 **Sybil resistance** is achieved through [Fidelity Bonds](https://github.com/JoinMarket-Org/joinmarket-clientserver/blob/master/docs/fidelity-bonds.md): time-locked UTXOs that make Sybil attacks economically costly while simultaneously bootstrapping the marketplace on-chain.
 
@@ -48,7 +62,7 @@ The project extends Chris Belcher's [teleport-transactions](https://github.com/b
 
 For protocol-level details, see the [Coinswap Protocol Specifications](https://github.com/citadel-tech/Coinswap-Protocol-Specification).
 
-For questions about the repo, it's recommended to use [Deepwiki](https://deepwiki.com/citadel-tech/coinswap).
+For an in-depth exploration of the repository, it's recommended to use [Deep Wiki](https://deepwiki.com/citadel-tech/coinswap).
 
 # Components
 
@@ -150,7 +164,7 @@ Extensive functional testing simulates various protocol edge cases:
 cargo test --features=integration-test -- --nocapture
 ```
 
-The [Test Framework](./tests/test_framework/mod.rs) spawns toy marketplaces in Bitcoin regtest to test swap scenarios. Each test in [tests](./tests/) covers different edge cases. Start with [standard_swap](./tests/standard_swap.rs) to understand programmatic simulation.
+The [Test Framework](./tests/integration/test_framework/mod.rs) spawns toy marketplaces in Bitcoin regtest to test swap scenarios. Each test in [tests/integration](./tests/integration/) covers different edge cases. Start with [standard_swap](./tests/integration/standard_swap.rs) to understand programmatic simulation.
 
 ## Contributing
 
@@ -175,4 +189,3 @@ Dev community: [Matrix](https://matrix.to/#/#citadel-foss:matrix.org)
 Dev discussions predominantly happen via FOSS best practices, and by using Github as the major community forum.
 
 The Issues, PRs and Discussions are where all the hard lifting is happening.
-
