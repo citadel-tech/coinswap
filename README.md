@@ -16,20 +16,28 @@ Functioning, minimal-viable binaries and libraries to perform a trustless, p2p [
 
 </div>
 
-## 🚨 Announcements
- - **Coinswap Protocol V2 with Taproot-Musig2 is NOW LIVE!** : [See Specifications](https://github.com/citadel-tech/Coinswap-Protocol-Specification/tree/main/v2)
-  
- - **Public Coinswap Marketplace Available On** [Mutinynet](https://github.com/benthecarman/bitcoin/tree/mutinynet-inq-29).
-   - **Block Explorer:** [Mutinynet's mempool.space](https://mutinynet.com/mining)
-   - **Faucet:** [Mutinynet's Faucet](https://faucet.mutinynet.com/)
+## 🚨 Release Announcement
 
-- **GUI Coinswap Client available for testing**: [Taker App](https://github.com/citadel-tech/taker-app)
+**Coinswap `v0.2.1` is now released.**
 
-- **GUI Maker Manager available**: [Maker Dashboard](https://github.com/citadel-tech/maker-dasboard)
+See the [full `v0.2.1` release notes](https://github.com/citadel-tech/coinswap/releases/tag/v0.2.1) and the [core changelog](https://github.com/citadel-tech/coinswap/compare/v0.2.0...v0.2.1).
 
-- **New Coinswap website is up**: [All Coinswap-related details](https://citadel-tech.github.io/website/)
+### What's New in `v0.2.1`
 
-- **One-Click Deployment for Coinswap maker server available here**: [Coinswap Docker](./docs/docker.md)  
+- Unified Legacy and Taproot protocol support in the core library, making downstream applications easier to maintain and extend.
+- [Maker Dashboard](https://github.com/citadel-tech/maker-dashboard)
+- [Taker App](https://github.com/citadel-tech/taker-app)
+- [Coinswap Website](https://citadel-tech.github.io/website/)
+
+## Previous Announcements
+
+Earlier project announcements are retained here for reference:
+
+| Announcement | Reference |
+| --- | --- |
+| Coinswap Protocol V2 with Taproot-MuSig2 is live | [See specifications](https://github.com/citadel-tech/Coinswap-Protocol-Specification/tree/main/v2) |
+| Public Coinswap marketplace is available on Mutinynet | [Mutinynet branch](https://github.com/benthecarman/bitcoin/tree/mutinynet-inq-29), [block explorer](https://mutinynet.com/mining), [faucet](https://faucet.mutinynet.com/) |
+| One-click deployment for a Coinswap maker server is available | [Coinswap Docker](./docs/docker.md) |
 
 ## ⚠️ Warning
 This library is currently under development and is in an experimental stage. **Mainnet use is NOT recommended.**
