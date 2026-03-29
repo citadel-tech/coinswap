@@ -102,8 +102,7 @@ Full documentation is in the [`docs/`](docs/) folder:
 - Write idiomatic, well-commented Rust
 - Prefer explicit error handling and clear variable names
 - Update relevant files in `docs/` when you change behavior
-- **Dual-protocol rule:** When modifying protocol logic, ensure changes are applied to **both** Legacy ([`messages.rs`](src/protocol/messages.rs), [`contract.rs`](src/protocol/contract.rs), [`handlers.rs`](src/maker/handlers.rs)) and Taproot-Musig2 ([`messages2.rs`](src/protocol/messages2.rs), [`contract2.rs`](src/protocol/contract2.rs), [`handlers2.rs`](src/maker/handlers2.rs)) versions unless the change is explicitly version-specific.
-- **Test-only gating:** Code that is only needed for tests (e.g. `MakerBehavior` simulation) must be gated behind `#[cfg(feature = "integration-test")]`.
+-  **Dual-protocol rule:** When modifying protocol logic, ensure changes are applied to **both** Legacy ([`legacy_messages.rs`](src/protocol/legacy_messages.rs), [`contract.rs`](src/protocol/contract.rs), [`legacy_handlers.rs`](src/maker/legacy_handlers.rs)) and Taproot-Musig2 ([`taproot_messages.rs`](src/protocol/taproot_messages.rs), [`contract2.rs`](src/protocol/contract2.rs), [`taproot_handlers.rs`](src/maker/taproot_handlers.rs)) versions unless the change is explicitly version-specific.
 
 ## Testing
 

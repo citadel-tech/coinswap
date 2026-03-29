@@ -154,7 +154,7 @@ Extensive functional testing simulates various protocol edge cases:
 cargo test --features=integration-test -- --nocapture
 ```
 
-The [Test Framework](./tests/test_framework/mod.rs) spawns toy marketplaces in Bitcoin regtest to test swap scenarios. Each test in [tests](./tests/) covers different edge cases. Start with [standard_swap](./tests/standard_swap.rs) to understand programmatic simulation.
+The [Test Framework](./tests/integration/test_framework/mod.rs) spawns toy marketplaces in Bitcoin regtest to test swap scenarios. Each test in [tests/integration](./tests/integration/) covers different edge cases. Start with [standard_swap](./tests/integration/standard_swap.rs) to understand programmatic simulation.
 
 ## Contributing
 
