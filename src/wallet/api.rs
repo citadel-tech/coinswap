@@ -699,7 +699,7 @@ impl Wallet {
                             self.rpc.get_tx_out(
                                 &input_outpoint.txid,
                                 input_outpoint.vout,
-                                Some(false)
+                                Some(true)
                             ),
                             Ok(Some(_))
                         );
