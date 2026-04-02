@@ -15,7 +15,7 @@ The docker compose spins up a `bitcoind`, `Tor` and `Maker Dashboard` backend se
 
 In a fresh terminal, do:
 ```shell
-git clone git@github.com:citadel-tech/maker-dasboard.git
+git clone https://github.com/citadel-tech/maker-dashboard.git
 cd maker-dashboard/docker
 docker compose up --build -d
 ```
@@ -25,8 +25,8 @@ Once the docker build completes, connect to `http://127.0.0.1:3000` from a brows
 Use the usual defaults for bitcoin configurations.
 
 For tor configurations use the following:
-- Tor Control Port: `19051`
-- Tor Socks Port: `19050`
+- Tor Control Port: `9051`
+- Tor Socks Port: `9050`
 - Tor Password: `coinswap`
 
 To start a maker:
