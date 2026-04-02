@@ -5,6 +5,9 @@
 curl -fsSL https://get.docker.com | sudo sh
 ```
 
+> If you have bitcoind signet running in your system, temporarily stop it for the demo.
+
+
 ## Maker Dashboard
 
 The Maker Dashboard is a web-based management dashboard to control and manage multiple makers. It is a binary that can be run in any full node environment.
