@@ -1,5 +1,10 @@
 # Coinswap Setup
 
+## Prerequisite: Docker
+```shell
+curl -fsSL https://get.docker.com | sudo sh
+```
+
 ## Maker Dashboard
 
 The Maker Dashboard is a web-based management dashboard to control and manage multiple makers. It is a binary that can be run in any full node environment.
