@@ -68,6 +68,18 @@ fn list_wallet_dir(client: &Client) -> Result<Vec<String>, WalletError> {
     Ok(result.wallets.into_iter().map(|n| n.name).collect())
 }
 
+fn get_wallet_scanning_details(client: &Client) -> Result<Option<ScanningDetails>, WalletError> {
+    #[derive(Deserialize)]
+    struct WalletInfoScanningOnly {
+        scanning: Option<ScanningDetails>,
+    }
+
+    // Parse only the field we need so upstream schema removals (e.g. getwalletinfo v30 balance related fields removal)
+    // do not break deserialization.
+    let wallet_info: WalletInfoScanningOnly = client.call("getwalletinfo", &[])?;
+    Ok(wallet_info.scanning)
+}
+
 impl Wallet {
     /// Wrapper around Self::sync that also saves the wallet to disk.
     ///
@@ -157,8 +169,7 @@ impl Wallet {
 
         // Returns when the scanning is completed
         loop {
-            let wallet_info = self.rpc.get_wallet_info()?;
-            match wallet_info.scanning {
+            match get_wallet_scanning_details(&self.rpc)? {
                 Some(ScanningDetails::Scanning { duration, .. }) => {
                     // Todo: Show scan progress
                     log::info!("Scanning for {}s", duration);
