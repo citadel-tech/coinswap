@@ -2157,6 +2157,7 @@ impl Taker {
         let output_utxos = [output_change_amounts.clone(), output_swap_amounts.clone()].concat();
         let total_input_amount: u64 = input_utxos.iter().sum();
         let total_output_amount: u64 = output_utxos.iter().sum();
+        let total_output_swap_amount: u64 = output_swap_amounts.iter().sum();
 
         // Maker addresses
         let maker_count = swap.params.maker_count;
@@ -2201,15 +2202,17 @@ impl Taker {
                 let (base_fee, amount_rel_fee, time_rel_fee) = if let Some(offer) =
                     swap.makers[maker_index].offer.as_ref()
                 {
-                    let bf = offer.base_fee as f64;
-                    let arf = (offer.amount_relative_fee_pct * temp_target_amount as f64) / 100.0;
-                    let trf = (offer.time_relative_fee_pct
+                    let bf = offer.base_fee;
+                    let arf = ((offer.amount_relative_fee_pct * temp_target_amount as f64) / 100.0)
+                        .ceil() as u64;
+                    let trf = ((offer.time_relative_fee_pct
                         * maker_refund_locktime as f64
                         * temp_target_amount as f64)
-                        / 100.0;
+                        / 100.0)
+                        .ceil() as u64;
                     (bf, arf, trf)
                 } else {
-                    (0.0, 0.0, 0.0)
+                    (0, 0, 0)
                 };
 
                 let total_maker_fee = base_fee + amount_rel_fee + time_rel_fee;
@@ -2223,8 +2226,8 @@ impl Taker {
                     total_fee: total_maker_fee,
                 });
 
-                temp_target_amount -= total_maker_fee as u64;
-                total_maker_fee as u64
+                temp_target_amount = temp_target_amount.saturating_sub(total_maker_fee);
+                total_maker_fee
             })
             .sum();
 
@@ -2262,7 +2265,7 @@ impl Taker {
             swap_id: swap.id.clone(),
             swap_duration_seconds: swap_duration.as_secs_f64(),
             outgoing_amount: swap.params.send_amount.to_sat(),
-            incoming_amount: total_output_amount,
+            incoming_amount: total_output_swap_amount,
             fee_paid_or_earned: -(total_fee as i64),
             makers_count: Some(maker_count),
             maker_addresses,

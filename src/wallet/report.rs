@@ -105,13 +105,13 @@ pub struct MakerFeeInfo {
     /// Network address of the Maker (e.g., onion address with port).
     pub maker_address: String,
     /// Fixed base fee charged by this maker (in satoshis).
-    pub base_fee: f64,
+    pub base_fee: u64,
     /// Fee proportional to the swap amount (in satoshis).
-    pub amount_relative_fee: f64,
+    pub amount_relative_fee: u64,
     /// Fee proportional to the timelock duration (in satoshis).
-    pub time_relative_fee: f64,
+    pub time_relative_fee: u64,
     /// Total fee charged by this maker (sum of all fee components).
-    pub total_fee: f64,
+    pub total_fee: u64,
 }
 
 /// Swap report capturing all details of a coinswap transaction.
@@ -510,10 +510,13 @@ impl SwapReport {
                     info.maker_index + 1,
                     info.maker_address
                 );
-                println!("    Base Fee             : {:.2}", info.base_fee);
-                println!("    Amount Relative Fee  : {:.2}", info.amount_relative_fee);
-                println!("    Time Relative Fee    : {:.2}", info.time_relative_fee);
-                println!("    Total Fee            : {:.2}", info.total_fee);
+                println!("    Base Fee             : {} sats", info.base_fee);
+                println!(
+                    "    Amount Relative Fee  : {} sats",
+                    info.amount_relative_fee
+                );
+                println!("    Time Relative Fee    : {} sats", info.time_relative_fee);
+                println!("    Total Fee            : {} sats", info.total_fee);
             }
         }
 
