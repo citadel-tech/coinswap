@@ -106,7 +106,8 @@ enum Commands {
     /// Update the offerbook with current market offers and display them
     FetchOffers,
 
-    // TODO: Also add ListOffers command to just list the current book.
+    /// List makers from the locally cached offerbook without triggering a network sync.
+    ListOffers,
     /// Initiate the coinswap process
     Coinswap {
         /// Sets the Maker count to swap with. Swapping with less than 2 makers is not allowed to maintain client privacy.
@@ -419,6 +420,41 @@ fn main() -> Result<(), TakerError> {
                 good,
                 bad,
                 unresponsive,
+                makers.len()
+            );
+        }
+        Commands::ListOffers => {
+            let offerbook = taker.fetch_offers()?;
+            let makers = offerbook.all_makers();
+
+            if makers.is_empty() {
+                println!(
+                    "No makers in local offerbook. Run `fetch-offers` to sync from the network."
+                );
+                return Ok(());
+            }
+
+            let mut good_maker = 0;
+            let mut bad_maker = 0;
+            let mut unresponsive_maker = 0;
+
+            println!("\n{} makers in local offerbook\n", makers.len());
+
+            for maker in &makers {
+                match maker.state {
+                    MakerState::Good => good_maker += 1,
+                    MakerState::Bad => bad_maker += 1,
+                    MakerState::Unresponsive { .. } => unresponsive_maker += 1,
+                }
+
+                let wallet = taker.get_wallet().read().unwrap();
+                println!("{}", display_offer(&wallet, maker)?);
+            }
+            println!(
+                "\nOfferbook summary → good: {}, bad: {}, unresponsive: {} (total: {})",
+                good_maker,
+                bad_maker,
+                unresponsive_maker,
                 makers.len()
             );
         }
