@@ -2220,10 +2220,10 @@ impl Taker {
                 maker_fee_info.push(ReportMakerFeeInfo {
                     maker_index,
                     maker_address: swap.makers[maker_index].address.to_string(),
-                    base_fee,
-                    amount_relative_fee: amount_rel_fee,
-                    time_relative_fee: time_rel_fee,
-                    total_fee: total_maker_fee,
+                    base_fee: base_fee as f64,
+                    amount_relative_fee: amount_rel_fee as f64,
+                    time_relative_fee: time_rel_fee as f64,
+                    total_fee: total_maker_fee as f64,
                 });
 
                 temp_target_amount = temp_target_amount.saturating_sub(total_maker_fee);
