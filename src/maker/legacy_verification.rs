@@ -26,7 +26,7 @@ pub(crate) fn verify_req_contract_sigs_for_sender(
     tweakable_pubkey: &PublicKey,
     hashvalue: &Hash160,
     locktime: u16,
-    network_port: u16,
+    wallet_name: &str,
 ) -> Result<(), MakerError> {
     if txs_info.is_empty() {
         return Err(MakerError::General(
@@ -102,7 +102,7 @@ pub(crate) fn verify_req_contract_sigs_for_sender(
 
     log::info!(
         "[{}] Verified {} sender contract txs (multisig, pubkeys, structure, P2WSH output)",
-        network_port,
+        wallet_name,
         txs_info.len()
     );
     Ok(())
@@ -114,7 +114,7 @@ pub(crate) fn verify_contract_sigs(
     senders_sigs: &[bitcoin::ecdsa::Signature],
     incoming_swapcoins: &[IncomingSwapCoin],
     outgoing_swapcoins: &[OutgoingSwapCoin],
-    network_port: u16,
+    wallet_name: &str,
 ) -> Result<(), MakerError> {
     for (i, (sig, incoming)) in receivers_sigs
         .iter()
@@ -177,7 +177,7 @@ pub(crate) fn verify_contract_sigs(
 
     log::info!(
         "[{}] Verified {} receiver + {} sender contract signatures",
-        network_port,
+        wallet_name,
         receivers_sigs.len(),
         senders_sigs.len()
     );
@@ -188,7 +188,7 @@ pub(crate) fn verify_contract_sigs(
 pub(crate) fn verify_legacy_privkey_handover(
     privkeys: &[crate::protocol::common_messages::SwapPrivkey],
     incoming_swapcoins: &[IncomingSwapCoin],
-    network_port: u16,
+    wallet_name: &str,
 ) -> Result<(), MakerError> {
     if privkeys.len() != incoming_swapcoins.len() {
         return Err(MakerError::General(
@@ -223,7 +223,7 @@ pub(crate) fn verify_legacy_privkey_handover(
 
     log::info!(
         "[{}] Verified {} Legacy private keys (derived pubkey matches expected)",
-        network_port,
+        wallet_name,
         privkeys.len()
     );
     Ok(())

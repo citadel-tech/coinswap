@@ -32,7 +32,7 @@ pub fn handle_taproot_message<M: Maker>(
 ) -> Result<Option<MakerToTakerMessage>, MakerError> {
     log::debug!(
         "[{}] Handling Taproot message: {:?} (swap_id: {:?})",
-        maker.network_port(),
+        maker.wallet_name(),
         message,
         state.swap_id
     );
@@ -60,7 +60,7 @@ fn process_taproot_contract<M: Maker>(
         if maker.behavior() == MakerBehavior::CloseAtContractSigsExchange {
             log::warn!(
                 "[{}] Test behavior: closing at taproot contract sigs exchange",
-                maker.network_port()
+                maker.wallet_name()
             );
             return Err(MakerError::General(
                 "Test: closing at contract sigs exchange",
@@ -70,7 +70,7 @@ fn process_taproot_contract<M: Maker>(
 
     log::info!(
         "[{}] Processing Taproot contract data for swap {}",
-        maker.network_port(),
+        maker.wallet_name(),
         data.id
     );
 
@@ -93,7 +93,7 @@ fn process_taproot_contract<M: Maker>(
     super::taproot_verification::verify_taproot_contract_data(
         &data,
         state.timelock,
-        maker.network_port(),
+        maker.wallet_name(),
     )?;
 
     let incoming_contract_tx = data
@@ -137,7 +137,7 @@ fn process_taproot_contract<M: Maker>(
 
     log::info!(
         "[{}] Fee calculation: incoming={}, fee={}, outgoing={}",
-        maker.network_port(),
+        maker.wallet_name(),
         incoming_funding_amount,
         fee,
         outgoing_amount
@@ -206,7 +206,7 @@ fn process_taproot_contract<M: Maker>(
     if !excluded_utxos.is_empty() {
         log::info!(
             "[{}] Excluding {} UTXOs from other active swaps",
-            maker.network_port(),
+            maker.wallet_name(),
             excluded_utxos.len()
         );
     }
@@ -254,7 +254,7 @@ fn process_taproot_contract<M: Maker>(
         if maker.behavior() == MakerBehavior::SkipFundingBroadcast {
             log::warn!(
                 "[{}] Test behavior: skipping Taproot funding broadcast",
-                maker.network_port()
+                maker.wallet_name()
             );
             // Swapcoins are already in state.
             // Save them to wallet for recovery detection.
@@ -271,7 +271,7 @@ fn process_taproot_contract<M: Maker>(
         Ok(txid) => {
             log::info!(
                 "[{}] Broadcast Taproot contract tx {} for swap {}",
-                maker.network_port(),
+                maker.wallet_name(),
                 txid,
                 data.id
             );
@@ -281,7 +281,7 @@ fn process_taproot_contract<M: Maker>(
         Err(e) => {
             log::warn!(
                 "[{}] Failed to broadcast Taproot contract tx (may already be broadcast): {:?}",
-                maker.network_port(),
+                maker.wallet_name(),
                 e
             );
         }
@@ -303,7 +303,7 @@ fn process_taproot_contract<M: Maker>(
         if maker.behavior() == MakerBehavior::BroadcastContractAfterSetup {
             log::warn!(
                 "[{}] Test behavior: broadcasting contract tx after taproot setup, then closing",
-                maker.network_port()
+                maker.wallet_name()
             );
             let _ = maker.broadcast_transaction(&outgoing_swapcoin.contract_tx);
             return Err(MakerError::General("Test: broadcast contract after setup"));
@@ -312,7 +312,7 @@ fn process_taproot_contract<M: Maker>(
 
     log::info!(
         "[{}] Created Taproot swapcoins for swap {}. Outgoing amount: {}",
-        maker.network_port(),
+        maker.wallet_name(),
         data.id,
         outgoing_swapcoin.funding_amount
     );
@@ -355,7 +355,7 @@ fn process_taproot_handover<M: Maker>(
         if maker.behavior() == MakerBehavior::CloseAtPrivateKeyHandover {
             log::warn!(
                 "[{}] Test behavior: closing at taproot private key handover",
-                maker.network_port()
+                maker.wallet_name()
             );
             return Err(MakerError::General("Test: closing at private key handover"));
         }
@@ -363,7 +363,7 @@ fn process_taproot_handover<M: Maker>(
 
     log::info!(
         "[{}] Processing Taproot private key handover for swap {}",
-        maker.network_port(),
+        maker.wallet_name(),
         handover.id
     );
 
@@ -371,7 +371,7 @@ fn process_taproot_handover<M: Maker>(
     super::taproot_verification::verify_taproot_privkey_handover(
         &handover.privkeys,
         &state.incoming_swapcoins,
-        maker.network_port(),
+        maker.wallet_name(),
     )?;
 
     let outgoing = state
@@ -407,7 +407,7 @@ fn process_taproot_handover<M: Maker>(
         if maker.behavior() == MakerBehavior::CloseAfterSweep {
             log::warn!(
                 "[{}] Test behavior: closing after sweep / completing handover",
-                maker.network_port()
+                maker.wallet_name()
             );
             return Err(MakerError::General("Test: closing after sweep"));
         }
@@ -415,7 +415,7 @@ fn process_taproot_handover<M: Maker>(
 
     log::info!(
         "[{}] Taproot swap {} completed successfully, returning private key",
-        maker.network_port(),
+        maker.wallet_name(),
         handover.id
     );
 

@@ -19,7 +19,7 @@ use super::error::MakerError;
 pub(crate) fn verify_taproot_contract_data(
     data: &TaprootContractData,
     maker_timelock: u32,
-    network_port: u16,
+    wallet_name: &str,
 ) -> Result<(), MakerError> {
     // Must have at least one contract tx
     if data.contract_txs.is_empty() {
@@ -179,7 +179,7 @@ pub(crate) fn verify_taproot_contract_data(
     log::info!(
         "[{}] Verified Taproot contract data from taker: {} contract txs \
          (hash, timelock, structure, P2TR output, amounts)",
-        network_port,
+        wallet_name,
         data.contract_txs.len()
     );
     Ok(())
@@ -189,7 +189,7 @@ pub(crate) fn verify_taproot_contract_data(
 pub(crate) fn verify_taproot_privkey_handover(
     privkeys: &[SwapPrivkey],
     incoming_swapcoins: &[crate::wallet::swapcoin::IncomingSwapCoin],
-    network_port: u16,
+    wallet_name: &str,
 ) -> Result<(), MakerError> {
     if privkeys.len() != incoming_swapcoins.len() {
         return Err(MakerError::General(
@@ -224,7 +224,7 @@ pub(crate) fn verify_taproot_privkey_handover(
 
     log::info!(
         "[{}] Verified {} Taproot private keys (derived pubkey matches expected)",
-        network_port,
+        wallet_name,
         privkeys.len()
     );
     Ok(())
