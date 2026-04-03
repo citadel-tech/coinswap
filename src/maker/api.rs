@@ -916,12 +916,15 @@ impl MakerTrait for MakerServer {
         const RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
 
         for attempt in 0..MAX_ATTEMPTS {
-            let wallet = self
-                .wallet
-                .read()
-                .map_err(|_| MakerError::General("Failed to lock wallet"))?;
+            let seen = {
+                let wallet = self
+                    .wallet
+                    .read()
+                    .map_err(|_| MakerError::General("Failed to lock wallet"))?;
+                wallet.rpc.get_raw_transaction(txid, None).is_ok()
+            };
 
-            if wallet.rpc.get_raw_transaction(txid, None).is_ok() {
+            if seen {
                 return Ok(());
             }
 
