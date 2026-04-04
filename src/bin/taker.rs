@@ -172,6 +172,30 @@ fn parse_protocol(s: &str) -> Result<ProtocolVersion, TakerError> {
     }
 }
 
+/// Display all makers with per-state counts and a summary line.
+fn display_makers_with_summary(
+    wallet: &Wallet,
+    makers: &[MakerOfferCandidate],
+) -> Result<(), TakerError> {
+    let (mut good, mut bad, mut unresponsive) = (0, 0, 0);
+    for maker in makers {
+        match maker.state {
+            MakerState::Good => good += 1,
+            MakerState::Bad => bad += 1,
+            MakerState::Unresponsive { .. } => unresponsive += 1,
+        }
+        println!("{}", display_offer(wallet, maker)?);
+    }
+    println!(
+        "\nOfferbook summary → good: {}, bad: {}, unresponsive: {} (total: {})",
+        good,
+        bad,
+        unresponsive,
+        makers.len()
+    );
+    Ok(())
+}
+
 /// Format a maker offer candidate as a human-readable string.
 fn display_offer(wallet: &Wallet, candidate: &MakerOfferCandidate) -> Result<String, TakerError> {
     let header = format!(
@@ -398,30 +422,10 @@ fn main() -> Result<(), TakerError> {
                 return Ok(());
             }
 
-            let mut good = 0;
-            let mut bad = 0;
-            let mut unresponsive = 0;
-
             println!("\nDiscovered {} makers\n", makers.len());
 
-            for maker in &makers {
-                match maker.state {
-                    MakerState::Good => good += 1,
-                    MakerState::Bad => bad += 1,
-                    MakerState::Unresponsive { .. } => unresponsive += 1,
-                }
-
-                let wallet = taker.get_wallet().read().unwrap();
-                println!("{}", display_offer(&wallet, maker)?);
-            }
-
-            println!(
-                "\nOfferbook summary → good: {}, bad: {}, unresponsive: {} (total: {})",
-                good,
-                bad,
-                unresponsive,
-                makers.len()
-            );
+            let wallet = taker.get_wallet().read().unwrap();
+            display_makers_with_summary(&wallet, &makers)?;
         }
         Commands::ListOffers => {
             let offerbook = taker.fetch_offers()?;
@@ -434,29 +438,10 @@ fn main() -> Result<(), TakerError> {
                 return Ok(());
             }
 
-            let mut good_maker = 0;
-            let mut bad_maker = 0;
-            let mut unresponsive_maker = 0;
-
             println!("\n{} makers in local offerbook\n", makers.len());
 
-            for maker in &makers {
-                match maker.state {
-                    MakerState::Good => good_maker += 1,
-                    MakerState::Bad => bad_maker += 1,
-                    MakerState::Unresponsive { .. } => unresponsive_maker += 1,
-                }
-
-                let wallet = taker.get_wallet().read().unwrap();
-                println!("{}", display_offer(&wallet, maker)?);
-            }
-            println!(
-                "\nOfferbook summary → good: {}, bad: {}, unresponsive: {} (total: {})",
-                good_maker,
-                bad_maker,
-                unresponsive_maker,
-                makers.len()
-            );
+            let wallet = taker.get_wallet().read().unwrap();
+            display_makers_with_summary(&wallet, &makers)?;
         }
         Commands::Coinswap {
             makers,
