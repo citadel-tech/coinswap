@@ -26,7 +26,7 @@ pub const NOSTR_RELAYS: &[&str] = &["wss://nos.lol", "wss://relay.damus.io"];
 pub const NOSTR_RELAYS: &[&str] = &["ws://127.0.0.1:8000"];
 
 /// coinswap nostr event kind
-pub const COINSWAP_KIND: u16 = 37777;
+pub const COINSWAP_KIND: u16 = 37778;
 /// Expiration time for noster event (24 hours)
 const EXPIRATION_SECS: u64 = 86400;
 
@@ -37,7 +37,7 @@ pub fn broadcast_bond_on_nostr(
 ) -> Result<(), MakerError> {
     let outpoint = fidelity.bond.outpoint;
     let content = format!("{}:{}", outpoint.txid, outpoint.vout);
-    // Kind 37777 is in the NIP-33 parameterized-replaceable range (30000..39999),
+    // Kind 37778 is in the NIP-33 parameterized-replaceable range (30000..39999),
     // so included a stable `d` tag to keep relay handling spec-compliant.
     let d_tag = format!("fidelity:{}", content);
 

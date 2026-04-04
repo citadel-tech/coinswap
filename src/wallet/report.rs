@@ -510,10 +510,13 @@ impl SwapReport {
                     info.maker_index + 1,
                     info.maker_address
                 );
-                println!("    Base Fee             : {:.2}", info.base_fee);
-                println!("    Amount Relative Fee  : {:.2}", info.amount_relative_fee);
-                println!("    Time Relative Fee    : {:.2}", info.time_relative_fee);
-                println!("    Total Fee            : {:.2}", info.total_fee);
+                println!("    Base Fee             : {} sats", info.base_fee);
+                println!(
+                    "    Amount Relative Fee  : {} sats",
+                    info.amount_relative_fee
+                );
+                println!("    Time Relative Fee    : {} sats", info.time_relative_fee);
+                println!("    Total Fee            : {} sats", info.total_fee);
             }
         }
 
