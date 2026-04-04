@@ -106,7 +106,8 @@ enum Commands {
     /// Update the offerbook with current market offers and display them
     FetchOffers,
 
-    // TODO: Also add ListOffers command to just list the current book.
+    /// List makers from the locally cached offerbook without triggering a network sync.
+    ListOffers,
     /// Initiate the coinswap process
     Coinswap {
         /// Sets the Maker count to swap with. Swapping with less than 2 makers is not allowed to maintain client privacy.
@@ -169,6 +170,30 @@ fn parse_protocol(s: &str) -> Result<ProtocolVersion, TakerError> {
             s
         ))),
     }
+}
+
+/// Display all makers with per-state counts and a summary line.
+fn display_makers_with_summary(
+    wallet: &Wallet,
+    makers: &[MakerOfferCandidate],
+) -> Result<(), TakerError> {
+    let (mut good, mut bad, mut unresponsive) = (0, 0, 0);
+    for maker in makers {
+        match maker.state {
+            MakerState::Good => good += 1,
+            MakerState::Bad => bad += 1,
+            MakerState::Unresponsive { .. } => unresponsive += 1,
+        }
+        println!("{}", display_offer(wallet, maker)?);
+    }
+    println!(
+        "\nOfferbook summary → good: {}, bad: {}, unresponsive: {} (total: {})",
+        good,
+        bad,
+        unresponsive,
+        makers.len()
+    );
+    Ok(())
 }
 
 /// Format a maker offer candidate as a human-readable string.
@@ -397,30 +422,26 @@ fn main() -> Result<(), TakerError> {
                 return Ok(());
             }
 
-            let mut good = 0;
-            let mut bad = 0;
-            let mut unresponsive = 0;
-
             println!("\nDiscovered {} makers\n", makers.len());
 
-            for maker in &makers {
-                match maker.state {
-                    MakerState::Good => good += 1,
-                    MakerState::Bad => bad += 1,
-                    MakerState::Unresponsive { .. } => unresponsive += 1,
-                }
+            let wallet = taker.get_wallet().read().unwrap();
+            display_makers_with_summary(&wallet, &makers)?;
+        }
+        Commands::ListOffers => {
+            let offerbook = taker.fetch_offers()?;
+            let makers = offerbook.all_makers();
 
-                let wallet = taker.get_wallet().read().unwrap();
-                println!("{}", display_offer(&wallet, maker)?);
+            if makers.is_empty() {
+                println!(
+                    "No makers in local offerbook. Run `fetch-offers` to sync from the network."
+                );
+                return Ok(());
             }
 
-            println!(
-                "\nOfferbook summary → good: {}, bad: {}, unresponsive: {} (total: {})",
-                good,
-                bad,
-                unresponsive,
-                makers.len()
-            );
+            println!("\n{} makers in local offerbook\n", makers.len());
+
+            let wallet = taker.get_wallet().read().unwrap();
+            display_makers_with_summary(&wallet, &makers)?;
         }
         Commands::Coinswap {
             makers,

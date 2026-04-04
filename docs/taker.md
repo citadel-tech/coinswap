@@ -95,6 +95,8 @@ SUBCOMMANDS:
             Initiate the coinswap process
     fetch-offers
             Update the offerbook with current market offers and display them
+    list-offers
+            List makers from the locally cached offerbook without requesting a fresh offer sync
     get-balances
             Get total wallet balances of different categories. regular: All single signature regular
             wallet coins (seed balance). swap: All 2of2 multisig coins received in swaps. contract:
