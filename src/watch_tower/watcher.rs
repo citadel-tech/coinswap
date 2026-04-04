@@ -12,7 +12,7 @@ use std::{
     },
 };
 
-use bitcoin::{consensus::deserialize, Block, OutPoint, Transaction};
+use bitcoin::{consensus::deserialize, Block, Network, OutPoint, Transaction};
 use crossbeam_channel::Sender as CbSender;
 
 use crate::{
@@ -114,6 +114,23 @@ impl<R: Role> Watcher<R> {
         log::info!("Watcher initiated");
         let rest_backend_1 = BitcoinRest::new(rpc_config.clone())?;
         let rest_backend_2 = BitcoinRest::new(rpc_config)?;
+        let network = match rest_backend_1
+            .get_blockchain_info()?
+            .chain
+            .to_string()
+            .as_str()
+        {
+            "main" => Network::Bitcoin,
+            "test" => Network::Testnet,
+            "testnet4" => Network::Testnet4,
+            "signet" => Network::Signet,
+            "regtest" => Network::Regtest,
+            unknown => {
+                return Err(WatcherError::General(format!(
+                    "Unsupported Bitcoin network from node: {unknown}"
+                )))
+            }
+        };
 
         if let Err(e) = rest_backend_1.process_mempool(&mut self.registry) {
             log::warn!("Failed to process mempool on startup: {}", e);
@@ -129,6 +146,7 @@ impl<R: Role> Watcher<R> {
                 s.spawn(move || {
                     if let Err(e) = nostr_discovery::run_discovery(
                         rest_backend_1,
+                        network,
                         registry,
                         discovery_shutdown.clone(),
                         initial_sync_complete,
