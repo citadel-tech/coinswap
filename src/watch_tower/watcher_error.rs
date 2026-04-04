@@ -110,6 +110,22 @@ impl<'a, T> From<PoisonError<MutexGuard<'a, T>>> for WatcherError {
     }
 }
 
+impl From<crate::nostr_relay_pool::RelayPoolError> for WatcherError {
+    fn from(value: crate::nostr_relay_pool::RelayPoolError) -> Self {
+        match value {
+            crate::nostr_relay_pool::RelayPoolError::WebSocket(e) => WatcherError::WebSocket(e),
+            crate::nostr_relay_pool::RelayPoolError::NostrParsing(e) => {
+                WatcherError::NostrParsingError(e)
+            }
+            crate::nostr_relay_pool::RelayPoolError::Utf8(_) => WatcherError::ParsingError,
+            crate::nostr_relay_pool::RelayPoolError::UnknownRelay(msg) => {
+                WatcherError::General(msg)
+            }
+            crate::nostr_relay_pool::RelayPoolError::Shutdown => WatcherError::Shutdown,
+        }
+    }
+}
+
 impl WatcherError {
     /// Returns the underlying `ErrorKind` if the error wraps an I/O failure.
     pub fn io_error_kind(&self) -> Option<std::io::ErrorKind> {

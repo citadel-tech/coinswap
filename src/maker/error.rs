@@ -121,3 +121,11 @@ impl From<WatcherError> for MakerError {
         Self::Watcher(value)
     }
 }
+
+impl From<crate::nostr_relay_pool::RelayPoolError> for MakerError {
+    fn from(value: crate::nostr_relay_pool::RelayPoolError) -> Self {
+        // Convert to WatcherError first, then into MakerError, to reuse
+        // the existing variant mapping without adding a new MakerError variant.
+        Self::Watcher(value.into())
+    }
+}

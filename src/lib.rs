@@ -7,6 +7,7 @@ pub mod error;
 pub mod fee_estimation;
 pub mod maker;
 pub mod nostr_coinswap;
+pub mod nostr_relay_pool;
 pub mod protocol;
 pub mod security;
 pub mod taker;
