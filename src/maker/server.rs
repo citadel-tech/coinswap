@@ -14,6 +14,7 @@ use std::{
 use crate::{
     maker::rpc::server::MakerRpc,
     nostr_coinswap::broadcast_bond_on_nostr,
+    nostr_relay_pool::RelayPool,
     protocol::common_messages::{FidelityProof, MakerToTakerMessage, TakerToMakerMessage},
     wallet::SwapReport,
 };
@@ -235,8 +236,10 @@ fn spawn_nostr_broadcast_thread(
     let handle = thread::Builder::new()
         .name("nostr-thread".to_string())
         .spawn(move || {
+            let pool = RelayPool::new(&relays, Arc::new(std::sync::atomic::AtomicBool::new(false)));
+
             // Initial broadcast
-            if let Err(e) = broadcast_bond_on_nostr(fidelity.clone(), &relays) {
+            if let Err(e) = broadcast_bond_on_nostr(fidelity.clone(), &pool) {
                 log::warn!("Initial nostr broadcast failed: {:?}", e);
             }
 
@@ -256,11 +259,12 @@ fn spawn_nostr_broadcast_thread(
 
                 log::debug!("Re-pinging nostr relays with bond announcement");
 
-                if let Err(e) = broadcast_bond_on_nostr(fidelity.clone(), &relays) {
+                if let Err(e) = broadcast_bond_on_nostr(fidelity.clone(), &pool) {
                     log::warn!("Nostr re-ping failed: {:?}", e);
                 }
             }
 
+            pool.disconnect_all();
             log::info!("Nostr background task stopped");
         })
         .map_err(MakerError::IO)?;

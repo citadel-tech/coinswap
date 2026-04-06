@@ -16,6 +16,7 @@ use bitcoin::{consensus::deserialize, Block, OutPoint, Transaction};
 use crossbeam_channel::Sender as CbSender;
 
 use crate::{
+    nostr_relay_pool::RelayPool,
     wallet::RPCConfig,
     watch_tower::{
         nostr_discovery,
@@ -125,6 +126,7 @@ impl<R: Role> Watcher<R> {
         std::thread::scope(move |s| {
             let discovery_clone = discovery_shutdown.clone();
             if R::RUN_DISCOVERY {
+                let pool = Arc::new(RelayPool::new(&nostr_relays, discovery_shutdown.clone()));
                 let initial_sync_complete = initial_sync_complete.clone();
                 s.spawn(move || {
                     if let Err(e) = nostr_discovery::run_discovery(
@@ -132,7 +134,7 @@ impl<R: Role> Watcher<R> {
                         registry,
                         discovery_shutdown.clone(),
                         initial_sync_complete,
-                        &nostr_relays,
+                        pool,
                     ) {
                         log::error!("Discovery thread failed: {:?}", e);
                     }

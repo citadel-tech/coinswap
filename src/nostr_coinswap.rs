@@ -12,11 +12,11 @@ use nostr::{
     key::{Keys, SecretKey},
     message::{ClientMessage, RelayMessage},
     types::Timestamp,
-    util::JsonUtil,
 };
-use tungstenite::Message;
 
-use crate::{maker::MakerError, protocol::common_messages::FidelityProof};
+use crate::{
+    maker::MakerError, nostr_relay_pool::RelayPool, protocol::common_messages::FidelityProof,
+};
 
 /// nostr url for coinswap
 #[cfg(not(feature = "integration-test"))]
@@ -30,10 +30,10 @@ pub const COINSWAP_KIND: u16 = 37778;
 /// Expiration time for noster event (24 hours)
 const EXPIRATION_SECS: u64 = 86400;
 
-/// Broadcasts a fidelity bond announcement over Nostr.
+/// Broadcasts a fidelity bond announcement over Nostr using a connection pool.
 pub fn broadcast_bond_on_nostr(
     fidelity: FidelityProof,
-    relays: &[String],
+    pool: &RelayPool,
 ) -> Result<(), MakerError> {
     let outpoint = fidelity.bond.outpoint;
     let content = format!("{}:{}", outpoint.txid, outpoint.vout);
@@ -89,16 +89,14 @@ pub fn broadcast_bond_on_nostr(
 
     let msg = ClientMessage::Event(std::borrow::Cow::Owned(event));
 
-    log::debug!("nostr wire msg: {}", msg.as_json());
-
     const RELAY_DELAY: Duration = Duration::from_secs(2);
     const MAX_RETRIES: usize = 3;
 
     let mut success = false;
 
-    for relay in relays {
+    for relay in pool.relay_urls() {
         for attempt in 1..=MAX_RETRIES {
-            match broadcast_to_relay(relay, &msg) {
+            match broadcast_to_relay(pool, relay, &msg) {
                 Ok(()) => {
                     success = true;
                     break;
@@ -111,6 +109,8 @@ pub fn broadcast_bond_on_nostr(
                         MAX_RETRIES,
                         e
                     );
+                    // On failure, disconnect so next attempt gets a fresh socket.
+                    pool.disconnect(relay);
                     if attempt < MAX_RETRIES {
                         std::thread::sleep(RELAY_DELAY);
                     }
@@ -126,54 +126,43 @@ pub fn broadcast_bond_on_nostr(
     Ok(())
 }
 
-/// Sends a Nostr event to a single relay and waits for confirmation.
-fn broadcast_to_relay(relay: &str, msg: &ClientMessage) -> Result<(), MakerError> {
-    let (mut socket, _) = tungstenite::connect(relay).map_err(|e| {
-        log::warn!("failed to connect to nostr relay {}: {}", relay, e);
-        MakerError::General("failed to connect to nostr relay")
-    })?;
-
-    socket
-        .write(Message::Text(msg.as_json().into()))
-        .map_err(|e| {
-            log::warn!("nostr relay write failed: {}", e);
-            MakerError::General("failed to write to nostr relay")
-        })?;
-    socket.flush().ok();
-
-    match socket.read() {
-        Ok(Message::Text(text)) => {
-            if let Ok(relay_msg) = RelayMessage::from_json(&text) {
-                match relay_msg {
-                    RelayMessage::Ok {
-                        event_id,
-                        status: true,
-                        ..
-                    } => {
-                        log::info!("nostr relay {} accepted event {}", relay, event_id);
-                        return Ok(());
-                    }
-                    RelayMessage::Ok {
-                        event_id,
-                        status: false,
-                        message,
-                    } => {
-                        log::warn!(
-                            "nostr relay {} rejected event {}: {}",
-                            relay,
-                            event_id,
-                            message
-                        );
-                    }
-                    _ => {}
-                }
+/// Sends a Nostr event to a single relay via the pool and waits for confirmation.
+fn broadcast_to_relay(
+    pool: &RelayPool,
+    relay: &str,
+    msg: &ClientMessage,
+) -> Result<(), MakerError> {
+    match pool.send_and_read_response(relay, msg) {
+        Ok(relay_msg) => match relay_msg {
+            RelayMessage::Ok {
+                event_id,
+                status: true,
+                ..
+            } => {
+                log::info!("nostr relay {} accepted event {}", relay, event_id);
+                Ok(())
             }
-        }
-        Ok(_) => {}
+            RelayMessage::Ok {
+                event_id,
+                status: false,
+                message,
+            } => {
+                log::warn!(
+                    "nostr relay {} rejected event {}: {}",
+                    relay,
+                    event_id,
+                    message
+                );
+                Err(MakerError::General("nostr relay rejected event"))
+            }
+            _ => {
+                log::warn!("nostr relay {} did not confirm event", relay);
+                Err(MakerError::General("nostr relay did not confirm event"))
+            }
+        },
         Err(e) => {
-            log::warn!("nostr relay {} read error: {}", relay, e);
+            log::warn!("nostr relay {} error: {}", relay, e);
+            Err(e.into())
         }
     }
-    log::warn!("nostr relay {} did not confirm event", relay);
-    Err(MakerError::General("nostr relay did not confirm event"))
 }

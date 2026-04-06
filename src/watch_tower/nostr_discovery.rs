@@ -17,12 +17,11 @@ use nostr::{
     filter::Filter,
     message::{ClientMessage, RelayMessage, SubscriptionId},
     types::Timestamp,
-    util::JsonUtil,
 };
-use tungstenite::{stream::MaybeTlsStream, Message};
 
 use crate::{
     nostr_coinswap::COINSWAP_KIND,
+    nostr_relay_pool::RelayPool,
     watch_tower::{
         registry_storage::FileRegistry,
         rest_backend::BitcoinRest,
@@ -31,14 +30,13 @@ use crate::{
     },
 };
 
-// ## TODO: Instead of looping over relay's have a connection Pool.
-/// Runs the main discovery routine for maker's fidelity bonds by subscribing to Nostr events (kind 37778).
+/// Runs the main discovery routine for maker's fidelity bonds by subscribing to Nostr events (kind 37777).
 pub fn run_discovery(
     bitcoin_rpc: BitcoinRest,
     registry: FileRegistry,
     shutdown: Arc<AtomicBool>,
     initial_sync_complete: Arc<AtomicBool>,
-    relays: &[String],
+    pool: Arc<RelayPool>,
 ) -> Result<(), WatcherError> {
     log::info!("Starting market discovery via Nostr");
 
@@ -46,24 +44,28 @@ pub fn run_discovery(
     let registry = Arc::new(registry);
     let bitcoin_rpc = Arc::new(bitcoin_rpc);
 
-    for relay in relays {
+    let relay_urls: Vec<String> = pool.relay_urls().into_iter().map(String::from).collect();
+
+    for relay in &relay_urls {
         let relay = relay.to_string();
         let shutdown = shutdown.clone();
         let registry = Arc::clone(&registry);
         let bitcoin_rpc = Arc::clone(&bitcoin_rpc);
         let seen_txid = Arc::clone(&seen_txid);
         let initial_sync_complete = initial_sync_complete.clone();
+        let pool = Arc::clone(&pool);
 
         std::thread::Builder::new()
             .name(format!("nostr-session-{}", relay))
             .spawn(move || {
                 run_nostr_session_for_relay(
-                    &relay.clone(),
+                    &relay,
                     registry,
                     shutdown,
                     bitcoin_rpc,
                     &seen_txid,
                     &initial_sync_complete,
+                    &pool,
                 );
             })?;
     }
@@ -80,17 +82,19 @@ fn run_nostr_session_for_relay(
     bitcoin_rpc: Arc<BitcoinRest>,
     seen_txid: &Arc<Mutex<SeenTxids>>,
     initial_sync_complete: &Arc<AtomicBool>,
+    pool: &RelayPool,
 ) {
     log::info!("Starting Nostr session for relay {}", relay_url);
 
     while !shutdown.load(Ordering::SeqCst) {
-        match connect_and_run_once(
+        match subscribe_and_read(
             relay_url,
             registry.clone(),
             shutdown.clone(),
             bitcoin_rpc.clone(),
             seen_txid,
             initial_sync_complete,
+            pool,
         ) {
             Ok(()) => {
                 // Likely exited due to shutdown
@@ -102,6 +106,8 @@ fn run_nostr_session_for_relay(
                     relay_url,
                     e
                 );
+                // Drop the broken connection so the pool reconnects on next use.
+                pool.disconnect(relay_url);
                 std::thread::sleep(std::time::Duration::from_secs(5));
             }
         }
@@ -110,18 +116,16 @@ fn run_nostr_session_for_relay(
     log::info!("Stopped Nostr session for relay {}", relay_url);
 }
 
-/// Establishes websocket connection to single Nostr relay and processes events until error or shutdown.
-/// Subscribe to Nostr events on Kind (37778).
-fn connect_and_run_once(
+/// Subscribes to Nostr events on a single relay and reads events until error or shutdown.
+fn subscribe_and_read(
     relay_url: &str,
     registry: Arc<FileRegistry>,
     shutdown: Arc<AtomicBool>,
     bitcoin_rpc: Arc<BitcoinRest>,
     seen_txid: &Arc<Mutex<SeenTxids>>,
     initial_sync_complete: &Arc<AtomicBool>,
+    pool: &RelayPool,
 ) -> Result<(), WatcherError> {
-    let (mut socket, _) = tungstenite::connect(relay_url)?;
-
     let since = registry.load_nostr_cursor(relay_url).map(Timestamp::from);
 
     let mut filter = Filter::new().kind(Kind::Custom(COINSWAP_KIND));
@@ -137,9 +141,7 @@ fn connect_and_run_once(
         filters: vec![Cow::Owned(filter)],
     };
 
-    socket.write(Message::Text(req.as_json().into()))?;
-
-    socket.flush()?;
+    pool.send(relay_url, &req)?;
 
     log::info!(
         "Subscribed to fidelity announcements on {} (kind={}, since={:?})",
@@ -148,37 +150,19 @@ fn connect_and_run_once(
         since
     );
 
-    read_event_loop(
-        registry,
-        socket,
-        shutdown,
-        bitcoin_rpc,
-        relay_url,
-        seen_txid,
-        initial_sync_complete,
-    )
-}
-
-/// Stream all the events from the Nostr relay and deserialize from json until shutdown
-fn read_event_loop(
-    registry: Arc<FileRegistry>,
-    mut socket: tungstenite::WebSocket<MaybeTlsStream<std::net::TcpStream>>,
-    shutdown: Arc<AtomicBool>,
-    bitcoin_rpc: Arc<BitcoinRest>,
-    relay_url: &str,
-    seen_txid: &Arc<Mutex<SeenTxids>>,
-    initial_sync_complete: &Arc<AtomicBool>,
-) -> Result<(), WatcherError> {
+    // Read event loop — the pool returns parsed RelayMessages directly.
     while !shutdown.load(Ordering::SeqCst) {
-        let msg = socket.read()?;
-
-        let text = match msg {
-            Message::Text(t) => t,
-            Message::Binary(b) => String::from_utf8(b.to_vec())?.into(),
-            _ => continue,
+        let relay_msg = match pool.read(relay_url) {
+            Ok(msg) => msg,
+            Err(crate::nostr_relay_pool::RelayPoolError::Shutdown) => break,
+            Err(crate::nostr_relay_pool::RelayPoolError::WebSocket(ref e))
+                if is_timeout_error(e) =>
+            {
+                // Read timed out — socket is healthy, loop back to check shutdown.
+                continue;
+            }
+            Err(e) => return Err(e.into()),
         };
-
-        let relay_msg = RelayMessage::from_json(&text)?;
 
         handle_relay_message(
             registry.clone(),
@@ -191,6 +175,18 @@ fn read_event_loop(
     }
 
     Ok(())
+}
+
+/// Returns true if the tungstenite error is a harmless read timeout.
+fn is_timeout_error(e: &tungstenite::Error) -> bool {
+    if let tungstenite::Error::Io(io) = e {
+        matches!(
+            io.kind(),
+            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+        )
+    } else {
+        false
+    }
 }
 
 /// filter events based on kind and tags
