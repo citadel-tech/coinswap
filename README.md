@@ -184,7 +184,7 @@ ln -s ../../git_hooks/pre-commit .git/hooks/pre-commit
 
 ## Community
 
-Dev community: [Matrix](https://matrix.to/#/#citadel-foss:matrix.org)
+Dev community: [Matrix(Element)](https://app.element.io/#/room/#coinswap:matrix.org)
 
 Dev discussions predominantly happen via FOSS best practices, and by using Github as the major community forum.
 
