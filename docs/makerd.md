@@ -119,7 +119,7 @@ Developers at Citadel-Tech
 Coinswap Maker Server
 
 The server requires a Bitcoin Core RPC connection running in Testnet4. It requires a starting
-balance, around 50,000 sats for Fidelity + Swap Liquidity (suggested 50,000 sats). So top up with at
+balance, around 10,000 sats for Fidelity + Swap Liquidity (suggested 10,000 sats for the fidelity bond). So top up with at
 least 0.001 BTC to start all the node processes. Suggested [faucet
 here] http://xjw3jlepdy35ydwpjuptdbu3y74gyeagcjbuyq7xals2njjxrze6kxid.onion/
 
@@ -242,17 +242,17 @@ This will launch `makerd` and connect it to the Bitcoin RPC core running on its 
   INFO coinswap::maker::server - Highest bond at outpoint fc11a129...c:0 | Amount 5000000 sats | Remaining Timelock for expiry : 536 Blocks
   ```
 
-  **If no fidelity bonds are found**, it will create one using the fidelity amount and timelock from the configuration file. By default, the fidelity amount is `50,000 sats` and the timelock is `13104 blocks`:
+  **If no fidelity bonds are found**, it will create one using the fidelity amount and timelock from the configuration file. By default, the fidelity amount is `10,000 sats` (`fidelity_amount = 10000`) and the timelock is `15,000 blocks` (`fidelity_timelock = 15000`):
 
   ```bash
   INFO coinswap::maker::server - No active Fidelity Bonds found. Creating one.
-  INFO coinswap::maker::server - Fidelity value chosen = 0.0005 BTC
+  INFO coinswap::maker::server - Fidelity value chosen = 0.0001 BTC
   INFO coinswap::maker::server - Fidelity Tx fee = 1000 sats
   ```
 
   > **Note**: Currently, the transaction fee for the fidelity bond is hardcoded at `1000 sats`. This approach of directly considering `fee` not `fee rate` will be improved in v0.1.1 milestones.
 
-- **Funding Requirements**: If creating a new fidelity bond and the maker wallet is empty, you'll need to fund it with at least `0.00051000 BTC` to cover the fidelity amount and transaction fee. To fund the wallet, you can use [this faucet](http://s2ncekhezyo2tkwtftti3aiukfpqmxidatjrdqmwie6xnf2dfggyscad.onion/)(open in Tor browser).
+- **Funding Requirements**: If creating a new fidelity bond and the maker wallet is empty, you'll need to fund it with at least `0.00011000 BTC` to cover the fidelity amount and transaction fee. To fund the wallet, you can use [this faucet](http://s2ncekhezyo2tkwtftti3aiukfpqmxidatjrdqmwie6xnf2dfggyscad.onion/)(open in Tor browser).
   We suggest taking `0.01 BTC` testcoins as the extra amount will be used in doing wallet related operations in [maker-cli demo](./maker-cli.md)
 
 - **Regular Wallet Sync**: The server will regularly sync the wallet every 10 seconds, increasing the interval in the pattern 10,20,30,40..., to detect any incoming funds.

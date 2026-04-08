@@ -20,7 +20,7 @@ use crate::{
 
 use super::{
     api::MakerServer,
-    connection_limiter::{ConnectionGuard, ConnectionLimiter},
+    connection_limiter::ConnectionGuard,
     error::MakerError,
     handlers::{handle_message, ConnectionState, Maker},
 };
@@ -173,14 +173,14 @@ pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
     while !maker.is_shutdown() {
         match listener.accept() {
             Ok((stream, addr)) => {
-                if !maker.connection_limiter.try_accept(addr.ip()) {
+                let Some(connection_guard) = maker.connection_limiter.try_accept(addr.ip()) else {
                     log::warn!(
                         "[{}] Rejected connection from {} due to rate limit or connection cap",
                         maker.config.network_port,
                         addr
                     );
                     continue;
-                }
+                };
 
                 log::info!(
                     "[{}] New connection from {}",
@@ -190,11 +190,12 @@ pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
 
                 let maker_clone = Arc::clone(&maker);
                 let peer_ip = addr.ip();
-                let limiter = Arc::clone(&maker.connection_limiter);
                 thread::Builder::new()
                     .name(format!("connection-{}", addr))
                     .spawn(move || {
-                        if let Err(e) = handle_connection(maker_clone, stream, peer_ip, limiter) {
+                        if let Err(e) =
+                            handle_connection(maker_clone, stream, peer_ip, connection_guard)
+                        {
                             log::error!("Connection error: {:?}", e);
                         }
                     })
@@ -287,10 +288,8 @@ fn handle_connection(
     maker: Arc<MakerServer>,
     stream: TcpStream,
     peer_ip: IpAddr,
-    limiter: Arc<ConnectionLimiter>,
+    _connection_guard: ConnectionGuard,
 ) -> Result<(), MakerError> {
-    let _connection_guard = ConnectionGuard::new(limiter, peer_ip);
-
     stream.set_nonblocking(false).map_err(MakerError::IO)?;
     stream
         .set_read_timeout(Some(IDLE_CONNECTION_TIMEOUT))
