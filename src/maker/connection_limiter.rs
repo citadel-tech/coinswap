@@ -58,9 +58,24 @@ impl ConnectionLimiter {
     /// connections.
     pub(crate) fn try_accept(self: &Arc<Self>, ip: IpAddr) -> Option<ConnectionGuard> {
         let now = Instant::now();
-        let total_active = self.active_count.load(Ordering::Acquire);
-        if total_active >= self.max_connections {
-            return None;
+        let mut active = self.active_count.load(Ordering::Acquire);
+
+        // Atomically reserve one global connection slot. This prevents races
+        // where concurrent acceptors could temporarily exceed max_connections.
+        loop {
+            if active >= self.max_connections {
+                return None;
+            }
+
+            match self.active_count.compare_exchange_weak(
+                active,
+                active + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => break,
+                Err(observed) => active = observed,
+            }
         }
 
         if !ip.is_loopback() {
@@ -69,6 +84,7 @@ impl ConnectionLimiter {
                 let ip_active = self.ip_active.lock().expect("ip_active mutex poisoned");
                 let active_for_ip = ip_active.get(&ip).copied().unwrap_or(0);
                 if active_for_ip >= self.max_per_ip {
+                    self.active_count.fetch_sub(1, Ordering::Release);
                     return None;
                 }
             }
@@ -89,6 +105,7 @@ impl ConnectionLimiter {
                     count
                 };
                 if effective_count >= self.rate_limit_per_ip {
+                    self.active_count.fetch_sub(1, Ordering::Release);
                     return None;
                 }
             }
@@ -102,6 +119,7 @@ impl ConnectionLimiter {
                 *global_rate = (0, now);
             }
             if global_rate.0 >= self.rate_limit_per_ip {
+                self.active_count.fetch_sub(1, Ordering::Release);
                 return None;
             }
             global_rate.0 += 1;
@@ -123,7 +141,6 @@ impl ConnectionLimiter {
             }
         }
 
-        self.active_count.fetch_add(1, Ordering::Release);
         Some(ConnectionGuard {
             limiter: Arc::clone(self),
             ip,
