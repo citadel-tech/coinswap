@@ -5,7 +5,10 @@
 //! fidelity bond information and other coordination signals required
 //! by the Coinswap protocol.
 
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::{
+    net::TcpStream,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 use nostr::{
     event::{EventBuilder, Kind, Tag, TagStandard},
@@ -14,9 +17,10 @@ use nostr::{
     types::Timestamp,
     util::JsonUtil,
 };
-use tungstenite::Message;
+use socks::Socks5Stream;
+use tungstenite::{stream::MaybeTlsStream, Message, WebSocket};
 
-use crate::{maker::MakerError, protocol::common_messages::FidelityProof};
+use crate::{maker::MakerError, protocol::common_messages::FidelityProof, utill::relay_host_port};
 
 /// nostr url for coinswap
 #[cfg(not(feature = "integration-test"))]
@@ -30,10 +34,49 @@ pub const COINSWAP_KIND: u16 = 37778;
 /// Expiration time for noster event (24 hours)
 const EXPIRATION_SECS: u64 = 86400;
 
+/// Opens a WebSocket connection to a Nostr relay.
+///
+/// In production, routes through the local Tor SOCKS5 proxy at `127.0.0.1:<socks_port>`.
+/// Under `integration-test`, connects directly to allow local test relays.
+fn connect_relay_ws(
+    relay: &str,
+    socks_port: u16,
+) -> Result<WebSocket<MaybeTlsStream<TcpStream>>, MakerError> {
+    if cfg!(feature = "integration-test") {
+        return tungstenite::connect(relay).map(|(s, _)| s).map_err(|e| {
+            log::warn!("failed to connect to nostr relay {}: {}", relay, e);
+            MakerError::General("failed to connect to nostr relay")
+        });
+    }
+
+    let host_port = relay_host_port(relay)
+        .map_err(|_| MakerError::General("invalid relay URL: missing ws:// or wss:// scheme"))?;
+    let socks_addr = format!("127.0.0.1:{}", socks_port);
+    let tcp = Socks5Stream::connect(socks_addr.as_str(), host_port.as_str())
+        .map_err(|e| {
+            log::warn!(
+                "failed to reach nostr relay {} via Tor SOCKS5 ({}): {}",
+                relay,
+                socks_addr,
+                e
+            );
+            MakerError::General("failed to connect to nostr relay via Tor")
+        })?
+        .into_inner();
+
+    tungstenite::client_tls_with_config(relay, tcp, None, None)
+        .map(|(s, _)| s)
+        .map_err(|e| {
+            log::warn!("WebSocket handshake failed for {}: {}", relay, e);
+            MakerError::General("WebSocket handshake failed for nostr relay")
+        })
+}
+
 /// Broadcasts a fidelity bond announcement over Nostr.
 pub fn broadcast_bond_on_nostr(
     fidelity: FidelityProof,
     relays: &[String],
+    socks_port: u16,
 ) -> Result<(), MakerError> {
     let outpoint = fidelity.bond.outpoint;
     let content = format!("{}:{}", outpoint.txid, outpoint.vout);
@@ -98,7 +141,7 @@ pub fn broadcast_bond_on_nostr(
 
     for relay in relays {
         for attempt in 1..=MAX_RETRIES {
-            match broadcast_to_relay(relay, &msg) {
+            match broadcast_to_relay(relay, &msg, socks_port) {
                 Ok(()) => {
                     success = true;
                     break;
@@ -127,11 +170,8 @@ pub fn broadcast_bond_on_nostr(
 }
 
 /// Sends a Nostr event to a single relay and waits for confirmation.
-fn broadcast_to_relay(relay: &str, msg: &ClientMessage) -> Result<(), MakerError> {
-    let (mut socket, _) = tungstenite::connect(relay).map_err(|e| {
-        log::warn!("failed to connect to nostr relay {}: {}", relay, e);
-        MakerError::General("failed to connect to nostr relay")
-    })?;
+fn broadcast_to_relay(relay: &str, msg: &ClientMessage, socks_port: u16) -> Result<(), MakerError> {
+    let mut socket = connect_relay_ws(relay, socks_port)?;
 
     socket
         .write(Message::Text(msg.as_json().into()))

@@ -426,6 +426,7 @@ impl MakerServer {
             &rpc_config,
             &data_dir,
             config.network_port,
+            config.socks_port,
         )
         .map_err(MakerError::Watcher)?;
 

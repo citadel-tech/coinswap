@@ -6,6 +6,7 @@
 
 use std::{
     borrow::Cow,
+    net::TcpStream,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
@@ -19,10 +20,12 @@ use nostr::{
     types::Timestamp,
     util::JsonUtil,
 };
-use tungstenite::{stream::MaybeTlsStream, Message};
+use socks::Socks5Stream;
+use tungstenite::{stream::MaybeTlsStream, Message, WebSocket};
 
 use crate::{
     nostr_coinswap::COINSWAP_KIND,
+    utill::relay_host_port,
     watch_tower::{
         registry_storage::FileRegistry,
         rest_backend::BitcoinRest,
@@ -30,6 +33,41 @@ use crate::{
         watcher_error::WatcherError,
     },
 };
+
+/// Opens a WebSocket connection to a Nostr relay.
+///
+/// In production, routes through the local Tor SOCKS5 proxy at `127.0.0.1:<socks_port>`.
+/// Under `integration-test`, connects directly to allow local test relays.
+fn connect_relay_ws(
+    relay: &str,
+    socks_port: u16,
+) -> Result<WebSocket<MaybeTlsStream<TcpStream>>, WatcherError> {
+    if cfg!(feature = "integration-test") {
+        return tungstenite::connect(relay)
+            .map(|(s, _)| s)
+            .map_err(Into::into);
+    }
+
+    let host_port = relay_host_port(relay).map_err(WatcherError::General)?;
+    let socks_addr = format!("127.0.0.1:{}", socks_port);
+    let tcp = Socks5Stream::connect(socks_addr.as_str(), host_port.as_str())
+        .map_err(|e| {
+            log::warn!(
+                "failed to reach nostr relay {} via Tor SOCKS5 ({}): {}",
+                relay,
+                socks_addr,
+                e
+            );
+            WatcherError::IOError(e)
+        })?
+        .into_inner();
+
+    tungstenite::client_tls_with_config(relay, tcp, None, None)
+        .map(|(s, _)| s)
+        .map_err(|e| {
+            WatcherError::General(format!("WebSocket handshake failed for {}: {}", relay, e))
+        })
+}
 
 // ## TODO: Instead of looping over relay's have a connection Pool.
 /// Runs the main discovery routine for maker's fidelity bonds by subscribing to Nostr events (kind 37778).
@@ -39,6 +77,7 @@ pub fn run_discovery(
     shutdown: Arc<AtomicBool>,
     initial_sync_complete: Arc<AtomicBool>,
     relays: &[String],
+    socks_port: u16,
 ) -> Result<(), WatcherError> {
     log::info!("Starting market discovery via Nostr");
 
@@ -64,6 +103,7 @@ pub fn run_discovery(
                     bitcoin_rpc,
                     &seen_txid,
                     &initial_sync_complete,
+                    socks_port,
                 );
             })?;
     }
@@ -80,6 +120,7 @@ fn run_nostr_session_for_relay(
     bitcoin_rpc: Arc<BitcoinRest>,
     seen_txid: &Arc<Mutex<SeenTxids>>,
     initial_sync_complete: &Arc<AtomicBool>,
+    socks_port: u16,
 ) {
     log::info!("Starting Nostr session for relay {}", relay_url);
 
@@ -91,6 +132,7 @@ fn run_nostr_session_for_relay(
             bitcoin_rpc.clone(),
             seen_txid,
             initial_sync_complete,
+            socks_port,
         ) {
             Ok(()) => {
                 // Likely exited due to shutdown
@@ -119,8 +161,9 @@ fn connect_and_run_once(
     bitcoin_rpc: Arc<BitcoinRest>,
     seen_txid: &Arc<Mutex<SeenTxids>>,
     initial_sync_complete: &Arc<AtomicBool>,
+    socks_port: u16,
 ) -> Result<(), WatcherError> {
-    let (mut socket, _) = tungstenite::connect(relay_url)?;
+    let mut socket = connect_relay_ws(relay_url, socks_port)?;
 
     let since = registry.load_nostr_cursor(relay_url).map(Timestamp::from);
 
