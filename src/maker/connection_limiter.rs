@@ -78,39 +78,6 @@ impl ConnectionLimiter {
             }
         }
 
-        if !ip.is_loopback() {
-            // Enforce per-IP active connections.
-            {
-                let ip_active = self.ip_active.lock().expect("ip_active mutex poisoned");
-                let active_for_ip = ip_active.get(&ip).copied().unwrap_or(0);
-                if active_for_ip >= self.max_per_ip {
-                    self.active_count.fetch_sub(1, Ordering::Release);
-                    return None;
-                }
-            }
-
-            // Enforce per-IP connection rate window.
-            {
-                let mut ip_rate = self.ip_rate.lock().expect("ip_rate mutex poisoned");
-
-                // Opportunistically prune stale entries to bound map growth.
-                ip_rate.retain(|_, (_, window_start)| {
-                    now.duration_since(*window_start) < self.rate_window
-                });
-
-                let (count, window_start) = ip_rate.get(&ip).copied().unwrap_or((0, now));
-                let effective_count = if now.duration_since(window_start) >= self.rate_window {
-                    0
-                } else {
-                    count
-                };
-                if effective_count >= self.rate_limit_per_ip {
-                    self.active_count.fetch_sub(1, Ordering::Release);
-                    return None;
-                }
-            }
-        }
-
         // Always enforce a global accept-rate limit so loopback traffic (Tor
         // forwarding in production) is still throttled even without per-IP identity.
         {
@@ -122,23 +89,41 @@ impl ConnectionLimiter {
                 self.active_count.fetch_sub(1, Ordering::Release);
                 return None;
             }
-            global_rate.0 += 1;
-        }
 
-        if !ip.is_loopback() {
-            // Register accepted connection in per-IP rate and active maps.
-            {
+            if !ip.is_loopback() {
+                // Atomically check-and-reserve per-IP active/rate state under the
+                // same critical section so concurrent admissions cannot overbook.
+                let mut ip_active = self.ip_active.lock().expect("ip_active mutex poisoned");
                 let mut ip_rate = self.ip_rate.lock().expect("ip_rate mutex poisoned");
+
+                // Opportunistically prune stale entries to bound map growth.
+                ip_rate.retain(|_, (_, window_start)| {
+                    now.duration_since(*window_start) < self.rate_window
+                });
+
+                let active_for_ip = ip_active.get(&ip).copied().unwrap_or(0);
+                let (count, window_start) = ip_rate.get(&ip).copied().unwrap_or((0, now));
+                let effective_count = if now.duration_since(window_start) >= self.rate_window {
+                    0
+                } else {
+                    count
+                };
+
+                if active_for_ip >= self.max_per_ip || effective_count >= self.rate_limit_per_ip {
+                    self.active_count.fetch_sub(1, Ordering::Release);
+                    return None;
+                }
+
+                *ip_active.entry(ip).or_insert(0) += 1;
                 let entry = ip_rate.entry(ip).or_insert((0, now));
                 if now.duration_since(entry.1) >= self.rate_window {
                     *entry = (0, now);
                 }
                 entry.0 += 1;
             }
-            {
-                let mut ip_active = self.ip_active.lock().expect("ip_active mutex poisoned");
-                *ip_active.entry(ip).or_insert(0) += 1;
-            }
+
+            // Increment global rate only after all admission checks pass.
+            global_rate.0 += 1;
         }
 
         Some(ConnectionGuard {
