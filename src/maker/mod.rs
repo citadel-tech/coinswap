@@ -19,6 +19,7 @@ pub mod taproot_handlers;
 mod taproot_verification;
 
 pub mod api;
+pub mod connection_limiter;
 pub mod handlers;
 pub mod server;
 pub mod swap_tracker;

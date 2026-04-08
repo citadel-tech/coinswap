@@ -31,6 +31,7 @@ use crate::{
 pub use super::handlers::MakerBehavior;
 
 use super::{
+    connection_limiter::ConnectionLimiter,
     error::MakerError,
     handlers::{ConnectionState, Maker as MakerTrait, MakerConfig, SwapPhase},
     rpc::server::MakerRpc,
@@ -105,6 +106,16 @@ pub struct MakerServerConfig {
     pub min_swap_amount: u64,
     /// Required confirmations for funding transactions.
     pub required_confirms: u32,
+    /// Maximum number of simultaneous incoming connections.
+    pub max_connections: usize,
+    /// Maximum number of simultaneous incoming connections per IP address.
+    pub max_connections_per_ip: usize,
+    /// Maximum number of new connections from one IP per rate window.
+    pub connection_rate_limit: u32,
+    /// Connection rate limiting window in seconds.
+    pub connection_rate_window_secs: u64,
+    /// Maximum number of messages per second accepted per connection.
+    pub max_msg_rate_per_sec: u32,
     /// Supported protocol versions.
     pub supported_protocols: Vec<ProtocolVersion>,
     /// ZMQ address for transaction monitoring.
@@ -142,6 +153,11 @@ impl Default for MakerServerConfig {
             time_relative_fee_pct: 0.001,
             min_swap_amount: 10_000,
             required_confirms: 1,
+            max_connections: 50,
+            max_connections_per_ip: 5,
+            connection_rate_limit: 10,
+            connection_rate_window_secs: 60,
+            max_msg_rate_per_sec: 10,
             supported_protocols: vec![ProtocolVersion::Legacy, ProtocolVersion::Taproot],
             zmq_addr: "tcp://127.0.0.1:28332".to_string(),
             fidelity_amount: 10_000,   // 0.05 BTC
@@ -227,6 +243,26 @@ impl MakerServerConfig {
                 config_map.get("required_confirms"),
                 default_config.required_confirms,
             ),
+            max_connections: parse_field(
+                config_map.get("max_connections"),
+                default_config.max_connections,
+            ),
+            max_connections_per_ip: parse_field(
+                config_map.get("max_connections_per_ip"),
+                default_config.max_connections_per_ip,
+            ),
+            connection_rate_limit: parse_field(
+                config_map.get("connection_rate_limit"),
+                default_config.connection_rate_limit,
+            ),
+            connection_rate_window_secs: parse_field(
+                config_map.get("connection_rate_window_secs"),
+                default_config.connection_rate_window_secs,
+            ),
+            max_msg_rate_per_sec: parse_field(
+                config_map.get("max_msg_rate_per_sec"),
+                default_config.max_msg_rate_per_sec,
+            ),
             fidelity_amount: parse_field(
                 config_map.get("fidelity_amount"),
                 default_config.fidelity_amount,
@@ -280,6 +316,16 @@ amount_relative_fee_pct = {}
 time_relative_fee_pct = {}
 # Required confirmations for funding transactions
 required_confirms = {}
+# Max concurrent incoming connections across all IPs
+max_connections = {}
+# Max concurrent incoming connections per IP
+max_connections_per_ip = {}
+# Max new incoming connections per IP within the configured window
+connection_rate_limit = {}
+# Time window in seconds for connection_rate_limit
+connection_rate_window_secs = {}
+# Max messages per second accepted per connection
+max_msg_rate_per_sec = {}
 ",
             self.network_port,
             self.rpc_port,
@@ -295,6 +341,11 @@ required_confirms = {}
             self.amount_relative_fee_pct,
             self.time_relative_fee_pct,
             self.required_confirms,
+            self.max_connections,
+            self.max_connections_per_ip,
+            self.connection_rate_limit,
+            self.connection_rate_window_secs,
+            self.max_msg_rate_per_sec,
         );
 
         std::fs::create_dir_all(path.parent().expect("Config path should not be root"))?;
@@ -372,6 +423,8 @@ pub struct MakerServer {
     pub watch_service: WatchService,
     /// Thread pool for background threads.
     pub thread_pool: Arc<ThreadPool>,
+    /// Connection limiter for incoming peer traffic.
+    pub connection_limiter: Arc<ConnectionLimiter>,
     /// Data directory.
     pub data_dir: PathBuf,
     /// Persistent swap tracker for recovery progress.
@@ -440,6 +493,13 @@ impl MakerServer {
             swap_tracker.log_state();
         }
 
+        let connection_limiter = ConnectionLimiter::new(
+            config.max_connections,
+            config.max_connections_per_ip,
+            config.connection_rate_limit,
+            config.connection_rate_window_secs,
+        );
+
         let nostr_relays = config.nostr_relays.clone();
         Ok(MakerServer {
             config: config.clone(),
@@ -450,6 +510,7 @@ impl MakerServer {
             ongoing_swaps: Mutex::new(HashMap::new()),
             watch_service,
             thread_pool: Arc::new(ThreadPool::new(config.network_port)),
+            connection_limiter,
             data_dir,
             swap_tracker: Mutex::new(swap_tracker),
             nostr_relays,

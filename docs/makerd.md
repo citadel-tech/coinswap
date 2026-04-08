@@ -24,11 +24,17 @@ socks_port = 9050
 control_port = 9051
 tor_auth_password = ""
 min_swap_amount = 10000
-fidelity_amount = 50000
-fidelity_timelock = 13104
-connection_type = TOR
-base_fee = 100,
-amount_relative_fee_pct = 0.1,
+fidelity_amount = 10000
+fidelity_timelock = 15000
+base_fee = 1000
+amount_relative_fee_pct = 0.025
+time_relative_fee_pct = 0.001
+required_confirms = 1
+max_connections = 50
+max_connections_per_ip = 5
+connection_rate_limit = 10
+connection_rate_window_secs = 60
+max_msg_rate_per_sec = 10
 ```
 - `network_port`: TCP port where the Maker listens for incoming Coinswap protocol messages.
 - `rpc_port`: The port through which `makerd` listens for RPC commands from `maker-cli`.
@@ -38,14 +44,20 @@ amount_relative_fee_pct = 0.1,
 - `min_swap_amount`: Minimum swap amount (in satoshis).
 - `fidelity_amount`: Amount (in satoshis) locked as a fidelity bond to deter Sybil attacks.
 - `fidelity_timelock`: Lock duration in block heights for the fidelity bond.
-- `connection_type`: Specifies the network mode; set to "TOR" in production for privacy, or "CLEARNET" during testing.
 - `base_fee`: A fixed fee charged by the Maker for providing its services (in satoshis).
 - `amount_relative_fee_pct`: A percentage fee based on the swap amount.
+- `time_relative_fee_pct`: A percentage fee based on swap duration.
+- `required_confirms`: Number of confirmations required before progressing swap funding state.
+- `max_connections`: Global cap for simultaneous incoming swap connections.
+- `max_connections_per_ip`: Per-IP cap for simultaneous incoming connections (applied to non-loopback peers).
+- `connection_rate_limit`: Max number of newly accepted connections per IP during the configured window.
+- `connection_rate_window_secs`: Time window (in seconds) used by `connection_rate_limit`.
+- `max_msg_rate_per_sec`: Per-connection message-rate cap to prevent request flooding.
 
 
 
 > **Important:**  
-> At the moment, Coinswap operates only on the **TOR** network. The `connection_type` is hardcoded to `TOR`, and the app will only work with this network until multi-network support is added.
+> Production maker traffic is typically received via local Tor forwarding, so many peers appear as loopback (`127.0.0.1`). In that mode, the global connection cap and per-connection message-rate cap provide primary DoS protection.
 
 ### 2. **wallets Directory**
 
@@ -107,7 +119,7 @@ Developers at Citadel-Tech
 Coinswap Maker Server
 
 The server requires a Bitcoin Core RPC connection running in Testnet4. It requires a starting
-balance, around 50,000 sats for Fidelity + Swap Liquidity (suggested 50,000 sats). So top up with at
+balance, around 10,000 sats for Fidelity + Swap Liquidity (suggested 10,000 sats for the fidelity bond). So top up with at
 least 0.001 BTC to start all the node processes. Suggested [faucet
 here] http://xjw3jlepdy35ydwpjuptdbu3y74gyeagcjbuyq7xals2njjxrze6kxid.onion/
 
@@ -230,17 +242,17 @@ This will launch `makerd` and connect it to the Bitcoin RPC core running on its 
   INFO coinswap::maker::server - Highest bond at outpoint fc11a129...c:0 | Amount 5000000 sats | Remaining Timelock for expiry : 536 Blocks
   ```
 
-  **If no fidelity bonds are found**, it will create one using the fidelity amount and timelock from the configuration file. By default, the fidelity amount is `50,000 sats` and the timelock is `13104 blocks`:
+  **If no fidelity bonds are found**, it will create one using the fidelity amount and timelock from the configuration file. By default, the fidelity amount is `10,000 sats` (`fidelity_amount = 10000`) and the timelock is `15,000 blocks` (`fidelity_timelock = 15000`):
 
   ```bash
   INFO coinswap::maker::server - No active Fidelity Bonds found. Creating one.
-  INFO coinswap::maker::server - Fidelity value chosen = 0.0005 BTC
+  INFO coinswap::maker::server - Fidelity value chosen = 0.0001 BTC
   INFO coinswap::maker::server - Fidelity Tx fee = 1000 sats
   ```
 
   > **Note**: Currently, the transaction fee for the fidelity bond is hardcoded at `1000 sats`. This approach of directly considering `fee` not `fee rate` will be improved in v0.1.1 milestones.
 
-- **Funding Requirements**: If creating a new fidelity bond and the maker wallet is empty, you'll need to fund it with at least `0.00051000 BTC` to cover the fidelity amount and transaction fee. To fund the wallet, you can use [this faucet](http://s2ncekhezyo2tkwtftti3aiukfpqmxidatjrdqmwie6xnf2dfggyscad.onion/)(open in Tor browser).
+- **Funding Requirements**: If creating a new fidelity bond and the maker wallet is empty, you'll need to fund it with at least `0.00011000 BTC` to cover the fidelity amount and transaction fee. To fund the wallet, you can use [this faucet](http://s2ncekhezyo2tkwtftti3aiukfpqmxidatjrdqmwie6xnf2dfggyscad.onion/)(open in Tor browser).
   We suggest taking `0.01 BTC` testcoins as the extra amount will be used in doing wallet related operations in [maker-cli demo](./maker-cli.md)
 
 - **Regular Wallet Sync**: The server will regularly sync the wallet every 10 seconds, increasing the interval in the pattern 10,20,30,40..., to detect any incoming funds.

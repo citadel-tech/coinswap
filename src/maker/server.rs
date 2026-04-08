@@ -2,13 +2,13 @@
 
 use std::{
     io::ErrorKind,
-    net::{Ipv4Addr, TcpListener, TcpStream},
+    net::{IpAddr, Ipv4Addr, TcpListener, TcpStream},
     sync::{
         atomic::Ordering::{self, Relaxed},
         Arc,
     },
     thread::{self, sleep},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use crate::{
@@ -20,6 +20,7 @@ use crate::{
 
 use super::{
     api::MakerServer,
+    connection_limiter::ConnectionGuard,
     error::MakerError,
     handlers::{handle_message, ConnectionState, Maker},
 };
@@ -172,6 +173,15 @@ pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
     while !maker.is_shutdown() {
         match listener.accept() {
             Ok((stream, addr)) => {
+                let Some(connection_guard) = maker.connection_limiter.try_accept(addr.ip()) else {
+                    log::warn!(
+                        "[{}] Rejected connection from {} due to rate limit or connection cap",
+                        maker.config.network_port,
+                        addr
+                    );
+                    continue;
+                };
+
                 log::info!(
                     "[{}] New connection from {}",
                     maker.config.network_port,
@@ -179,10 +189,13 @@ pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
                 );
 
                 let maker_clone = Arc::clone(&maker);
+                let peer_ip = addr.ip();
                 thread::Builder::new()
                     .name(format!("connection-{}", addr))
                     .spawn(move || {
-                        if let Err(e) = handle_connection(maker_clone, stream) {
+                        if let Err(e) =
+                            handle_connection(maker_clone, stream, peer_ip, connection_guard)
+                        {
                             log::error!("Connection error: {:?}", e);
                         }
                     })
@@ -271,13 +284,20 @@ fn spawn_nostr_broadcast_thread(
 }
 
 /// Handle a single connection.
-fn handle_connection(maker: Arc<MakerServer>, stream: TcpStream) -> Result<(), MakerError> {
+fn handle_connection(
+    maker: Arc<MakerServer>,
+    stream: TcpStream,
+    peer_ip: IpAddr,
+    _connection_guard: ConnectionGuard,
+) -> Result<(), MakerError> {
     stream.set_nonblocking(false).map_err(MakerError::IO)?;
     stream
         .set_read_timeout(Some(IDLE_CONNECTION_TIMEOUT))
         .map_err(MakerError::IO)?;
 
     let mut state = ConnectionState::default();
+    let mut msg_window_start = Instant::now();
+    let mut msg_count_in_window: u32 = 0;
 
     log::debug!(
         "[{}] Starting connection handler",
@@ -310,6 +330,22 @@ fn handle_connection(maker: Arc<MakerServer>, stream: TcpStream) -> Result<(), M
                 break;
             }
         };
+
+        let now = Instant::now();
+        if now.duration_since(msg_window_start) >= Duration::from_secs(1) {
+            msg_window_start = now;
+            msg_count_in_window = 0;
+        }
+        msg_count_in_window += 1;
+        if msg_count_in_window > maker.config.max_msg_rate_per_sec {
+            log::warn!(
+                "[{}] Message rate limit exceeded for {} (>{} msg/s), dropping connection",
+                maker.config.network_port,
+                peer_ip,
+                maker.config.max_msg_rate_per_sec
+            );
+            break;
+        }
 
         log::debug!(
             "[{}] Received message: {:?}",
