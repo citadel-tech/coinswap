@@ -24,11 +24,17 @@ socks_port = 9050
 control_port = 9051
 tor_auth_password = ""
 min_swap_amount = 10000
-fidelity_amount = 50000
-fidelity_timelock = 13104
-connection_type = TOR
-base_fee = 100,
-amount_relative_fee_pct = 0.1,
+fidelity_amount = 10000
+fidelity_timelock = 15000
+base_fee = 1000
+amount_relative_fee_pct = 0.025
+time_relative_fee_pct = 0.001
+required_confirms = 1
+max_connections = 50
+max_connections_per_ip = 5
+connection_rate_limit = 10
+connection_rate_window_secs = 60
+max_msg_rate_per_sec = 10
 ```
 - `network_port`: TCP port where the Maker listens for incoming Coinswap protocol messages.
 - `rpc_port`: The port through which `makerd` listens for RPC commands from `maker-cli`.
@@ -38,14 +44,20 @@ amount_relative_fee_pct = 0.1,
 - `min_swap_amount`: Minimum swap amount (in satoshis).
 - `fidelity_amount`: Amount (in satoshis) locked as a fidelity bond to deter Sybil attacks.
 - `fidelity_timelock`: Lock duration in block heights for the fidelity bond.
-- `connection_type`: Specifies the network mode; set to "TOR" in production for privacy, or "CLEARNET" during testing.
 - `base_fee`: A fixed fee charged by the Maker for providing its services (in satoshis).
 - `amount_relative_fee_pct`: A percentage fee based on the swap amount.
+- `time_relative_fee_pct`: A percentage fee based on swap duration.
+- `required_confirms`: Number of confirmations required before progressing swap funding state.
+- `max_connections`: Global cap for simultaneous incoming swap connections.
+- `max_connections_per_ip`: Per-IP cap for simultaneous incoming connections (applied to non-loopback peers).
+- `connection_rate_limit`: Max number of newly accepted connections per IP during the configured window.
+- `connection_rate_window_secs`: Time window (in seconds) used by `connection_rate_limit`.
+- `max_msg_rate_per_sec`: Per-connection message-rate cap to prevent request flooding.
 
 
 
 > **Important:**  
-> At the moment, Coinswap operates only on the **TOR** network. The `connection_type` is hardcoded to `TOR`, and the app will only work with this network until multi-network support is added.
+> Production maker traffic is typically received via local Tor forwarding, so many peers appear as loopback (`127.0.0.1`). In that mode, the global connection cap and per-connection message-rate cap provide primary DoS protection.
 
 ### 2. **wallets Directory**
 
