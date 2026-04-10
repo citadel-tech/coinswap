@@ -406,7 +406,12 @@ impl OfferSyncService {
         {
             let mut book = self.offerbook.inner.write().unwrap();
             for addr in maker_addresses {
-                book.upsert_address(MakerAddress::try_from(addr).unwrap());
+                match MakerAddress::try_from(addr) {
+                    Ok(parsed) => book.upsert_address(parsed),
+                    Err(e) => {
+                        log::warn!("Skipping invalid maker address from watcher: {e}");
+                    }
+                }
             }
         }
 

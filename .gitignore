@@ -11,3 +11,4 @@ bin
 docker-compose.generated.yml
 torrc.generated
 .docker-config
+.DS_Store
