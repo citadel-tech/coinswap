@@ -4,7 +4,7 @@ use bitcoin::{
     hashes::Hash,
     key::{rand::thread_rng, Keypair},
     secp256k1::{Secp256k1, SecretKey},
-    Amount, FeeRate, PublicKey, ScriptBuf, WitnessProgram, WitnessVersion,
+    Address, Amount, FeeRate, Network, PublicKey, ScriptBuf, WitnessProgram, WitnessVersion,
 };
 use bitcoind::bitcoincore_rpc::json::ListUnspentResultEntry;
 use crossterm::{
@@ -23,8 +23,6 @@ use log4rs::{
     Config,
 };
 use serde::{Deserialize, Serialize};
-#[cfg(test)]
-use std::str::FromStr;
 use std::{
     cmp::max,
     collections::HashMap,
@@ -32,6 +30,7 @@ use std::{
     io::{self, stdout, BufReader, BufWriter, ErrorKind, Read, Write},
     net::TcpStream,
     path::{Path, PathBuf},
+    str::FromStr,
     sync::{Once, OnceLock},
     time::Duration,
 };
@@ -375,19 +374,27 @@ pub struct UTXO {
 impl UTXO {
     /// Creates an UTXO from detailed internal utxo data
     pub fn from_utxo_data(data: (ListUnspentResultEntry, UTXOSpendInfo)) -> Self {
-        let addr = data
-            .0
+        let (entry, spend_info) = data;
+        let addr = entry
             .address
-            .expect("address always expected")
-            .assume_checked()
-            .to_string();
+            .as_ref()
+            .map(|addr| addr.clone().assume_checked().to_string())
+            .unwrap_or_else(|| format!("script_{}", entry.script_pub_key));
         Self {
             addr,
-            amount: data.0.amount,
-            confirmations: data.0.confirmations,
-            utxo_type: data.1.to_string(),
+            amount: entry.amount,
+            confirmations: entry.confirmations,
+            utxo_type: spend_info.to_string(),
         }
     }
+}
+
+/// Parse a user-provided address and enforce the expected network.
+pub(crate) fn parse_checked_address(address: &str, network: Network) -> Result<Address, NetError> {
+    let unchecked = Address::from_str(address).map_err(|_| NetError::InvalidNetworkAddress)?;
+    unchecked
+        .require_network(network)
+        .map_err(|_| NetError::InvalidAppNetwork)
 }
 
 /// Compute the checksum of a descriptor
@@ -1124,5 +1131,25 @@ mod tests {
             .add_exp_tweak(&secp, &scalar_from_nonce)
             .unwrap();
         assert_eq!(returned_pubkey.to_string(), tweaked_pubkey.to_string());
+    }
+
+    #[test]
+    fn test_parse_checked_address_accepts_expected_network() {
+        let addr = parse_checked_address("1BoatSLRHtKNngkdXEeobR76b53LETtpyT", Network::Bitcoin);
+        assert!(addr.is_ok());
+    }
+
+    #[test]
+    fn test_parse_checked_address_rejects_wrong_network() {
+        let err = parse_checked_address("1BoatSLRHtKNngkdXEeobR76b53LETtpyT", Network::Testnet)
+            .expect_err("mainnet address should fail on testnet");
+        assert!(matches!(err, NetError::InvalidAppNetwork));
+    }
+
+    #[test]
+    fn test_parse_checked_address_rejects_invalid_string() {
+        let err = parse_checked_address("not-an-address", Network::Bitcoin)
+            .expect_err("invalid address string should fail");
+        assert!(matches!(err, NetError::InvalidNetworkAddress));
     }
 }
