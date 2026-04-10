@@ -265,7 +265,7 @@ impl Taker {
                 for (swapcoin, sig) in swap
                     .outgoing_swapcoins
                     .iter_mut()
-                    .zip(sender_sigs.into_iter())
+                    .zip(sender_sigs)
                 {
                     swapcoin.others_contract_sig = Some(sig);
                 }

@@ -653,7 +653,7 @@ impl OfferBook {
     /// Makers are included for both Legacy and Taproot requests.
     fn get_bad_makers(&self, protocol: &MakerProtocol) -> Vec<OfferAndAddress> {
         let mut makers = self.makers.clone();
-        makers.sort_by(|a, b| a.address.0.port.len().cmp(&b.address.0.port.len()));
+        makers.sort_by_key(|a| a.address.0.port.len());
         makers
             .iter()
             .filter(|m| m.state == MakerState::Bad)
