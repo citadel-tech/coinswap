@@ -19,7 +19,7 @@ pub enum NetError {
     /// Error caused by an invalid network address.
     InvalidNetworkAddress,
 
-    /// Error caused by an invalid network address with parser details.
+    /// Error caused by an invalid Bitcoin address, including parser details.
     InvalidNetworkAddressDetailed(String),
 
     /// Error related to CBOR (Concise Binary Object Representation) serialization or deserialization.
