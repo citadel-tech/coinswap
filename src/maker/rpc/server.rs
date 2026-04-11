@@ -9,15 +9,17 @@ use std::{
     time::Duration,
 };
 
-use bitcoin::{Address, Amount};
+use bitcoin::{Amount, Network};
 
 use super::messages::RpcMsgReq;
 use crate::{
     maker::{api::MakerServerConfig, error::MakerError, rpc::messages::RpcMsgResp},
-    utill::{read_message, send_message, TorError, HEART_BEAT_INTERVAL, UTXO},
+    utill::{
+        parse_checked_address, read_message, send_message, TorError, HEART_BEAT_INTERVAL, UTXO,
+    },
     wallet::{AddressType, Destination, Wallet},
 };
-use std::{path::Path, str::FromStr, sync::RwLock};
+use std::{path::Path, sync::RwLock};
 
 pub trait MakerRpc {
     fn wallet(&self) -> &RwLock<Wallet>;
@@ -91,10 +93,9 @@ fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result
             feerate,
         } => {
             let amount = Amount::from_sat(amount);
-            let outputs = vec![(
-                Address::from_str(&address).unwrap().assume_checked(),
-                amount,
-            )];
+            let destination_address =
+                parse_rpc_destination_address(&address, maker.config().network)?;
+            let outputs = vec![(destination_address, amount)];
             let destination = Destination::Multi {
                 outputs,
                 op_return_data: None,
@@ -156,6 +157,13 @@ fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result
     Ok(())
 }
 
+fn parse_rpc_destination_address(
+    address: &str,
+    network: Network,
+) -> Result<bitcoin::Address, MakerError> {
+    parse_checked_address(address, network).map_err(MakerError::from)
+}
+
 pub(crate) fn start_rpc_server<M: MakerRpc>(maker: Arc<M>) -> Result<(), MakerError> {
     let rpc_port = maker.config().rpc_port;
     let listener = TcpListener::bind(("127.0.0.1", rpc_port))?;
@@ -200,4 +208,32 @@ pub(crate) fn start_rpc_server<M: MakerRpc>(maker: Arc<M>) -> Result<(), MakerEr
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_rpc_destination_address;
+    use crate::{error::NetError, maker::error::MakerError};
+    use bitcoin::Network;
+
+    #[test]
+    fn parse_rpc_destination_address_rejects_invalid_address() {
+        let err = parse_rpc_destination_address("not-an-address", Network::Regtest)
+            .expect_err("invalid address should fail");
+        assert!(matches!(
+            err,
+            MakerError::Net(NetError::InvalidNetworkAddressDetailed(_))
+        ));
+    }
+
+    #[test]
+    fn parse_rpc_destination_address_rejects_wrong_network() {
+        let err =
+            parse_rpc_destination_address("1BoatSLRHtKNngkdXEeobR76b53LETtpyT", Network::Regtest)
+                .expect_err("mainnet address should fail for regtest");
+        assert!(matches!(
+            err,
+            MakerError::Net(NetError::InvalidNetworkAddressDetailed(_))
+        ));
+    }
 }

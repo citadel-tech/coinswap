@@ -186,7 +186,7 @@ fn process_taproot_contract<M: Maker>(
         .map_err(|e| MakerError::General(format!("Failed to add timelock leaf: {:?}", e).leak()))?;
 
     let mut ordered_pubkeys = [outgoing_pubkey, data.next_hop_point];
-    ordered_pubkeys.sort_by(|a, b| a.inner.serialize().cmp(&b.inner.serialize()));
+    ordered_pubkeys.sort_by_key(|a| a.inner.serialize());
     let internal_key = crate::protocol::musig_interface::get_aggregated_pubkey_compat(
         ordered_pubkeys[0].inner,
         ordered_pubkeys[1].inner,

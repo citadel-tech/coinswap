@@ -1,4 +1,4 @@
-use bitcoin::{Address, Amount};
+use bitcoin::Amount;
 use bitcoind::bitcoincore_rpc::Auth;
 use clap::Parser;
 use coinswap::{
@@ -7,8 +7,8 @@ use coinswap::{
         error::TakerError, format_state, MakerOfferCandidate, MakerState, SwapParams, Taker,
         TakerInitConfig,
     },
-    utill::{parse_proxy_auth, setup_taker_logger, MIN_FEE_RATE, UTXO},
-    wallet::{AddressType, Destination, RPCConfig, Wallet},
+    utill::{parse_proxy_auth, setup_taker_logger, UTXO},
+    wallet::{AddressType, RPCConfig, Wallet},
 };
 use log::LevelFilter;
 use serde_json::{json, to_string_pretty};
@@ -353,30 +353,13 @@ fn main() -> Result<(), TakerError> {
             };
 
             let mut wallet = taker.get_wallet().write().unwrap();
-            let coins_to_spend = wallet.coin_select(
-                amount,
-                feerate.unwrap_or(MIN_FEE_RATE),
+            let txid = wallet.send_to_address(
+                amount.to_sat(),
+                address.clone(),
+                *feerate,
                 manually_selected_outpoints,
-                None,
             )?;
-
-            let outputs = vec![(Address::from_str(address)?.assume_checked(), amount)];
-            let destination = Destination::Multi {
-                outputs,
-                op_return_data: None,
-                change_address_type: AddressType::P2TR,
-            };
-
-            let tx = wallet.spend_from_wallet(
-                feerate.unwrap_or(MIN_FEE_RATE),
-                destination,
-                &coins_to_spend,
-            )?;
-
-            let txid = wallet.send_tx(&tx).unwrap();
             println!("{txid}");
-
-            wallet.sync_and_save()?;
         }
         Commands::FetchOffers => {
             use std::time::Instant;

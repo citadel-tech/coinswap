@@ -410,7 +410,12 @@ impl OfferSyncService {
         {
             let mut book = self.offerbook.inner.write().unwrap();
             for addr in maker_addresses {
-                book.upsert_address(MakerAddress::try_from(addr).unwrap());
+                match MakerAddress::try_from(addr) {
+                    Ok(parsed) => book.upsert_address(parsed),
+                    Err(e) => {
+                        log::warn!("Skipping invalid maker address from watcher: {e}");
+                    }
+                }
             }
         }
 
@@ -648,7 +653,7 @@ impl OfferBook {
     /// Makers are included for both Legacy and Taproot requests.
     fn get_bad_makers(&self, protocol: &MakerProtocol) -> Vec<OfferAndAddress> {
         let mut makers = self.makers.clone();
-        makers.sort_by(|a, b| a.address.0.port.len().cmp(&b.address.0.port.len()));
+        makers.sort_by_key(|a| a.address.0.port.len());
         makers
             .iter()
             .filter(|m| m.state == MakerState::Bad)
