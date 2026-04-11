@@ -391,8 +391,8 @@ impl UTXO {
 
 /// Parse a user-provided address and enforce the expected network.
 pub(crate) fn parse_checked_address(address: &str, network: Network) -> Result<Address, NetError> {
-    let unchecked =
-        Address::from_str(address).map_err(|e| NetError::InvalidNetworkAddress(e.to_string()))?;
+    let unchecked = Address::from_str(address)
+        .map_err(|e| NetError::InvalidNetworkAddressDetailed(e.to_string()))?;
     unchecked
         .require_network(network)
         .map_err(|_| NetError::InvalidAppNetwork)
@@ -446,9 +446,7 @@ pub(crate) fn compute_checksum(descriptor: &str) -> Result<String, WalletError> 
 pub fn parse_proxy_auth(s: &str) -> Result<(String, String), NetError> {
     let parts: Vec<_> = s.split(':').collect();
     if parts.len() != 2 {
-        return Err(NetError::InvalidNetworkAddress(
-            "proxy auth must be in user:password format".to_string(),
-        ));
+        return Err(NetError::InvalidNetworkAddress);
     }
 
     let user = parts[0].to_string();
@@ -1149,6 +1147,6 @@ mod tests {
     fn test_parse_checked_address_rejects_invalid_string() {
         let err = parse_checked_address("not-an-address", Network::Bitcoin)
             .expect_err("invalid address string should fail");
-        assert!(matches!(err, NetError::InvalidNetworkAddress(_)));
+        assert!(matches!(err, NetError::InvalidNetworkAddressDetailed(_)));
     }
 }
