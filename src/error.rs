@@ -17,7 +17,9 @@ pub enum NetError {
     ConnectionTimedOut,
 
     /// Error caused by an invalid network address.
-    InvalidNetworkAddress,
+    ///
+    /// Contains parser details to make invalid input failures actionable.
+    InvalidNetworkAddress(String),
 
     /// Error related to CBOR (Concise Binary Object Representation) serialization or deserialization.
     ///
