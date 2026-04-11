@@ -137,7 +137,12 @@ impl Wallet {
     ) -> Result<Txid, WalletError> {
         let amount = Amount::from_sat(amount);
 
-        let addr = parse_checked_address(&address, self.store.network).map_err(|_| {
+        let addr = parse_checked_address(&address, self.store.network).map_err(|e| {
+            log::debug!(
+                "Address validation failed for network {:?}: {:?}",
+                self.store.network,
+                e
+            );
             WalletError::General("Invalid address for the current wallet network".to_string())
         })?;
 
