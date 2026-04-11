@@ -137,6 +137,9 @@ impl Wallet {
     ) -> Result<Txid, WalletError> {
         let amount = Amount::from_sat(amount);
 
+        let addr = parse_checked_address(&address, self.store.network)
+            .map_err(|e| WalletError::General(format!("Invalid address: {e}")))?;
+
         let coins_to_spend = self.coin_select(
             amount,
             fee_rate.unwrap_or(MIN_FEE_RATE),
@@ -144,8 +147,6 @@ impl Wallet {
             None,
         )?;
 
-        let addr = parse_checked_address(&address, self.store.network)
-            .map_err(|e| WalletError::General(format!("Invalid address: {e}")))?;
         let outputs = vec![(addr, amount)];
         let destination = Destination::Multi {
             outputs,
@@ -161,7 +162,6 @@ impl Wallet {
 
         let txid = self.send_tx(&tx)?;
         self.sync_and_save()?;
-        println!("Send to Address TxId: {txid}");
 
         Ok(txid)
     }

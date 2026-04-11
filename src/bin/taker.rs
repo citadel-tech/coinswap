@@ -353,13 +353,12 @@ fn main() -> Result<(), TakerError> {
             };
 
             let mut wallet = taker.get_wallet().write().unwrap();
-            let txid = wallet.send_to_address(
+            wallet.send_to_address(
                 amount.to_sat(),
                 address.clone(),
                 *feerate,
                 manually_selected_outpoints,
             )?;
-            println!("{txid}");
         }
         Commands::FetchOffers => {
             use std::time::Instant;
