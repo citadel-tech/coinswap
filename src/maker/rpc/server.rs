@@ -221,7 +221,7 @@ mod tests {
             .expect_err("invalid address should fail");
         assert!(matches!(
             err,
-            MakerError::Net(NetError::InvalidNetworkAddress(_))
+            MakerError::Net(NetError::InvalidNetworkAddressDetailed(_))
         ));
     }
 
