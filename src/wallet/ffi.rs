@@ -137,8 +137,9 @@ impl Wallet {
     ) -> Result<Txid, WalletError> {
         let amount = Amount::from_sat(amount);
 
-        let addr = parse_checked_address(&address, self.store.network)
-            .map_err(|e| WalletError::General(format!("Invalid address: {e}")))?;
+        let addr = parse_checked_address(&address, self.store.network).map_err(|_| {
+            WalletError::General("Invalid address for the current wallet network".to_string())
+        })?;
 
         let coins_to_spend = self.coin_select(
             amount,

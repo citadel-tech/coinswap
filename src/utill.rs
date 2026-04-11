@@ -393,9 +393,12 @@ impl UTXO {
 pub(crate) fn parse_checked_address(address: &str, network: Network) -> Result<Address, NetError> {
     let unchecked = Address::from_str(address)
         .map_err(|e| NetError::InvalidNetworkAddressDetailed(e.to_string()))?;
-    unchecked
-        .require_network(network)
-        .map_err(|_| NetError::InvalidAppNetwork)
+    unchecked.require_network(network).map_err(|_| {
+        NetError::InvalidNetworkAddressDetailed(format!(
+            "address is not valid for the expected Bitcoin network: expected {:?}",
+            network
+        ))
+    })
 }
 
 /// Compute the checksum of a descriptor
@@ -1140,7 +1143,7 @@ mod tests {
     fn test_parse_checked_address_rejects_wrong_network() {
         let err = parse_checked_address("1BoatSLRHtKNngkdXEeobR76b53LETtpyT", Network::Testnet)
             .expect_err("mainnet address should fail on testnet");
-        assert!(matches!(err, NetError::InvalidAppNetwork));
+        assert!(matches!(err, NetError::InvalidNetworkAddressDetailed(_)));
     }
 
     #[test]

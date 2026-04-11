@@ -231,6 +231,9 @@ mod tests {
         let err =
             parse_rpc_destination_address("1BoatSLRHtKNngkdXEeobR76b53LETtpyT", Network::Regtest)
                 .expect_err("mainnet address should fail for regtest");
-        assert!(matches!(err, MakerError::Net(NetError::InvalidAppNetwork)));
+        assert!(matches!(
+            err,
+            MakerError::Net(NetError::InvalidNetworkAddressDetailed(_))
+        ));
     }
 }
