@@ -155,13 +155,52 @@ impl Wallet {
 
         let _ = self.import_descriptors(&descriptors_to_import, Some(time), None);
 
+        let mut last_reported_percent: Option<u8> = None;
         // Returns when the scanning is completed
         loop {
             let wallet_info = self.rpc.get_wallet_info()?;
             match wallet_info.scanning {
-                Some(ScanningDetails::Scanning { duration, .. }) => {
-                    // Todo: Show scan progress
-                    log::info!("Scanning for {}s", duration);
+                Some(ScanningDetails::Scanning {
+                    duration, progress, ..
+                }) => {
+                    // Progress comes from RPC and should be in [0, 1], but clamp/validate
+                    // defensively in case of transient or unexpected values.
+                    let progress = if progress.is_finite() {
+                        progress.clamp(0.0, 1.0)
+                    } else {
+                        0.0
+                    };
+                    let percent = (progress * 100.0).floor() as u8;
+
+                    // Approximate current scan height from progress fraction.
+                    let span = node_synced.saturating_sub(last_synced_height);
+                    let walked = ((span as f64) * f64::from(progress)).round() as u64;
+                    let scan_tip = last_synced_height
+                        .saturating_add(walked.min(span))
+                        .min(node_synced);
+
+                    // Avoid noisy logs every heartbeat if percent has not changed.
+                    if last_reported_percent != Some(percent) {
+                        let eta_secs = if progress > 0.0 {
+                            (((duration as f64) / f64::from(progress)) - (duration as f64))
+                                .max(0.0)
+                                .round() as u64
+                        } else {
+                            0
+                        };
+
+                        log::info!(
+                            "Scanning {:.2}% | elapsed={}s | eta~{}s | height {}/{}",
+                            progress * 100.0,
+                            duration,
+                            eta_secs,
+                            scan_tip,
+                            node_synced
+                        );
+
+                        last_reported_percent = Some(percent);
+                    }
+
                     thread::sleep(HEART_BEAT_INTERVAL);
                     continue;
                 }
