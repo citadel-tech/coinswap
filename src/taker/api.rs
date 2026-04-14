@@ -632,8 +632,14 @@ impl Taker {
         let initial_sync_clone = initial_sync_complete.clone();
 
         let nostr_relays = config.nostr_relays.clone();
-        let mut watcher =
-            Watcher::<Taker>::new(backend, registry, rx_requests, tx_events, nostr_relays);
+        let mut watcher = Watcher::<Taker>::new(
+            backend,
+            registry,
+            rx_requests,
+            tx_events,
+            nostr_relays,
+            config.socks_port,
+        );
         let _ = thread::Builder::new()
             .name("Watcher thread".to_string())
             .spawn(move || watcher.run(rpc_config_watcher, initial_sync_clone));

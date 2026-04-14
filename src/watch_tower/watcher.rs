@@ -40,6 +40,7 @@ pub struct Watcher<R: Role> {
     rx_requests: StdReceiver<WatcherCommand>,
     tx_events: CbSender<WatcherEvent>,
     nostr_relays: Vec<String>,
+    socks_port: u16,
     _role: PhantomData<R>,
 }
 
@@ -94,6 +95,7 @@ impl<R: Role> Watcher<R> {
         rx_requests: StdReceiver<WatcherCommand>,
         tx_events: CbSender<WatcherEvent>,
         nostr_relays: Vec<String>,
+        socks_port: u16,
     ) -> Self {
         Self {
             backend,
@@ -101,6 +103,7 @@ impl<R: Role> Watcher<R> {
             rx_requests,
             tx_events,
             nostr_relays,
+            socks_port,
             _role: PhantomData,
         }
     }
@@ -126,6 +129,7 @@ impl<R: Role> Watcher<R> {
             let discovery_clone = discovery_shutdown.clone();
             if R::RUN_DISCOVERY {
                 let initial_sync_complete = initial_sync_complete.clone();
+                let socks_port = self.socks_port;
                 s.spawn(move || {
                     if let Err(e) = nostr_discovery::run_discovery(
                         rest_backend_1,
@@ -133,6 +137,7 @@ impl<R: Role> Watcher<R> {
                         discovery_shutdown.clone(),
                         initial_sync_complete,
                         &nostr_relays,
+                        socks_port,
                     ) {
                         log::error!("Discovery thread failed: {:?}", e);
                     }

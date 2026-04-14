@@ -231,12 +231,13 @@ fn spawn_nostr_broadcast_thread(
 
     let maker_clone = Arc::clone(maker);
     let relays = maker.nostr_relays.clone();
+    let socks_port = maker.config.socks_port;
 
     let handle = thread::Builder::new()
         .name("nostr-thread".to_string())
         .spawn(move || {
             // Initial broadcast
-            if let Err(e) = broadcast_bond_on_nostr(fidelity.clone(), &relays) {
+            if let Err(e) = broadcast_bond_on_nostr(fidelity.clone(), &relays, socks_port) {
                 log::warn!("Initial nostr broadcast failed: {:?}", e);
             }
 
@@ -256,7 +257,7 @@ fn spawn_nostr_broadcast_thread(
 
                 log::debug!("Re-pinging nostr relays with bond announcement");
 
-                if let Err(e) = broadcast_bond_on_nostr(fidelity.clone(), &relays) {
+                if let Err(e) = broadcast_bond_on_nostr(fidelity.clone(), &relays, socks_port) {
                     log::warn!("Nostr re-ping failed: {:?}", e);
                 }
             }

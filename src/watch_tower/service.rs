@@ -88,6 +88,7 @@ pub fn start_maker_watch_service(
     rpc_config: &RPCConfig,
     data_dir: &Path,
     network_port: u16,
+    socks_port: u16,
 ) -> Result<WatchService, WatcherError> {
     // Backends
     let backend = ZmqBackend::new(zmq_addr);
@@ -106,8 +107,14 @@ pub fn start_maker_watch_service(
 
     // Watcher
     let rpc_config_watcher = rpc_config.clone();
-    let mut watcher =
-        Watcher::<MakerRole>::new(backend, registry, rx_requests, tx_events, Vec::new());
+    let mut watcher = Watcher::<MakerRole>::new(
+        backend,
+        registry,
+        rx_requests,
+        tx_events,
+        Vec::new(),
+        socks_port,
+    );
 
     // Makers don't run discovery, so pass an already-complete flag.
     thread::Builder::new()

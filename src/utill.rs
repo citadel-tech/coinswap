@@ -184,6 +184,28 @@ pub fn setup_logger(filter: LevelFilter, data_dir: Option<PathBuf>) {
     });
 }
 
+/// Extracts `host:port` from a `ws://` or `wss://` relay URL for SOCKS5 target addressing.
+/// Assumes standard relay URL format (no IPv6 literals, no userinfo).
+pub fn relay_host_port(relay: &str) -> Result<String, String> {
+    let rest = relay
+        .strip_prefix("wss://")
+        .or_else(|| relay.strip_prefix("ws://"))
+        .ok_or_else(|| {
+            format!(
+                "invalid relay URL (missing ws:// or wss:// scheme): {}",
+                relay
+            )
+        })?;
+    let authority = rest.split('/').next().unwrap_or(rest);
+    if authority.contains(':') {
+        Ok(authority.to_string())
+    } else if relay.starts_with("wss://") {
+        Ok(format!("{}:443", authority))
+    } else {
+        Ok(format!("{}:80", authority))
+    }
+}
+
 /// Send a length-appended Protocol or RPC Message through a stream.
 /// The first byte sent is the length of the actual message.
 pub fn send_message(
@@ -1124,5 +1146,26 @@ mod tests {
             .add_exp_tweak(&secp, &scalar_from_nonce)
             .unwrap();
         assert_eq!(returned_pubkey.to_string(), tweaked_pubkey.to_string());
+    }
+
+    #[test]
+    fn test_relay_host_port() {
+        use super::relay_host_port;
+
+        assert_eq!(relay_host_port("wss://nos.lol").unwrap(), "nos.lol:443");
+        assert_eq!(
+            relay_host_port("wss://relay.damus.io").unwrap(),
+            "relay.damus.io:443"
+        );
+        assert_eq!(
+            relay_host_port("ws://127.0.0.1:8000").unwrap(),
+            "127.0.0.1:8000"
+        );
+        assert_eq!(relay_host_port("ws://abc.onion").unwrap(), "abc.onion:80");
+        assert_eq!(
+            relay_host_port("wss://relay.example.com:9443/path").unwrap(),
+            "relay.example.com:9443"
+        );
+        assert!(relay_host_port("https://example.com").is_err());
     }
 }
