@@ -65,8 +65,21 @@ fn test_fidelity() {
 
     thread::sleep(Duration::from_secs(6));
 
-    let log_path = format!("{}/taker/debug.log", test_framework.temp_dir.display());
-    test_framework.assert_log("Send at least 0.01000424 BTC to", &log_path);
+    // The maker should still be waiting for enough funds to create its first fidelity bond
+    assert!(
+        !maker.is_setup_complete.load(Relaxed),
+        "maker should remain uninitialized while it lacks funds for the first fidelity bond"
+    );
+    assert!(
+        maker
+            .wallet
+            .read()
+            .unwrap()
+            .get_highest_fidelity_index()
+            .unwrap()
+            .is_none(),
+        "no fidelity bond should exist before sufficient funds are provided"
+    );
 
     log::info!("Adding sufficient funds for fidelity bond creation");
     // Provide the Maker with more funds.
@@ -81,9 +94,6 @@ fn test_fidelity() {
     maker.shutdown.store(true, Relaxed);
 
     let _ = maker_thread.join().unwrap();
-
-    // Assert that successful fidelity bond creation is logged
-    test_framework.assert_log("Successfully created fidelity bond", &log_path);
 
     log::info!("Verifying first fidelity bond creation");
     // Verify that the fidelity bond is created correctly.

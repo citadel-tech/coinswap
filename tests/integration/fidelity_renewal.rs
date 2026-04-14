@@ -152,13 +152,27 @@ fn test_fidelity_auto_renewal() {
         "Fidelity bond should have been automatically renewed"
     );
 
-    let log_file = test_framework.temp_dir.join("taker/debug.log");
-    let log_path = log_file.to_str().unwrap();
-    test_framework.assert_log(
-        "Fidelity Bond at index: 0 expired | Redeeming it.",
-        log_path,
-    );
-    test_framework.assert_log("Successfully created fidelity bond", log_path);
+    maker.wallet.write().unwrap().sync_and_save().unwrap();
+    {
+        // After renewal, the expired bond should be spent and the replacement bond should advance the fidelity index.
+        let wallet_read = maker.wallet.read().unwrap();
+
+        let original_bond = wallet_read
+            .get_fidelity_bonds()
+            .get(&initial_bond_index)
+            .unwrap();
+        assert!(
+            original_bond.is_spent(),
+            "original fidelity bond should be spent after renewal"
+        );
+
+        let renewed_index = wallet_read.get_highest_fidelity_index().unwrap();
+        assert_eq!(
+            renewed_index,
+            Some(initial_bond_index + 1),
+            "renewal should create the next fidelity bond index"
+        );
+    }
 
     // Shutdown
     maker.shutdown.store(true, Relaxed);
