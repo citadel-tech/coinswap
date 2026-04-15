@@ -181,8 +181,8 @@ impl ConnectionState {
 
 /// Trait for maker operations.
 pub trait Maker: Send + Sync {
-    /// Get the network port for logging.
-    fn network_port(&self) -> u16;
+    /// Short identifier for log lines (maker's wallet name).
+    fn wallet_name(&self) -> &str;
 
     /// Get the Bitcoin network.
     fn network(&self) -> bitcoin::Network;
@@ -321,7 +321,7 @@ pub fn handle_message<M: Maker>(
 
     log::debug!(
         "[{}] Handling message: {:?} (phase: {:?}, protocol: {:?})",
-        Maker::network_port(maker.as_ref()),
+        Maker::wallet_name(maker.as_ref()),
         message,
         state.phase,
         state.protocol
@@ -366,7 +366,7 @@ pub fn handle_message<M: Maker>(
         TakerToMakerMessage::WaitingFundingConfirmation(ref id) => {
             log::info!(
                 "[{}] Taker is waiting for funding confirmation (swap {}). Resetting timer.",
-                maker.network_port(),
+                maker.wallet_name(),
                 id
             );
             state.touch();
@@ -385,7 +385,7 @@ fn handle_taker_hello<M: Maker>(
 
     log::info!(
         "[{}] Received TakerHello",
-        Maker::network_port(maker.as_ref()),
+        Maker::wallet_name(maker.as_ref()),
     );
 
     let config = maker.get_config();
@@ -393,7 +393,7 @@ fn handle_taker_hello<M: Maker>(
 
     log::info!(
         "[{}] Supported protocols: {:?}",
-        Maker::network_port(maker.as_ref()),
+        Maker::wallet_name(maker.as_ref()),
         config.supported_protocols
     );
 
@@ -412,7 +412,7 @@ fn handle_get_offer<M: Maker>(
 
     log::info!(
         "[{}] Received GetOffer request",
-        Maker::network_port(maker.as_ref())
+        Maker::wallet_name(maker.as_ref())
     );
 
     let (_, tweakable_point) = maker.get_tweakable_keypair()?;
@@ -435,7 +435,7 @@ fn handle_get_offer<M: Maker>(
 
     log::info!(
         "[{}] Sending offer: min={}, max={}",
-        Maker::network_port(maker.as_ref()),
+        Maker::wallet_name(maker.as_ref()),
         offer.min_size,
         offer.max_size
     );
@@ -453,7 +453,7 @@ fn handle_swap_details<M: Maker>(
 
     log::info!(
         "[{}] Received SwapDetails: amount={}, timelock={}, protocol={:?}",
-        Maker::network_port(maker.as_ref()),
+        Maker::wallet_name(maker.as_ref()),
         details.amount,
         details.timelock,
         details.protocol_version
@@ -474,7 +474,7 @@ fn handle_swap_details<M: Maker>(
 
     log::info!(
         "[{}] Accepting swap (id: {})",
-        Maker::network_port(maker.as_ref()),
+        Maker::wallet_name(maker.as_ref()),
         details.id
     );
 
@@ -482,7 +482,7 @@ fn handle_swap_details<M: Maker>(
     if maker.behavior() == MakerBehavior::CloseAfterAckResponse {
         log::warn!(
             "[{}] Test behavior: closing after AckSwapDetails",
-            maker.network_port()
+            maker.wallet_name()
         );
         return Err(MakerError::General("Test: closing after ack response"));
     }
@@ -498,7 +498,7 @@ fn restore_state_if_needed<M: Maker>(maker: &Arc<M>, state: &mut ConnectionState
         if let Some(stored) = maker.get_connection_state(swap_id) {
             log::info!(
                 "[{}] Restored state for {}: amount={}, timelock={}, phase={:?}, outgoing_count={}",
-                maker.network_port(),
+                maker.wallet_name(),
                 swap_id,
                 stored.swap_amount,
                 stored.timelock,
@@ -529,7 +529,7 @@ fn handle_legacy_dispatch<M: Maker>(
 
     log::info!(
         "[{}] Dispatching Legacy message: {} (swap_id: {})",
-        maker.network_port(),
+        maker.wallet_name(),
         legacy_msg,
         swap_id
     );
@@ -549,7 +549,7 @@ fn handle_taproot_dispatch<M: Maker>(
 
     log::info!(
         "[{}] Dispatching Taproot message: {:?} (swap_id: {})",
-        maker.network_port(),
+        maker.wallet_name(),
         taproot_msg,
         swap_id
     );

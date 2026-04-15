@@ -604,7 +604,7 @@ impl MakerServer {
                         } else {
                             log::error!(
                                 "[{}] Fidelity Bond Creation failed: {:?}",
-                                self.config.network_port,
+                                self.config.wallet_name.as_str(),
                                 e
                             );
                             return Err(MakerError::Wallet(e));
@@ -615,7 +615,7 @@ impl MakerServer {
                         // so other operations (swaps, balance reads, etc.) aren't blocked.
                         log::info!(
                             "[{}] Fidelity bond broadcast, waiting for confirmation: {}",
-                            self.config.network_port,
+                            self.config.wallet_name.as_str(),
                             txid
                         );
                         let conf_height = self
@@ -634,7 +634,7 @@ impl MakerServer {
 
                         log::info!(
                             "[{}] Successfully created fidelity bond",
-                            self.config.network_port
+                            self.config.wallet_name.as_str()
                         );
                         let highest_proof = self
                             .wallet
@@ -754,8 +754,8 @@ impl MakerServer {
 }
 
 impl MakerTrait for MakerServer {
-    fn network_port(&self) -> u16 {
-        self.config.network_port
+    fn wallet_name(&self) -> &str {
+        &self.config.wallet_name
     }
 
     fn get_tweakable_keypair(
@@ -997,7 +997,7 @@ impl MakerTrait for MakerServer {
     fn sweep_incoming_swapcoins(&self) -> Result<(), MakerError> {
         log::info!(
             "[{}] Sweeping coins after successful swap",
-            self.config.network_port
+            self.config.wallet_name.as_str()
         );
 
         // Sweep all completed incoming swapcoins
@@ -1011,7 +1011,7 @@ impl MakerTrait for MakerServer {
         if !sweep_outcome.is_empty() {
             log::info!(
                 "[{}] Successfully swept {} incoming swap coins",
-                self.config.network_port,
+                self.config.wallet_name.as_str(),
                 sweep_outcome.resolved.len(),
             );
         }
@@ -1019,7 +1019,7 @@ impl MakerTrait for MakerServer {
         // Sync and save wallet state
         log::info!(
             "[{}] Sync at:----sweep_incoming_swapcoins----",
-            self.config.network_port
+            self.config.wallet_name.as_str()
         );
         self.wallet
             .write()
@@ -1046,7 +1046,7 @@ impl MakerTrait for MakerServer {
         swap_state.last_activity = Instant::now();
         log::debug!(
             "[{}] Stored connection state for {}: amount={}, timelock={}, protocol={:?}, outgoing_count={}",
-            self.config.network_port,
+            self.config.wallet_name.as_str(),
             swap_id,
             state.swap_amount,
             state.timelock,
@@ -1098,7 +1098,7 @@ impl MakerTrait for MakerServer {
     ) -> Result<Vec<bitcoin::ecdsa::Signature>, MakerError> {
         log::info!(
             "[{}] Verifying and signing {} sender contract txs",
-            self.config.network_port,
+            self.config.wallet_name.as_str(),
             txs_info.len()
         );
 
@@ -1109,7 +1109,7 @@ impl MakerTrait for MakerServer {
             &tweakable_pubkey,
             hashvalue,
             locktime,
-            self.config.network_port,
+            self.config.wallet_name.as_str(),
         )?;
 
         let mut sigs = Vec::new();
@@ -1140,13 +1140,16 @@ impl MakerTrait for MakerServer {
                 MakerError::General("Failed to sign contract transaction")
             })?;
 
-            log::debug!("[{}] Signed sender contract tx", self.config.network_port);
+            log::debug!(
+                "[{}] Signed sender contract tx",
+                self.config.wallet_name.as_str()
+            );
             sigs.push(sig);
         }
 
         log::info!(
             "[{}] Generated {} signatures for sender contracts",
-            self.config.network_port,
+            self.config.wallet_name.as_str(),
             sigs.len()
         );
         Ok(sigs)
@@ -1170,7 +1173,7 @@ impl MakerTrait for MakerServer {
 
         log::info!(
             "[{}] Verifying proof of funding for swap {}",
-            self.config.network_port,
+            self.config.wallet_name.as_str(),
             message.id
         );
 
@@ -1271,7 +1274,7 @@ impl MakerTrait for MakerServer {
         let hashvalue = hashvalue.ok_or(MakerError::General("No hashvalue found in contracts"))?;
         log::info!(
             "[{}] Proof of funding verified successfully, hashvalue={:?}",
-            self.config.network_port,
+            self.config.wallet_name.as_str(),
             hashvalue.to_byte_array()
         );
         Ok(hashvalue)
@@ -1289,7 +1292,7 @@ impl MakerTrait for MakerServer {
     ) -> Result<(Vec<Transaction>, Vec<OutgoingSwapCoin>, Amount), MakerError> {
         log::info!(
             "[{}] Initializing coinswap: amount={} sats, {} pubkeys",
-            self.config.network_port,
+            self.config.wallet_name.as_str(),
             send_amount.to_sat(),
             next_multisig_pubkeys.len()
         );
@@ -1360,7 +1363,7 @@ impl MakerTrait for MakerServer {
 
         log::info!(
             "[{}] Created {} funding txs and {} outgoing swapcoins, mining_fees={}",
-            self.config.network_port,
+            self.config.wallet_name.as_str(),
             create_funding_txes_result.funding_txes.len(),
             outgoing_swapcoins.len(),
             mining_fees
@@ -1393,7 +1396,7 @@ impl MakerTrait for MakerServer {
                             if &computed_script == multisig_redeemscript {
                                 log::debug!(
                                     "[{}] Found outgoing swapcoin in ongoing swap state",
-                                    self.config.network_port
+                                    self.config.wallet_name.as_str()
                                 );
                                 return Some(outgoing.clone());
                             }
@@ -1409,7 +1412,7 @@ impl MakerTrait for MakerServer {
             {
                 log::debug!(
                     "[{}] Found outgoing swapcoin in wallet store",
-                    self.config.network_port
+                    self.config.wallet_name.as_str()
                 );
                 return Some(swapcoin.clone());
             }
@@ -1417,7 +1420,7 @@ impl MakerTrait for MakerServer {
 
         log::debug!(
             "[{}] No outgoing swapcoin found for multisig script",
-            self.config.network_port
+            self.config.wallet_name.as_str()
         );
         None
     }
