@@ -179,6 +179,10 @@ impl SeenTxids {
         }
     }
 
+    pub fn contains(&self, txid: &Txid) -> bool {
+        self.seen.contains(txid)
+    }
+
     /// Returns true if txid was newly inserted (not seen before).
     /// Returns false if txid was already present.
     /// Uses FIFO eviction when capacity is exceeded.

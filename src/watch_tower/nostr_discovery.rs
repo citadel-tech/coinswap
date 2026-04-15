@@ -222,28 +222,34 @@ fn handle_relay_message(
                 return Ok(());
             };
 
-            registry.save_nostr_cursor(relay_url, event.created_at.as_secs());
+            if seen_txid.lock()?.contains(&txid) {
+                log::debug!("Transaction ID already present {txid} via {relay_url}");
+                registry.save_nostr_cursor(relay_url, event.created_at.as_secs());
+                return Ok(());
+            }
+
+            let Ok(tx) = bitcoin_rpc.get_raw_tx(&txid) else {
+                log::debug!(
+                    "get_raw_tx failed for {txid:?} via {relay_url}, will retry on next delivery"
+                );
+                return Ok(());
+            };
+
+            match process_fidelity(&tx) {
+                Some(fidelity) => {
+                    if registry.insert_fidelity(txid, fidelity) {
+                        log::info!("Stored verified fidelity via {relay_url}: {txid}:{vout}");
+                    }
+                }
+                None => {
+                    log::debug!("Invalid fidelity {txid}:{vout} via {relay_url}");
+                }
+            }
 
             if seen_txid.lock()?.insert(txid) {
                 log::debug!("add new cache {}", txid);
-                let Ok(tx) = bitcoin_rpc.get_raw_tx(&txid) else {
-                    log::debug!("Received invalid txid: {txid:?}");
-                    return Ok(());
-                };
-
-                match process_fidelity(&tx) {
-                    Some(fidelity) => {
-                        if registry.insert_fidelity(txid, fidelity) {
-                            log::info!("Stored verified fidelity via {relay_url}: {txid}:{vout}");
-                        }
-                    }
-                    None => {
-                        log::debug!("Invalid fidelity {txid}:{vout} via {relay_url}");
-                    }
-                }
-            } else {
-                log::debug!("Transaction ID already present {txid} via {relay_url}")
             }
+            registry.save_nostr_cursor(relay_url, event.created_at.as_secs());
         }
 
         RelayMessage::EndOfStoredEvents(sub_id) => {
