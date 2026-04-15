@@ -78,7 +78,7 @@ const DISCOVERY_WAIT_MAX: Duration = Duration::from_secs(150);
 pub struct OfferAndAddress {
     /// Details for Maker Offer
     pub offer: Offer,
-    /// Maker Address: onion_addr:port
+    /// Maker address (hostname)
     pub address: MakerAddress,
     /// Current state of maker
     pub state: MakerState,
@@ -90,7 +90,7 @@ pub struct OfferAndAddress {
 /// A maker may or may not currently have an offer.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MakerOfferCandidate {
-    /// Maker Address: onion_addr:port
+    /// Maker address (hostname)
     pub address: MakerAddress,
 
     /// Latest offer, if successfully fetched
@@ -197,19 +197,14 @@ impl fmt::Display for MakerProtocol {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
-struct OnionAddress {
-    port: String,
-    onion_addr: String,
-}
-
-/// Enum representing maker addresses.
+/// Maker address: just the hostname (e.g. `"xyz.onion"`).
+/// In integration tests (clearnet), this is `"ip:port"`.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Hash)]
-pub struct MakerAddress(OnionAddress);
+pub struct MakerAddress(String);
 
 impl fmt::Display for MakerAddress {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}:{}", self.0.onion_addr, self.0.port)
+        f.write_str(&self.0)
     }
 }
 
@@ -217,10 +212,11 @@ impl TryFrom<&mut TcpStream> for MakerAddress {
     type Error = std::io::Error;
     fn try_from(value: &mut TcpStream) -> Result<Self, Self::Error> {
         let socket_addr = value.peer_addr()?;
-        Ok(MakerAddress(OnionAddress {
-            port: socket_addr.port().to_string(),
-            onion_addr: socket_addr.ip().to_string(),
-        }))
+        Ok(MakerAddress(format!(
+            "{}:{}",
+            socket_addr.ip(),
+            socket_addr.port()
+        )))
     }
 }
 
@@ -616,9 +612,8 @@ impl OfferBook {
     /// Gets all active (good) offers for a given protocol.
     /// Makers are included for both Legacy and Taproot requests.
     fn active_makers(&self, protocol: &MakerProtocol) -> Vec<OfferAndAddress> {
-        let mut makers = self.makers.clone();
-        makers.sort_by(|a, b| a.address.0.port.cmp(&b.address.0.port));
-        makers
+        let mut result: Vec<_> = self
+            .makers
             .iter()
             .filter(|m| m.state == MakerState::Good)
             .filter(|m| {
@@ -628,7 +623,9 @@ impl OfferBook {
                     .unwrap_or(false)
             })
             .filter_map(|m| m.as_offer_and_address())
-            .collect()
+            .collect();
+        result.sort_by(|a, b| a.address.cmp(&b.address));
+        result
     }
 
     fn good_makers(&self) -> Vec<OfferAndAddress> {
@@ -647,9 +644,8 @@ impl OfferBook {
     /// Gets the list of bad makers.
     /// Makers are included for both Legacy and Taproot requests.
     fn get_bad_makers(&self, protocol: &MakerProtocol) -> Vec<OfferAndAddress> {
-        let mut makers = self.makers.clone();
-        makers.sort_by(|a, b| a.address.0.port.len().cmp(&b.address.0.port.len()));
-        makers
+        let mut result: Vec<_> = self
+            .makers
             .iter()
             .filter(|m| m.state == MakerState::Bad)
             .filter(|m| {
@@ -659,7 +655,9 @@ impl OfferBook {
                     .unwrap_or(false)
             })
             .filter_map(|m| m.as_offer_and_address())
-            .collect()
+            .collect();
+        result.sort_by(|a, b| a.address.cmp(&b.address));
+        result
     }
 
     /// Load existing file, updates it, writes it back (create if path doesn't exist).
@@ -759,28 +757,34 @@ pub(crate) fn fetch_offer_from_makers(
     Ok(offers)
 }
 
-impl TryFrom<String> for OnionAddress {
-    type Error = &'static str;
-
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        let mut parts = value.splitn(2, ':');
-        let onion_addr = parts.next().ok_or("Missing onion address")?.to_string();
-        let port = parts.next().ok_or("Missing port")?.to_string();
-
-        if onion_addr.is_empty() || port.is_empty() {
-            return Err("Empty onion address or port");
-        }
-
-        Ok(OnionAddress { onion_addr, port })
-    }
-}
-
 impl TryFrom<String> for MakerAddress {
     type Error = &'static str;
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
-        let onion = OnionAddress::try_from(value)?;
-        Ok(MakerAddress(onion))
+        if value.is_empty() {
+            return Err("Empty address");
+        }
+
+        #[cfg(feature = "integration-test")]
+        {
+            // Integration tests use "ip:port" format
+            let mut parts = value.splitn(2, ':');
+            let ip = parts.next().ok_or("Missing IP")?;
+            let port = parts.next().ok_or("Missing port")?;
+            if ip.is_empty() || port.is_empty() {
+                return Err("Empty IP or port");
+            }
+        }
+
+        #[cfg(not(feature = "integration-test"))]
+        {
+            // Production: value is just a hostname like "xyz.onion"
+            if !value.ends_with(".onion") {
+                return Err("Not a valid .onion hostname");
+            }
+        }
+
+        Ok(MakerAddress(value))
     }
 }
 
@@ -819,17 +823,18 @@ impl MakerAddress {
 
     /// Download a single offer from a maker.
     fn fetch_offer(&self, socks_port: u16) -> Result<(Offer, MakerProtocol), TakerError> {
-        let maker_addr = self.to_string();
-        log::debug!("Downloading offer from maker: {}", maker_addr);
+        use crate::protocol::common_messages::COINSWAP_PORT;
+
+        log::debug!("Downloading offer from maker: {}", self);
 
         let mut socket = if cfg!(feature = "integration-test") {
-            TcpStream::connect(&maker_addr)?
+            // Integration test: self.0 is "ip:port"
+            TcpStream::connect(self.to_string())?
         } else {
-            Socks5Stream::connect(
-                format!("127.0.0.1:{socks_port}").as_str(),
-                maker_addr.as_ref(),
-            )?
-            .into_inner()
+            // Production: self.0 is a .onion hostname, append the well-known port
+            let addr = format!("{}:{}", self.0, COINSWAP_PORT);
+            Socks5Stream::connect(format!("127.0.0.1:{socks_port}").as_str(), addr.as_ref())?
+                .into_inner()
         };
 
         socket.set_read_timeout(Some(Duration::from_secs(FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC)))?;
@@ -894,7 +899,7 @@ impl MakerAddress {
 
         log::info!(
             "Successfully downloaded offer from maker: {} (protocol: Unified)",
-            maker_addr
+            self
         );
 
         Ok((offer, MakerProtocol::Unified))
@@ -922,11 +927,8 @@ mod tests {
         Amount, OutPoint, Txid,
     };
 
-    fn addr(port: &str) -> MakerAddress {
-        MakerAddress(OnionAddress {
-            port: port.to_string(),
-            onion_addr: "testonionaddress.onion".to_string(),
-        })
+    fn addr(id: &str) -> MakerAddress {
+        MakerAddress(format!("testmaker{id}.onion"))
     }
 
     fn dummy_offer(maker_addr: &str) -> Offer {

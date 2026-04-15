@@ -13,6 +13,9 @@ use super::{
 };
 use crate::wallet::FidelityBond;
 
+/// Well-known virtual port for the CoinSwap protocol over Tor.
+pub const COINSWAP_PORT: u16 = 21;
+
 /// Hash preimage type used in HTLC contracts.
 pub type Preimage = [u8; 32];
 

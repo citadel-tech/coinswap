@@ -591,11 +591,12 @@ pub fn prompt_password(message: String) -> io::Result<String> {
 
 pub(crate) fn get_emphemeral_address(
     control_port: u16,
-    target_port: u16,
+    local_port: u16,
     password: &str,
     private_key_data: Option<&str>,
     service_id_data: Option<&str>,
 ) -> Result<(String, String), TorError> {
+    use crate::protocol::common_messages::COINSWAP_PORT;
     use std::io::BufRead;
     let mut stream = TcpStream::connect(format!("127.0.0.1:{control_port}"))?;
     let mut reader = BufReader::new(stream.try_clone()?);
@@ -609,10 +610,10 @@ pub(crate) fn get_emphemeral_address(
         stream.write_all(remove_command.as_bytes())?;
     }
     let mut add_onion_command =
-        format!("ADD_ONION NEW:BEST Flags=Detach Port={target_port},127.0.0.1:{target_port}\r\n");
+        format!("ADD_ONION NEW:BEST Flags=Detach Port={COINSWAP_PORT},127.0.0.1:{local_port}\r\n");
     if let Some(pk) = private_key_data {
         add_onion_command =
-            format!("ADD_ONION {pk} Flags=Detach Port={target_port},127.0.0.1:{target_port}\r\n");
+            format!("ADD_ONION {pk} Flags=Detach Port={COINSWAP_PORT},127.0.0.1:{local_port}\r\n");
         private_key = pk.to_string();
     }
     stream.write_all(add_onion_command.as_bytes())?;
@@ -647,7 +648,7 @@ pub(crate) fn get_emphemeral_address(
 pub(crate) fn get_tor_hostname(
     data_dir: &Path,
     control_port: u16,
-    target_port: u16,
+    local_port: u16,
     password: &str,
 ) -> Result<String, TorError> {
     let tor_config_path = data_dir.join("tor/hostname");
@@ -661,7 +662,7 @@ pub(crate) fn get_tor_hostname(
 
             let (hostname, private_key) = get_emphemeral_address(
                 control_port,
-                target_port,
+                local_port,
                 password,
                 Some(private_key_data),
                 Some(hostname_data.replace(".onion", "").as_str()),
@@ -677,7 +678,7 @@ pub(crate) fn get_tor_hostname(
     }
 
     let (hostname, private_key) =
-        get_emphemeral_address(control_port, target_port, password, None, None)?;
+        get_emphemeral_address(control_port, local_port, password, None, None)?;
 
     if let Some(parent) = tor_config_path.parent() {
         fs::create_dir_all(parent)?;

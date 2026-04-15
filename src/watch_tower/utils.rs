@@ -53,16 +53,7 @@ fn extract_op_return_data(script: &[u8]) -> Option<&[u8]> {
 
 #[cfg(not(feature = "integration-test"))]
 fn is_valid_onion_address(s: &str) -> bool {
-    let parts: Vec<&str> = s.split(':').collect();
-    if parts.len() != 2 {
-        return false;
-    }
-    let domain = parts[0];
-    let port = parts[1];
-    if !domain.ends_with(".onion") {
-        return false;
-    }
-    matches!(port.parse::<u16>(), Ok(p) if p > 0)
+    s.ends_with(".onion") && s.len() > ".onion".len()
 }
 
 #[cfg(feature = "integration-test")]
@@ -215,7 +206,7 @@ mod tests {
     use bitcoind::tempfile::TempDir;
 
     #[cfg(not(feature = "integration-test"))]
-    const TEST_ADDR: &[u8] = b"aslkdfjbiakdsfn.onion:9050#500";
+    const TEST_ADDR: &[u8] = b"aslkdfjbiakdsfn.onion#500";
     #[cfg(feature = "integration-test")]
     const TEST_ADDR: &[u8] = b"127.0.0.1:9050#500";
 
@@ -261,7 +252,7 @@ mod tests {
         let ann = process_fidelity(&tx).expect("expected valid fidelity announcement");
 
         #[cfg(not(feature = "integration-test"))]
-        assert_eq!(ann.onion, "aslkdfjbiakdsfn.onion:9050");
+        assert_eq!(ann.onion, "aslkdfjbiakdsfn.onion");
         #[cfg(feature = "integration-test")]
         assert_eq!(ann.onion, "127.0.0.1:9050");
         assert_eq!(ann.expires_at_height, 500);
@@ -300,7 +291,7 @@ mod tests {
         );
         assert!(process_fidelity(&tx_no).is_none());
 
-        let bad = op_return(b"aslkdfjbiakdsfn.onion:9050");
+        let bad = op_return(b"aslkdfjbiakdsfn.onion");
         let tx_bad = tx(
             1,
             vec![OutPoint::null()],
@@ -308,7 +299,7 @@ mod tests {
         );
         assert!(process_fidelity(&tx_bad).is_none());
 
-        let bad2 = op_return(b"aslkdfjbiakdsfn.onion:9050#abc");
+        let bad2 = op_return(b"aslkdfjbiakdsfn.onion#abc");
         let tx_bad2 = tx(
             1,
             vec![OutPoint::null()],

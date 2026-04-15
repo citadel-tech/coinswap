@@ -1643,6 +1643,8 @@ impl Taker {
 
     /// Connect to a maker using either direct connection or Tor proxy.
     pub(crate) fn net_connect(&self, address: &str) -> Result<TcpStream, TakerError> {
+        use crate::protocol::common_messages::COINSWAP_PORT;
+
         log::debug!("Connecting to maker at {}", address);
         let timeout = Duration::from_secs(CONNECT_TIMEOUT_SECS);
 
@@ -1658,7 +1660,8 @@ impl Taker {
             })?,
             ConnectionType::Tor => {
                 let socks_addr = format!("127.0.0.1:{}", self.config.socks_port);
-                Socks5Stream::connect(socks_addr.as_str(), address)
+                let tor_target = format!("{}:{}", address, COINSWAP_PORT);
+                Socks5Stream::connect(socks_addr.as_str(), tor_target.as_str())
                     .map_err(|e| {
                         TakerError::General(format!(
                             "Failed to connect to {} via Tor: {}",
