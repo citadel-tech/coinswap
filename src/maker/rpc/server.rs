@@ -124,8 +124,7 @@ fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result
                 RpcMsgResp::GetTorAddressResp("Maker is not running on TOR".to_string())
             } else {
                 let hostname = maker.get_tor_hostname()?;
-                let address = format!("{}:{}", hostname, maker.config().network_port);
-                RpcMsgResp::GetTorAddressResp(address)
+                RpcMsgResp::GetTorAddressResp(hostname)
             }
         }
         RpcMsgReq::Stop => {

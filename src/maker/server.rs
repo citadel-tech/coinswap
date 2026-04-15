@@ -60,12 +60,10 @@ pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
     };
     listener.set_nonblocking(true).map_err(MakerError::IO)?;
 
-    let maker_port = maker.config.network_port;
     let maker_address = if cfg!(feature = "integration-test") {
-        format!("127.0.0.1:{maker_port}")
+        format!("127.0.0.1:{}", maker.config.network_port)
     } else {
-        let maker_hostname = maker.get_tor_hostname()?;
-        format!("{maker_hostname}:{maker_port}")
+        maker.get_tor_hostname()?
     };
 
     log::info!(
