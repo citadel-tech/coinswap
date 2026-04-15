@@ -1,7 +1,7 @@
 //! Nostr discovery module.
 //!
 //! Handles the discovery of Maker fidelity bonds via Nostr relays. It creates persistent
-//! subscriptions to CoinSwap-related events (kind 37778), validates incoming fidelity
+//! subscriptions to network-specific CoinSwap events, validates incoming fidelity
 //! announcements against the Bitcoin blockchain, and stores verified bonds in the registry.
 
 use std::{
@@ -12,6 +12,7 @@ use std::{
     },
 };
 
+use bitcoin::Network;
 use nostr::{
     event::Kind,
     filter::Filter,
@@ -22,7 +23,7 @@ use nostr::{
 use tungstenite::{stream::MaybeTlsStream, Message};
 
 use crate::{
-    nostr_coinswap::COINSWAP_KIND,
+    nostr_coinswap::coinswap_kind,
     watch_tower::{
         registry_storage::FileRegistry,
         rest_backend::BitcoinRest,
@@ -32,9 +33,10 @@ use crate::{
 };
 
 // ## TODO: Instead of looping over relay's have a connection Pool.
-/// Runs the main discovery routine for maker's fidelity bonds by subscribing to Nostr events (kind 37778).
+/// Runs the main discovery routine for maker's fidelity bonds by subscribing to network-specific Nostr events.
 pub fn run_discovery(
     bitcoin_rpc: BitcoinRest,
+    network: Network,
     registry: FileRegistry,
     shutdown: Arc<AtomicBool>,
     initial_sync_complete: Arc<AtomicBool>,
@@ -59,6 +61,7 @@ pub fn run_discovery(
             .spawn(move || {
                 run_nostr_session_for_relay(
                     &relay.clone(),
+                    network,
                     registry,
                     shutdown,
                     bitcoin_rpc,
@@ -75,6 +78,7 @@ pub fn run_discovery(
 /// Reconnects automatically until shutdown is requested.
 fn run_nostr_session_for_relay(
     relay_url: &str,
+    network: Network,
     registry: Arc<FileRegistry>,
     shutdown: Arc<AtomicBool>,
     bitcoin_rpc: Arc<BitcoinRest>,
@@ -86,6 +90,7 @@ fn run_nostr_session_for_relay(
     while !shutdown.load(Ordering::SeqCst) {
         match connect_and_run_once(
             relay_url,
+            network,
             registry.clone(),
             shutdown.clone(),
             bitcoin_rpc.clone(),
@@ -111,9 +116,10 @@ fn run_nostr_session_for_relay(
 }
 
 /// Establishes websocket connection to single Nostr relay and processes events until error or shutdown.
-/// Subscribe to Nostr events on Kind (37778).
+/// Subscribe to Nostr events on the Coinswap kind for the active network.
 fn connect_and_run_once(
     relay_url: &str,
+    network: Network,
     registry: Arc<FileRegistry>,
     shutdown: Arc<AtomicBool>,
     bitcoin_rpc: Arc<BitcoinRest>,
@@ -121,10 +127,11 @@ fn connect_and_run_once(
     initial_sync_complete: &Arc<AtomicBool>,
 ) -> Result<(), WatcherError> {
     let (mut socket, _) = tungstenite::connect(relay_url)?;
+    let kind = coinswap_kind(network);
 
     let since = registry.load_nostr_cursor(relay_url).map(Timestamp::from);
 
-    let mut filter = Filter::new().kind(Kind::Custom(COINSWAP_KIND));
+    let mut filter = Filter::new().kind(Kind::Custom(kind));
     if let Some(since) = since {
         filter = filter.since(since);
     }
@@ -144,7 +151,7 @@ fn connect_and_run_once(
     log::info!(
         "Subscribed to fidelity announcements on {} (kind={}, since={:?})",
         relay_url,
-        COINSWAP_KIND,
+        kind,
         since
     );
 
@@ -154,18 +161,21 @@ fn connect_and_run_once(
         shutdown,
         bitcoin_rpc,
         relay_url,
+        network,
         seen_txid,
         initial_sync_complete,
     )
 }
 
 /// Stream all the events from the Nostr relay and deserialize from json until shutdown
+#[allow(clippy::too_many_arguments)]
 fn read_event_loop(
     registry: Arc<FileRegistry>,
     mut socket: tungstenite::WebSocket<MaybeTlsStream<std::net::TcpStream>>,
     shutdown: Arc<AtomicBool>,
     bitcoin_rpc: Arc<BitcoinRest>,
     relay_url: &str,
+    network: Network,
     seen_txid: &Arc<Mutex<SeenTxids>>,
     initial_sync_complete: &Arc<AtomicBool>,
 ) -> Result<(), WatcherError> {
@@ -185,6 +195,7 @@ fn read_event_loop(
             relay_msg,
             bitcoin_rpc.clone(),
             relay_url,
+            network,
             seen_txid,
             initial_sync_complete,
         )?;
@@ -201,12 +212,13 @@ fn handle_relay_message(
     msg: RelayMessage,
     bitcoin_rpc: Arc<BitcoinRest>,
     relay_url: &str,
+    network: Network,
     seen_txid: &Arc<Mutex<SeenTxids>>,
     initial_sync_complete: &Arc<AtomicBool>,
 ) -> Result<(), WatcherError> {
     match msg {
         RelayMessage::Event { event, .. } => {
-            if event.kind != Kind::Custom(COINSWAP_KIND) {
+            if event.kind != Kind::Custom(coinswap_kind(network)) {
                 return Ok(());
             }
 

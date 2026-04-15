@@ -236,7 +236,9 @@ fn spawn_nostr_broadcast_thread(
         .name("nostr-thread".to_string())
         .spawn(move || {
             // Initial broadcast
-            if let Err(e) = broadcast_bond_on_nostr(fidelity.clone(), &relays) {
+            if let Err(e) =
+                broadcast_bond_on_nostr(fidelity.clone(), maker_clone.config.network, &relays)
+            {
                 log::warn!("Initial nostr broadcast failed: {:?}", e);
             }
 
@@ -256,7 +258,9 @@ fn spawn_nostr_broadcast_thread(
 
                 log::debug!("Re-pinging nostr relays with bond announcement");
 
-                if let Err(e) = broadcast_bond_on_nostr(fidelity.clone(), &relays) {
+                if let Err(e) =
+                    broadcast_bond_on_nostr(fidelity.clone(), maker_clone.config.network, &relays)
+                {
                     log::warn!("Nostr re-ping failed: {:?}", e);
                 }
             }
@@ -1004,7 +1008,7 @@ pub fn bind_port_retry(port: u16) -> Result<(TcpListener, u16), MakerError> {
             Ok(l) => return Ok((l, current_port)),
             Err(e) if e.kind() == ErrorKind::AddrInUse => {
                 log::info!("Port {} in use, trying {}", current_port, current_port + 2);
-                current_port += 2;
+                current_port += 2
             }
             Err(e) => {
                 log::error!("Failed to bind port {}: {}", current_port, e);

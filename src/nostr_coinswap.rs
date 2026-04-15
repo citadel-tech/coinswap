@@ -7,6 +7,7 @@
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use bitcoin::Network;
 use nostr::{
     event::{EventBuilder, Kind, Tag, TagStandard},
     key::{Keys, SecretKey},
@@ -25,19 +26,29 @@ pub const NOSTR_RELAYS: &[&str] = &["wss://nos.lol", "wss://relay.damus.io"];
 #[cfg(feature = "integration-test")]
 pub const NOSTR_RELAYS: &[&str] = &["ws://127.0.0.1:8000"];
 
-/// coinswap nostr event kind
-pub const COINSWAP_KIND: u16 = 37778;
+/// Returns the Coinswap Nostr event kind for the given Bitcoin network.
+pub fn coinswap_kind(network: Network) -> u16 {
+    match network {
+        Network::Bitcoin => 37778,
+        Network::Signet => 37779,
+        Network::Regtest => 37780,
+        Network::Testnet => 37781,
+        Network::Testnet4 => 37782,
+    }
+}
 /// Expiration time for noster event (24 hours)
 const EXPIRATION_SECS: u64 = 86400;
 
 /// Broadcasts a fidelity bond announcement over Nostr.
 pub fn broadcast_bond_on_nostr(
     fidelity: FidelityProof,
+    network: Network,
     relays: &[String],
 ) -> Result<(), MakerError> {
     let outpoint = fidelity.bond.outpoint;
     let content = format!("{}:{}", outpoint.txid, outpoint.vout);
-    // Kind 37778 is in the NIP-33 parameterized-replaceable range (30000..39999),
+    let kind = coinswap_kind(network);
+    // Coinswap kinds are in the NIP-33 parameterized-replaceable range (30000..39999),
     // so included a stable `d` tag to keep relay handling spec-compliant.
     let d_tag = format!("fidelity:{}", content);
 
@@ -69,7 +80,7 @@ pub fn broadcast_bond_on_nostr(
         expiration
     );
 
-    let event = EventBuilder::new(Kind::Custom(COINSWAP_KIND), content)
+    let event = EventBuilder::new(Kind::Custom(kind), content)
         .tag(Tag::identifier(d_tag))
         .tag(Tag::from_standardized(TagStandard::Expiration(
             Timestamp::from_secs(expiration),
@@ -82,7 +93,7 @@ pub fn broadcast_bond_on_nostr(
         "Nostr event built | event_id={} pubkey={} kind={} created_at={} tags={:?}",
         event.id,
         event.pubkey,
-        COINSWAP_KIND,
+        kind,
         event.created_at,
         event.tags
     );
