@@ -83,6 +83,14 @@ pub enum WalletError {
     ///
     /// Typically occurs during fee calculation or coin selection operations.
     Selection(rust_coinselect::types::SelectionError),
+
+    /// Represents an error caused by an invalid Bitcoin address
+    ///
+    /// wraps the internal [`bitcoin::address::ParseError`] directly so callers
+    /// retain full detail about why parsing failed (bad checksums, wrong prefix,
+    /// invalid characters, etc.) without losing information by converting to a
+    /// plain string
+    InvalidAddress(bitcoin::address::ParseError),
 }
 
 impl From<std::io::Error> for WalletError {
@@ -114,6 +122,7 @@ impl From<ProtocolError> for WalletError {
         Self::Protocol(value)
     }
 }
+
 impl From<serde_cbor::Error> for WalletError {
     fn from(value: serde_cbor::Error) -> Self {
         Self::Cbor(value)
@@ -180,6 +189,12 @@ impl From<rust_coinselect::types::SelectionError> for WalletError {
     }
 }
 
+impl From<bitcoin::address::ParseError> for WalletError {
+    fn from(value: bitcoin::address::ParseError) -> Self {
+        Self::InvalidAddress(value)
+    }
+}
+
 impl std::fmt::Display for WalletError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -206,6 +221,7 @@ impl std::fmt::Display for WalletError {
                 )
             }
             WalletError::Selection(e) => write!(f, "Coin selection error: {:?}", e),
+            WalletError::InvalidAddress(e) => write!(f, "Invalid Bitcoin address: {}", e),
         }
     }
 }
@@ -221,6 +237,7 @@ impl std::error::Error for WalletError {
             WalletError::BIP39(e) => Some(e),
             WalletError::Locktime(e) => Some(e),
             WalletError::Secp(e) => Some(e),
+            WalletError::InvalidAddress(e) => Some(e),
             _ => None,
         }
     }

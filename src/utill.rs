@@ -4,7 +4,7 @@ use bitcoin::{
     hashes::Hash,
     key::{rand::thread_rng, Keypair},
     secp256k1::{Secp256k1, SecretKey},
-    Amount, FeeRate, PublicKey, ScriptBuf, WitnessProgram, WitnessVersion,
+    Address, Amount, FeeRate, Network, PublicKey, ScriptBuf, WitnessProgram, WitnessVersion,
 };
 use bitcoind::bitcoincore_rpc::json::ListUnspentResultEntry;
 use crossterm::{
@@ -23,8 +23,6 @@ use log4rs::{
     Config,
 };
 use serde::{Deserialize, Serialize};
-#[cfg(test)]
-use std::str::FromStr;
 use std::{
     cmp::max,
     collections::HashMap,
@@ -32,6 +30,7 @@ use std::{
     io::{self, stdout, BufReader, BufWriter, ErrorKind, Read, Write},
     net::TcpStream,
     path::{Path, PathBuf},
+    str::FromStr,
     sync::{Once, OnceLock},
     time::Duration,
 };
@@ -375,19 +374,32 @@ pub struct UTXO {
 impl UTXO {
     /// Creates an UTXO from detailed internal utxo data
     pub fn from_utxo_data(data: (ListUnspentResultEntry, UTXOSpendInfo)) -> Self {
-        let addr = data
-            .0
+        let (entry, spend_info) = data;
+        let addr = entry
             .address
-            .expect("address always expected")
-            .assume_checked()
-            .to_string();
+            .as_ref()
+            .map(|addr| addr.clone().assume_checked().to_string())
+            .unwrap_or_else(|| format!("script_{}", entry.script_pub_key));
         Self {
             addr,
-            amount: data.0.amount,
-            confirmations: data.0.confirmations,
-            utxo_type: data.1.to_string(),
+            amount: entry.amount,
+            confirmations: entry.confirmations,
+            utxo_type: spend_info.to_string(),
         }
     }
+}
+
+/// Parse a user-provided address and enforce the expected network.
+pub(crate) fn parse_checked_address(
+    address: &str,
+    network: Network,
+) -> Result<Address, WalletError> {
+    let unchecked = Address::from_str(address).map_err(WalletError::InvalidAddress)?;
+    unchecked.require_network(network).map_err(|e| {
+        WalletError::General(format!(
+            "Address Network Mismatch | Expected : {network} | Details: {e}"
+        ))
+    })
 }
 
 /// Compute the checksum of a descriptor
@@ -877,37 +889,33 @@ pub fn interactive_select(
 
     loop {
         match read()? {
-            Event::Mouse(mouse_event) => {
-                if mouse_event.kind == MouseEventKind::Down(MouseButton::Left) {
-                    let click_row = mouse_event.row;
-                    let click_col = mouse_event.column;
+            Event::Mouse(mouse_event)
+                if mouse_event.kind == MouseEventKind::Down(MouseButton::Left) =>
+            {
+                let click_row = mouse_event.row;
+                let click_col = mouse_event.column;
 
-                    if click_row >= HEADER_LINES as u16 {
-                        let display_row = (click_row - HEADER_LINES as u16) / LINES_PER_ROW as u16;
-                        let actual_row = scroll_offset + display_row as usize;
-                        let box_col = click_col / COL_SPACING as u16;
-                        let i = actual_row * cols + box_col as usize;
+                if click_row >= HEADER_LINES as u16 {
+                    let display_row = (click_row - HEADER_LINES as u16) / LINES_PER_ROW as u16;
+                    let actual_row = scroll_offset + display_row as usize;
+                    let box_col = click_col / COL_SPACING as u16;
+                    let i = actual_row * cols + box_col as usize;
 
-                        if i < choices.len() {
-                            selected[i] = !selected[i];
+                    if i < choices.len() {
+                        selected[i] = !selected[i];
 
-                            render_utxo_grid(&mut stdout, &choices, &selected, scroll_offset)?;
-                        }
+                        render_utxo_grid(&mut stdout, &choices, &selected, scroll_offset)?;
                     }
                 }
             }
             Event::Key(key_event) => match key_event.code {
-                KeyCode::PageUp => {
-                    if scroll_offset > 0 {
-                        scroll_offset -= 1;
-                        render_utxo_grid(&mut stdout, &choices, &selected, scroll_offset)?;
-                    }
+                KeyCode::PageUp if scroll_offset > 0 => {
+                    scroll_offset -= 1;
+                    render_utxo_grid(&mut stdout, &choices, &selected, scroll_offset)?;
                 }
-                KeyCode::PageDown => {
-                    if scroll_offset < max_scroll {
-                        scroll_offset += 1;
-                        render_utxo_grid(&mut stdout, &choices, &selected, scroll_offset)?;
-                    }
+                KeyCode::PageDown if scroll_offset < max_scroll => {
+                    scroll_offset += 1;
+                    render_utxo_grid(&mut stdout, &choices, &selected, scroll_offset)?;
                 }
                 // Numlock your keyboard, key 3 is PageDown and key 9 is PageUp
                 KeyCode::Up => {
@@ -1124,5 +1132,183 @@ mod tests {
             .add_exp_tweak(&secp, &scalar_from_nonce)
             .unwrap();
         assert_eq!(returned_pubkey.to_string(), tweaked_pubkey.to_string());
+    }
+
+    // ── parse_checked_address tests ──────────────────────────────────────────
+
+    #[test]
+    fn test_parse_checked_address_accepts_valid_mainnet() {
+        // Standard P2PKH mainnet address
+        let addr = parse_checked_address("1BoatSLRHtKNngkdXEeobR76b53LETtpyT", Network::Bitcoin);
+        assert!(addr.is_ok(), "valid mainnet address must be accepted");
+    }
+
+    #[test]
+    fn test_parse_checked_address_rejects_completely_invalid_string() {
+        // Totally garbage input — must fail at the parse step
+        let err = parse_checked_address("not-an-address", Network::Bitcoin)
+            .expect_err("garbage string should fail");
+        assert!(
+            matches!(err, WalletError::InvalidAddress(_)),
+            "expected InvalidAddress, got: {:?}",
+            err
+        );
+        // Internal parse error detail must be non-empty
+        if let WalletError::InvalidAddress(inner) = &err {
+            let msg = inner.to_string();
+            assert!(!msg.is_empty(), "inner parse error should have a message");
+        }
+    }
+
+    #[test]
+    fn test_parse_checked_address_rejects_empty_string() {
+        let err =
+            parse_checked_address("", Network::Bitcoin).expect_err("empty string should fail");
+        assert!(
+            matches!(err, WalletError::InvalidAddress(_)),
+            "expected InvalidAddress, got: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_parse_checked_address_rejects_truncated_address() {
+        // Valid prefix but truncated — checksum/length mismatch
+        let err = parse_checked_address("1BoatSLRHtKNng", Network::Bitcoin)
+            .expect_err("truncated address should fail");
+        assert!(
+            matches!(err, WalletError::InvalidAddress(_)),
+            "expected InvalidAddress, got: {:?}",
+            err
+        );
+        if let WalletError::InvalidAddress(inner) = &err {
+            assert!(!inner.to_string().is_empty());
+        }
+    }
+
+    #[test]
+    fn test_parse_checked_address_rejects_address_with_invalid_chars() {
+        // Base58 doesn't include 0, O, I, l — inserting one corrupts the address
+        let err = parse_checked_address("1BoatSLRHtKNngkdXEeobR76b53LET0pyT", Network::Bitcoin)
+            .expect_err("address with invalid base58 chars should fail");
+        assert!(
+            matches!(err, WalletError::InvalidAddress(_)),
+            "expected InvalidAddress, got: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_parse_checked_address_rejects_wrong_network_mainnet_on_testnet() {
+        // Mainnet address rejected on Testnet — fails at require_network step
+        let err = parse_checked_address("1BoatSLRHtKNngkdXEeobR76b53LETtpyT", Network::Testnet)
+            .expect_err("mainnet address should fail on testnet");
+        assert!(
+            matches!(err, WalletError::General(_)),
+            "expected General (network mismatch), got: {:?}",
+            err
+        );
+        if let WalletError::General(msg) = &err {
+            assert!(
+                msg.contains("Address Network Mismatch"),
+                "error must mention mismatch, got: {}",
+                msg
+            );
+            assert!(
+                msg.contains("Expected"),
+                "error must mention expected network, got: {}",
+                msg
+            );
+            assert!(
+                msg.contains("Details"),
+                "error must contain internal detail, got: {}",
+                msg
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_checked_address_rejects_wrong_network_mainnet_on_regtest() {
+        let err = parse_checked_address("1BoatSLRHtKNngkdXEeobR76b53LETtpyT", Network::Regtest)
+            .expect_err("mainnet address should fail on regtest");
+        assert!(matches!(err, WalletError::General(_)));
+        if let WalletError::General(msg) = &err {
+            assert!(msg.contains("Address Network Mismatch"));
+            assert!(msg.contains("Details"));
+        }
+    }
+
+    #[test]
+    fn test_parse_checked_address_rejects_testnet_on_mainnet() {
+        // A known testnet bech32 address (tb1q...)
+        let err = parse_checked_address(
+            "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
+            Network::Bitcoin,
+        )
+        .expect_err("testnet address should fail on mainnet");
+        assert!(
+            matches!(err, WalletError::General(_)),
+            "expected General (network mismatch), got: {:?}",
+            err
+        );
+        if let WalletError::General(msg) = &err {
+            assert!(msg.contains("Address Network Mismatch"));
+            assert!(msg.contains("Details"));
+        }
+    }
+
+    #[test]
+    fn test_parse_checked_address_invalid_and_wrong_network_produce_different_errors() {
+        // The two error arms must be distinguishable — different variants
+        let parse_err = parse_checked_address("complete-garbage-!!!", Network::Bitcoin)
+            .expect_err("should fail");
+        let network_err =
+            parse_checked_address("1BoatSLRHtKNngkdXEeobR76b53LETtpyT", Network::Regtest)
+                .expect_err("should fail");
+
+        // One is InvalidAddress, the other is General — they must not match each other
+        assert!(
+            matches!(parse_err, WalletError::InvalidAddress(_)),
+            "parse error should be InvalidAddress"
+        );
+        assert!(
+            matches!(network_err, WalletError::General(_)),
+            "network mismatch should be General"
+        );
+
+        // Their display strings must differ
+        assert_ne!(
+            parse_err.to_string(),
+            network_err.to_string(),
+            "the two error cases must produce different messages"
+        );
+    }
+
+    #[test]
+    fn test_parse_checked_address_bech32_valid_mainnet() {
+        // P2WPKH mainnet bech32
+        let addr = parse_checked_address(
+            "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4",
+            Network::Bitcoin,
+        );
+        assert!(
+            addr.is_ok(),
+            "valid bech32 mainnet address must be accepted"
+        );
+    }
+
+    #[test]
+    fn test_parse_checked_address_bech32_wrong_network() {
+        // mainnet bech32 on regtest
+        let err = parse_checked_address(
+            "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4",
+            Network::Regtest,
+        )
+        .expect_err("mainnet bech32 should fail on regtest");
+        assert!(matches!(err, WalletError::General(_)));
+        if let WalletError::General(msg) = &err {
+            assert!(msg.contains("Address Network Mismatch"));
+            assert!(msg.contains("Details"));
+        }
     }
 }

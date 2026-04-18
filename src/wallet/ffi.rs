@@ -5,15 +5,12 @@
 
 use crate::{
     security::{load_sensitive_struct, KeyMaterial, SerdeJson},
-    utill::{get_taker_dir, MIN_FEE_RATE},
+    utill::{get_taker_dir, parse_checked_address, MIN_FEE_RATE},
     wallet::{AddressType, Destination, RPCConfig, Wallet, WalletBackup, WalletError},
 };
-use bitcoin::{Address, Amount, OutPoint, Txid};
+use bitcoin::{Amount, OutPoint, Txid};
 use bitcoind::bitcoincore_rpc::{json::ListTransactionResult, RpcApi};
-use std::{
-    path::{Path, PathBuf},
-    str::FromStr,
-};
+use std::path::{Path, PathBuf};
 
 pub use super::report::{MakerFeeInfo, SwapReport, SwapRole, SwapStatus};
 
@@ -140,6 +137,15 @@ impl Wallet {
     ) -> Result<Txid, WalletError> {
         let amount = Amount::from_sat(amount);
 
+        let addr = parse_checked_address(&address, self.store.network).map_err(|e| {
+            log::debug!(
+                "Address validation failed for network {:?}: {:?}",
+                self.store.network,
+                e
+            );
+            WalletError::General("Invalid address for the current wallet network".to_string())
+        })?;
+
         let coins_to_spend = self.coin_select(
             amount,
             fee_rate.unwrap_or(MIN_FEE_RATE),
@@ -147,9 +153,6 @@ impl Wallet {
             None,
         )?;
 
-        let addr = Address::from_str(&address)
-            .map_err(|e| WalletError::General(format!("Invalid address: {}", e)))?
-            .assume_checked();
         let outputs = vec![(addr, amount)];
         let destination = Destination::Multi {
             outputs,
@@ -163,9 +166,8 @@ impl Wallet {
             &coins_to_spend,
         )?;
 
-        let txid = self.send_tx(&tx).unwrap();
+        let txid = self.send_tx(&tx)?;
         self.sync_and_save()?;
-        println!("Send to Address TxId: {txid}");
 
         Ok(txid)
     }

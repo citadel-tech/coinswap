@@ -9,15 +9,17 @@ use std::{
     time::Duration,
 };
 
-use bitcoin::{Address, Amount};
+use bitcoin::Amount;
 
 use super::messages::RpcMsgReq;
 use crate::{
     maker::{api::MakerServerConfig, error::MakerError, rpc::messages::RpcMsgResp},
-    utill::{read_message, send_message, TorError, HEART_BEAT_INTERVAL, UTXO},
+    utill::{
+        parse_checked_address, read_message, send_message, TorError, HEART_BEAT_INTERVAL, UTXO,
+    },
     wallet::{AddressType, Destination, Wallet},
 };
-use std::{path::Path, str::FromStr, sync::RwLock};
+use std::{path::Path, sync::RwLock};
 
 pub trait MakerRpc {
     fn wallet(&self) -> &RwLock<Wallet>;
@@ -91,10 +93,12 @@ fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result
             feerate,
         } => {
             let amount = Amount::from_sat(amount);
-            let outputs = vec![(
-                Address::from_str(&address).unwrap().assume_checked(),
-                amount,
-            )];
+
+            // Inline address validation - parse and enforce the configured network.
+            let destination_address = parse_checked_address(&address, maker.config().network)
+                .map_err(MakerError::from)?;
+
+            let outputs = vec![(destination_address, amount)];
             let destination = Destination::Multi {
                 outputs,
                 op_return_data: None,

@@ -262,11 +262,7 @@ impl Taker {
                     outgoing_locktime,
                 )?;
                 let swap = self.swap_state_mut()?;
-                for (swapcoin, sig) in swap
-                    .outgoing_swapcoins
-                    .iter_mut()
-                    .zip(sender_sigs.into_iter())
-                {
+                for (swapcoin, sig) in swap.outgoing_swapcoins.iter_mut().zip(sender_sigs) {
                     swapcoin.others_contract_sig = Some(sig);
                 }
                 let exch = self.swap_state_mut()?.makers[maker_idx].legacy_exchange_mut()?;
