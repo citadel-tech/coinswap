@@ -9,7 +9,7 @@ use std::{
     time::Duration,
 };
 
-use bitcoin::{Amount, Network};
+use bitcoin::Amount;
 
 use super::messages::RpcMsgReq;
 use crate::{
@@ -93,8 +93,11 @@ fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result
             feerate,
         } => {
             let amount = Amount::from_sat(amount);
-            let destination_address =
-                parse_rpc_destination_address(&address, maker.config().network)?;
+
+            // Inline address validation - parse and enforce the configured network.
+            let destination_address = parse_checked_address(&address, maker.config().network)
+                .map_err(MakerError::from)?;
+
             let outputs = vec![(destination_address, amount)];
             let destination = Destination::Multi {
                 outputs,
@@ -157,13 +160,6 @@ fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result
     Ok(())
 }
 
-fn parse_rpc_destination_address(
-    address: &str,
-    network: Network,
-) -> Result<bitcoin::Address, MakerError> {
-    parse_checked_address(address, network).map_err(MakerError::from)
-}
-
 pub(crate) fn start_rpc_server<M: MakerRpc>(maker: Arc<M>) -> Result<(), MakerError> {
     let rpc_port = maker.config().rpc_port;
     let listener = TcpListener::bind(("127.0.0.1", rpc_port))?;
@@ -208,32 +204,4 @@ pub(crate) fn start_rpc_server<M: MakerRpc>(maker: Arc<M>) -> Result<(), MakerEr
     }
 
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::parse_rpc_destination_address;
-    use crate::{error::NetError, maker::error::MakerError};
-    use bitcoin::Network;
-
-    #[test]
-    fn parse_rpc_destination_address_rejects_invalid_address() {
-        let err = parse_rpc_destination_address("not-an-address", Network::Regtest)
-            .expect_err("invalid address should fail");
-        assert!(matches!(
-            err,
-            MakerError::Net(NetError::InvalidNetworkAddressDetailed(_))
-        ));
-    }
-
-    #[test]
-    fn parse_rpc_destination_address_rejects_wrong_network() {
-        let err =
-            parse_rpc_destination_address("1BoatSLRHtKNngkdXEeobR76b53LETtpyT", Network::Regtest)
-                .expect_err("mainnet address should fail for regtest");
-        assert!(matches!(
-            err,
-            MakerError::Net(NetError::InvalidNetworkAddressDetailed(_))
-        ));
-    }
 }
