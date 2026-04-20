@@ -94,7 +94,6 @@ fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result
         } => {
             let amount = Amount::from_sat(amount);
 
-            // Inline address validation - parse and enforce the configured network.
             let destination_address = parse_checked_address(&address, maker.config().network)
                 .map_err(MakerError::from)?;
 

@@ -19,7 +19,9 @@ pub enum NetError {
     /// Error caused by an invalid network address.
     InvalidNetworkAddress,
 
-    /// Error related to CBOR serialization or deserialization.
+    /// Error related to CBOR (Concise Binary Object Representation) serialization or deserialization.
+    ///
+    /// This variant wraps a [`serde_cbor::Error`] to provide details about the issue.
     Cbor(serde_cbor::Error),
 
     /// Error indicating an invalid CLI application network.
