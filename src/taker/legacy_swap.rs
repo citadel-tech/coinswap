@@ -277,7 +277,15 @@ impl Taker {
             if is_first_peer && !taker_funding_broadcast {
                 log::info!("Broadcasting funding transactions and waiting for confirmation");
                 {
-                    let wallet = self.write_wallet()?;
+                    let mut wallet = self.write_wallet()?;
+
+                    // Persist the outgoing swapcoins (now carrying the maker's
+                    // contract signatures) before broadcasting the funding txs.
+                    // Without this, a crash after broadcast leaves the wallet
+                    // store missing `others_contract_sig`, blocking timelock recovery.
+                    for swapcoin in &self.swap_state()?.outgoing_swapcoins {
+                        wallet.add_outgoing_swapcoin(swapcoin);
+                    }
 
                     for swapcoin in &self.swap_state()?.outgoing_swapcoins {
                         let funding_tx = swapcoin.funding_tx.as_ref().ok_or_else(|| {

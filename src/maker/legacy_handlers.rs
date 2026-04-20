@@ -451,6 +451,17 @@ fn process_resp_contract_sigs_for_recvr_and_sender<M: Maker>(
         }
     }
 
+    // Persist swapcoins (now carrying contract signatures) to the wallet
+    // store BEFORE broadcasting funding txs. Without this, a crash after
+    // broadcast leaves the wallet with no record of these swapcoins,
+    // making timelock recovery impossible.
+    for incoming in &state.incoming_swapcoins {
+        maker.save_incoming_swapcoin(incoming)?;
+    }
+    for outgoing in &state.outgoing_swapcoins {
+        maker.save_outgoing_swapcoin(outgoing)?;
+    }
+
     log::info!(
         "[{}] SECURITY: Broadcasting {} funding txs after receiving signatures",
         maker.network_port(),
@@ -466,12 +477,7 @@ fn process_resp_contract_sigs_for_recvr_and_sender<M: Maker>(
     state.funding_broadcast = true;
     state.phase = SwapPhase::AwaitingPrivateKeyHandover;
 
-    for incoming in &state.incoming_swapcoins {
-        maker.save_incoming_swapcoin(incoming)?;
-    }
     for outgoing in &state.outgoing_swapcoins {
-        maker.save_outgoing_swapcoin(outgoing)?;
-
         // Register outgoing contract output with watchtower EARLY so it can
         // detect hashlock spends by the taker before recovery starts.
         let contract_txid = outgoing.contract_tx.compute_txid();
