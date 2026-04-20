@@ -878,37 +878,33 @@ pub fn interactive_select(
 
     loop {
         match read()? {
-            Event::Mouse(mouse_event) => {
-                if mouse_event.kind == MouseEventKind::Down(MouseButton::Left) {
-                    let click_row = mouse_event.row;
-                    let click_col = mouse_event.column;
+            Event::Mouse(mouse_event)
+                if mouse_event.kind == MouseEventKind::Down(MouseButton::Left) =>
+            {
+                let click_row = mouse_event.row;
+                let click_col = mouse_event.column;
 
-                    if click_row >= HEADER_LINES as u16 {
-                        let display_row = (click_row - HEADER_LINES as u16) / LINES_PER_ROW as u16;
-                        let actual_row = scroll_offset + display_row as usize;
-                        let box_col = click_col / COL_SPACING as u16;
-                        let i = actual_row * cols + box_col as usize;
+                if click_row >= HEADER_LINES as u16 {
+                    let display_row = (click_row - HEADER_LINES as u16) / LINES_PER_ROW as u16;
+                    let actual_row = scroll_offset + display_row as usize;
+                    let box_col = click_col / COL_SPACING as u16;
+                    let i = actual_row * cols + box_col as usize;
 
-                        if i < choices.len() {
-                            selected[i] = !selected[i];
+                    if i < choices.len() {
+                        selected[i] = !selected[i];
 
-                            render_utxo_grid(&mut stdout, &choices, &selected, scroll_offset)?;
-                        }
+                        render_utxo_grid(&mut stdout, &choices, &selected, scroll_offset)?;
                     }
                 }
             }
             Event::Key(key_event) => match key_event.code {
-                KeyCode::PageUp => {
-                    if scroll_offset > 0 {
-                        scroll_offset -= 1;
-                        render_utxo_grid(&mut stdout, &choices, &selected, scroll_offset)?;
-                    }
+                KeyCode::PageUp if scroll_offset > 0 => {
+                    scroll_offset -= 1;
+                    render_utxo_grid(&mut stdout, &choices, &selected, scroll_offset)?;
                 }
-                KeyCode::PageDown => {
-                    if scroll_offset < max_scroll {
-                        scroll_offset += 1;
-                        render_utxo_grid(&mut stdout, &choices, &selected, scroll_offset)?;
-                    }
+                KeyCode::PageDown if scroll_offset < max_scroll => {
+                    scroll_offset += 1;
+                    render_utxo_grid(&mut stdout, &choices, &selected, scroll_offset)?;
                 }
                 // Numlock your keyboard, key 3 is PageDown and key 9 is PageUp
                 KeyCode::Up => {

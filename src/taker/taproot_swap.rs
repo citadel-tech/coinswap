@@ -115,7 +115,7 @@ impl Taker {
             // Create aggregated MuSig2 pubkey for internal key (allows cooperative key-path spend)
             // Order pubkeys lexicographically to match signing order
             let mut ordered_pubkeys = [my_pubkey, *multisig_pubkey];
-            ordered_pubkeys.sort_by(|a, b| a.inner.serialize().cmp(&b.inner.serialize()));
+            ordered_pubkeys.sort_by_key(|a| a.inner.serialize());
             let internal_key = crate::protocol::musig_interface::get_aggregated_pubkey_compat(
                 ordered_pubkeys[0].inner,
                 ordered_pubkeys[1].inner,

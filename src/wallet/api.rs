@@ -1689,9 +1689,7 @@ impl Wallet {
             })
             .collect();
 
-        for (ix, (input, input_info)) in
-            tx.input.iter_mut().zip(inputs_info.into_iter()).enumerate()
-        {
+        for (ix, (input, input_info)) in tx.input.iter_mut().zip(inputs_info).enumerate() {
             match input_info {
                 UTXOSpendInfo::OutgoingSwapCoin { .. } => {
                     return Err(WalletError::General(
