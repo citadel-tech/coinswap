@@ -29,6 +29,7 @@ pub trait MakerRpc {
     fn get_tor_hostname(&self) -> Result<String, TorError>;
 }
 
+#[hotpath::measure]
 fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result<(), MakerError> {
     let msg_bytes = read_message(socket)?;
     let rpc_request: RpcMsgReq = serde_cbor::from_slice(&msg_bytes)?;
@@ -158,6 +159,7 @@ fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result
     Ok(())
 }
 
+#[hotpath::measure]
 pub(crate) fn start_rpc_server<M: MakerRpc>(maker: Arc<M>) -> Result<(), MakerError> {
     let rpc_port = maker.config().rpc_port;
     let listener = TcpListener::bind(("127.0.0.1", rpc_port))?;

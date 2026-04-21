@@ -51,6 +51,7 @@ impl Wallet {
     ///   value to the specified Address.
     /// - If [Destination::Multi] is used, a custom value is sent, and any remaining funds
     ///   are held in a change address, if applicable.
+    #[hotpath::measure]
     pub fn spend_from_wallet(
         &mut self,
         feerate: f64,
@@ -82,6 +83,7 @@ impl Wallet {
     /// Redeem a Fidelity Bond.
     /// This function creates a spending transaction from the fidelity bond, signs and broadcasts it.
     /// Returns the txid of the spending tx, and mark the bond as spent.
+    #[hotpath::measure]
     pub fn redeem_fidelity(
         &mut self,
         idx: u32,
@@ -156,6 +158,7 @@ impl Wallet {
     }
 
     /// Creates a [`Transaction`] spending given UTXOs to a [`Destination`] with fee calculated from `feerate`.
+    #[hotpath::measure]
     pub fn spend_coins(
         &self,
         coins: &[(ListUnspentResultEntry, UTXOSpendInfo)],

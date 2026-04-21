@@ -25,6 +25,7 @@ use crate::{
 };
 
 /// Handle a Taproot protocol message.
+#[hotpath::measure]
 pub fn handle_taproot_message<M: Maker>(
     maker: &Arc<M>,
     state: &mut ConnectionState,
@@ -46,6 +47,7 @@ pub fn handle_taproot_message<M: Maker>(
 }
 
 /// Process Taproot contract data.
+#[hotpath::measure]
 fn process_taproot_contract<M: Maker>(
     maker: &Arc<M>,
     state: &mut ConnectionState,
@@ -341,6 +343,7 @@ fn process_taproot_contract<M: Maker>(
 /// Stores the received privkey on incoming swapcoins, extracts outgoing privkey
 /// as a response. Sweep and state cleanup happen in the server loop after the
 /// response has been sent to the taker, to avoid blocking delivery.
+#[hotpath::measure]
 fn process_taproot_handover<M: Maker>(
     maker: &Arc<M>,
     state: &mut ConnectionState,
@@ -433,6 +436,7 @@ fn process_taproot_handover<M: Maker>(
 }
 
 /// Emit a maker success report after private key handover.
+#[hotpath::measure]
 fn emit_maker_success_report<M: Maker>(maker: &Arc<M>, state: &ConnectionState, swap_id: &str) {
     let incoming_total: u64 = state
         .incoming_swapcoins

@@ -196,6 +196,7 @@ impl Display for LegacyTakerMessage {
 
 impl LegacyTakerMessage {
     /// Returns the swap ID.
+    #[hotpath::measure]
     pub fn swap_id(&self) -> &str {
         match self {
             Self::ReqContractSigsForSender(req) => &req.id,

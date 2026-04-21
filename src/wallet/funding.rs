@@ -26,6 +26,7 @@ pub struct CreateFundingTxesResult {
 impl Wallet {
     // Attempts to create the funding transactions.
     /// Returns Ok(None) if there was no error but the wallet was unable to create funding txes
+    #[hotpath::measure]
     pub fn create_funding_txes(
         &mut self,
         coinswap_amount: Amount,
@@ -124,6 +125,7 @@ impl Wallet {
 
     /// This function creates a single funding transaction with random, distrubuted, bounded amounts
     /// Which are distributed among the destinations in different outputs.
+    #[hotpath::measure]
     pub fn create_funding_txes_regular_swaps(
         &mut self,
         normie_flag: bool,

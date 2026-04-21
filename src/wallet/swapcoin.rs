@@ -263,6 +263,7 @@ impl IncomingSwapCoin {
     ///
     /// For Legacy, the contract tx spends the P2WSH multisig funding output.
     /// It needs both our signature and the maker's signature applied to the witness.
+    #[hotpath::measure]
     pub fn create_signed_contract_tx(&self) -> Result<Transaction, WalletError> {
         let mut signed_tx = self.contract_tx.clone();
 
@@ -318,6 +319,7 @@ impl IncomingSwapCoin {
     }
 
     /// Creates and signs a spend transaction for this incoming swap coin.
+    #[hotpath::measure]
     pub fn sign_spend_transaction(
         &self,
         input_value: Amount,
@@ -414,6 +416,7 @@ impl IncomingSwapCoin {
     }
 
     /// Signs a legacy (ECDSA) spend transaction.
+    #[hotpath::measure]
     fn sign_legacy_spend(&self, spend_tx: &mut Transaction) -> Result<(), WalletError> {
         use crate::protocol::contract::apply_two_signatures_to_2of2_multisig_spend;
         use bitcoin::sighash::{EcdsaSighashType, SighashCache};
@@ -536,6 +539,7 @@ impl IncomingSwapCoin {
     }
 
     /// Signs a Taproot (MuSig2) spend transaction using cooperative key-path spend.
+    #[hotpath::measure]
     fn sign_taproot_spend(&self, spend_tx: &mut Transaction) -> Result<(), WalletError> {
         if self.other_privkey.is_none() {
             if let Some(preimage) = &self.hash_preimage {
@@ -981,6 +985,7 @@ impl OutgoingSwapCoin {
     /// For Legacy, the contract tx spends the P2WSH multisig funding output.
     /// It needs both our signature and the maker's signature applied to the witness.
     /// For Taproot, the contract tx is already self-contained (no multisig witness needed).
+    #[hotpath::measure]
     pub fn create_signed_contract_tx(&self) -> Result<Transaction, WalletError> {
         let mut signed_tx = self.contract_tx.clone();
 
@@ -1040,6 +1045,7 @@ impl OutgoingSwapCoin {
     ///
     /// This signs a transaction that spends the contract output via the timelock path,
     /// allowing recovery of funds after the timelock has expired.
+    #[hotpath::measure]
     pub fn sign_timelock_recovery(&self, mut tx: Transaction) -> Result<Transaction, WalletError> {
         use bitcoin::{
             secp256k1::Secp256k1,

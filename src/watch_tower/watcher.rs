@@ -89,6 +89,7 @@ pub enum WatcherCommand {
 
 impl<R: Role> Watcher<R> {
     /// Creates a watcher with its backend, registry, and communication channels.
+    #[hotpath::measure]
     pub fn new(
         backend: ZmqBackend,
         registry: FileRegistry,
@@ -109,6 +110,7 @@ impl<R: Role> Watcher<R> {
     }
 
     /// Runs the watcher loop: handles ZMQ events and commands, optionally spawning discovery.
+    #[hotpath::measure]
     pub fn run(
         &mut self,
         rpc_config: RPCConfig,
@@ -186,6 +188,7 @@ impl<R: Role> Watcher<R> {
         Ok(())
     }
 
+    #[hotpath::measure]
     fn handle_command(&mut self, cmd: WatcherCommand, rest_backend: &BitcoinRest) -> bool {
         match cmd {
             WatcherCommand::RegisterWatchRequest { outpoint } => {
@@ -241,6 +244,7 @@ impl<R: Role> Watcher<R> {
     }
 
     /// Handles a backend event, updating registry state and checkpoints.
+    #[hotpath::measure]
     pub fn handle_event(&mut self, ev: BackendEvent) {
         match ev {
             BackendEvent::TxSeen { raw_tx } => {
