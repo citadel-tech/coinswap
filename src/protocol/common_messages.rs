@@ -40,15 +40,36 @@ pub enum ProtocolVersion {
     Taproot,
 }
 
+/// Transport mode for maker/taker protocol messages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+pub enum TransportMode {
+    /// Current transport: plaintext length-prefixed CBOR over TCP/Tor.
+    #[default]
+    Plaintext,
+    /// Target transport: BIP324 v1 encrypted transport.
+    Bip324V1,
+}
+
+fn default_supported_transports() -> Vec<TransportMode> {
+    vec![TransportMode::Plaintext]
+}
+
 /// Initial handshake from Taker to Maker.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
-pub struct TakerHello;
+pub struct TakerHello {
+    /// Preferred transport mode requested by the taker.
+    #[serde(default)]
+    pub requested_transport: TransportMode,
+}
 
 /// Handshake response from Maker to Taker.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MakerHello {
     /// Protocol versions this maker supports.
     pub supported_protocols: Vec<ProtocolVersion>,
+    /// Transport modes this maker supports.
+    #[serde(default = "default_supported_transports")]
+    pub supported_transports: Vec<TransportMode>,
 }
 
 /// Request for offer from Taker to Maker.

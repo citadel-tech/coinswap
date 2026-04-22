@@ -346,6 +346,7 @@ pub struct OfferSyncService {
     offerbook: OfferBookHandle,
     watch_service: WatchService,
     socks_port: u16,
+    transport_mode: crate::protocol::common_messages::TransportMode,
     rest_backend: BitcoinRest,
     /// Set to `true` by Nostr discovery after the first EOSE is received.
     initial_discovery_complete: Arc<AtomicBool>,
@@ -383,6 +384,7 @@ impl OfferSyncService {
         offerbook: OfferBookHandle,
         watch_service: WatchService,
         socks_port: u16,
+        transport_mode: crate::protocol::common_messages::TransportMode,
         rest_backend: BitcoinRest,
         initial_discovery_complete: Arc<AtomicBool>,
     ) -> Self {
@@ -390,6 +392,7 @@ impl OfferSyncService {
             offerbook,
             watch_service,
             socks_port,
+            transport_mode,
             rest_backend,
             initial_discovery_complete,
         }
@@ -421,7 +424,11 @@ impl OfferSyncService {
             return Ok(());
         }
 
-        let offers = fetch_offer_from_makers(to_poll.clone(), self.socks_port)?;
+        let offers = fetch_offer_from_makers(
+            to_poll.clone(),
+            self.socks_port,
+            self.transport_mode,
+        )?;
 
         let mut responded = HashSet::with_capacity(offers.len());
 
@@ -693,6 +700,7 @@ impl OfferBook {
 pub(crate) fn fetch_offer_from_makers(
     maker_addresses: Vec<MakerAddress>,
     socks_port: u16,
+    transport_mode: crate::protocol::common_messages::TransportMode,
 ) -> Result<Vec<OfferAndAddress>, TakerError> {
     // Limit workers to CPU cores to avoid thread overhead
     let workers = std::thread::available_parallelism()
@@ -720,7 +728,9 @@ pub(crate) fn fetch_offer_from_makers(
                     };
 
                     let Some(addr) = addr_opt else { break };
-                    if let Some(offer) = addr.download_offer_with_retries(socks_port) {
+                    if let Some(offer) =
+                        addr.download_offer_with_retries(socks_port, transport_mode)
+                    {
                         let _ = tx.send(offer);
                     }
                 }
@@ -794,9 +804,13 @@ impl TryFrom<String> for MakerAddress {
 }
 
 impl MakerAddress {
-    fn download_offer_with_retries(self, socks_port: u16) -> Option<OfferAndAddress> {
+    fn download_offer_with_retries(
+        self,
+        socks_port: u16,
+        transport_mode: crate::protocol::common_messages::TransportMode,
+    ) -> Option<OfferAndAddress> {
         for attempt in 1..=FIRST_CONNECT_ATTEMPTS {
-            match self.clone().download_offer_auto(socks_port) {
+            match self.clone().download_offer_auto(socks_port, transport_mode) {
                 Ok(offer) => return Some(offer),
                 Err(e) if attempt < FIRST_CONNECT_ATTEMPTS => {
                     log::debug!(
@@ -816,8 +830,12 @@ impl MakerAddress {
         None
     }
 
-    fn download_offer_auto(self, socks_port: u16) -> Result<OfferAndAddress, TakerError> {
-        let (offer, protocol) = self.fetch_offer(socks_port)?;
+    fn download_offer_auto(
+        self,
+        socks_port: u16,
+        transport_mode: crate::protocol::common_messages::TransportMode,
+    ) -> Result<OfferAndAddress, TakerError> {
+        let (offer, protocol) = self.fetch_offer(socks_port, transport_mode)?;
         Ok(OfferAndAddress {
             offer,
             address: self,
@@ -827,7 +845,11 @@ impl MakerAddress {
     }
 
     /// Download a single offer from a maker.
-    fn fetch_offer(&self, socks_port: u16) -> Result<(Offer, MakerProtocol), TakerError> {
+    fn fetch_offer(
+        &self,
+        socks_port: u16,
+        transport_mode: crate::protocol::common_messages::TransportMode,
+    ) -> Result<(Offer, MakerProtocol), TakerError> {
         use crate::protocol::common_messages::COINSWAP_PORT;
 
         log::debug!("Downloading offer from maker: {}", self);
@@ -846,7 +868,9 @@ impl MakerAddress {
         socket.set_write_timeout(Some(Duration::from_secs(FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC)))?;
 
         // Send TakerHello
-        let taker_hello = RouterTakerToMakerMessage::TakerHello(RouterTakerHello);
+        let taker_hello = RouterTakerToMakerMessage::TakerHello(RouterTakerHello {
+            requested_transport: transport_mode,
+        });
         send_message(&mut socket, &taker_hello)?;
 
         // Read MakerHello

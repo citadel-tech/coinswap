@@ -34,7 +34,7 @@ use crate::{
     protocol::{
         common_messages::{
             GetOffer, MakerToTakerMessage, Offer, PrivateKeyHandover, ProtocolVersion, SwapDetails,
-            SwapPrivkey, TakerHello, TakerToMakerMessage,
+            SwapPrivkey, TakerHello, TakerToMakerMessage, TransportMode,
         },
         contract::calculate_pubkey_from_nonce,
     },
@@ -138,6 +138,8 @@ pub struct TakerInitConfig {
     pub password: Option<String>,
     /// Connection type (Tor or Clearnet).
     pub connection_type: ConnectionType,
+    /// Preferred transport mode for maker/taker traffic.
+    pub transport_mode: TransportMode,
     /// Nostr relay URLs for maker discovery.
     pub nostr_relays: Vec<String>,
 }
@@ -154,6 +156,7 @@ impl Default for TakerInitConfig {
             zmq_addr: "tcp://127.0.0.1:28332".to_string(),
             password: None,
             connection_type: ConnectionType::Tor,
+            transport_mode: TransportMode::Plaintext,
             nostr_relays: NOSTR_RELAYS.iter().map(|s| s.to_string()).collect(),
         }
     }
@@ -187,6 +190,12 @@ impl TakerInitConfig {
     /// Set the Nostr relay URLs.
     pub fn with_nostr_relays(mut self, relays: Vec<String>) -> Self {
         self.nostr_relays = relays;
+        self
+    }
+
+    /// Set preferred transport mode.
+    pub fn with_transport_mode(mut self, mode: TransportMode) -> Self {
+        self.transport_mode = mode;
         self
     }
 }
@@ -508,6 +517,7 @@ impl Taker {
             &offerbook,
             &watch_service,
             config.socks_port,
+            config.transport_mode,
             rpc_config,
             initial_discovery_complete,
         )?;
@@ -675,6 +685,7 @@ impl Taker {
         offerbook: &OfferBookHandle,
         watch_service: &WatchService,
         socks_port: u16,
+        transport_mode: TransportMode,
         rpc_config: RPCConfig,
         initial_discovery_complete: Arc<AtomicBool>,
     ) -> Result<OfferSyncHandle, TakerError> {
@@ -683,6 +694,7 @@ impl Taker {
             offerbook.clone(),
             watch_service.clone(),
             socks_port,
+            transport_mode,
             rest_backend,
             initial_discovery_complete,
         )
@@ -1613,18 +1625,55 @@ impl Taker {
     }
 
     /// Perform handshake with a maker and verify protocol support.
+    fn validate_requested_transport(
+        requested_transport: TransportMode,
+        supported_transports: &[TransportMode],
+    ) -> Result<(), TakerError> {
+        if !supported_transports.contains(&requested_transport) {
+            return Err(TakerError::General(format!(
+                "Maker does not support {:?} transport. Supported: {:?}",
+                requested_transport, supported_transports
+            )));
+        }
+
+        if requested_transport != TransportMode::Plaintext {
+            return Err(TakerError::General(
+                "Encrypted transport negotiation is not enabled yet".to_string(),
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Perform handshake with a maker and verify protocol support.
     pub(crate) fn net_handshake(
         &self,
         stream: &mut TcpStream,
     ) -> Result<ProtocolVersion, TakerError> {
+        let requested_transport = if cfg!(feature = "integration-test") {
+            TransportMode::Plaintext
+        } else {
+            self.config.transport_mode
+        };
+
         // Send TakerHello
-        send_message(stream, &TakerToMakerMessage::TakerHello(TakerHello))?;
+        send_message(
+            stream,
+            &TakerToMakerMessage::TakerHello(TakerHello {
+                requested_transport,
+            }),
+        )?;
 
         let msg_bytes = read_message(stream)?;
         let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
 
         match msg {
             MakerToTakerMessage::MakerHello(maker_hello) => {
+                Self::validate_requested_transport(
+                    requested_transport,
+                    &maker_hello.supported_transports,
+                )?;
+
                 let desired = self.swap_state()?.params.protocol;
                 if maker_hello.supported_protocols.contains(&desired) {
                     Ok(desired)
@@ -2477,4 +2526,19 @@ pub enum TakerBehavior {
     CloseAtSendersContract,
     /// Close connection when receiving maker's contract data response (taproot taker abort).
     CloseAtSendersContractFromMaker,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Taker, TakerError, TransportMode};
+
+    #[test]
+    fn rejects_non_plaintext_transport_even_if_advertised() {
+        let result = Taker::validate_requested_transport(
+            TransportMode::Bip324V1,
+            &[TransportMode::Bip324V1],
+        );
+
+        assert!(matches!(result, Err(TakerError::General(_))));
+    }
 }

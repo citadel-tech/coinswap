@@ -17,7 +17,7 @@ use bitcoind::bitcoincore_rpc::RpcApi;
 
 use crate::{
     nostr_coinswap::NOSTR_RELAYS,
-    protocol::common_messages::{FidelityProof, ProtocolVersion, SwapDetails},
+    protocol::common_messages::{FidelityProof, ProtocolVersion, SwapDetails, TransportMode},
     utill::{get_maker_dir, parse_field, parse_toml, MIN_FEE_RATE},
     wallet::{
         swapcoin::{IncomingSwapCoin, OutgoingSwapCoin},
@@ -107,6 +107,8 @@ pub struct MakerServerConfig {
     pub required_confirms: u32,
     /// Supported protocol versions.
     pub supported_protocols: Vec<ProtocolVersion>,
+    /// Supported transport modes.
+    pub supported_transports: Vec<TransportMode>,
     /// ZMQ address for transaction monitoring.
     pub zmq_addr: String,
     /// Fidelity bond amount in satoshis.
@@ -143,6 +145,7 @@ impl Default for MakerServerConfig {
             min_swap_amount: 10_000,
             required_confirms: 1,
             supported_protocols: vec![ProtocolVersion::Legacy, ProtocolVersion::Taproot],
+            supported_transports: vec![TransportMode::Plaintext],
             zmq_addr: "tcp://127.0.0.1:28332".to_string(),
             fidelity_amount: 10_000,   // 0.05 BTC
             fidelity_timelock: 15_000, // ~6 months (MAX_FIDELITY_TIMELOCK)
@@ -246,6 +249,7 @@ impl MakerServerConfig {
             zmq_addr: default_config.zmq_addr,
             password: default_config.password,
             supported_protocols: default_config.supported_protocols,
+            supported_transports: default_config.supported_transports,
             nostr_relays: default_config.nostr_relays,
         })
     }
@@ -791,6 +795,7 @@ impl MakerTrait for MakerServer {
                 .unwrap_or(u64::MAX),
             required_confirms: self.config.required_confirms,
             supported_protocols: self.config.supported_protocols.clone(),
+            supported_transports: self.config.supported_transports.clone(),
         }
     }
 

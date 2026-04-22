@@ -9,7 +9,7 @@ use crate::{
     protocol::{
         common_messages::{
             AckSwapDetails, FidelityProof, GetOffer, MakerHello, MakerToTakerMessage, Offer,
-            ProtocolVersion, SwapDetails, TakerHello, TakerToMakerMessage,
+            ProtocolVersion, SwapDetails, TakerHello, TakerToMakerMessage, TransportMode,
         },
         legacy_messages::LegacyTakerMessage,
         taproot_messages::TaprootTakerMessage,
@@ -309,6 +309,8 @@ pub struct MakerConfig {
     pub required_confirms: u32,
     /// Supported protocol versions.
     pub supported_protocols: Vec<ProtocolVersion>,
+    /// Supported transport modes.
+    pub supported_transports: Vec<TransportMode>,
 }
 
 /// Message handler
@@ -379,7 +381,7 @@ pub fn handle_message<M: Maker>(
 fn handle_taker_hello<M: Maker>(
     maker: &Arc<M>,
     state: &mut ConnectionState,
-    _hello: TakerHello,
+    hello: TakerHello,
 ) -> Result<Option<MakerToTakerMessage>, MakerError> {
     state.expect_phase(&[SwapPhase::AwaitingHello])?;
 
@@ -389,6 +391,14 @@ fn handle_taker_hello<M: Maker>(
     );
 
     let config = maker.get_config();
+    if !config.supported_transports.contains(&hello.requested_transport) {
+        return Err(MakerError::General(format!(
+            "Unsupported transport requested: {:?}. Supported: {:?}",
+            hello.requested_transport, config.supported_transports
+        )
+        .leak()));
+    }
+
     state.phase = SwapPhase::AwaitingOfferRequest;
 
     log::info!(
@@ -399,6 +409,7 @@ fn handle_taker_hello<M: Maker>(
 
     Ok(Some(MakerToTakerMessage::MakerHello(MakerHello {
         supported_protocols: config.supported_protocols,
+        supported_transports: config.supported_transports,
     })))
 }
 

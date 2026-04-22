@@ -965,7 +965,9 @@ mod tests {
         PubkeyHash,
     };
 
-    use crate::protocol::common_messages::{MakerHello, MakerToTakerMessage, ProtocolVersion};
+    use crate::protocol::common_messages::{
+        MakerHello, MakerToTakerMessage, ProtocolVersion, TakerHello, TransportMode,
+    };
 
     use super::*;
 
@@ -976,6 +978,7 @@ mod tests {
 
         let message = MakerToTakerMessage::MakerHello(MakerHello {
             supported_protocols: vec![ProtocolVersion::Legacy, ProtocolVersion::Taproot],
+            supported_transports: vec![TransportMode::Plaintext],
         });
 
         thread::spawn(move || {
@@ -989,6 +992,10 @@ mod tests {
                 assert!(hello
                     .supported_protocols
                     .contains(&ProtocolVersion::Taproot));
+                assert_eq!(hello.supported_transports.len(), 1);
+                assert!(hello
+                    .supported_transports
+                    .contains(&TransportMode::Plaintext));
             } else {
                 panic!(
                     "Received Wrong Message: Expected MakerHello variant, Got: {:?}",
@@ -999,6 +1006,22 @@ mod tests {
 
         let mut stream = TcpStream::connect(address).unwrap();
         send_message(&mut stream, &message).unwrap();
+    }
+
+    #[test]
+    fn test_deserialize_missing_transport_fields() {
+        let taker = TakerHello::default();
+        let taker_bytes = serde_cbor::to_vec(&taker).unwrap();
+        let decoded_taker: TakerHello = serde_cbor::from_slice(&taker_bytes).unwrap();
+        assert_eq!(decoded_taker.requested_transport, TransportMode::Plaintext);
+
+        let maker = MakerHello {
+            supported_protocols: vec![ProtocolVersion::Legacy],
+            supported_transports: vec![TransportMode::Plaintext],
+        };
+        let maker_bytes = serde_cbor::to_vec(&maker).unwrap();
+        let decoded_maker: MakerHello = serde_cbor::from_slice(&maker_bytes).unwrap();
+        assert_eq!(decoded_maker.supported_transports, vec![TransportMode::Plaintext]);
     }
 
     #[test]
