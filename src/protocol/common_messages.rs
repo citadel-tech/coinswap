@@ -1,6 +1,6 @@
 //! Common Coinswap Protocol Messages and Top-Level Message Enums.
 
-use bitcoin::{hashes::sha256d::Hash, Amount, PublicKey};
+use bitcoin::{bip32::ChainCode, hashes::sha256d::Hash, Amount, PublicKey};
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -77,6 +77,8 @@ pub struct Offer {
     pub tweakable_point: PublicKey,
     /// Cryptographic proof of fidelity bond for Sybil resistance.
     pub fidelity: FidelityProof,
+    /// Chain code for deterministic derivation of swap addresses from the tweakable point.
+    pub tweak_chain_code: ChainCode,
 }
 
 /// Swap details from Taker to Maker.

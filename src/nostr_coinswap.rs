@@ -121,12 +121,11 @@ pub fn broadcast_bond_on_nostr(
         + EXPIRATION_SECS;
 
     log::debug!(
-        "Publishing fidelity bond to Nostr | outpoint={} amount_sats={} lock_time={} conf_height={:?} cert_expiry={:?} is_spent={} pubkey={} cert_hash={} cert_sig={:?} content={} d_tag={} expiration_unix={}",
+        "Publishing fidelity bond to Nostr | outpoint={} amount_sats={} lock_time={} conf_height={:?} is_spent={} pubkey={} cert_hash={} cert_sig={:?} content={} d_tag={} expiration_unix={}",
         fidelity.bond.outpoint,
         fidelity.bond.amount.to_sat(),
         fidelity.bond.lock_time.to_consensus_u32(),
         fidelity.bond.conf_height,
-        fidelity.bond.cert_expiry,
         fidelity.bond.is_spent,
         fidelity.bond.pubkey,
         fidelity.cert_hash,

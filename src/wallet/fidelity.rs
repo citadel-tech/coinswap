@@ -35,7 +35,7 @@ const BOND_VALUE_EXPONENT: f64 = 1.3;
 const BOND_VALUE_INTEREST_RATE: f64 = 0.015;
 
 /// Constant representing the derivation path for fidelity addresses.
-const FIDELITY_DERIVATION_PATH: &str = "m/84'/0'/0'/2";
+const FIDELITY_DERIVATION_PATH: &str = "m/0'/2";
 // Fidelity Bond relative timelock in number of blocks ( 1 block ~= 10mins)
 // Must be between 12,960 (≈3 months) and 25,920 (≈6 months)
 #[cfg(not(feature = "integration-test"))]
@@ -56,7 +56,6 @@ pub enum FidelityError {
     BondDoesNotExist,
     BondAlreadyRedeemed,
     BondLocktimeExpired,
-    CertExpired,
     InvalidCertHash,
     General(String),
     InvalidBondLocktime,
@@ -72,7 +71,6 @@ impl std::fmt::Display for FidelityError {
                 write!(f, "Fidelity bond has already been redeemed")
             }
             FidelityError::BondLocktimeExpired => write!(f, "Fidelity bond locktime has expired"),
-            FidelityError::CertExpired => write!(f, "Fidelity certificate has expired"),
             FidelityError::InvalidCertHash => write!(f, "Invalid fidelity certificate hash"),
             FidelityError::InvalidBondLocktime => {
                 write!(f, "Fidelity bond locktime is outside the acceptable range")
@@ -109,6 +107,8 @@ pub(crate) fn verify_fidelity_checks(
     addr: &str,
     tx: Transaction,
     current_height: u64,
+    tweakable_point: &PublicKey, //can be sent as not referece check once
+    tweak_chain_code: &bitcoin::bip32::ChainCode,
 ) -> Result<(), WalletError> {
     // Ensure fidelity bond timelock lies within allowed range
     let bond_height = proof.bond.lock_time.to_consensus_u32()
@@ -133,12 +133,36 @@ pub(crate) fn verify_fidelity_checks(
     }
 
     // Verify certificate hash
-    let expected_cert_hash = proof
-        .bond
-        .generate_cert_hash(addr)
-        .ok_or(WalletError::Fidelity(FidelityError::BondUncomfirmed))?;
+    let expected_cert_hash = proof.bond.generate_cert_hash(addr, tweakable_point);
     if proof.cert_hash != expected_cert_hash {
         return Err(FidelityError::InvalidCertHash.into());
+    }
+
+    // Verify fidelity pubkey derivation from tweak key.
+    // Only public_key and chain_code are used in BIP32 derivation;
+    // network, depth, parent_fingerprint, child_number are metadata only.
+    let offer_xpub = bitcoin::bip32::Xpub {
+        network: bitcoin::NetworkKind::Main,
+        depth: 1,
+        parent_fingerprint: Default::default(),
+        child_number: ChildNumber::Hardened { index: 0 },
+        public_key: tweakable_point.inner,
+        chain_code: *tweak_chain_code,
+    };
+    let secp = Secp256k1::new();
+    let derived = offer_xpub.derive_pub(
+        &secp,
+        &[
+            ChildNumber::Normal { index: 2 },
+            ChildNumber::Normal {
+                index: proof.bond.bond_index,
+            },
+        ],
+    )?;
+    if derived.public_key != proof.bond.pubkey.inner {
+        return Err(WalletError::General(
+            "Bond does not belong to this tweak point".to_string(),
+        ));
     }
 
     // Validate redeem script and corresponding output scriptPubKey
@@ -153,7 +177,6 @@ pub(crate) fn verify_fidelity_checks(
     }
 
     // Verify ECDSA signature
-    let secp = Secp256k1::new();
     let cert_message = Message::from_digest_slice(proof.cert_hash.as_byte_array())?;
     secp.verify_ecdsa(&cert_message, &proof.cert_sig, &proof.bond.pubkey.inner)?;
 
@@ -218,10 +241,10 @@ pub struct FidelityBond {
     pub(crate) pubkey: PublicKey,
     // Height at which the bond was confirmed.
     pub(crate) conf_height: Option<u32>,
-    // Cert expiry denoted in multiple of difficulty adjustment period (2016 blocks)
-    pub(crate) cert_expiry: Option<u32>,
     /// Whether this bond is spent or not.
     pub(crate) is_spent: bool,
+    /// Child index at `m/0'/2/<bond_index>`; also the key in `WalletStore::fidelity_bond`.
+    pub bond_index: u32,
 }
 
 impl FidelityBond {
@@ -245,25 +268,22 @@ impl FidelityBond {
     }
 
     /// Generate the bond's certificate hash.
-    pub(crate) fn generate_cert_hash(&self, addr: &str) -> Option<sha256d::Hash> {
-        self.cert_expiry.map(|expiry| {
-            let cert_msg_str = format!(
-                "fidelity-bond-cert|{}|{}|{}|{}|{}|{}",
-                self.outpoint, self.pubkey, expiry, self.lock_time, self.amount, addr
-            );
-            let cert_msg = cert_msg_str.as_bytes();
-            let mut btc_signed_msg = Vec::<u8>::new();
-            btc_signed_msg.extend("\x18Bitcoin Signed Message:\n".as_bytes());
-            btc_signed_msg.push(cert_msg.len() as u8);
-            btc_signed_msg.extend(cert_msg);
+    pub(crate) fn generate_cert_hash(
+        &self,
+        addr: &str,
+        tweakable_point: &PublicKey,
+    ) -> sha256d::Hash {
+        let cert_msg_str = format!(
+            "fidelity-bond-cert|{}|{}|{}|{}|{}|{}",
+            self.outpoint, self.pubkey, self.lock_time, self.amount, addr, tweakable_point
+        );
+        let cert_msg = cert_msg_str.as_bytes();
+        let mut btc_signed_msg = Vec::<u8>::new();
+        btc_signed_msg.extend("\x18Bitcoin Signed Message:\n".as_bytes());
+        btc_signed_msg.push(cert_msg.len() as u8);
+        btc_signed_msg.extend(cert_msg);
 
-            sha256d::Hash::hash(&btc_signed_msg)
-        })
-    }
-
-    /// Calculate the expiry value. This depends on the bond's confirmation height
-    pub(crate) fn get_fidelity_expiry(conf_height: u32) -> u32 {
-        (conf_height + 2) /* safety buffer */ / 2016 + 5
+        sha256d::Hash::hash(&btc_signed_msg)
     }
 }
 
@@ -365,8 +385,8 @@ impl Wallet {
             .store
             .fidelity_bond
             .keys()
+            .max()
             .map(|i| *i + 1)
-            .last()
             .unwrap_or(0);
 
         let fidelity_pubkey = PublicKey {
@@ -469,10 +489,10 @@ impl Wallet {
                 amount,
                 lock_time: locktime,
                 pubkey: fidelity_pubkey,
-                // `Conf_height` & `cert_expiry` are considered None as they can't be known before the confirmation.
+                // `Conf_height` considered None as they can't be known before the confirmation.
                 conf_height: None,
-                cert_expiry: None,
                 is_spent: false,
+                bond_index: index,
             };
             self.store.fidelity_bond.insert(index, bond);
             self.save_to_disk()?;
@@ -481,21 +501,19 @@ impl Wallet {
         Ok((index, txid))
     }
 
-    /// Update the confirmation height and certificate expiry of a fidelity bond after it confirms.
+    /// Update the confirmation height of a fidelity bond after it confirms.
     #[hotpath::measure]
     pub fn update_fidelity_bond_conf_details(
         &mut self,
         index: u32,
         conf_height: u32,
     ) -> Result<(), WalletError> {
-        let cert_expiry = FidelityBond::get_fidelity_expiry(conf_height);
         let bond = self
             .store
             .fidelity_bond
             .get_mut(&index)
             .ok_or(FidelityError::BondDoesNotExist)?;
 
-        bond.cert_expiry = Some(cert_expiry);
         bond.conf_height = Some(conf_height);
 
         Ok(())
@@ -547,10 +565,9 @@ impl Wallet {
         }
 
         let fidelity_privkey = self.get_fidelity_keypair(index)?.secret_key();
+        let (_, tweakable_point, _) = self.get_tweakable_keypair()?;
 
-        let cert_hash = bond
-            .generate_cert_hash(maker_addr)
-            .expect("Bond is not yet confirmed");
+        let cert_hash = bond.generate_cert_hash(maker_addr, &tweakable_point);
 
         let secp = Secp256k1::new();
         let cert_sig = secp.sign_ecdsa_low_r(

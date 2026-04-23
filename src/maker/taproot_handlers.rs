@@ -76,7 +76,7 @@ fn process_taproot_contract<M: Maker>(
         data.id
     );
 
-    let (tweakable_privkey, tweakable_pubkey) = maker.get_tweakable_keypair()?;
+    let (tweakable_privkey, tweakable_pubkey, _) = maker.get_tweakable_keypair()?;
     let secp = bitcoin::secp256k1::Secp256k1::new();
 
     // Use the nonce from the received message to reconstruct hashlock_privkey.
