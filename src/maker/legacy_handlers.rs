@@ -160,7 +160,7 @@ fn process_proof_of_funding<M: Maker>(
 
     state.contract_feerate = pof.contract_feerate;
 
-    let (tweakable_privkey, _) = maker.get_tweakable_keypair()?;
+    let (tweakable_privkey, _, _) = maker.get_tweakable_keypair()?;
     let secp = bitcoin::secp256k1::Secp256k1::new();
 
     let mut incoming_swapcoins = Vec::new();
