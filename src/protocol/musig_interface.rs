@@ -55,8 +55,7 @@ pub fn generate_new_nonce_pair_compat(
 pub fn get_aggregated_nonce_compat(
     nonces: &[&secp::musig::PublicNonce],
 ) -> secp::musig::AggregatedNonce {
-    let secp = secp::Secp256k1::new();
-    secp::musig::AggregatedNonce::new(&secp, nonces)
+    secp::musig::AggregatedNonce::new(nonces)
 }
 
 /// Generates a partial signature
@@ -69,14 +68,13 @@ pub fn generate_partial_signature_compat(
     pubkey1: btc_secp::PublicKey,
     pubkey2: btc_secp::PublicKey,
 ) -> Result<secp::musig::PartialSignature, ProtocolError> {
-    let secp = secp::Secp256k1::new();
     let message = btc_msg_to_secp!(message);
     let tap_tweak = btc_scalar_to_secp!(tap_tweak);
     let pubkey1 = btc_pubkey_to_secp!(pubkey1);
     let pubkey2 = btc_pubkey_to_secp!(pubkey2);
     let pubkeys = [&pubkey1, &pubkey2];
-    let secret_key = secp::SecretKey::from_slice(&keypair.secret_bytes())?;
-    let keypair = secp::Keypair::from_secret_key(&secp, &secret_key);
+    let secret_key = secp::SecretKey::from_secret_bytes(keypair.secret_bytes())?;
+    let keypair = secp::Keypair::from_secret_key(&secret_key);
 
     generate_partial_signature(message, agg_nonce, sec_nonce, keypair, tap_tweak, &pubkeys)
 }
