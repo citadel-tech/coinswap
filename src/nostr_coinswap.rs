@@ -37,7 +37,7 @@ pub fn coinswap_kind(network: Network) -> u16 {
     }
 }
 /// Expiration time for noster event (24 hours)
-const EXPIRATION_SECS: u64 = 86400;
+pub(crate) const EXPIRATION_SECS: u64 = 86400;
 
 /// Broadcasts a fidelity bond announcement over Nostr.
 pub fn broadcast_bond_on_nostr(

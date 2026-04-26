@@ -23,7 +23,7 @@ use nostr::{
 use tungstenite::{stream::MaybeTlsStream, Message};
 
 use crate::{
-    nostr_coinswap::coinswap_kind,
+    nostr_coinswap::{coinswap_kind, EXPIRATION_SECS},
     watch_tower::{
         registry_storage::FileRegistry,
         rest_backend::BitcoinRest,
@@ -227,6 +227,18 @@ fn handle_relay_message(
                 log::debug!(
                     "Ignoring expired event or event without expiration tag from {}",
                     relay_url
+                );
+                return Ok(());
+            }
+
+            if Timestamp::now()
+                .as_secs()
+                .saturating_sub(event.created_at.as_secs())
+                > EXPIRATION_SECS
+            {
+                log::debug!(
+                    "Skipping stale event from {relay_url} older than {} hours",
+                    EXPIRATION_SECS / 3600
                 );
                 return Ok(());
             }
