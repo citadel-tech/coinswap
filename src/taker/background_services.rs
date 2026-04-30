@@ -19,7 +19,7 @@ use bitcoind::bitcoincore_rpc::RpcApi;
 
 use crate::{
     utill::HEART_BEAT_INTERVAL,
-    wallet::{SwapReport, SwapStatus, Wallet},
+    wallet::{RecoveryReport, SwapStatus, Wallet},
     watch_tower::{service::WatchService, watcher::WatcherEvent},
 };
 
@@ -189,14 +189,17 @@ impl RecoveryLoop {
                                     .read()
                                     .map(|w| w.store.network.to_string())
                                     .unwrap_or_default();
-                                SwapReport::emit_taker_recovery_report(
+                                let recovery_type = match status {
+                                    SwapStatus::RecoveryHashlock => "hashlock",
+                                    _ => "timelock",
+                                }
+                                .to_string();
+                                RecoveryReport::emit_taker(
                                     &data_dir,
                                     record.swap_id.clone(),
                                     network,
-                                    record.send_amount_sat,
-                                    status,
-                                    &recovery_txids,
-                                    0.0,
+                                    recovery_type,
+                                    recovery_txids,
                                 );
                             }
 

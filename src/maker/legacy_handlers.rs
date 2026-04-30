@@ -18,7 +18,7 @@ use crate::{
         legacy_messages::{FundingTxInfo, LegacyTakerMessage},
     },
     utill::redeemscript_to_scriptpubkey,
-    wallet::{swapcoin::IncomingSwapCoin, SwapReport},
+    wallet::{swapcoin::IncomingSwapCoin, MakerReport},
 };
 
 /// Handle a Legacy protocol message.
@@ -760,7 +760,7 @@ fn emit_maker_success_report<M: Maker>(maker: &Arc<M>, state: &ConnectionState, 
         .unwrap_or(0);
     let network = maker.network().to_string();
 
-    let report = SwapReport::maker_success(
+    let report = MakerReport::success(
         swap_id.to_string(),
         state.swap_start_time,
         incoming_total,
@@ -771,7 +771,7 @@ fn emit_maker_success_report<M: Maker>(maker: &Arc<M>, state: &ConnectionState, 
         network,
     );
     report.print();
-    if let Err(e) = report.save_to_disk(maker.data_dir()) {
+    if let Err(e) = report.save(maker.data_dir()) {
         log::warn!("Failed to save maker success report: {:?}", e);
     }
 }

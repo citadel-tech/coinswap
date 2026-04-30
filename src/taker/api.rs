@@ -41,7 +41,7 @@ use crate::{
     utill::{check_tor_status, generate_maker_keys, get_taker_dir, read_message, send_message},
     wallet::{
         swapcoin::{IncomingSwapCoin, OutgoingSwapCoin, WatchOnlySwapCoin},
-        MakerFeeInfo as ReportMakerFeeInfo, RPCConfig, RecoveryOutcome, SwapReport, SwapStatus,
+        MakerFeeInfo as ReportMakerFeeInfo, RPCConfig, RecoveryOutcome, SwapStatus, TakerReport,
         Wallet,
     },
     watch_tower::{
@@ -833,7 +833,7 @@ impl Taker {
     ///
     /// Commits funds on-chain: creates funding transactions, exchanges
     /// contracts with makers, finalizes, and sweeps.
-    pub fn start_coinswap(&mut self, swap_id: &str) -> Result<SwapReport, TakerError> {
+    pub fn start_coinswap(&mut self, swap_id: &str) -> Result<TakerReport, TakerError> {
         let swap_start_time = Instant::now();
 
         // Verify the swap_id matches the prepared swap.
@@ -2070,7 +2070,7 @@ impl Taker {
         start_time: Instant,
         status: SwapStatus,
         error_message: Option<String>,
-    ) -> Result<SwapReport, TakerError> {
+    ) -> Result<TakerReport, TakerError> {
         let swap = self.swap_state()?;
         let swap_duration = start_time.elapsed();
 
@@ -2263,14 +2263,18 @@ impl Taker {
             None
         };
 
-        let report = SwapReport::taker_report(SwapReport {
+        let swap_end_ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let report = TakerReport {
             status,
             swap_id: swap.id.clone(),
             swap_duration_seconds: swap_duration.as_secs_f64(),
             outgoing_amount: swap.params.send_amount.to_sat(),
             incoming_amount: total_output_swap_amount,
-            fee_paid_or_earned: -(total_fee as i64),
-            makers_count: Some(maker_count),
+            fee_paid: total_fee,
+            makers_count: maker_count,
             maker_addresses,
             funding_txids,
             total_maker_fees,
@@ -2286,12 +2290,13 @@ impl Taker {
             error_message,
             incoming_contract_txid,
             outgoing_contract_txid,
-            ..Default::default()
-        });
+            end_timestamp: swap_end_ts,
+            start_timestamp: swap_end_ts.saturating_sub(swap_duration.as_secs()),
+        };
 
         report.print();
         let data_dir = self.config.data_dir.clone().unwrap_or_else(get_taker_dir);
-        if let Err(e) = report.save_to_disk(&data_dir) {
+        if let Err(e) = report.save(&data_dir) {
             log::warn!("Failed to save taker swap report: {:?}", e);
         }
 
