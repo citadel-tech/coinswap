@@ -40,6 +40,7 @@ pub struct Watcher<R: Role> {
     rx_requests: StdReceiver<WatcherCommand>,
     tx_events: CbSender<WatcherEvent>,
     nostr_relays: Vec<String>,
+    nostr_tor_config: Option<(u16, String)>,
     _role: PhantomData<R>,
 }
 
@@ -94,6 +95,7 @@ impl<R: Role> Watcher<R> {
         rx_requests: StdReceiver<WatcherCommand>,
         tx_events: CbSender<WatcherEvent>,
         nostr_relays: Vec<String>,
+        nostr_tor_config: Option<(u16, String)>,
     ) -> Self {
         Self {
             backend,
@@ -101,6 +103,7 @@ impl<R: Role> Watcher<R> {
             rx_requests,
             tx_events,
             nostr_relays,
+            nostr_tor_config,
             _role: PhantomData,
         }
     }
@@ -139,25 +142,28 @@ impl<R: Role> Watcher<R> {
         let discovery_shutdown = Arc::new(AtomicBool::new(false));
         let registry = self.registry.clone();
         let nostr_relays = self.nostr_relays.clone();
+        let nostr_tor_config = self.nostr_tor_config.clone();
         std::thread::scope(move |s| {
             let discovery_clone = discovery_shutdown.clone();
-            if R::RUN_DISCOVERY {
-                let initial_sync_complete = initial_sync_complete.clone();
-                s.spawn(move || {
-                    if let Err(e) = nostr_discovery::run_discovery(
-                        rest_backend_1,
-                        network,
-                        registry,
-                        discovery_shutdown.clone(),
-                        initial_sync_complete,
-                        &nostr_relays,
-                    ) {
-                        log::error!("Discovery thread failed: {:?}", e);
-                    }
-                });
-            } else {
-                // No discovery — mark initial sync as trivially complete.
-                initial_sync_complete.store(true, Ordering::SeqCst);
+            match (R::RUN_DISCOVERY, nostr_tor_config) {
+                (true, Some((socks_port, tor_auth_password))) => {
+                    let initial_sync_complete = initial_sync_complete.clone();
+                    s.spawn(move || {
+                        if let Err(e) = nostr_discovery::run_discovery(
+                            rest_backend_1,
+                            network,
+                            registry,
+                            discovery_shutdown.clone(),
+                            initial_sync_complete,
+                            &nostr_relays,
+                            socks_port,
+                            tor_auth_password,
+                        ) {
+                            log::error!("Discovery thread failed: {:?}", e);
+                        }
+                    });
+                }
+                _ => initial_sync_complete.store(true, Ordering::SeqCst),
             }
             loop {
                 match self.rx_requests.try_recv() {

@@ -500,9 +500,13 @@ impl Taker {
         std::fs::create_dir_all(&data_dir)?;
 
         let (wallet, rpc_config) = Self::init_wallet(&config, &data_dir)?;
-        let (watch_service, initial_discovery_complete) =
-            Self::init_watch_service(&config, &rpc_config, &data_dir)?;
-        Self::init_taker_config(&config, &data_dir)?;
+        let taker_config = Self::init_taker_config(&config, &data_dir)?;
+        let (watch_service, initial_discovery_complete) = Self::init_watch_service(
+            &config,
+            &rpc_config,
+            &data_dir,
+            taker_config.tor_auth_password.clone(),
+        )?;
         let offerbook = OfferBookHandle::load_or_create(&data_dir)?;
         let offer_sync_handle = Self::init_offer_sync(
             &offerbook,
@@ -615,6 +619,7 @@ impl Taker {
         config: &TakerInitConfig,
         rpc_config: &RPCConfig,
         data_dir: &std::path::Path,
+        tor_auth_password: String,
     ) -> Result<(WatchService, Arc<AtomicBool>), TakerError> {
         let backend = ZmqBackend::new(&config.zmq_addr);
         let rpc_backend = BitcoinRest::new(rpc_config.clone())?;
@@ -632,8 +637,14 @@ impl Taker {
         let initial_sync_clone = initial_sync_complete.clone();
 
         let nostr_relays = config.nostr_relays.clone();
-        let mut watcher =
-            Watcher::<Taker>::new(backend, registry, rx_requests, tx_events, nostr_relays);
+        let mut watcher = Watcher::<Taker>::new(
+            backend,
+            registry,
+            rx_requests,
+            tx_events,
+            nostr_relays,
+            Some((config.socks_port, tor_auth_password)),
+        );
         let _ = thread::Builder::new()
             .name("Watcher thread".to_string())
             .spawn(move || watcher.run(rpc_config_watcher, initial_sync_clone));
@@ -648,7 +659,7 @@ impl Taker {
     fn init_taker_config(
         config: &TakerInitConfig,
         data_dir: &std::path::Path,
-    ) -> Result<(), TakerError> {
+    ) -> Result<TakerConfig, TakerError> {
         let mut taker_config = TakerConfig::new(Some(&data_dir.join("config.toml")))?;
 
         if let Some(control_port) = config.control_port {
@@ -667,7 +678,7 @@ impl Taker {
         }
 
         taker_config.write_to_file(&data_dir.join("config.toml"))?;
-        Ok(())
+        Ok(taker_config)
     }
 
     /// Start the background offer sync service.
