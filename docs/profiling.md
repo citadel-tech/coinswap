@@ -1,4 +1,4 @@
-# Hotpath Benchmarking
+# Hotpath Profiling
 
 This repo supports lightweight profiling via the `hotpath` crate.
 

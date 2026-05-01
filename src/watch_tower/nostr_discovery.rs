@@ -34,7 +34,7 @@ use crate::{
 };
 
 // ## TODO: Instead of looping over relay's have a connection Pool.
-/// Runs the main discovery routine for maker's fidelity bonds by subscribing to Nostr events (kind 37778).
+/// Runs the main discovery routine for maker's fidelity bonds by subscribing to network-specific Nostr events.
 #[hotpath::measure]
 pub fn run_discovery(
     bitcoin_rpc: BitcoinRest,
@@ -127,7 +127,7 @@ fn run_nostr_session_for_relay(
 }
 
 /// Establishes websocket connection to single Nostr relay and processes events until error or shutdown.
-/// Subscribe to Nostr events on Kind (37778).
+/// Subscribe to Nostr events on the Coinswap kind for the active network.
 #[hotpath::measure]
 #[allow(clippy::too_many_arguments)]
 fn connect_and_run_once(
