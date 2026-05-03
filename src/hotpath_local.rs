@@ -2,7 +2,7 @@
 
 use serde_json::Value;
 use std::{
-    env, fs,
+    fs,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -67,14 +67,16 @@ impl Drop for HotpathRun {
     }
 }
 
-fn read_to_string_with_retries(path: &Path) -> std::io::Result<String> {
+fn read_json_with_retries(path: &Path) -> std::io::Result<Value> {
     let mut last_err = std::io::Error::new(
         std::io::ErrorKind::NotFound,
         format!("report not readable at {}", path.display()),
     );
     for _ in 0..IO_RETRIES {
-        match fs::read_to_string(path) {
-            Ok(s) => return Ok(s),
+        match fs::read_to_string(path)
+            .and_then(|s| serde_json::from_str::<Value>(&s).map_err(std::io::Error::other))
+        {
+            Ok(v) => return Ok(v),
             Err(e) => {
                 last_err = e;
                 thread::sleep(IO_RETRY_SLEEP);
@@ -82,12 +84,6 @@ fn read_to_string_with_retries(path: &Path) -> std::io::Result<String> {
         }
     }
     Err(last_err)
-}
-
-fn read_json_with_retries(path: &Path) -> std::io::Result<Value> {
-    let json = read_to_string_with_retries(path)?;
-    serde_json::from_str::<Value>(&json)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
 }
 
 fn write_json_pretty(path: &Path, v: &Value) -> std::io::Result<()> {
@@ -120,14 +116,6 @@ impl HotpathRun {
     fn build(caller_name: &'static str, report_path: PathBuf) -> std::io::Result<Self> {
         if let Some(parent) = report_path.parent() {
             fs::create_dir_all(parent)?;
-        }
-
-        // Keep profiling quiet and deterministic unless the caller overrides.
-        if env::var_os("HOTPATH_METRICS_SERVER_OFF").is_none() {
-            env::set_var("HOTPATH_METRICS_SERVER_OFF", "1");
-        }
-        if env::var_os("HOTPATH_FUNCTIONS_NAME_DEPTH").is_none() {
-            env::set_var("HOTPATH_FUNCTIONS_NAME_DEPTH", "0");
         }
 
         let mut sections = vec![hotpath::Section::FunctionsTiming, hotpath::Section::Threads];
@@ -173,33 +161,20 @@ impl HotpathRun {
 
     /// Ends profiling, then prints timing/alloc tables parsed from the JSON.
     pub fn finish_and_print(self) {
-        self.finish_impl(true);
-    }
-
-    /// Ends profiling and pretty-formats the JSON report, without printing tables.
-    pub fn finish_quiet(self) {
-        self.finish_impl(false);
-    }
-
-    fn finish_impl(self, print_tables: bool) {
         let path = self.report_path.clone();
         drop(self);
 
         // Make the on-disk report readable for humans.
         if let Err(e) = pretty_format_json_file_in_place(&path) {
-            if print_tables {
-                eprintln!(
-                    "[hotpath] failed to pretty-format report {}: {e}",
-                    path.display()
-                );
-            }
+            eprintln!(
+                "[hotpath] failed to pretty-format report {}: {e}",
+                path.display()
+            );
             return;
         }
 
-        if print_tables {
-            println!("\n[hotpath] JSON report: {}", path.display());
-            print_hotpath_tables_from_path(&path);
-        }
+        println!("\n[hotpath] JSON report: {}", path.display());
+        print_hotpath_tables_from_path(&path);
     }
 }
 
@@ -282,7 +257,7 @@ fn print_section(v: &Value, key: &str) {
 }
 
 /// Prints Hotpath function timing/allocation sections from a JSON report.
-pub fn print_hotpath_tables_from_path(report_path: &Path) {
+fn print_hotpath_tables_from_path(report_path: &Path) {
     let v = match read_json_with_retries(report_path) {
         Ok(v) => v,
         Err(_) => {
@@ -292,43 +267,4 @@ pub fn print_hotpath_tables_from_path(report_path: &Path) {
     };
     print_section(&v, "functions_timing");
     print_section(&v, "functions_alloc");
-}
-
-fn filter_section_by_prefixes(report: &mut Value, section_key: &str, prefixes: &[&str]) {
-    let Some(section) = report.get_mut(section_key) else {
-        return;
-    };
-    let Some(data) = section.get_mut("data") else {
-        return;
-    };
-    let Some(rows) = data.as_array_mut() else {
-        return;
-    };
-
-    rows.retain(|row| {
-        let Some(name) = row.get("name").and_then(|v| v.as_str()) else {
-            return false;
-        };
-        prefixes.iter().any(|p| name.starts_with(p))
-    });
-}
-
-/// Reads a Hotpath JSON report, filters function rows by name prefixes, and writes a new report.
-///
-/// This is useful for producing per-module reports (e.g. maker vs taker) from a single run.
-pub fn write_filtered_report_by_prefixes(
-    input_report_path: &Path,
-    output_report_path: &Path,
-    prefixes: &[&str],
-) -> std::io::Result<()> {
-    let mut v = read_json_with_retries(input_report_path)?;
-
-    filter_section_by_prefixes(&mut v, "functions_timing", prefixes);
-    filter_section_by_prefixes(&mut v, "functions_alloc", prefixes);
-
-    if let Some(parent) = output_report_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-
-    write_json_pretty(output_report_path, &v)
 }
