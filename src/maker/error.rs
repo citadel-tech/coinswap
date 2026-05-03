@@ -2,7 +2,7 @@
 
 use std::sync::{MutexGuard, PoisonError, RwLockReadGuard, RwLockWriteGuard};
 
-use bitcoin::secp256k1;
+use bitcoin::{secp256k1, Amount};
 
 use crate::{
     error::NetError, protocol::error::ProtocolError, utill::TorError, wallet::WalletError,
@@ -30,6 +30,15 @@ pub enum MakerError {
     },
     /// Represents a general error with a static message.
     General(&'static str),
+    /// Represents a maker-side liquidity rejection for a new swap.
+    InsufficientLiquidity {
+        /// Currently spendable swap liquidity.
+        available: Amount,
+        /// Liquidity already reserved by active swaps.
+        reserved: Amount,
+        /// Liquidity requested by the new swap.
+        requested: Amount,
+    },
     /// Represents a mutex poisoning error.
     MutexPossion,
     /// Represents an error related to secp256k1 operations.

@@ -262,7 +262,7 @@ fn process_taproot_contract<M: Maker>(
             state.phase = SwapPhase::AwaitingPrivateKeyHandover;
             maker.save_incoming_swapcoin(&incoming_swapcoin)?;
             maker.save_outgoing_swapcoin(&outgoing_swapcoin)?;
-            maker.store_connection_state(&data.id, state);
+            maker.store_connection_state(&data.id, state)?;
             return Err(MakerError::General("Test: skipped funding broadcast"));
         }
     }
@@ -295,7 +295,7 @@ fn process_taproot_contract<M: Maker>(
     maker.save_incoming_swapcoin(&incoming_swapcoin)?;
     maker.save_outgoing_swapcoin(&outgoing_swapcoin)?;
 
-    maker.store_connection_state(&data.id, state);
+    maker.store_connection_state(&data.id, state)?;
 
     #[cfg(feature = "integration-test")]
     {

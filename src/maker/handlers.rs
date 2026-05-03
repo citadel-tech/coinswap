@@ -234,7 +234,11 @@ pub trait Maker: Send + Sync {
     fn sweep_incoming_swapcoins(&self) -> Result<(), MakerError>;
 
     /// Store connection state for persistence across connections.
-    fn store_connection_state(&self, swap_id: &str, state: &ConnectionState);
+    fn store_connection_state(
+        &self,
+        swap_id: &str,
+        state: &ConnectionState,
+    ) -> Result<(), MakerError>;
 
     /// Retrieve stored connection state.
     fn get_connection_state(&self, swap_id: &str) -> Option<ConnectionState>;
@@ -468,7 +472,7 @@ fn handle_swap_details<M: Maker>(
     state.protocol = details.protocol_version;
     state.phase = SwapPhase::AwaitingContractData;
 
-    maker.store_connection_state(&details.id, state);
+    maker.store_connection_state(&details.id, state)?;
 
     let (_, tweakable_point) = maker.get_tweakable_keypair()?;
 

@@ -66,7 +66,7 @@ fn test_concurrent_takers_taproot() {
         &makers,
         bitcoind,
         2,
-        Amount::from_btc(0.05).unwrap(),
+        Amount::from_btc(0.03).unwrap(),
         AddressType::P2TR,
     );
 
@@ -155,7 +155,7 @@ fn test_concurrent_takers_taproot() {
         s.spawn(move || {
             info!("Taker 2 starting concurrent Taproot coinswap");
             let swap_params =
-                SwapParams::new(ProtocolVersion::Taproot, Amount::from_sat(500000), 2)
+                SwapParams::new(ProtocolVersion::Taproot, Amount::from_sat(900000), 2)
                     .with_tx_count(3)
                     .with_required_confirms(1);
 
@@ -195,6 +195,8 @@ fn test_concurrent_takers_taproot() {
     // With limited liquidity, we expect one to succeed and one to fail
     // The UTXO reservation mechanism prevents double-spend of maker UTXOs
     assert!(success_count >= 1, "At least one taker should succeed");
+    let log_path = format!("{}/taker/debug.log", test_framework.temp_dir.display());
+    test_framework.assert_log("Rejecting swap ", &log_path);
     assert_eq!(
         completed_count, 2,
         "Both takers should have completed (success or failure)"
