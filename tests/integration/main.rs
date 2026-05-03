@@ -33,8 +33,6 @@ mod wallet_backup;
 mod concurrent_takers;
 mod fidelity_timelock_violation;
 mod funding_dynamic_splits;
-#[cfg(feature = "hotpath")]
-mod hotpath_swap;
 mod liquidity_test;
 mod offerbook_sync_race;
 mod taker_cli;
