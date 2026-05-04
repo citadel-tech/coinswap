@@ -322,7 +322,7 @@ pub struct MakerReport {
     /// Transaction ID of the outgoing contract.
     pub outgoing_contract_txid: String,
     /// Timelock value in blocks for the outgoing contract.
-    pub timelock: u16,
+    pub timelock: u32,
 }
 
 impl MakerReport {
@@ -334,7 +334,7 @@ impl MakerReport {
         outgoing_amount: u64,
         incoming_contract_txid: String,
         outgoing_contract_txid: String,
-        timelock: u16,
+        timelock: u32,
         network: String,
     ) -> Self {
         let swap_duration_seconds = start_time.elapsed().as_secs_f64();
@@ -552,7 +552,8 @@ impl Drop for LockGuard {
 }
 
 fn acquire_lock(lock_path: &Path) -> std::io::Result<LockGuard> {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+    let mut deadline = std::time::Instant::now() + TIMEOUT;
     loop {
         match OpenOptions::new()
             .write(true)
@@ -566,9 +567,17 @@ fn acquire_lock(lock_path: &Path) -> std::io::Result<LockGuard> {
             }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                 if std::time::Instant::now() > deadline {
-                    // Stale lock — force remove and retry once.
-                    std::fs::remove_file(lock_path)?;
-                    continue;
+                    let is_stale = std::fs::metadata(lock_path)
+                        .and_then(|m| m.modified())
+                        .map(|mtime| mtime.elapsed().unwrap_or_default() > TIMEOUT)
+                        .unwrap_or(true);
+
+                    if is_stale {
+                        std::fs::remove_file(lock_path)?;
+                    } else {
+                        // Owner is still active — extend and keep waiting.
+                        deadline = std::time::Instant::now() + TIMEOUT;
+                    }
                 }
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }
@@ -591,7 +600,7 @@ where
 
     let mut report_file: SwapReportFile = if file_path.exists() {
         let content = std::fs::read_to_string(&file_path)?;
-        serde_json::from_str(&content).unwrap_or_default()
+        serde_json::from_str(&content).map_err(std::io::Error::other)?
     } else {
         SwapReportFile::default()
     };
@@ -599,7 +608,14 @@ where
     mutate(&mut report_file);
 
     let json = serde_json::to_string_pretty(&report_file).map_err(std::io::Error::other)?;
-    std::fs::write(&file_path, json)?;
+    let tmp_path = file_path.with_extension("partial");
+    {
+        use std::io::Write;
+        let mut tmp = std::fs::File::create(&tmp_path)?;
+        tmp.write_all(json.as_bytes())?;
+        tmp.sync_all()?;
+    }
+    std::fs::rename(&tmp_path, &file_path)?;
 
     log::info!("Saved swap report to: {}", file_path.display());
     Ok(())

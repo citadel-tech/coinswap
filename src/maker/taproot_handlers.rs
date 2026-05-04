@@ -468,7 +468,7 @@ fn emit_maker_success_report<M: Maker>(maker: &Arc<M>, state: &ConnectionState, 
         outgoing_total,
         incoming_txid,
         outgoing_txid,
-        timelock as u16,
+        timelock,
         network,
     );
     report.print();
