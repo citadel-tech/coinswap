@@ -6,6 +6,7 @@
 
 use std::{
     borrow::Cow,
+    net::TcpStream,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
@@ -23,7 +24,7 @@ use nostr::{
 use tungstenite::{stream::MaybeTlsStream, Message};
 
 use crate::{
-    nostr_coinswap::{coinswap_kind, EXPIRATION_SECS},
+    nostr_coinswap::{coinswap_kind, connect_nostr_websocket, EXPIRATION_SECS},
     watch_tower::{
         registry_storage::FileRegistry,
         rest_backend::BitcoinRest,
@@ -41,6 +42,7 @@ pub fn run_discovery(
     shutdown: Arc<AtomicBool>,
     initial_sync_complete: Arc<AtomicBool>,
     relays: &[String],
+    nostr_tor_config: (u16, String),
 ) -> Result<(), WatcherError> {
     log::info!("Starting market discovery via Nostr");
 
@@ -57,18 +59,20 @@ pub fn run_discovery(
         let bitcoin_rpc = Arc::clone(&bitcoin_rpc);
         let seen_txid = Arc::clone(&seen_txid);
         let initial_sync_complete = initial_sync_complete.clone();
+        let nostr_tor_config = nostr_tor_config.clone();
 
         std::thread::Builder::new()
             .name(format!("nostr-session-{}", relay))
             .spawn(move || {
                 run_nostr_session_for_relay(
-                    &relay.clone(),
+                    &relay,
                     kind,
                     registry,
                     shutdown,
                     bitcoin_rpc,
                     &seen_txid,
                     &initial_sync_complete,
+                    (nostr_tor_config.0, nostr_tor_config.1.as_str()),
                 );
             })?;
     }
@@ -78,6 +82,7 @@ pub fn run_discovery(
 
 /// Runs a long-lived Nostr session for a single relay.
 /// Reconnects automatically until shutdown is requested.
+#[allow(clippy::too_many_arguments)]
 fn run_nostr_session_for_relay(
     relay_url: &str,
     kind: Kind,
@@ -86,6 +91,7 @@ fn run_nostr_session_for_relay(
     bitcoin_rpc: Arc<BitcoinRest>,
     seen_txid: &Arc<Mutex<SeenTxids>>,
     initial_sync_complete: &Arc<AtomicBool>,
+    nostr_tor_config: (u16, &str),
 ) {
     log::info!("Starting Nostr session for relay {}", relay_url);
 
@@ -98,6 +104,7 @@ fn run_nostr_session_for_relay(
             bitcoin_rpc.clone(),
             seen_txid,
             initial_sync_complete,
+            nostr_tor_config,
         ) {
             Ok(()) => {
                 // Likely exited due to shutdown
@@ -119,6 +126,7 @@ fn run_nostr_session_for_relay(
 
 /// Establishes websocket connection to single Nostr relay and processes events until error or shutdown.
 /// Subscribe to Nostr events on the Coinswap kind for the active network.
+#[allow(clippy::too_many_arguments)]
 fn connect_and_run_once(
     relay_url: &str,
     kind: Kind,
@@ -127,8 +135,9 @@ fn connect_and_run_once(
     bitcoin_rpc: Arc<BitcoinRest>,
     seen_txid: &Arc<Mutex<SeenTxids>>,
     initial_sync_complete: &Arc<AtomicBool>,
+    nostr_tor_config: (u16, &str),
 ) -> Result<(), WatcherError> {
-    let (mut socket, _) = tungstenite::connect(relay_url)?;
+    let mut socket = connect_nostr_websocket(relay_url, nostr_tor_config.0, nostr_tor_config.1)?;
 
     let since = registry.load_nostr_cursor(relay_url).map(Timestamp::from);
 
@@ -172,7 +181,7 @@ fn connect_and_run_once(
 #[allow(clippy::too_many_arguments)]
 fn read_event_loop(
     registry: Arc<FileRegistry>,
-    mut socket: tungstenite::WebSocket<MaybeTlsStream<std::net::TcpStream>>,
+    mut socket: tungstenite::WebSocket<MaybeTlsStream<TcpStream>>,
     shutdown: Arc<AtomicBool>,
     bitcoin_rpc: Arc<BitcoinRest>,
     relay_url: &str,

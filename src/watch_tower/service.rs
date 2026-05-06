@@ -107,7 +107,7 @@ pub fn start_maker_watch_service(
     // Watcher
     let rpc_config_watcher = rpc_config.clone();
     let mut watcher =
-        Watcher::<MakerRole>::new(backend, registry, rx_requests, tx_events, Vec::new());
+        Watcher::<MakerRole>::new(backend, registry, rx_requests, tx_events, Vec::new(), None);
 
     // Makers don't run discovery, so pass an already-complete flag.
     thread::Builder::new()

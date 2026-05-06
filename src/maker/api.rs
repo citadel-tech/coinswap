@@ -401,7 +401,7 @@ pub struct IdleSwapData {
 
 impl MakerServer {
     /// Initialize a new maker server with full setup.
-    pub fn init(config: MakerServerConfig) -> Result<Self, MakerError> {
+    pub fn init(mut config: MakerServerConfig) -> Result<Self, MakerError> {
         let data_dir = config.data_dir.clone();
         std::fs::create_dir_all(&data_dir).map_err(MakerError::IO)?;
 
@@ -419,6 +419,15 @@ impl MakerServer {
         let mut wallet = wallet;
         log::info!("Sync at:----MakerServer init----");
         wallet.sync_and_save()?;
+        let wallet_network = wallet.store.network;
+        if config.network != wallet_network {
+            log::info!(
+                "Maker config network ({:?}) differs from wallet network ({:?}); using wallet network",
+                config.network,
+                wallet_network
+            );
+            config.network = wallet_network;
+        }
 
         // Initialize watch service
         let watch_service = crate::watch_tower::service::start_maker_watch_service(
