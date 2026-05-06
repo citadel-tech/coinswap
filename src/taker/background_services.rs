@@ -19,7 +19,7 @@ use bitcoind::bitcoincore_rpc::RpcApi;
 
 use crate::{
     utill::HEART_BEAT_INTERVAL,
-    wallet::{SwapReport, SwapStatus, Wallet},
+    wallet::{RecoveryReport, Wallet},
     watch_tower::{service::WatchService, watcher::WatcherEvent},
 };
 
@@ -168,36 +168,48 @@ impl RecoveryLoop {
                         if let Ok(mut tracker) = swap_tracker.lock() {
                             // Emit recovery reports before marking as cleaned up
                             for record in tracker.incomplete_swaps() {
-                                let recovery_txids: Vec<String> = record
-                                    .recovery
-                                    .incoming
-                                    .iter()
-                                    .chain(record.recovery.outgoing.iter())
-                                    .filter_map(|o| o.spending_txid.map(|t| t.to_string()))
-                                    .collect();
-                                let has_hashlock = record
-                                    .recovery
-                                    .incoming
-                                    .iter()
-                                    .any(|o| o.resolution == ContractResolution::Hashlock);
-                                let status = if has_hashlock {
-                                    SwapStatus::RecoveryHashlock
-                                } else {
-                                    SwapStatus::RecoveryTimelock
-                                };
                                 let network = wallet
                                     .read()
                                     .map(|w| w.store.network.to_string())
                                     .unwrap_or_default();
-                                SwapReport::emit_taker_recovery_report(
-                                    &data_dir,
-                                    record.swap_id.clone(),
-                                    network,
-                                    record.send_amount_sat,
-                                    status,
-                                    &recovery_txids,
-                                    0.0,
-                                );
+                                let all_outcomes = record
+                                    .recovery
+                                    .incoming
+                                    .iter()
+                                    .chain(record.recovery.outgoing.iter());
+                                let mut hashlock_txids: Vec<String> = Vec::new();
+                                let mut timelock_txids: Vec<String> = Vec::new();
+                                for o in all_outcomes {
+                                    if let Some(txid) = o.spending_txid {
+                                        match o.resolution {
+                                            ContractResolution::Hashlock => {
+                                                hashlock_txids.push(txid.to_string())
+                                            }
+                                            ContractResolution::Timelock => {
+                                                timelock_txids.push(txid.to_string())
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                }
+                                if !hashlock_txids.is_empty() {
+                                    RecoveryReport::emit_taker(
+                                        &data_dir,
+                                        record.swap_id.clone(),
+                                        network.clone(),
+                                        "hashlock".to_string(),
+                                        hashlock_txids,
+                                    );
+                                }
+                                if !timelock_txids.is_empty() {
+                                    RecoveryReport::emit_taker(
+                                        &data_dir,
+                                        record.swap_id.clone(),
+                                        network,
+                                        "timelock".to_string(),
+                                        timelock_txids,
+                                    );
+                                }
                             }
 
                             for swap_id in &swap_ids {

@@ -12,7 +12,9 @@ use bitcoin::{Amount, OutPoint, Txid};
 use bitcoind::bitcoincore_rpc::{json::ListTransactionResult, RpcApi};
 use std::path::{Path, PathBuf};
 
-pub use super::report::{MakerFeeInfo, SwapReport, SwapRole, SwapStatus};
+pub use super::report::{
+    MakerFeeInfo, MakerReport, RecoveryReport, SwapRole, SwapStatus, TakerReport,
+};
 
 /// Restores a wallet from an encrypted or unencrypted JSON backup file for GUI/FFI applications.
 ///

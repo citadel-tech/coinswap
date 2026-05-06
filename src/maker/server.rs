@@ -15,7 +15,7 @@ use crate::{
     maker::rpc::server::MakerRpc,
     nostr_coinswap::broadcast_bond_on_nostr,
     protocol::common_messages::{FidelityProof, MakerToTakerMessage, TakerToMakerMessage},
-    wallet::SwapReport,
+    wallet::RecoveryReport,
 };
 
 use super::{
@@ -828,26 +828,18 @@ fn recover_from_swap(
                     .read()
                     .map(|w| w.store.network.to_string())
                     .unwrap_or_default();
-                for (contract_txid, spending_txid) in &swept.resolved {
-                    let amount = incoming_swapcoins
-                        .iter()
-                        .find(|s| s.contract_tx.compute_txid() == *contract_txid)
-                        .map(|s| s.funding_amount.to_sat())
-                        .unwrap_or(0);
-                    let report = SwapReport::maker_recovery(
-                        format!("recovery_hashlock_{}", contract_txid),
-                        "hashlock",
-                        amount,
-                        0,
-                        contract_txid.to_string(),
-                        "N/A".to_string(),
-                        spending_txid.to_string(),
-                        0,
-                        network.clone(),
-                    );
-                    report.print();
-                    let _ = report.save_to_disk(&maker.data_dir);
-                }
+                let recovery_txids: Vec<String> = swept
+                    .resolved
+                    .iter()
+                    .map(|(_, spending_txid)| spending_txid.to_string())
+                    .collect();
+                RecoveryReport::emit_maker(
+                    &maker.data_dir,
+                    swap_id.clone(),
+                    network.clone(),
+                    "hashlock".to_string(),
+                    recovery_txids,
+                );
 
                 #[cfg(feature = "integration-test")]
                 maker.shutdown.store(true, Relaxed);
@@ -917,26 +909,18 @@ fn recover_from_swap(
                     .read()
                     .map(|w| w.store.network.to_string())
                     .unwrap_or_default();
-                for (contract_txid, spending_txid) in &recovered.resolved {
-                    let out = outgoing_swapcoins
-                        .iter()
-                        .find(|s| s.contract_tx.compute_txid() == *contract_txid);
-                    let amount = out.map(|s| s.funding_amount.to_sat()).unwrap_or(0);
-                    let timelock = out.and_then(|s| s.get_timelock()).unwrap_or(0);
-                    let report = SwapReport::maker_recovery(
-                        format!("recovery_timelock_{}", contract_txid),
-                        "timelock",
-                        0,
-                        amount,
-                        "N/A".to_string(),
-                        contract_txid.to_string(),
-                        spending_txid.to_string(),
-                        timelock as u16,
-                        network.clone(),
-                    );
-                    report.print();
-                    let _ = report.save_to_disk(&maker.data_dir);
-                }
+                let recovery_txids: Vec<String> = recovered
+                    .resolved
+                    .iter()
+                    .map(|(_, spending_txid)| spending_txid.to_string())
+                    .collect();
+                RecoveryReport::emit_maker(
+                    &maker.data_dir,
+                    swap_id.clone(),
+                    network.clone(),
+                    "timelock".to_string(),
+                    recovery_txids,
+                );
 
                 #[cfg(feature = "integration-test")]
                 maker.shutdown.store(true, Relaxed);
