@@ -1723,13 +1723,6 @@ impl Taker {
             txids.len()
         );
 
-        let start = Instant::now();
-        let timeout = if cfg!(feature = "integration-test") {
-            Duration::from_secs(120)
-        } else {
-            Duration::from_secs(600)
-        };
-
         loop {
             let mut all_confirmed = true;
             let mut max_confirm_height: u32 = 0;
@@ -1779,10 +1772,6 @@ impl Taker {
                     log::warn!("Breach detected by background detector — aborting wait");
                     return Err(TakerError::ContractsBroadcasted(vec![]));
                 }
-            }
-
-            if start.elapsed() > timeout {
-                return Err(TakerError::FundingTxWaitTimeOut);
             }
 
             thread::sleep(Duration::from_secs(5));
