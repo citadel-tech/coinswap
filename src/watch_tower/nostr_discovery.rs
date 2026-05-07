@@ -207,7 +207,10 @@ fn read_event_loop(
                 continue;
             }
             Err(tungstenite::Error::ConnectionClosed | tungstenite::Error::AlreadyClosed) => {
-                return Ok(());
+                if shutdown.load(Ordering::SeqCst) {
+                    return Ok(());
+                }
+                return Err(tungstenite::Error::ConnectionClosed.into());
             }
             Err(e) => return Err(e.into()),
         };

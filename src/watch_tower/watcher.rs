@@ -10,6 +10,7 @@ use std::{
         mpsc::{Receiver as StdReceiver, TryRecvError},
         Arc,
     },
+    time::Duration,
 };
 
 use bitcoin::{consensus::deserialize, Block, Network, OutPoint, Transaction};
@@ -182,6 +183,9 @@ impl<R: Role> Watcher<R> {
 
                 if let Some(event) = self.backend.poll() {
                     self.handle_event(event);
+                } else {
+                    // Avoid busy-looping when there are no commands and no ZMQ events.
+                    std::thread::sleep(Duration::from_millis(5));
                 }
             }
         });
