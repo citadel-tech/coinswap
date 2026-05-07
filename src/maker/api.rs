@@ -1211,6 +1211,8 @@ impl MakerTrait for MakerServer {
                 .ok_or(MakerError::General("Funding output not found"))?
                 as u32;
 
+            let funding_txid = funding_info.funding_tx.compute_txid();
+
             // Check the funding_tx is confirmed to required depth
             let wallet_read = self
                 .wallet
@@ -1219,11 +1221,7 @@ impl MakerTrait for MakerServer {
 
             if let Some(txout) = wallet_read
                 .rpc
-                .get_tx_out(
-                    &funding_info.funding_tx.compute_txid(),
-                    funding_output_index,
-                    None,
-                )
+                .get_tx_out(&funding_txid, funding_output_index, None)
                 .map_err(WalletError::Rpc)?
             {
                 if txout.confirmations < REQUIRED_CONFIRMS {
@@ -1234,6 +1232,9 @@ impl MakerTrait for MakerServer {
             } else {
                 return Err(MakerError::General("Funding tx output doesn't exist"));
             }
+
+            // Verify the taker-provided SPV proof commits to this funding transaction.
+            wallet_read.verify_tx_out_proof(&funding_txid, &funding_info.funding_tx_merkleproof)?;
 
             check_reedemscript_is_multisig(&funding_info.multisig_redeemscript)?;
 
@@ -1256,7 +1257,7 @@ impl MakerTrait for MakerServer {
 
             if !wallet_read.does_prevout_match_cached_contract(
                 &OutPoint {
-                    txid: funding_info.funding_tx.compute_txid(),
+                    txid: funding_txid,
                     vout: funding_output_index,
                 },
                 &contract_spk,

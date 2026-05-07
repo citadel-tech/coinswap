@@ -4,9 +4,11 @@ use std::{net::TcpStream, time::Duration};
 
 use bitcoin::{
     hashes::{hash160::Hash as Hash160, Hash},
+    hex::DisplayHex,
     secp256k1::{self, rand::rngs::OsRng, Secp256k1, SecretKey},
     Amount, Network, OutPoint, PublicKey, ScriptBuf, Transaction, Txid,
 };
+use bitcoind::bitcoincore_rpc::RpcApi;
 
 use crate::{
     protocol::{
@@ -24,7 +26,7 @@ use crate::{
     utill::{generate_keypair, generate_maker_keys, read_message, send_message, MIN_FEE_RATE},
     wallet::{
         swapcoin::{IncomingSwapCoin, OutgoingSwapCoin, WatchOnlySwapCoin},
-        Wallet,
+        Wallet, WalletError,
     },
 };
 
@@ -871,25 +873,36 @@ impl Taker {
         next_hashlock_nonces: &[SecretKey],
         refund_locktime: u16,
     ) -> Result<(Vec<Transaction>, Vec<SenderContractTxInfo>), TakerError> {
-        let confirmed_funding_txes: Vec<FundingTxInfo> = funding_txs
-            .iter()
-            .zip(multisig_redeemscripts.iter())
-            .zip(contract_redeemscripts.iter())
-            .zip(multisig_nonces.iter())
-            .zip(hashlock_nonces.iter())
-            .map(
-                |((((funding_tx, multisig_rs), contract_rs), &multisig_nonce), &hashlock_nonce)| {
-                    FundingTxInfo {
-                        funding_tx: funding_tx.clone(),
-                        funding_tx_merkleproof: String::new(), // TODO: Get actual merkle proof
-                        multisig_redeemscript: multisig_rs.clone(),
-                        multisig_nonce,
-                        contract_redeemscript: contract_rs.clone(),
-                        hashlock_nonce,
-                    }
-                },
-            )
-            .collect();
+        let confirmed_funding_txes: Vec<FundingTxInfo> = {
+            let wallet = self.read_wallet()?;
+            funding_txs
+                .iter()
+                .zip(multisig_redeemscripts.iter())
+                .zip(contract_redeemscripts.iter())
+                .zip(multisig_nonces.iter())
+                .zip(hashlock_nonces.iter())
+                .map(
+                    |(
+                        (((funding_tx, multisig_rs), contract_rs), &multisig_nonce),
+                        &hashlock_nonce,
+                    )| {
+                        let txids = [funding_tx.compute_txid()];
+                        let merkle_proof = wallet
+                            .rpc
+                            .get_tx_out_proof(&txids, None)
+                            .map_err(WalletError::Rpc)?;
+                        Ok(FundingTxInfo {
+                            funding_tx: funding_tx.clone(),
+                            funding_tx_merkleproof: merkle_proof.to_lower_hex_string(),
+                            multisig_redeemscript: multisig_rs.clone(),
+                            multisig_nonce,
+                            contract_redeemscript: contract_rs.clone(),
+                            hashlock_nonce,
+                        })
+                    },
+                )
+                .collect::<Result<Vec<_>, TakerError>>()?
+        };
 
         let next_coinswap_info: Vec<NextHopInfo> = next_multisig_pubkeys
             .iter()

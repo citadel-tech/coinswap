@@ -237,4 +237,25 @@ impl Wallet {
         let _res: Vec<Value> = self.rpc.call("importdescriptors", &[import_requests])?;
         Ok(())
     }
+
+    /// Verify the SPV proof for a transaction.
+    pub fn verify_tx_out_proof(
+        &self,
+        expected_txid: &bitcoin::Txid,
+        proof_hex: &str,
+    ) -> Result<(), WalletError> {
+        let proof_txids: Vec<bitcoin::Txid> = self
+            .rpc
+            .call("verifytxoutproof", &[json!(proof_hex)])
+            .map_err(WalletError::Rpc)?;
+
+        if proof_txids != vec![*expected_txid] {
+            return Err(WalletError::MerkleProofInvalid {
+                expected: *expected_txid,
+                got: proof_txids,
+            });
+        }
+
+        Ok(())
+    }
 }

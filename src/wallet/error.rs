@@ -45,6 +45,17 @@ pub enum WalletError {
     /// Use this variant for errors that do not fall under any specific category.
     General(String),
 
+    /// Represents an invalid Merkle proof for a transaction.
+    ///
+    /// `got` contains the txids returned by `verifytxoutproof`, which may be
+    /// empty if the proof failed SPV verification or is not in the best chain.
+    MerkleProofInvalid {
+        /// The txid the proof was expected to commit to.
+        expected: bitcoin::Txid,
+        /// The txids actually returned by `verifytxoutproof`.
+        got: Vec<bitcoin::Txid>,
+    },
+
     /// Represents an error related to protocol violations or unexpected protocol behavior.
     Protocol(ProtocolError),
 
@@ -205,6 +216,13 @@ impl std::fmt::Display for WalletError {
             WalletError::BIP32(e) => write!(f, "BIP32 error: {}", e),
             WalletError::BIP39(e) => write!(f, "BIP39 error: {}", e),
             WalletError::General(msg) => write!(f, "{}", msg),
+            WalletError::MerkleProofInvalid { expected, got } => {
+                write!(
+                    f,
+                    "MerkleProofInvalid | expected: {} | got: {:?}",
+                    expected, got
+                )
+            }
             WalletError::Protocol(e) => write!(f, "Protocol error: {}", e),
             WalletError::Fidelity(e) => write!(f, "Fidelity error: {}", e),
             WalletError::Locktime(e) => write!(f, "Locktime conversion error: {}", e),
