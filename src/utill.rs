@@ -183,8 +183,10 @@ pub fn setup_logger(filter: LevelFilter, data_dir: Option<PathBuf>) {
     });
 }
 
-/// Send a length-appended Protocol or RPC Message through a stream.
-/// The first byte sent is the length of the actual message.
+/// Sends a protocol or RPC message through a stream.
+///
+/// The wire format is a 4-byte big-endian u32 length prefix followed
+/// by the CBOR-serialized message payload.
 pub fn send_message(
     socket_writer: &mut TcpStream,
     message: &impl serde::Serialize,
@@ -200,8 +202,10 @@ pub fn send_message(
     Ok(())
 }
 
-/// Reads a response byte_array from a given stream.
-/// Response can be any length-appended data, where the first byte is the length of the actual message.
+/// Reads a protocol or RPC message from a stream.
+///
+/// Expects the same wire format written by [`send_message`]: a 4-byte big-endian u32 length
+/// prefix followed by the CBOR-serialized message payload.
 pub fn read_message(reader: &mut TcpStream) -> Result<Vec<u8>, NetError> {
     let mut reader = BufReader::new(reader);
     // length of incoming data
