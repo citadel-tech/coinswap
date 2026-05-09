@@ -2589,7 +2589,8 @@ impl Wallet {
                 Ok(spend_tx) => {
                     match self.send_tx(&spend_tx) {
                         Ok(txid) => {
-                            let conf_height = self.wait_for_tx_confirmation(txid, None)?;
+                            let conf_height =
+                                self.wait_for_tx_confirmation(&[txid], 1, None, None)?;
                             log::info!(
                                 "Sweep transaction {} confirmed at blockheight: {}",
                                 txid,
@@ -2631,44 +2632,99 @@ impl Wallet {
         Ok(outcome)
     }
 
-    /// Waits for a transaction to confirm and returns its block height.
+    /// Wait for one or more transactions to reach the required number of confirmations.
     ///
-    /// If a `shutdown` flag is provided, the wait is interrupted when it becomes `true`,
-    /// returning `WalletError::General` instead of blocking indefinitely.
+    /// Returns the highest block height at which any of the transactions was confirmed
+    /// (i.e. `current_height - confirmations + 1`). Returns 0 if `required_confirms` is 0
+    /// or `txids` is empty.
+    ///
+    /// If a `shutdown` flag is provided, the wait is interrupted when it becomes `true`.
+    /// If an `abort_check` is provided, it is polled during the wait; if it returns `true`,
+    /// the wait is interrupted.
     #[hotpath::measure]
     pub fn wait_for_tx_confirmation(
         &self,
-        txid: Txid,
+        txids: &[Txid],
+        required_confirms: u32,
         shutdown: Option<&std::sync::atomic::AtomicBool>,
+        abort_check: Option<&dyn Fn() -> bool>,
     ) -> Result<u32, WalletError> {
-        let sleep_increment = 10;
-        let mut sleep_multiplier = 0;
+        if required_confirms == 0 || txids.is_empty() {
+            return Ok(0);
+        }
 
-        let ht = loop {
+        log::info!(
+            "Waiting for {} confirmation(s) on {} transaction(s)...",
+            required_confirms,
+            txids.len()
+        );
+
+        // cap at ~1 block interval
+        let max_backoff_secs: u64 = 600;
+        let sleep_increment_secs: u64 = 10;
+        let mut attempt: u64 = 0;
+
+        loop {
             if shutdown.is_some_and(|s| s.load(std::sync::atomic::Ordering::Relaxed)) {
-                return Err(WalletError::General("Shutdown requested".to_string()));
+                return Err(WalletError::Interrupted("Shutdown requested"));
+            }
+            if abort_check.is_some_and(|f| f()) {
+                return Err(WalletError::Interrupted("Abort requested"));
             }
 
-            sleep_multiplier += 1;
+            attempt = attempt.saturating_add(1);
 
-            let get_tx_result = self.rpc.get_transaction(&txid, None)?;
-            if let Some(ht) = get_tx_result.info.blockheight {
-                log::info!("Transaction confirmed at blockheight: {ht}, txid : {txid}");
-                break ht;
-            } else {
-                log::info!("Transaction seen in mempool,waiting for confirmation, txid: {txid}");
-                let total_sleep = sleep_increment * sleep_multiplier.min(10 * 60); // Caps at 10 minutes
-                log::info!("Next sync in {total_sleep:?} secs");
-                // Sleep in 1-second increments so we can check the shutdown flag
-                for _ in 0..total_sleep {
-                    if shutdown.is_some_and(|s| s.load(std::sync::atomic::Ordering::Relaxed)) {
-                        return Err(WalletError::General("Shutdown requested".to_string()));
+            let mut all_confirmed = true;
+            let mut max_confirm_height: u32 = 0;
+
+            let current_height = self.rpc.get_block_count()? as u32;
+            for txid in txids {
+                match self.rpc.get_raw_transaction_info(txid, None) {
+                    Ok(tx_info) => {
+                        let confirms: u32 = tx_info.confirmations.unwrap_or(0);
+                        if confirms < required_confirms {
+                            log::debug!(
+                                "Tx {} has {} confirmations (need {})",
+                                txid,
+                                confirms,
+                                required_confirms
+                            );
+                            all_confirmed = false;
+                        } else {
+                            let confirm_height = current_height.saturating_sub(confirms) + 1;
+                            max_confirm_height = max_confirm_height.max(confirm_height);
+                        }
                     }
-                    thread::sleep(Duration::from_secs(1));
+                    Err(e) => {
+                        log::debug!("Error getting tx info for {}: {:?}", txid, e);
+                        all_confirmed = false;
+                    }
                 }
             }
-        };
 
-        Ok(ht)
+            if all_confirmed {
+                log::info!(
+                    "All transactions confirmed (latest at height {})",
+                    max_confirm_height
+                );
+                return Ok(max_confirm_height);
+            }
+
+            let total_sleep = sleep_increment_secs
+                .saturating_mul(attempt)
+                .min(max_backoff_secs);
+            log::info!("Next sync in {} secs", total_sleep);
+
+            // Sleep in 1-second increments so we can check shutdown/abort.
+            for _ in 0..total_sleep {
+                if shutdown.is_some_and(|s| s.load(std::sync::atomic::Ordering::Relaxed)) {
+                    return Err(WalletError::Interrupted("Shutdown requested"));
+                }
+                if abort_check.is_some_and(|f| f()) {
+                    return Err(WalletError::Interrupted("Abort requested"));
+                }
+                thread::sleep(Duration::from_secs(1));
+            }
+        }
     }
 }
