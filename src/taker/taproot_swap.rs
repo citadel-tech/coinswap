@@ -49,6 +49,7 @@ impl Taker {
     }
     /// Create Taproot (MuSig2) contract transactions and swapcoins
     #[allow(clippy::too_many_arguments)]
+    #[hotpath::measure]
     pub(crate) fn funding_create_taproot(
         wallet: &mut Wallet,
         multisig_pubkeys: &[PublicKey],
@@ -176,6 +177,7 @@ impl Taker {
     /// This is the single entrypoint for the taproot exchange phase:
     /// 1. Broadcast our outgoing contract txs and wait for confirmation
     /// 2. Exchange contract data with each maker in the route
+    #[hotpath::measure]
     pub(crate) fn exchange_taproot(&mut self) -> Result<(), TakerError> {
         // Makers verify that contract txs are on-chain before creating their
         // own outgoing, so we must broadcast first.
@@ -420,6 +422,7 @@ impl Taker {
 
     /// Build contract data from our outgoing swapcoins (first hop).
     #[allow(clippy::type_complexity)]
+    #[hotpath::measure]
     fn exchange_build_from_outgoing(
         &self,
     ) -> Result<
@@ -484,6 +487,7 @@ impl Taker {
     }
 
     /// Create swapcoins from received Taproot contract data.
+    #[hotpath::measure]
     fn exchange_create_incoming(
         &mut self,
         contract: &TaprootContractData,
@@ -532,6 +536,7 @@ impl Taker {
     }
 
     /// Broadcast contract transactions (Taproot).
+    #[hotpath::measure]
     fn funding_broadcast(&mut self) -> Result<(), TakerError> {
         log::info!("Broadcasting contract transactions...");
 

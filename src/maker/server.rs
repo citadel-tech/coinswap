@@ -44,6 +44,7 @@ const FIDELITY_BOND_UPDATE_INTERVAL: Duration = Duration::from_secs(30);
 const FIDELITY_BOND_UPDATE_INTERVAL: Duration = Duration::from_secs(600);
 
 /// Start the maker server.
+#[hotpath::measure]
 pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
     log::info!("[{}] Starting maker server", maker.config.network_port);
 
@@ -218,6 +219,7 @@ pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
 }
 
 /// Spawn a background thread for nostr bond announcements.
+#[hotpath::measure]
 fn spawn_nostr_broadcast_thread(
     maker: &Arc<MakerServer>,
     fidelity: FidelityProof,
@@ -271,6 +273,7 @@ fn spawn_nostr_broadcast_thread(
 }
 
 /// Handle a single connection.
+#[hotpath::measure]
 fn handle_connection(maker: Arc<MakerServer>, stream: TcpStream) -> Result<(), MakerError> {
     stream.set_nonblocking(false).map_err(MakerError::IO)?;
     stream
@@ -388,7 +391,24 @@ fn handle_connection(maker: Arc<MakerServer>, stream: TcpStream) -> Result<(), M
             if let Some(ref swap_id) = state.swap_id {
                 maker.remove_connection_state(swap_id);
             }
+
+            #[cfg(feature = "hotpath")]
+            {
+                if let Some(run) = crate::hotpath_local::take_process_hotpath_run() {
+                    run.finish_and_print();
+                }
+            }
             break;
+        }
+    }
+
+    // Fallback: if the swap already completed but we exited the loop via some
+    // other break path (e.g. read error after completion), still finalize the
+    // stored process report.
+    #[cfg(feature = "hotpath")]
+    if state.phase == super::handlers::SwapPhase::Completed {
+        if let Some(run) = crate::hotpath_local::take_process_hotpath_run() {
+            run.finish_and_print();
         }
     }
 
@@ -401,6 +421,7 @@ fn handle_connection(maker: Arc<MakerServer>, stream: TcpStream) -> Result<(), M
 }
 
 /// Background thread that checks for idle swap states and spawns recovery.
+#[hotpath::measure]
 fn check_for_idle_states(maker: Arc<MakerServer>) -> Result<(), MakerError> {
     use super::swap_tracker::{now_secs, MakerRecoveryState, MakerSwapPhase, MakerSwapRecord};
 
@@ -462,6 +483,7 @@ fn check_for_idle_states(maker: Arc<MakerServer>) -> Result<(), MakerError> {
 }
 
 /// Periodically check for expired fidelity bonds and renew them.
+#[hotpath::measure]
 fn fidelity_renewal_loop(maker: Arc<MakerServer>, maker_address: &str) -> Result<(), MakerError> {
     use crate::wallet::AddressType;
 
@@ -523,6 +545,7 @@ const PREIMAGE_LEN: usize = 32;
 
 /// Check the watch tower for spends on outgoing contract outputs, extract
 /// preimages from hashlock spends, and update incoming swapcoins in the wallet.
+#[hotpath::measure]
 fn check_for_preimage_via_watchtower(
     maker: &MakerServer,
     outgoing_swapcoins: &[crate::wallet::swapcoin::OutgoingSwapCoin],
@@ -631,6 +654,7 @@ fn check_for_preimage_via_watchtower(
 /// Update the Maker swap tracker with the given closure.
 ///
 /// Locks the tracker, applies `f` to the record matching `swap_id`, then flushes.
+#[hotpath::measure]
 fn update_tracker(
     maker: &MakerServer,
     swap_id: &str,
@@ -655,6 +679,7 @@ fn update_tracker(
 ///    We extract it via the watch tower and sweep our incoming swapcoins.
 /// 2. **Timelock** (outgoing swapcoins): After the timelock expires, we reclaim
 ///    our outgoing funds via the timelock spending path.
+#[hotpath::measure]
 fn recover_from_swap(
     maker: Arc<MakerServer>,
     swap_id: String,
@@ -935,6 +960,7 @@ fn recover_from_swap(
 }
 
 /// Read a message from a stream.
+#[hotpath::measure]
 fn read_message(stream: &TcpStream) -> Result<TakerToMakerMessage, MakerError> {
     let mut len_buf = [0u8; 4];
     use std::io::Read;
@@ -960,6 +986,7 @@ fn read_message(stream: &TcpStream) -> Result<TakerToMakerMessage, MakerError> {
 }
 
 /// Send a message to a stream.
+#[hotpath::measure]
 fn send_message(stream: &TcpStream, message: &MakerToTakerMessage) -> Result<(), MakerError> {
     let buf = serde_cbor::to_vec(message)
         .map_err(|_| MakerError::General("Failed to serialize message"))?;
@@ -979,6 +1006,7 @@ fn send_message(stream: &TcpStream, message: &MakerToTakerMessage) -> Result<(),
 }
 
 /// Retry with different ports if not availabe
+#[hotpath::measure]
 pub fn bind_port_retry(port: u16) -> Result<(TcpListener, u16), MakerError> {
     let mut current_port = port + 2;
     const MAX_PORT: u16 = 62000;

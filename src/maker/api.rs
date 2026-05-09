@@ -401,6 +401,7 @@ pub struct IdleSwapData {
 
 impl MakerServer {
     /// Initialize a new maker server with full setup.
+    #[hotpath::measure]
     pub fn init(mut config: MakerServerConfig) -> Result<Self, MakerError> {
         let data_dir = config.data_dir.clone();
         std::fs::create_dir_all(&data_dir).map_err(MakerError::IO)?;
@@ -473,6 +474,7 @@ impl MakerServer {
     }
 
     /// Setup fidelity bond for this maker.
+    #[hotpath::measure]
     pub fn setup_fidelity_bond(&self, maker_address: &str) -> Result<FidelityProof, MakerError> {
         use bitcoin::absolute::LockTime;
         use bitcoind::bitcoincore_rpc::RpcApi;
@@ -672,6 +674,7 @@ impl MakerServer {
     }
 
     /// Check if maker has enough liquidity for swaps.
+    #[hotpath::measure]
     pub fn check_swap_liquidity(&self) -> Result<(), MakerError> {
         let sleep_increment = 10u64;
         let mut sleep_duration = 0u64;
@@ -722,6 +725,7 @@ impl MakerServer {
     /// Atomically find and remove stale entries from `ongoing_swaps`.
     /// Returns swap data for each idle swap.
     /// Only drains entries where `outgoing_swapcoins` is non-empty (otherwise nothing to recover).
+    #[hotpath::measure]
     pub fn drain_idle_swaps(&self, timeout: Duration) -> Vec<IdleSwapData> {
         let mut swaps = self.ongoing_swaps.lock().unwrap();
         let mut idle = Vec::new();
@@ -803,6 +807,7 @@ impl MakerTrait for MakerServer {
         }
     }
 
+    #[hotpath::measure]
     fn validate_swap_parameters(&self, details: &SwapDetails) -> Result<(), MakerError> {
         use super::handlers::MIN_CONTRACT_REACTION_TIME;
 
@@ -869,6 +874,7 @@ impl MakerTrait for MakerServer {
         self.config.network
     }
 
+    #[hotpath::measure]
     fn create_funding_transaction(
         &self,
         amount: Amount,
@@ -917,6 +923,7 @@ impl MakerTrait for MakerServer {
             .map_err(|e| MakerError::Wallet(crate::wallet::WalletError::Rpc(e)))
     }
 
+    #[hotpath::measure]
     fn verify_contract_tx_on_chain(&self, txid: &bitcoin::Txid) -> Result<(), MakerError> {
         // The taker broadcasts the contract tx before sending us the contract
         // data, but there can be a brief delay before our bitcoind sees it in
@@ -954,6 +961,7 @@ impl MakerTrait for MakerServer {
         ))
     }
 
+    #[hotpath::measure]
     fn broadcast_transaction(&self, tx: &Transaction) -> Result<bitcoin::Txid, MakerError> {
         let wallet = self
             .wallet
@@ -963,6 +971,7 @@ impl MakerTrait for MakerServer {
         wallet.send_tx(tx).map_err(MakerError::Wallet)
     }
 
+    #[hotpath::measure]
     fn save_incoming_swapcoin(
         &self,
         swapcoin: &crate::wallet::swapcoin::IncomingSwapCoin,
@@ -975,6 +984,7 @@ impl MakerTrait for MakerServer {
         wallet.save_to_disk().map_err(MakerError::Wallet)
     }
 
+    #[hotpath::measure]
     fn save_outgoing_swapcoin(
         &self,
         swapcoin: &crate::wallet::swapcoin::OutgoingSwapCoin,
@@ -987,14 +997,17 @@ impl MakerTrait for MakerServer {
         wallet.save_to_disk().map_err(MakerError::Wallet)
     }
 
+    #[hotpath::measure]
     fn register_watch_outpoint(&self, outpoint: OutPoint) {
         self.watch_service.register_watch_request(outpoint);
     }
 
+    #[hotpath::measure]
     fn unwatch_outpoint(&self, outpoint: OutPoint) {
         self.watch_service.unwatch(outpoint);
     }
 
+    #[hotpath::measure]
     fn sync_and_save_wallet(&self) -> Result<(), MakerError> {
         self.wallet
             .write()
@@ -1003,6 +1016,7 @@ impl MakerTrait for MakerServer {
             .map_err(MakerError::Wallet)
     }
 
+    #[hotpath::measure]
     fn sweep_incoming_swapcoins(&self) -> Result<(), MakerError> {
         log::info!(
             "[{}] Sweeping coins after successful swap",
@@ -1099,6 +1113,7 @@ impl MakerTrait for MakerServer {
             .collect()
     }
 
+    #[hotpath::measure]
     fn verify_and_sign_sender_contract_txs(
         &self,
         txs_info: &[crate::protocol::legacy_messages::ContractTxInfoForSender],
@@ -1161,6 +1176,7 @@ impl MakerTrait for MakerServer {
         Ok(sigs)
     }
 
+    #[hotpath::measure]
     fn verify_proof_of_funding(
         &self,
         message: &crate::protocol::legacy_messages::ProofOfFunding,
@@ -1287,6 +1303,7 @@ impl MakerTrait for MakerServer {
         Ok(hashvalue)
     }
 
+    #[hotpath::measure]
     fn initialize_coinswap(
         &self,
         send_amount: Amount,
@@ -1383,6 +1400,7 @@ impl MakerTrait for MakerServer {
         ))
     }
 
+    #[hotpath::measure]
     fn find_outgoing_swapcoin(
         &self,
         multisig_redeemscript: &bitcoin::ScriptBuf,

@@ -22,6 +22,7 @@ use crate::{
 };
 
 /// Handle a Legacy protocol message.
+#[hotpath::measure]
 pub fn handle_legacy_message<M: Maker>(
     maker: &Arc<M>,
     state: &mut ConnectionState,
@@ -57,6 +58,7 @@ pub fn handle_legacy_message<M: Maker>(
 // MULTI-HOP COORDINATION HANDLERS
 
 /// Process request for contract signatures for sender.
+#[hotpath::measure]
 fn process_req_contract_sigs_for_sender<M: Maker>(
     maker: &Arc<M>,
     state: &mut ConnectionState,
@@ -113,6 +115,7 @@ fn process_req_contract_sigs_for_sender<M: Maker>(
 }
 
 /// Process proof of funding.
+#[hotpath::measure]
 fn process_proof_of_funding<M: Maker>(
     maker: &Arc<M>,
     state: &mut ConnectionState,
@@ -360,6 +363,7 @@ fn process_proof_of_funding<M: Maker>(
     )))
 }
 
+#[hotpath::measure]
 fn process_resp_contract_sigs_for_recvr_and_sender<M: Maker>(
     maker: &Arc<M>,
     state: &mut ConnectionState,
@@ -518,6 +522,7 @@ fn process_resp_contract_sigs_for_recvr_and_sender<M: Maker>(
 }
 
 /// Process request for contract signatures for receiver.
+#[hotpath::measure]
 fn process_req_contract_sigs_for_recvr<M: Maker>(
     maker: &Arc<M>,
     state: &mut ConnectionState,
@@ -630,6 +635,7 @@ fn process_req_contract_sigs_for_recvr<M: Maker>(
 /// Process Legacy private key handover.
 /// Stores the received privkey on incoming swapcoins, extracts outgoing privkeys
 /// as a response, then sweeps.
+#[hotpath::measure]
 fn process_legacy_handover<M: Maker>(
     maker: &Arc<M>,
     state: &mut ConnectionState,

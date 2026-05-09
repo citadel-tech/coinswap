@@ -35,6 +35,7 @@ use crate::{
 
 // ## TODO: Instead of looping over relay's have a connection Pool.
 /// Runs the main discovery routine for maker's fidelity bonds by subscribing to network-specific Nostr events.
+#[hotpath::measure]
 pub fn run_discovery(
     bitcoin_rpc: BitcoinRest,
     network: Network,
@@ -82,6 +83,7 @@ pub fn run_discovery(
 
 /// Runs a long-lived Nostr session for a single relay.
 /// Reconnects automatically until shutdown is requested.
+#[hotpath::measure]
 #[allow(clippy::too_many_arguments)]
 fn run_nostr_session_for_relay(
     relay_url: &str,
@@ -126,6 +128,7 @@ fn run_nostr_session_for_relay(
 
 /// Establishes websocket connection to single Nostr relay and processes events until error or shutdown.
 /// Subscribe to Nostr events on the Coinswap kind for the active network.
+#[hotpath::measure]
 #[allow(clippy::too_many_arguments)]
 fn connect_and_run_once(
     relay_url: &str,
@@ -178,6 +181,7 @@ fn connect_and_run_once(
 }
 
 /// Stream all the events from the Nostr relay and deserialize from json until shutdown
+#[hotpath::measure]
 #[allow(clippy::too_many_arguments)]
 fn read_event_loop(
     registry: Arc<FileRegistry>,
@@ -217,6 +221,7 @@ fn read_event_loop(
 /// filter events based on kind and tags
 /// check if event was alredy recived using the cache
 /// Returns the fidelity announcement containing onion address
+#[hotpath::measure]
 fn handle_relay_message(
     registry: Arc<FileRegistry>,
     msg: RelayMessage,

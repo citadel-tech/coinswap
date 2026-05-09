@@ -60,15 +60,36 @@ struct Cli {
     /// Optional Password for the encryption of the wallet.
     #[clap(name = "PASSWORD", long, short = 'p')]
     pub password: Option<String>,
+    /// When enabled (and built with `--features 'hotpath hotpath-alloc'`), this will:
+    /// - write JSON reports under `{data_dir}/hotpath/`
+    /// - print timing + alloc tables when each swap completes
+    #[cfg(feature = "hotpath")]
+    #[clap(long)]
+    pub hotpath: bool,
 }
 
 fn main() -> Result<(), MakerError> {
     let args = Cli::parse();
+
     setup_maker_logger(log::LevelFilter::Info, args.data_directory.clone());
 
     let data_dir = args
         .data_directory
         .unwrap_or_else(coinswap::utill::get_maker_dir);
+
+    // Start Hotpath at process startup
+    #[cfg(feature = "hotpath")]
+    if args.hotpath {
+        let report_path =
+            coinswap::hotpath_local::default_report_path(&data_dir, "makerd_run", "session");
+
+        let run = coinswap::hotpath_local::HotpathRun::start("coinswap_maker_swap", report_path)
+            .map_err(MakerError::IO)?;
+
+        if !coinswap::hotpath_local::try_set_process_hotpath_run(run) {
+            log::warn!("Hotpath run already stored; startup profiling disabled");
+        }
+    }
 
     // Load static settings from config file (auto-creates defaults if missing)
     let config_path = data_dir.join("config.toml");

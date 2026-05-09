@@ -241,6 +241,7 @@ impl OfferBookHandle {
     }
 
     /// All current good makers
+    #[hotpath::measure]
     pub fn active_makers(&self, protocol: &MakerProtocol) -> Vec<OfferAndAddress> {
         #[cfg(not(feature = "integration-test"))]
         {
@@ -369,6 +370,7 @@ impl OfferSyncHandle {
     }
 
     /// Trigger an offerbook sync and block until it completes.
+    #[hotpath::measure]
     pub fn sync_and_wait(&self) -> Result<(), TakerError> {
         let (done_tx, done_rx) = mpsc::channel();
         self.cmd_tx.send(SyncCommand::SyncNow(done_tx))?;

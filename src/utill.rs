@@ -82,7 +82,7 @@ pub fn get_maker_dir() -> PathBuf {
 }
 
 /// Get the Taker Directory
-pub(crate) fn get_taker_dir() -> PathBuf {
+pub fn get_taker_dir() -> PathBuf {
     get_data_dir().join("taker")
 }
 

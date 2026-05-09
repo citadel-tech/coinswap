@@ -13,6 +13,7 @@ use secp256k1::{
 use crate::protocol::error::ProtocolError;
 
 /// get aggregated public key from two public keys
+#[hotpath::measure]
 pub fn get_aggregated_pubkey(pubkey1: &PublicKey, pubkey2: &PublicKey) -> XOnlyPublicKey {
     let mut pubkeys = [pubkey1, pubkey2];
     // Sort pubkeys lexicographically (manual implementation)
@@ -22,12 +23,14 @@ pub fn get_aggregated_pubkey(pubkey1: &PublicKey, pubkey2: &PublicKey) -> XOnlyP
 }
 
 /// Generates a new nonce pair
+#[hotpath::measure]
 pub fn generate_new_nonce_pair(pubkey: PublicKey) -> (SecretNonce, PublicNonce) {
     let musig_session_sec_rand = SessionSecretRand::from_rng(&mut rand::rng());
     new_nonce_pair(musig_session_sec_rand, None, None, pubkey, None, None)
 }
 
 /// Generates a partial signature
+#[hotpath::measure]
 pub fn generate_partial_signature(
     message: Message,
     agg_nonce: &AggregatedNonce,
@@ -43,6 +46,7 @@ pub fn generate_partial_signature(
 }
 
 /// Aggregates the partial signatures
+#[hotpath::measure]
 pub fn aggregate_partial_signatures(
     message: Message,
     agg_nonce: AggregatedNonce,

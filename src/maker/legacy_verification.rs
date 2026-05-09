@@ -21,6 +21,7 @@ use crate::{
 use super::error::MakerError;
 
 /// Verify sender contract tx details before signing (ReqContractSigsForSender)
+#[hotpath::measure]
 pub(crate) fn verify_req_contract_sigs_for_sender(
     txs_info: &[ContractTxInfoForSender],
     tweakable_pubkey: &PublicKey,
@@ -109,6 +110,7 @@ pub(crate) fn verify_req_contract_sigs_for_sender(
 }
 
 /// Verify taker's contract signatures (RespContractSigsForRecvrAndSender).
+#[hotpath::measure]
 pub(crate) fn verify_contract_sigs(
     receivers_sigs: &[bitcoin::ecdsa::Signature],
     senders_sigs: &[bitcoin::ecdsa::Signature],
@@ -185,6 +187,7 @@ pub(crate) fn verify_contract_sigs(
 }
 
 /// Verify Legacy private key handover from taker.
+#[hotpath::measure]
 pub(crate) fn verify_legacy_privkey_handover(
     privkeys: &[crate::protocol::common_messages::SwapPrivkey],
     incoming_swapcoins: &[IncomingSwapCoin],

@@ -200,6 +200,7 @@ impl MakerSwapTracker {
     }
 
     /// Upsert a swap record and flush to disk.
+    #[hotpath::measure]
     pub fn save_record(&mut self, record: &MakerSwapRecord) -> Result<(), MakerError> {
         self.data
             .swaps
@@ -208,11 +209,13 @@ impl MakerSwapTracker {
     }
 
     /// Get a reference to a swap record by ID.
+    #[hotpath::measure]
     pub fn get_record(&self, swap_id: &str) -> Option<&MakerSwapRecord> {
         self.data.swaps.get(swap_id)
     }
 
     /// Get a mutable reference to a swap record by ID.
+    #[hotpath::measure]
     pub fn get_record_mut(&mut self, swap_id: &str) -> Option<&mut MakerSwapRecord> {
         self.data.swaps.get_mut(swap_id)
     }

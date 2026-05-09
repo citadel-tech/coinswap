@@ -14,6 +14,7 @@ pub struct SerializableScalar(pub Vec<u8>);
 
 impl SerializableScalar {
     /// Create from raw bytes.
+    #[hotpath::measure]
     pub fn from_bytes(bytes: Vec<u8>) -> Self {
         SerializableScalar(bytes)
     }
@@ -74,6 +75,7 @@ pub struct TaprootContractData {
 impl TaprootContractData {
     /// Create a new TaprootContractData message.
     #[allow(clippy::too_many_arguments)]
+    #[hotpath::measure]
     pub fn new(
         id: String,
         pubkeys: Vec<PublicKey>,
@@ -103,6 +105,7 @@ impl TaprootContractData {
     }
 
     /// Convenience method to get the tap tweak as a Scalar.
+    #[hotpath::measure]
     pub fn tap_tweak_scalar(
         &self,
     ) -> Result<bitcoin::secp256k1::Scalar, crate::protocol::error::ProtocolError> {
@@ -121,6 +124,7 @@ pub enum TaprootTakerMessage {
 
 impl TaprootTakerMessage {
     /// Returns the swap ID.
+    #[hotpath::measure]
     pub fn swap_id(&self) -> &str {
         match self {
             Self::ContractData(data) => &data.id,

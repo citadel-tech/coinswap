@@ -103,6 +103,7 @@ fn fidelity_redeemscript(lock_time: &LockTime, pubkey: &PublicKey) -> ScriptBuf 
 
 /// Verifies a fidelity bond by checking timelock validity,
 /// certificate integrity, redeem script existence, and ECDSA signature correctness.
+#[hotpath::measure]
 pub(crate) fn verify_fidelity_checks(
     proof: &FidelityProof,
     addr: &str,
@@ -161,6 +162,7 @@ pub(crate) fn verify_fidelity_checks(
 
 #[allow(unused)]
 /// Reads the locktime from a fidelity redeemscript.
+#[hotpath::measure]
 fn read_locktime_from_fidelity_script(redeemscript: &ScriptBuf) -> Result<LockTime, FidelityError> {
     if let Some(Ok(Instruction::PushBytes(locktime_bytes))) = redeemscript.instructions().nth(2) {
         let mut u4slice: [u8; 4] = [0; 4];
@@ -385,6 +387,7 @@ impl Wallet {
     /// Calculate the theoretical fidelity bond value.
     /// Bond value calculation is described in the document below.
     /// <https://gist.github.com/chris-belcher/87ebbcbb639686057a389acb9ab3e25b#financial-mathematics-of-joinmarket-fidelity-bonds>
+    #[hotpath::measure]
     pub fn calculate_bond_value(&self, bond: &FidelityBond) -> Result<Amount, WalletError> {
         let current_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -428,6 +431,7 @@ impl Wallet {
     /// Upon confirmation it stores the fidelity information in the wallet data.
     /// Create and broadcast the fidelity bond transaction. Returns `(index, txid)`
     /// so the caller can wait for confirmation without holding the wallet lock.
+    #[hotpath::measure]
     pub fn create_fidelity(
         &mut self,
         amount: Amount,
@@ -478,6 +482,7 @@ impl Wallet {
     }
 
     /// Update the confirmation height and certificate expiry of a fidelity bond after it confirms.
+    #[hotpath::measure]
     pub fn update_fidelity_bond_conf_details(
         &mut self,
         index: u32,
@@ -497,6 +502,7 @@ impl Wallet {
     }
 
     /// Redeems all expired fidelity bonds in the wallet ,if found any.
+    #[hotpath::measure]
     pub fn redeem_expired_fidelity_bonds(
         &mut self,
         destination_address_type: AddressType,
@@ -524,6 +530,7 @@ impl Wallet {
     }
 
     /// Generate a [`FidelityProof`] for bond at a given index and a specific onion address.
+    #[hotpath::measure]
     pub(crate) fn generate_fidelity_proof(
         &self,
         index: u32,
