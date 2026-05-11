@@ -579,6 +579,7 @@ impl Wallet {
             }
         };
 
+        let onion = onion.strip_suffix(".onion").unwrap_or(onion);
         let payload = format!("{onion}#{locktime_height}");
         Ok(payload.into_bytes().into_boxed_slice())
     }
