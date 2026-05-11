@@ -52,8 +52,12 @@ fn extract_op_return_data(script: &[u8]) -> Option<&[u8]> {
 }
 
 #[cfg(not(feature = "integration-test"))]
-fn is_valid_onion_address(s: &str) -> bool {
-    s.ends_with(".onion") && s.len() > ".onion".len()
+fn normalize_onion_address(s: &str) -> Option<String> {
+    let onion = s.strip_suffix(".onion").unwrap_or(s);
+    if onion.is_empty() || onion.contains('.') {
+        return None;
+    }
+    Some(format!("{onion}.onion"))
 }
 
 #[cfg(feature = "integration-test")]
@@ -83,17 +87,20 @@ fn parse_fidelity_op_return(data: &[u8]) -> Option<FidelityAnnouncement> {
     let expires_at_height = locktime_str.parse::<u32>().ok()?;
 
     #[cfg(not(feature = "integration-test"))]
-    if !is_valid_onion_address(endpoint) {
-        return None;
+    let onion = normalize_onion_address(endpoint)?;
+
+    #[cfg(feature = "integration-test")]
+    {
+        if !is_valid_address(endpoint) {
+            return None;
+        }
     }
 
     #[cfg(feature = "integration-test")]
-    if !is_valid_address(endpoint) {
-        return None;
-    }
+    let onion = endpoint.to_string();
 
     Some(FidelityAnnouncement {
-        onion: endpoint.to_string(),
+        onion,
         expires_at_height,
     })
 }
@@ -211,7 +218,7 @@ mod tests {
     use bitcoind::tempfile::TempDir;
 
     #[cfg(not(feature = "integration-test"))]
-    const TEST_ADDR: &[u8] = b"aslkdfjbiakdsfn.onion#500";
+    const TEST_ADDR: &[u8] = b"aslkdfjbiakdsfn#500";
     #[cfg(feature = "integration-test")]
     const TEST_ADDR: &[u8] = b"127.0.0.1:9050#500";
 
@@ -260,6 +267,24 @@ mod tests {
         assert_eq!(ann.onion, "aslkdfjbiakdsfn.onion");
         #[cfg(feature = "integration-test")]
         assert_eq!(ann.onion, "127.0.0.1:9050");
+        assert_eq!(ann.expires_at_height, 500);
+    }
+
+    #[cfg(not(feature = "integration-test"))]
+    #[test]
+    fn test_process_fidelity_accepts_legacy_onion_suffix() {
+        let tx = tx(
+            500,
+            vec![OutPoint::null()],
+            vec![
+                ScriptBuf::new(),
+                op_return(b"aslkdfjbiakdsfn.onion#500").into(),
+            ],
+        );
+
+        let ann = process_fidelity(&tx).expect("expected valid fidelity announcement");
+
+        assert_eq!(ann.onion, "aslkdfjbiakdsfn.onion");
         assert_eq!(ann.expires_at_height, 500);
     }
 
