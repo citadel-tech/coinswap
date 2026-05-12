@@ -39,6 +39,7 @@ rustls = { version = "0.23.40", default-features = false, features = ["std", "ri
 nostr = "0.44.2"
 crossbeam-channel = "0.5.15"
 hotpath = "0.15.0"
+bip324 = "0.10.0"
 
 [dev-dependencies]
 flate2 = {version = "1.0.35"}
