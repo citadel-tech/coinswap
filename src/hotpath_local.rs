@@ -86,6 +86,12 @@ fn read_json_with_retries(path: &Path) -> std::io::Result<Value> {
     Err(last_err)
 }
 
+/// Test-only public wrapper for integration benchmarks.
+#[cfg(feature = "integration-test")]
+pub fn read_json_report_with_retries(path: &Path) -> std::io::Result<Value> {
+    read_json_with_retries(path)
+}
+
 fn write_json_pretty(path: &Path, v: &Value) -> std::io::Result<()> {
     let file = fs::OpenOptions::new()
         .create(true)
