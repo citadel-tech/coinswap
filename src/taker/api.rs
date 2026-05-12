@@ -17,6 +17,7 @@ use super::swap_tracker::{
     SwapTracker, TaprootExchangeProgress,
 };
 
+use bip324::io::{Payload, ProtocolError};
 use bitcoin::{
     hashes::{hash160::Hash as Hash160, Hash},
     hex::DisplayHex,
@@ -26,10 +27,11 @@ use bitcoin::{
     },
     Amount, OutPoint, PublicKey,
 };
-use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, RpcApi};
+use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, Client, RpcApi};
 use socks::Socks5Stream;
 
 use crate::{
+    error::{Bip324Error, NetError},
     nostr_coinswap::NOSTR_RELAYS,
     protocol::{
         common_messages::{
@@ -38,7 +40,7 @@ use crate::{
         },
         contract::calculate_pubkey_from_nonce,
     },
-    utill::{check_tor_status, generate_maker_keys, get_taker_dir, read_message, send_message},
+    utill::{check_tor_status, generate_maker_keys, get_taker_dir},
     wallet::{
         swapcoin::{IncomingSwapCoin, OutgoingSwapCoin, WatchOnlySwapCoin},
         MakerFeeInfo as ReportMakerFeeInfo, RPCConfig, RecoveryOutcome, SwapStatus, TakerReport,
@@ -364,6 +366,54 @@ impl MakerConnection {
     }
 }
 
+pub(crate) struct TakerBip324Wrapper {
+    protocol: bip324::io::Protocol<TcpStream, TcpStream>,
+}
+
+impl TakerBip324Wrapper {
+    pub fn new(stream: TcpStream, network: bip324::Network) -> Result<Self, ProtocolError> {
+        let reader = stream.try_clone()?;
+        let writer = stream;
+        let protocol = bip324::io::Protocol::new(
+            // TODO
+            network,
+            bip324::Role::Initiator,
+            None,
+            None, // no garbage or decoys
+            reader,
+            writer,
+        )?;
+
+        Ok(Self { protocol })
+    }
+
+    /// Reads a response byte_array from a given stream.
+    /// Response can be any length-appended data, where the first byte is the length of the actual message.
+    pub(crate) fn read_message(&mut self) -> Result<Vec<u8>, NetError> {
+        let payload = self.protocol.read()?;
+        let contents = payload.contents();
+        match payload.packet_type() {
+            bip324::PacketType::Decoy => {
+                // TODO implement proper decoy handling
+                log::info!("Received decoy message");
+                Err(Bip324Error::UnexpectedDecoy.into())
+            }
+            bip324::PacketType::Genuine => Ok(contents.to_vec()),
+        }
+    }
+
+    /// Send a length-appended Protocol or RPC Message through a stream.
+    /// The first byte sent is the length of the actual message.
+    pub(crate) fn send_message(&mut self, message: &impl serde::Serialize) -> Result<(), NetError> {
+        let msg_bytes = serde_cbor::ser::to_vec(message)?;
+        let to_send = Payload::genuine(msg_bytes);
+
+        self.protocol.write(&to_send)?;
+
+        Ok(())
+    }
+}
+
 impl Taker {
     /// Compute the minimum expected output amount for a specific maker hop.
     ///
@@ -405,6 +455,8 @@ pub struct Taker {
     pub(crate) config: TakerInitConfig,
     /// Wallet for managing funds.
     pub(crate) wallet: Arc<RwLock<Wallet>>,
+    /// Bitcoin network that the taker is operating on.
+    pub(crate) network: bitcoin::Network,
     /// Offer book for managing maker offers.
     pub(crate) offerbook: OfferBookHandle,
     /// Watch service for transaction monitoring.
@@ -501,6 +553,12 @@ impl Taker {
         std::fs::create_dir_all(&data_dir)?;
 
         let (wallet, rpc_config) = Self::init_wallet(&config, &data_dir)?;
+        let network = {
+            let rpc = Client::try_from(&rpc_config)?;
+            rpc.get_blockchain_info()
+                .map_err(|e| TakerError::Wallet(e.into()))?
+                .chain
+        };
         let (watch_service, registry, initial_sync_complete) =
             Self::init_watch_service(&config, &rpc_config, &data_dir)?;
         Self::init_taker_config(&config, &data_dir)?;
@@ -510,6 +568,7 @@ impl Taker {
             registry,
             config.socks_port,
             rpc_config,
+            network,
             initial_sync_complete,
         )?;
         let swap_tracker = Arc::new(Mutex::new(SwapTracker::load_or_create(&data_dir)?));
@@ -518,6 +577,7 @@ impl Taker {
         let mut taker = Taker {
             config,
             wallet: Arc::new(RwLock::new(wallet)),
+            network,
             offerbook,
             watch_service,
             offer_sync_handle,
@@ -689,12 +749,14 @@ impl Taker {
         socks_port: u16,
         rpc_config: RPCConfig,
         initial_sync_complete: Arc<AtomicBool>,
+        network: bitcoin::Network,
     ) -> Result<OfferSyncHandle, TakerError> {
         let rest_backend = BitcoinRest::new(rpc_config)?;
         Ok(OfferSyncService::new(
             offerbook.clone(),
             registry,
             socks_port,
+            network,
             rest_backend,
             initial_sync_complete,
         )
@@ -779,6 +841,7 @@ impl Taker {
         });
 
         self.discover_makers()?;
+        log::info!("Discovered {} makers for swap id {}", maker_count, swap_id);
         self.persist_swap(SwapPhase::MakersDiscovered)?;
 
         #[cfg(feature = "integration-test")]
@@ -789,6 +852,10 @@ impl Taker {
             ));
         }
 
+        log::info!(
+            "Negotiating swap details with makers for swap id {}",
+            swap_id
+        );
         self.negotiate_swap_details()?;
         self.persist_swap(SwapPhase::Negotiated)?;
 
@@ -1302,8 +1369,8 @@ impl Taker {
 
         // Fetch the maker's offer before proposing swap details.
         // This gives us the fee schedule for amount verification later.
-        send_message(&mut stream, &TakerToMakerMessage::GetOffer(GetOffer))?;
-        let offer_bytes = read_message(&mut stream)?;
+        stream.send_message(&TakerToMakerMessage::GetOffer(GetOffer))?;
+        let offer_bytes = stream.read_message()?;
         let offer_msg: MakerToTakerMessage = serde_cbor::from_slice(&offer_bytes)?;
         match offer_msg {
             MakerToTakerMessage::Offer(offer) => {
@@ -1344,9 +1411,9 @@ impl Taker {
             refund_locktime_offset,
         };
 
-        send_message(&mut stream, &TakerToMakerMessage::SwapDetails(swap_details))?;
+        stream.send_message(&TakerToMakerMessage::SwapDetails(swap_details))?;
 
-        let msg_bytes = read_message(&mut stream)?;
+        let msg_bytes = stream.read_message()?;
         let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
 
         match msg {
@@ -1641,12 +1708,12 @@ impl Taker {
     #[hotpath::measure]
     pub(crate) fn net_handshake(
         &self,
-        stream: &mut TcpStream,
+        stream: &mut TakerBip324Wrapper,
     ) -> Result<ProtocolVersion, TakerError> {
         // Send TakerHello
-        send_message(stream, &TakerToMakerMessage::TakerHello(TakerHello))?;
+        stream.send_message(&TakerToMakerMessage::TakerHello(TakerHello))?;
 
-        let msg_bytes = read_message(stream)?;
+        let msg_bytes = stream.read_message()?;
         let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
 
         match msg {
@@ -1669,7 +1736,7 @@ impl Taker {
 
     /// Connect to a maker using either direct connection or Tor proxy.
     #[hotpath::measure]
-    pub(crate) fn net_connect(&self, address: &str) -> Result<TcpStream, TakerError> {
+    pub(crate) fn net_connect(&self, address: &str) -> Result<TakerBip324Wrapper, TakerError> {
         use crate::protocol::common_messages::COINSWAP_PORT;
 
         log::debug!("Connecting to maker at {}", address);
@@ -1704,7 +1771,10 @@ impl Taker {
             .and_then(|_| socket.set_write_timeout(Some(timeout)))
             .map_err(|e| TakerError::General(format!("Failed to set socket timeout: {}", e)))?;
 
-        Ok(socket)
+        let encrypted_protocol =
+            TakerBip324Wrapper::new(socket, self.network).map_err(|e| TakerError::Net(e.into()))?;
+
+        Ok(encrypted_protocol)
     }
 
     /// Finalize the swap by exchanging private keys with all makers.
@@ -1787,9 +1857,9 @@ impl Taker {
             log::info!("Sending privkey to maker {} and awaiting response", i);
 
             let msg = Self::msg_build_handover(protocol, swap_id.clone(), current_privkey);
-            send_message(&mut stream, &msg)?;
+            stream.send_message(&msg)?;
 
-            let msg_bytes = read_message(&mut stream)?;
+            let msg_bytes = stream.read_message()?;
             let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
 
             let received_privkey = match msg {

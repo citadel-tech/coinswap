@@ -1,6 +1,6 @@
 //! Legacy (ECDSA) specific swap methods for the Taker.
 
-use std::{net::TcpStream, time::Duration};
+use std::time::Duration;
 
 use bitcoin::{
     hashes::{hash160::Hash as Hash160, Hash},
@@ -23,7 +23,8 @@ use crate::{
             RespContractSigsForRecvrAndSender, SenderContractTxInfo,
         },
     },
-    utill::{generate_keypair, generate_maker_keys, read_message, send_message, MIN_FEE_RATE},
+    taker::api::TakerBip324Wrapper,
+    utill::{generate_keypair, generate_maker_keys, MIN_FEE_RATE},
     wallet::{
         swapcoin::{IncomingSwapCoin, OutgoingSwapCoin, WatchOnlySwapCoin},
         Wallet, WalletError,
@@ -798,7 +799,7 @@ impl Taker {
     #[hotpath::measure]
     fn exchange_req_sender_sigs(
         &self,
-        stream: &mut TcpStream,
+        stream: &mut TakerBip324Wrapper,
         swap_id: &str,
         outgoing_swapcoins: &[OutgoingSwapCoin],
         locktime: u16,
@@ -855,9 +856,9 @@ impl Taker {
             locktime,
         };
 
-        send_message(stream, &TakerToMakerMessage::ReqContractSigsForSender(req))?;
+        stream.send_message(&TakerToMakerMessage::ReqContractSigsForSender(req))?;
 
-        let msg_bytes = read_message(stream)?;
+        let msg_bytes = stream.read_message()?;
         let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
 
         match msg {
@@ -890,7 +891,7 @@ impl Taker {
     #[hotpath::measure]
     fn exchange_send_proof_of_funding(
         &self,
-        stream: &mut TcpStream,
+        stream: &mut TakerBip324Wrapper,
         swap_id: &str,
         maker_idx: usize,
         funding_txs: &[Transaction],
@@ -961,9 +962,9 @@ impl Taker {
             contract_feerate: MIN_FEE_RATE,
         };
 
-        send_message(stream, &TakerToMakerMessage::ProofOfFunding(pof))?;
+        stream.send_message(&TakerToMakerMessage::ProofOfFunding(pof))?;
 
-        let msg_bytes = read_message(stream)?;
+        let msg_bytes = stream.read_message()?;
         let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
 
         match msg {
@@ -1001,7 +1002,7 @@ impl Taker {
     #[hotpath::measure]
     fn exchange_send_combined_sigs(
         &self,
-        stream: &mut TcpStream,
+        stream: &mut TakerBip324Wrapper,
         swap_id: &str,
         receivers_sigs: Vec<bitcoin::ecdsa::Signature>,
         senders_sigs: Vec<bitcoin::ecdsa::Signature>,
@@ -1012,10 +1013,9 @@ impl Taker {
             senders_sigs,
         };
 
-        send_message(
-            stream,
-            &TakerToMakerMessage::RespContractSigsForRecvrAndSender(resp),
-        )?;
+        stream.send_message(&TakerToMakerMessage::RespContractSigsForRecvrAndSender(
+            resp,
+        ))?;
 
         log::info!(
             "Sent RespContractSigsForRecvrAndSender for swap {}",
@@ -1028,7 +1028,7 @@ impl Taker {
     #[hotpath::measure]
     fn exchange_req_sender_sigs_forwarded(
         &self,
-        stream: &mut TcpStream,
+        stream: &mut TakerBip324Wrapper,
         swap_id: &str,
         senders_info: &[SenderContractTxInfo],
         hashvalue: Hash160,
@@ -1054,9 +1054,9 @@ impl Taker {
             locktime,
         };
 
-        send_message(stream, &TakerToMakerMessage::ReqContractSigsForSender(req))?;
+        stream.send_message(&TakerToMakerMessage::ReqContractSigsForSender(req))?;
 
-        let msg_bytes = read_message(stream)?;
+        let msg_bytes = stream.read_message()?;
         let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
 
         match msg {
@@ -1077,7 +1077,7 @@ impl Taker {
     #[hotpath::measure]
     fn exchange_req_receiver_sigs(
         &self,
-        stream: &mut TcpStream,
+        stream: &mut TakerBip324Wrapper,
         swap_id: &str,
         receivers_txs: &[Transaction],
         prev_senders_info: &[SenderContractTxInfo],
@@ -1097,9 +1097,9 @@ impl Taker {
             txs,
         };
 
-        send_message(stream, &TakerToMakerMessage::ReqContractSigsForRecvr(req))?;
+        stream.send_message(&TakerToMakerMessage::ReqContractSigsForRecvr(req))?;
 
-        let msg_bytes = read_message(stream)?;
+        let msg_bytes = stream.read_message()?;
         let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
 
         match msg {

@@ -19,6 +19,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use bip324::Network;
 use serde::{Deserialize, Serialize};
 use socks::Socks5Stream;
 
@@ -31,7 +32,7 @@ use crate::{
         },
         error::ProtocolError,
     },
-    utill::{read_message, send_message},
+    taker::api::TakerBip324Wrapper,
     wallet::verify_fidelity_checks,
     watch_tower::{registry_storage::FileRegistry, rest_backend::BitcoinRest},
 };
@@ -374,6 +375,7 @@ pub struct OfferSyncService {
     offerbook: OfferBookHandle,
     registry: FileRegistry,
     socks_port: u16,
+    network: Network,
     rest_backend: BitcoinRest,
     /// Set to `true` by Nostr discovery after the first EOSE is received.
     initial_sync_complete: Arc<AtomicBool>,
@@ -412,6 +414,7 @@ impl OfferSyncService {
         offerbook: OfferBookHandle,
         registry: FileRegistry,
         socks_port: u16,
+        network: Network,
         rest_backend: BitcoinRest,
         initial_sync_complete: Arc<AtomicBool>,
     ) -> Self {
@@ -419,6 +422,7 @@ impl OfferSyncService {
             offerbook,
             registry,
             socks_port,
+            network,
             rest_backend,
             initial_sync_complete,
         }
@@ -471,7 +475,6 @@ impl OfferSyncService {
         self.offerbook
             .last_sync_ts
             .store(finished_at, Ordering::Relaxed);
-
         Ok(())
     }
 
@@ -819,9 +822,13 @@ impl TryFrom<String> for MakerAddress {
 }
 
 impl MakerAddress {
-    fn download_offer_with_retries(self, socks_port: u16) -> Option<OfferAndAddress> {
+    fn download_offer_with_retries(
+        self,
+        socks_port: u16,
+        network: Network,
+    ) -> Option<OfferAndAddress> {
         for attempt in 1..=FIRST_CONNECT_ATTEMPTS {
-            match self.clone().download_offer_auto(socks_port) {
+            match self.clone().download_offer_auto(socks_port, network) {
                 Ok(offer) => return Some(offer),
                 Err(e) if attempt < FIRST_CONNECT_ATTEMPTS => {
                     log::debug!(
@@ -841,8 +848,12 @@ impl MakerAddress {
         None
     }
 
-    fn download_offer_auto(self, socks_port: u16) -> Result<OfferAndAddress, TakerError> {
-        let (offer, protocol) = self.fetch_offer(socks_port)?;
+    fn download_offer_auto(
+        self,
+        socks_port: u16,
+        network: Network,
+    ) -> Result<OfferAndAddress, TakerError> {
+        let (offer, protocol) = self.fetch_offer(socks_port, network)?;
         Ok(OfferAndAddress {
             offer,
             address: self,
@@ -852,12 +863,16 @@ impl MakerAddress {
     }
 
     /// Download a single offer from a maker.
-    fn fetch_offer(&self, socks_port: u16) -> Result<(Offer, MakerProtocol), TakerError> {
+    fn fetch_offer(
+        &self,
+        socks_port: u16,
+        network: Network,
+    ) -> Result<(Offer, MakerProtocol), TakerError> {
         use crate::protocol::common_messages::COINSWAP_PORT;
 
         log::debug!("Downloading offer from maker: {}", self);
 
-        let mut socket = if cfg!(feature = "integration-test") {
+        let socket = if cfg!(feature = "integration-test") {
             // Integration test: self.0 is "ip:port"
             TcpStream::connect(self.to_string())?
         } else {
@@ -870,12 +885,14 @@ impl MakerAddress {
         socket.set_read_timeout(Some(Duration::from_secs(FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC)))?;
         socket.set_write_timeout(Some(Duration::from_secs(FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC)))?;
 
+        let mut wrapper = TakerBip324Wrapper::new(socket, network)?;
+
         // Send TakerHello
         let taker_hello = RouterTakerToMakerMessage::TakerHello(RouterTakerHello);
-        send_message(&mut socket, &taker_hello)?;
+        wrapper.send_message(&taker_hello)?;
 
         // Read MakerHello
-        let msg_bytes = read_message(&mut socket)?;
+        let msg_bytes = wrapper.read_message()?;
         let msg: RouterMakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
 
         match msg {
@@ -893,10 +910,10 @@ impl MakerAddress {
 
         // Send GetOffer
         let get_offer = RouterTakerToMakerMessage::GetOffer(RouterGetOffer);
-        send_message(&mut socket, &get_offer)?;
+        wrapper.send_message(&get_offer)?;
 
         // Read Offer
-        let offer_bytes = read_message(&mut socket)?;
+        let offer_bytes = wrapper.read_message()?;
         let offer_msg: RouterMakerToTakerMessage = serde_cbor::from_slice(&offer_bytes)?;
 
         let router_offer = match offer_msg {

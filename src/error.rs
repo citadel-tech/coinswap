@@ -26,6 +26,24 @@ pub enum NetError {
 
     /// Error indicating an invalid CLI application network.
     InvalidAppNetwork,
+
+    /// Error related to Bip324
+    Bip324Error(Bip324Error),
+}
+
+/// Represents errors specific to the BIP324 protocol.
+#[derive(Debug)]
+pub enum Bip324Error {
+    /// Error indicating that an unexpected decoy was encountered during the BIP324 protocol execution.
+    UnexpectedDecoy,
+    /// Error indicating that the protocol was aborted by the peer.
+    ProtocolError(bip324::io::ProtocolError),
+}
+
+impl From<bip324::io::ProtocolError> for Bip324Error {
+    fn from(value: bip324::io::ProtocolError) -> Self {
+        Self::ProtocolError(value)
+    }
 }
 
 impl std::fmt::Display for NetError {
@@ -49,6 +67,18 @@ impl From<std::io::Error> for NetError {
 impl From<serde_cbor::Error> for NetError {
     fn from(value: serde_cbor::Error) -> Self {
         Self::Cbor(value)
+    }
+}
+
+impl From<bip324::io::ProtocolError> for NetError {
+    fn from(value: bip324::io::ProtocolError) -> Self {
+        Self::Bip324Error(Bip324Error::ProtocolError(value))
+    }
+}
+
+impl From<Bip324Error> for NetError {
+    fn from(value: Bip324Error) -> Self {
+        Self::Bip324Error(value)
     }
 }
 
