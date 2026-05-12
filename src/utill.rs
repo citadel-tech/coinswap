@@ -1227,8 +1227,13 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
 
+        let secp = Secp256k1::new();
+        let (sk, _) = secp.generate_keypair(&mut thread_rng());
+        let msg = bitcoin::secp256k1::Message::from_digest([0u8; 32]);
+        let session_id_sig = secp.sign_ecdsa_low_r(&msg, &sk);
         let message = MakerToTakerMessage::MakerHello(MakerHello {
             supported_protocols: vec![ProtocolVersion::Legacy, ProtocolVersion::Taproot],
+            session_id_sig,
         });
 
         thread::spawn(move || {
