@@ -622,8 +622,7 @@ impl MakerServer {
                         }
                     }
                     Ok((index, txid)) => {
-                        // Wait for confirmation WITHOUT holding the wallet lock,
-                        // so other operations (swaps, balance reads, etc.) aren't blocked.
+                        // Wait for confirmation without holding the write lock.
                         log::info!(
                             "[{}] Fidelity bond broadcast, waiting for confirmation: {}",
                             self.config.network_port,
@@ -633,7 +632,7 @@ impl MakerServer {
                             .wallet
                             .read()
                             .map_err(|_| MakerError::General("Failed to lock wallet"))?
-                            .wait_for_tx_confirmation(txid, Some(&self.shutdown))
+                            .wait_for_tx_confirmation(&[txid], 1, Some(&self.shutdown), None)
                             .map_err(MakerError::Wallet)?;
 
                         // Re-acquire write lock briefly to finalize

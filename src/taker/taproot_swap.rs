@@ -568,7 +568,11 @@ impl Taker {
             .iter()
             .map(|sc| sc.contract_tx.compute_txid())
             .collect();
-        self.net_wait_for_confirmation(&contract_txids, None)?;
+        let required_confirms = self.swap_state()?.params.required_confirms;
+        {
+            let wallet = self.read_wallet()?;
+            wallet.wait_for_tx_confirmation(&contract_txids, required_confirms, None, None)?;
+        }
 
         log::info!("Contract transactions broadcast and confirmed");
         Ok(())

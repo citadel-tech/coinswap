@@ -45,6 +45,9 @@ pub enum WalletError {
     /// Use this variant for errors that do not fall under any specific category.
     General(String),
 
+    /// Waiting was interrupted by an external signal (shutdown/abort).
+    Interrupted(&'static str),
+
     /// Represents an invalid Merkle proof for a transaction.
     ///
     /// `got` contains the txids returned by `verifytxoutproof`, which may be
@@ -216,6 +219,7 @@ impl std::fmt::Display for WalletError {
             WalletError::BIP32(e) => write!(f, "BIP32 error: {}", e),
             WalletError::BIP39(e) => write!(f, "BIP39 error: {}", e),
             WalletError::General(msg) => write!(f, "{}", msg),
+            WalletError::Interrupted(reason) => write!(f, "Interrupted: {}", reason),
             WalletError::MerkleProofInvalid { expected, got } => {
                 write!(
                     f,

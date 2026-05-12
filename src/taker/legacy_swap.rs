@@ -311,7 +311,16 @@ impl Taker {
                     .iter()
                     .filter_map(|sc| sc.funding_tx.as_ref().map(|tx| tx.compute_txid()))
                     .collect();
-                prev_confirm_height = self.net_wait_for_confirmation(&funding_txids, None)?;
+                let required_confirms = self.swap_state()?.params.required_confirms;
+                prev_confirm_height = {
+                    let wallet = self.read_wallet()?;
+                    wallet.wait_for_tx_confirmation(
+                        &funding_txids,
+                        required_confirms,
+                        None,
+                        None,
+                    )?
+                };
                 _taker_funding_confirmed = true;
                 self.swap_state_mut()?.makers[maker_idx]
                     .legacy_exchange_mut()?
@@ -608,8 +617,27 @@ impl Taker {
                 .map(|i| i.funding_tx.compute_txid())
                 .collect();
 
-            let maker_confirm_height = self
-                .net_wait_for_confirmation(&maker_funding_txids, self.breach_detector.as_ref())?;
+            let required_confirms = self.swap_state()?.params.required_confirms;
+            let abort_check = || {
+                self.breach_detector
+                    .as_ref()
+                    .is_some_and(|d| d.is_breached())
+            };
+            let maker_confirm_height = {
+                let wallet = self.read_wallet()?;
+                match wallet.wait_for_tx_confirmation(
+                    &maker_funding_txids,
+                    required_confirms,
+                    None,
+                    Some(&abort_check),
+                ) {
+                    Ok(h) => h,
+                    Err(crate::wallet::WalletError::Interrupted(_)) => {
+                        return Err(TakerError::ContractsBroadcasted(vec![]));
+                    }
+                    Err(e) => return Err(e.into()),
+                }
+            };
 
             // Verify that the maker's funding confirmed within a few blocks of the
             // previous hop. For legacy (CSV relative locktime), a large gap between

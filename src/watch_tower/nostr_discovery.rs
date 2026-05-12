@@ -194,7 +194,26 @@ fn read_event_loop(
     initial_sync_complete: &Arc<AtomicBool>,
 ) -> Result<(), WatcherError> {
     while !shutdown.load(Ordering::SeqCst) {
-        let msg = socket.read()?;
+        let msg = match socket.read() {
+            Ok(msg) => msg,
+            Err(tungstenite::Error::Io(e))
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::WouldBlock
+                        | std::io::ErrorKind::TimedOut
+                        | std::io::ErrorKind::Interrupted
+                ) =>
+            {
+                continue;
+            }
+            Err(tungstenite::Error::ConnectionClosed | tungstenite::Error::AlreadyClosed) => {
+                if shutdown.load(Ordering::SeqCst) {
+                    return Ok(());
+                }
+                return Err(tungstenite::Error::ConnectionClosed.into());
+            }
+            Err(e) => return Err(e.into()),
+        };
 
         let text = match msg {
             Message::Text(t) => t,

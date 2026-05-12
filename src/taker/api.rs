@@ -24,7 +24,7 @@ use bitcoin::{
         rand::{rngs::OsRng, RngCore},
         SecretKey,
     },
-    Amount, OutPoint, PublicKey, Txid,
+    Amount, OutPoint, PublicKey,
 };
 use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, RpcApi};
 use socks::Socks5Stream;
@@ -1699,94 +1699,6 @@ impl Taker {
             .map_err(|e| TakerError::General(format!("Failed to set socket timeout: {}", e)))?;
 
         Ok(socket)
-    }
-
-    /// Wait for transactions to reach the required number of confirmations.
-    ///
-    /// Returns the highest block height at which any of the transactions was
-    /// confirmed (i.e. `current_height - confirmations + 1`). Returns 0 if
-    /// `required_confirms` is 0 or `txids` is empty.
-    #[hotpath::measure]
-    pub(crate) fn net_wait_for_confirmation(
-        &self,
-        txids: &[Txid],
-        breach_detector: Option<&BreachDetector>,
-    ) -> Result<u32, TakerError> {
-        let required_confirms = self.swap_state()?.params.required_confirms;
-        if required_confirms == 0 || txids.is_empty() {
-            return Ok(0);
-        }
-
-        log::info!(
-            "Waiting for {} confirmation(s) on {} transaction(s)...",
-            required_confirms,
-            txids.len()
-        );
-
-        let start = Instant::now();
-        let timeout = if cfg!(feature = "integration-test") {
-            Duration::from_secs(120)
-        } else {
-            Duration::from_secs(600)
-        };
-
-        loop {
-            let mut all_confirmed = true;
-            let mut max_confirm_height: u32 = 0;
-
-            {
-                let wallet = self.read_wallet()?;
-                let current_height = wallet.rpc.get_block_count().map_err(|e| {
-                    TakerError::General(format!("Failed to get block count: {:?}", e))
-                })? as u32;
-                for txid in txids {
-                    match wallet.rpc.get_raw_transaction_info(txid, None) {
-                        Ok(tx_info) => {
-                            let confirms = tx_info.confirmations.unwrap_or(0);
-                            if confirms < required_confirms {
-                                log::debug!(
-                                    "Tx {} has {} confirmations (need {})",
-                                    txid,
-                                    confirms,
-                                    required_confirms
-                                );
-                                all_confirmed = false;
-                            } else {
-                                // confirmation height = current - confirms + 1
-                                let confirm_height = current_height.saturating_sub(confirms) + 1;
-                                max_confirm_height = max_confirm_height.max(confirm_height);
-                            }
-                        }
-                        Err(e) => {
-                            log::debug!("Error getting tx info for {}: {:?}", txid, e);
-                            all_confirmed = false;
-                        }
-                    }
-                }
-            }
-
-            if all_confirmed {
-                log::info!(
-                    "All transactions confirmed (latest at height {})",
-                    max_confirm_height
-                );
-                return Ok(max_confirm_height);
-            }
-
-            // Check for adversarial contract activity via the background detector thread.
-            if let Some(detector) = breach_detector {
-                if detector.is_breached() {
-                    log::warn!("Breach detected by background detector — aborting wait");
-                    return Err(TakerError::ContractsBroadcasted(vec![]));
-                }
-            }
-
-            if start.elapsed() > timeout {
-                return Err(TakerError::FundingTxWaitTimeOut);
-            }
-
-            thread::sleep(Duration::from_secs(5));
-        }
     }
 
     /// Finalize the swap by exchanging private keys with all makers.

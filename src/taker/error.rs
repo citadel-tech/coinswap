@@ -24,8 +24,6 @@ pub enum TakerError {
     Net(NetError),
     /// Error indicating the send amount was not set for a transaction.
     SendAmountNotSet,
-    /// Error indicating a timeout while waiting for the funding transaction.
-    FundingTxWaitTimeOut,
     /// Error deserializing data, typically related to CBOR-encoded data.
     Deserialize(String),
     /// Error indicating an MPSC channel failure.
