@@ -49,6 +49,8 @@ pub struct TakerHello;
 pub struct MakerHello {
     /// Protocol versions this maker supports.
     pub supported_protocols: Vec<ProtocolVersion>,
+    /// ECDSA signature over session_id using the maker's identity key, proving ownership and binding to maker address.
+    pub session_id_sig: bitcoin::secp256k1::ecdsa::Signature,
 }
 
 /// Request for offer from Taker to Maker.
@@ -104,18 +106,14 @@ pub struct SwapDetails {
 /// Acknowledgment of swap details from Maker.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AckSwapDetails {
-    /// Whether the swap is accepted.
-    /// If Some, contains the tweakable point for this swap.
-    /// If None, swap is rejected.
-    pub tweakable_point: Option<PublicKey>,
+    /// The maker's tweakable public key for this swap.
+    pub tweakable_point: PublicKey,
 }
 
 impl AckSwapDetails {
     /// Create an acceptance response.
     pub fn accept(tweakable_point: PublicKey) -> Self {
-        AckSwapDetails {
-            tweakable_point: Some(tweakable_point),
-        }
+        AckSwapDetails { tweakable_point }
     }
 }
 
@@ -172,7 +170,7 @@ pub enum MakerToTakerMessage {
     /// Maker's offer (fees, limits, fidelity bond).
     Offer(Box<Offer>),
     /// Acknowledgment of swap parameters.
-    AckSwapDetails(AckSwapDetails),
+    AckSwap(AckSwapDetails),
     /// Response with signatures for sender's contract.
     RespContractSigsForSender(RespContractSigsForSender),
     /// Request signatures for both receiver and sender contracts.
