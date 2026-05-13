@@ -1,0 +1,79 @@
+name: hotpath-profile
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  profile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install protoc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+
+      - name: Create metrics directory
+        run: mkdir -p /tmp/metrics
+
+      - name: Head benchmark
+        env:
+          BITCOIND_DOWNLOAD_ENDPOINT: https://bitcoincore.org/bin/bitcoin-core-28.1
+          HOTPATH_OUTPUT_FORMAT: json
+          HOTPATH_OUTPUT_PATH: /tmp/head_full.json
+          COINSWAP_HOTPATH_MAKER_OUTPUT_PATH: /tmp/metrics/head_maker.json
+          COINSWAP_HOTPATH_TAKER_OUTPUT_PATH: /tmp/metrics/head_taker.json
+          HOTPATH_METRICS_SERVER_OFF: "1"
+          HOTPATH_FUNCTIONS_LIMIT: "0"
+          HOTPATH_FUNCTIONS_NAME_DEPTH: "0"
+          HOTPATH_THREADS_LIMIT: "0"
+        run: |
+          cargo test --release --test integration hotpath_profile_swap \
+            --features='integration-test hotpath hotpath-alloc' -- --nocapture
+
+      - name: Checkout base
+        run: git checkout ${{ github.event.pull_request.base.sha }}
+
+      - name: Clean build artifacts before base benchmark
+        run: cargo clean
+
+      - name: Base benchmark
+        env:
+          BITCOIND_DOWNLOAD_ENDPOINT: https://bitcoincore.org/bin/bitcoin-core-28.1
+          HOTPATH_OUTPUT_FORMAT: json
+          HOTPATH_OUTPUT_PATH: /tmp/base_full.json
+          COINSWAP_HOTPATH_MAKER_OUTPUT_PATH: /tmp/metrics/base_maker.json
+          COINSWAP_HOTPATH_TAKER_OUTPUT_PATH: /tmp/metrics/base_taker.json
+          HOTPATH_METRICS_SERVER_OFF: "1"
+          HOTPATH_FUNCTIONS_LIMIT: "0"
+          HOTPATH_FUNCTIONS_NAME_DEPTH: "0"
+          HOTPATH_THREADS_LIMIT: "0"
+        run: |
+          cargo test --release --test integration hotpath_profile_swap \
+            --features='integration-test hotpath hotpath-alloc' -- --nocapture
+
+      - name: Save PR metadata
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          echo "$PR_NUMBER" > /tmp/metrics/pr_number.txt
+          echo "$BASE_REF" > /tmp/metrics/base_ref.txt
+          echo "$HEAD_REF" > /tmp/metrics/head_ref.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: profile-metrics
+          path: /tmp/metrics/
+          retention-days: 1
