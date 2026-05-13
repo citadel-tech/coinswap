@@ -257,7 +257,7 @@ fn handle_relay_message(
             }
 
             if event.is_expired() || event.tags.expiration().is_none() {
-                log::debug!(
+                log::info!(
                     "Ignoring expired event or event without expiration tag from {}",
                     relay_url
                 );
@@ -280,15 +280,16 @@ fn handle_relay_message(
                 return Ok(());
             };
 
-            registry.save_nostr_cursor(relay_url, event.created_at.as_secs());
+            let tx = match bitcoin_rpc.get_raw_tx(&txid) {
+                Ok(tx) => tx,
+                Err(e) => {
+                    log::warn!("Failed to fetch raw tx {txid:?} via {relay_url}: {e}");
+                    return Ok(());
+                }
+            };
 
             if seen_txid.lock()?.insert(txid) {
-                log::debug!("add new cache {}", txid);
-                let Ok(tx) = bitcoin_rpc.get_raw_tx(&txid) else {
-                    log::debug!("Received invalid txid: {txid:?}");
-                    return Ok(());
-                };
-
+                log::info!("Added txid to Nostr discovery cache: {txid}");
                 match process_fidelity(&tx) {
                     Some(fidelity) => {
                         if registry.insert_fidelity(txid, fidelity) {
@@ -296,12 +297,13 @@ fn handle_relay_message(
                         }
                     }
                     None => {
-                        log::debug!("Invalid fidelity {txid}:{vout} via {relay_url}");
+                        log::warn!("Invalid fidelity {txid}:{vout} via {relay_url}");
                     }
                 }
             } else {
-                log::debug!("Transaction ID already present {txid} via {relay_url}")
+                log::info!("Skipping already-seen txid {txid} via {relay_url}");
             }
+            registry.save_nostr_cursor(relay_url, event.created_at.as_secs());
         }
 
         RelayMessage::EndOfStoredEvents(sub_id) => {
