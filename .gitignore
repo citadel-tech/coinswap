@@ -1,11 +1,10 @@
 /target
 *.swp
-/docs/fidelity_bonds.md
 Cargo.lock
 .vscode
 .idea
 .ra-target
-bin
+/bin
 /coverage/reports
 
 docker-compose.generated.yml
