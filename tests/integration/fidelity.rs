@@ -97,7 +97,7 @@ fn test_fidelity() {
 
         let bond = wallet_read
             .get_fidelity_bonds()
-            .get(&highest_bond_index)
+            .get(highest_bond_index as usize)
             .unwrap();
         let bond_value = wallet_read.calculate_bond_value(bond).unwrap();
         // Bond value depends on wall-clock time and regtest block timing,
@@ -110,7 +110,7 @@ fn test_fidelity() {
 
         let bond = wallet_read
             .get_fidelity_bonds()
-            .get(&highest_bond_index)
+            .get(highest_bond_index as usize)
             .unwrap();
         assert_eq!(bond.amount, Amount::from_sat(5000000));
         assert!(!bond.is_spent());
@@ -161,7 +161,10 @@ fn test_fidelity() {
         let highest_bond_index = wallet_read.get_highest_fidelity_index().unwrap().unwrap();
         assert_eq!(highest_bond_index, index);
 
-        let bond = wallet_read.get_fidelity_bonds().get(&index).unwrap();
+        let bond = wallet_read
+            .get_fidelity_bonds()
+            .get(index as usize)
+            .unwrap();
         assert_eq!(bond.amount, Amount::from_sat(8000000));
         assert!(!bond.is_spent());
 
@@ -371,7 +374,10 @@ fn test_fidelity_spending() {
             );
         }
 
-        let bond = wallet.get_fidelity_bonds().get(&fidelity_index).unwrap();
+        let bond = wallet
+            .get_fidelity_bonds()
+            .get(fidelity_index as usize)
+            .unwrap();
         if bond.is_spent() {
             panic!(
                 "FAILED: Fidelity bond was marked as consumed by regular transaction #{}!",
@@ -483,7 +489,10 @@ fn test_fidelity_spending() {
             );
         }
 
-        let bond = wallet.get_fidelity_bonds().get(&fidelity_index).unwrap();
+        let bond = wallet
+            .get_fidelity_bonds()
+            .get(fidelity_index as usize)
+            .unwrap();
         assert!(
             bond.is_spent(),
             "Fidelity bond should be spent after redemption"
@@ -533,7 +542,7 @@ fn test_fidelity_spending() {
         let wallet = maker.wallet.read().unwrap();
         let new_bond = wallet
             .get_fidelity_bonds()
-            .get(&new_fidelity_index)
+            .get(new_fidelity_index as usize)
             .unwrap();
         assert!(!new_bond.is_spent(), "New fidelity bond should be unspent");
     }

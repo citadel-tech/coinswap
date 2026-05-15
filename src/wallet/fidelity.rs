@@ -15,7 +15,6 @@ use bitcoin::{
 use bitcoind::bitcoincore_rpc::RpcApi;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
     str::FromStr,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -161,7 +160,7 @@ pub(crate) fn verify_fidelity_checks(
     )?;
     if derived.public_key != proof.bond.pubkey.inner {
         return Err(WalletError::General(
-            "Bond does not belong to this tweak point".to_string(),
+            "Fidelity bond does not correspond to the provided tweak point".to_string(),
         ));
     }
 
@@ -243,7 +242,8 @@ pub struct FidelityBond {
     pub(crate) conf_height: Option<u32>,
     /// Whether this bond is spent or not.
     pub(crate) is_spent: bool,
-    /// Child index at `m/0'/2/<bond_index>`; also the key in `WalletStore::fidelity_bond`.
+    /// The child index used in the HD derivation path `m/0'/2/<bond_index>`.
+    /// Note: Fidelity bonds must only be appended to the store; they should never be removed or reordered.
     pub bond_index: u32,
 }
 
@@ -290,7 +290,7 @@ impl FidelityBond {
 // Wallet APIs related to fidelity bonds.
 impl Wallet {
     /// Get a reference to the fidelity bond store
-    pub fn get_fidelity_bonds(&self) -> &HashMap<u32, FidelityBond> {
+    pub fn get_fidelity_bonds(&self) -> &Vec<FidelityBond> {
         &self.store.fidelity_bond
     }
 
@@ -300,6 +300,7 @@ impl Wallet {
             .store
             .fidelity_bond
             .iter()
+            .enumerate()
             .map(|(index, bond)| {
                 let mut bond_info = serde_json::json!({
                         "index": index,
@@ -328,12 +329,13 @@ impl Wallet {
             .store
             .fidelity_bond
             .iter()
+            .enumerate()
             .filter_map(|(i, bond)| {
                 if !bond.is_spent {
                     match self.calculate_bond_value(bond) {
                         Ok(v) => {
                             log::info!("Fidelity Bond found | Index: {i} | Bond Value : {v}");
-                            Some((i, v))
+                            Some((i as u32, v))
                         }
                         Err(e) => {
                             log::error!("Fidelity valuation failed for index {i}:  {e:?} ");
@@ -345,7 +347,7 @@ impl Wallet {
                 }
             })
             .max_by(|a, b| a.1.cmp(&b.1))
-            .map(|(i, _)| *i))
+            .map(|(i, _)| i))
     }
 
     /// Get the [`Keypair`] for the fidelity bond at given index.
@@ -368,7 +370,7 @@ impl Wallet {
         let bond = self
             .store
             .fidelity_bond
-            .get(&index)
+            .get(index as usize)
             .ok_or(FidelityError::BondDoesNotExist)?;
         Ok(bond.redeem_script())
     }
@@ -381,13 +383,7 @@ impl Wallet {
     ) -> Result<(u32, Address, PublicKey), WalletError> {
         // Check what was the last fidelity address index.
         // Derive a fidelity address
-        let next_index = self
-            .store
-            .fidelity_bond
-            .keys()
-            .max()
-            .map(|i| *i + 1)
-            .unwrap_or(0);
+        let next_index = self.store.fidelity_bond.len() as u32;
 
         let fidelity_pubkey = PublicKey {
             compressed: true,
@@ -489,12 +485,12 @@ impl Wallet {
                 amount,
                 lock_time: locktime,
                 pubkey: fidelity_pubkey,
-                // `Conf_height` considered None as they can't be known before the confirmation.
+                // `conf_height` is None because it can't be known before confirmation.
                 conf_height: None,
                 is_spent: false,
                 bond_index: index,
             };
-            self.store.fidelity_bond.insert(index, bond);
+            self.store.fidelity_bond.push(bond);
             self.save_to_disk()?;
         }
 
@@ -511,7 +507,7 @@ impl Wallet {
         let bond = self
             .store
             .fidelity_bond
-            .get_mut(&index)
+            .get_mut(index as usize)
             .ok_or(FidelityError::BondDoesNotExist)?;
 
         bond.conf_height = Some(conf_height);
@@ -531,9 +527,10 @@ impl Wallet {
             .store
             .fidelity_bond
             .iter()
-            .filter_map(|(&i, bond)| {
+            .enumerate()
+            .filter_map(|(i, bond)| {
                 if !bond.is_spent && curr_height > bond.lock_time.to_consensus_u32() {
-                    Some(i)
+                    Some(i as u32)
                 } else {
                     None
                 }
@@ -558,7 +555,7 @@ impl Wallet {
         let bond = self
             .store
             .fidelity_bond
-            .get(&index)
+            .get(index as usize)
             .ok_or(FidelityError::BondDoesNotExist)?;
         if bond.is_spent {
             return Err(FidelityError::BondAlreadyRedeemed.into());
