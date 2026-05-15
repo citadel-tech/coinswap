@@ -497,7 +497,12 @@ impl MakerServer {
                 .wallet
                 .read()
                 .map_err(|_| MakerError::General("Failed to lock wallet"))?;
-            let bond = wallet_read.store.fidelity_bond.get(&i).unwrap().clone();
+            let bond = wallet_read
+                .store
+                .fidelity_bond
+                .get(i as usize)
+                .unwrap()
+                .clone();
             let current_height = wallet_read
                 .rpc
                 .get_block_count()

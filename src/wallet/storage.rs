@@ -56,8 +56,8 @@ pub(crate) struct WalletStore {
     pub(super) prevout_to_contract_map: HashMap<OutPoint, ScriptBuf>,
     /// Set of swept incoming swap coin scriptpubkeys to prevent mixing with regular UTXOs
     pub(crate) swept_incoming_swapcoins: HashSet<ScriptBuf>,
-    /// Map for all the fidelity bond information.
-    pub(crate) fidelity_bond: HashMap<u32, FidelityBond>,
+    /// List of all fidelity bonds.
+    pub(crate) fidelity_bond: Vec<FidelityBond>,
     pub(super) last_synced_height: Option<u64>,
 
     pub(super) wallet_birthday: Option<u64>,
@@ -88,7 +88,7 @@ impl WalletStore {
             watchonly_swapcoins: HashMap::new(),
             prevout_to_contract_map: HashMap::new(),
             swept_incoming_swapcoins: HashSet::new(),
-            fidelity_bond: HashMap::new(),
+            fidelity_bond: Vec::new(),
             last_synced_height: None,
             wallet_birthday,
             utxo_cache: HashMap::new(),

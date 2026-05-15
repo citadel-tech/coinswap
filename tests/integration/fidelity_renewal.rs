@@ -54,7 +54,7 @@ fn test_fidelity_auto_renewal() {
         );
 
         let idx = highest_index.unwrap();
-        let bond = wallet_read.get_fidelity_bonds().get(&idx).unwrap();
+        let bond = wallet_read.get_fidelity_bonds().get(idx as usize).unwrap();
         let locktime = bond.lock_time.to_consensus_u32();
 
         log::info!(
@@ -123,7 +123,7 @@ fn test_fidelity_auto_renewal() {
         // Check if original bond was redeemed (marked as spent)
         let original_bond = wallet_read
             .get_fidelity_bonds()
-            .get(&initial_bond_index)
+            .get(initial_bond_index as usize)
             .unwrap();
         let original_spent = original_bond.is_spent();
 
