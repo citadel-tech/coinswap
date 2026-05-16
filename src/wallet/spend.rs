@@ -93,7 +93,7 @@ impl Wallet {
         let bond = self
             .store
             .fidelity_bond
-            .get(&idx)
+            .get(idx as usize)
             .ok_or(FidelityError::BondDoesNotExist)?;
 
         if bond.is_spent {
@@ -128,7 +128,7 @@ impl Wallet {
                 let bond = self
                     .store
                     .fidelity_bond
-                    .get_mut(&idx)
+                    .get_mut(idx as usize)
                     .ok_or(FidelityError::BondDoesNotExist)?;
                 bond.is_spent = true;
 
@@ -148,7 +148,7 @@ impl Wallet {
             let bond = self
                 .store
                 .fidelity_bond
-                .get_mut(&idx)
+                .get_mut(idx as usize)
                 .ok_or(FidelityError::BondDoesNotExist)?;
 
             bond.is_spent = true;
@@ -206,7 +206,7 @@ impl Wallet {
                     let bond = self
                         .store
                         .fidelity_bond
-                        .get(index)
+                        .get(*index as usize)
                         .ok_or(FidelityError::BondDoesNotExist)?;
                     if bond.is_spent {
                         return Err(FidelityError::BondAlreadyRedeemed.into());

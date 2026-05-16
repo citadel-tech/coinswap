@@ -6,7 +6,7 @@ use bitcoin::{
     secp256k1::{Secp256k1, SecretKey},
     Address, Amount, FeeRate, Network, PublicKey, ScriptBuf, WitnessProgram, WitnessVersion,
 };
-use bitcoind::bitcoincore_rpc::json::ListUnspentResultEntry;
+use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, jsonrpc::base64};
 use crossterm::{
     cursor::MoveTo,
     event::{
@@ -605,33 +605,30 @@ pub fn prompt_password(message: String) -> io::Result<String> {
     Ok(password.trim_end().to_string())
 }
 
-pub(crate) fn get_emphemeral_address(
+pub(crate) fn get_ephemeral_address(
     control_port: u16,
     local_port: u16,
     password: &str,
-    private_key_data: Option<&str>,
+    private_key_data: &str,
     service_id_data: Option<&str>,
-) -> Result<(String, String), TorError> {
+) -> Result<String, TorError> {
     use crate::protocol::common_messages::COINSWAP_PORT;
     use std::io::BufRead;
     let mut stream = TcpStream::connect(format!("127.0.0.1:{control_port}"))?;
     let mut reader = BufReader::new(stream.try_clone()?);
     let mut response = String::new();
     let mut service_id = String::new();
-    let mut private_key = String::new();
     let auth_command = format!("AUTHENTICATE \"{password}\"\r\n");
     stream.write_all(auth_command.as_bytes())?;
     if let Some(service_id) = service_id_data {
         let remove_command = format!("DEL_ONION {service_id}\r\n");
         stream.write_all(remove_command.as_bytes())?;
     }
-    let mut add_onion_command =
-        format!("ADD_ONION NEW:BEST Flags=Detach Port={COINSWAP_PORT},127.0.0.1:{local_port}\r\n");
-    if let Some(pk) = private_key_data {
-        add_onion_command =
-            format!("ADD_ONION {pk} Flags=Detach Port={COINSWAP_PORT},127.0.0.1:{local_port}\r\n");
-        private_key = pk.to_string();
-    }
+
+    let add_onion_command = format!(
+        "ADD_ONION {private_key_data} Flags=Detach Port={COINSWAP_PORT},127.0.0.1:{local_port}\r\n"
+    );
+
     stream.write_all(add_onion_command.as_bytes())?;
 
     while reader.read_line(&mut response)? > 0 {
@@ -640,25 +637,17 @@ pub(crate) fn get_emphemeral_address(
                 .trim_start_matches("250-ServiceID=")
                 .trim()
                 .to_string();
-            if private_key_data.is_some() {
-                break;
-            }
-        } else if response.starts_with("250-PrivateKey=") {
-            private_key = response
-                .trim_start_matches("250-PrivateKey=")
-                .trim()
-                .to_string();
             break;
         }
         response.clear();
     }
 
-    if service_id.is_empty() || private_key.is_empty() {
+    if service_id.is_empty() {
         return Err(TorError::General(
             "Failed to retrieve ephemeral onion service details".to_string(),
         ));
     }
-    Ok((format!("{service_id}.onion"), private_key))
+    Ok(format!("{service_id}.onion"))
 }
 
 pub(crate) fn get_tor_hostname(
@@ -666,26 +655,23 @@ pub(crate) fn get_tor_hostname(
     control_port: u16,
     local_port: u16,
     password: &str,
+    tor_key: [u8; 64],
 ) -> Result<String, TorError> {
     let tor_config_path = data_dir.join("tor/hostname");
-
+    let tor_private_key = format!("ED25519-V3:{}", base64::encode(tor_key));
     if tor_config_path.exists() {
         if let Ok(tor_metadata) = fs::read(&tor_config_path) {
-            let data: [&str; 2] = serde_cbor::de::from_slice(&tor_metadata)?;
+            let hostname_data: String = serde_cbor::de::from_slice(&tor_metadata)?;
 
-            let hostname_data = data[1];
-            let private_key_data = data[0];
-
-            let (hostname, private_key) = get_emphemeral_address(
+            let hostname = get_ephemeral_address(
                 control_port,
                 local_port,
                 password,
-                Some(private_key_data),
-                Some(hostname_data.replace(".onion", "").as_str()),
+                &tor_private_key,
+                Some(hostname_data.trim_end_matches(".onion")),
             )?;
 
             assert_eq!(hostname, hostname_data);
-            assert_eq!(private_key, private_key_data);
 
             log::info!("Generated existing Tor Hidden Service Hostname: {hostname}");
 
@@ -693,17 +679,14 @@ pub(crate) fn get_tor_hostname(
         }
     }
 
-    let (hostname, private_key) =
-        get_emphemeral_address(control_port, local_port, password, None, None)?;
+    let hostname =
+        get_ephemeral_address(control_port, local_port, password, &tor_private_key, None)?;
 
     if let Some(parent) = tor_config_path.parent() {
         fs::create_dir_all(parent)?;
     }
 
-    fs::write(
-        &tor_config_path,
-        serde_cbor::ser::to_vec(&[private_key, hostname.clone()])?,
-    )?;
+    fs::write(&tor_config_path, serde_cbor::ser::to_vec(&hostname)?)?;
 
     log::info!("Generated new Tor Hidden Service Hostname: {hostname}");
 

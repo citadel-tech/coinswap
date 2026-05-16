@@ -13,7 +13,8 @@ use crate::security::KeyMaterial;
 
 use bip39::Mnemonic;
 use bitcoin::{
-    bip32::{ChildNumber, DerivationPath, Xpriv, Xpub},
+    bip32::{ChainCode, ChildNumber, DerivationPath, Xpriv, Xpub},
+    hashes::{sha512, Hash},
     key::TapTweak,
     secp256k1,
     secp256k1::{Keypair, Secp256k1, SecretKey},
@@ -1158,16 +1159,20 @@ impl Wallet {
 
     /// Checks if a UTXO belongs to fidelity bonds, and then returns corresponding UTXOSpendInfo
     fn check_if_fidelity(&self, utxo: &ListUnspentResultEntry) -> Option<UTXOSpendInfo> {
-        self.store.fidelity_bond.iter().find_map(|(i, bond)| {
-            if bond.script_pub_key() == utxo.script_pub_key && bond.amount == utxo.amount {
-                Some(UTXOSpendInfo::FidelityBondCoin {
-                    index: *i,
-                    input_value: bond.amount,
-                })
-            } else {
-                None
-            }
-        })
+        self.store
+            .fidelity_bond
+            .iter()
+            .enumerate()
+            .find_map(|(i, bond)| {
+                if bond.script_pub_key() == utxo.script_pub_key && bond.amount == utxo.amount {
+                    Some(UTXOSpendInfo::FidelityBondCoin {
+                        index: i as u32,
+                        input_value: bond.amount,
+                    })
+                } else {
+                    None
+                }
+            })
     }
 
     /// Check if a UTXO is a swept incoming swap coin based on ScriptPubkey
@@ -1543,20 +1548,38 @@ impl Wallet {
         Ok(())
     }
 
+    //expose a deterministically-derived 64-byte Ed25519-V3 Tor key
+    // built from the wallet's master_key
+    pub(crate) fn derive_tor_key(&self) -> [u8; 64] {
+        // Hash the 32-byte secp256k1 private key bytes RFC 8032 per 5.1.5,
+        // then clamp into a valid Ed25519 expanded key.
+        let mut tor_key =
+            *sha512::Hash::hash(&self.store.master_key.private_key.secret_bytes()).as_byte_array();
+        tor_key[0] &= 248;
+        tor_key[31] &= 127;
+        tor_key[31] |= 64;
+        tor_key
+    }
+
     /// Gets a tweakable key pair from the master key of the wallet.
-    pub(crate) fn get_tweakable_keypair(&self) -> Result<(SecretKey, PublicKey), WalletError> {
+    pub(crate) fn get_tweakable_keypair(
+        &self,
+    ) -> Result<(SecretKey, PublicKey, ChainCode), WalletError> {
         let secp = Secp256k1::new();
-        let privkey = self
+        let Xpriv {
+            private_key,
+            chain_code,
+            ..
+        } = self
             .store
             .master_key
-            .derive_priv(&secp, &[ChildNumber::from_hardened_idx(0)?])?
-            .private_key;
+            .derive_priv(&secp, &[ChildNumber::from_hardened_idx(0)?])?;
 
         let public_key = PublicKey {
             compressed: true,
-            inner: privkey.public_key(&secp),
+            inner: private_key.public_key(&secp),
         };
-        Ok((privkey, public_key))
+        Ok((private_key, public_key, chain_code))
     }
 
     /// Refreshes the UTXO cache by adding only new UTXOs while preserving existing ones.
@@ -2354,7 +2377,7 @@ impl Wallet {
         descriptors_to_import.extend(
             self.store
                 .fidelity_bond
-                .values()
+                .iter()
                 .map(|bond| {
                     let descriptor_without_checksum = format!("raw({:x})", bond.script_pub_key());
                     Ok(format!(

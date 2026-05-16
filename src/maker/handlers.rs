@@ -2,7 +2,7 @@
 
 use std::{sync::Arc, time::Instant};
 
-use bitcoin::{Amount, PublicKey, Transaction};
+use bitcoin::{bip32::ChainCode, Amount, PublicKey, Transaction};
 
 use super::error::MakerError;
 use crate::{
@@ -190,7 +190,7 @@ pub trait Maker: Send + Sync {
     /// Get the tweakable keypair for swap address derivation.
     fn get_tweakable_keypair(
         &self,
-    ) -> Result<(bitcoin::secp256k1::SecretKey, PublicKey), MakerError>;
+    ) -> Result<(bitcoin::secp256k1::SecretKey, PublicKey, ChainCode), MakerError>;
 
     /// Get the highest fidelity proof.
     fn get_fidelity_proof(&self) -> Result<FidelityProof, MakerError>;
@@ -422,7 +422,7 @@ fn handle_get_offer<M: Maker>(
         Maker::network_port(maker.as_ref())
     );
 
-    let (_, tweakable_point) = maker.get_tweakable_keypair()?;
+    let (_, tweakable_point, tweak_chain_code) = maker.get_tweakable_keypair()?;
     let fidelity = maker.get_fidelity_proof()?;
     let config = maker.get_config();
 
@@ -438,6 +438,7 @@ fn handle_get_offer<M: Maker>(
         min_size: config.min_swap_amount,
         tweakable_point,
         fidelity,
+        tweak_chain_code,
     };
 
     log::info!(
@@ -478,7 +479,7 @@ fn handle_swap_details<M: Maker>(
 
     maker.store_connection_state(&details.id, state)?;
 
-    let (_, tweakable_point) = maker.get_tweakable_keypair()?;
+    let (_, tweakable_point, _) = maker.get_tweakable_keypair()?;
 
     log::info!(
         "[{}] Accepting swap (id: {})",

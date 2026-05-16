@@ -12,7 +12,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use bitcoin::{Amount, Network, OutPoint, PublicKey, Transaction};
+use bitcoin::{bip32::ChainCode, Amount, Network, OutPoint, PublicKey, Transaction};
 use bitcoind::bitcoincore_rpc::RpcApi;
 
 use crate::{
@@ -497,7 +497,12 @@ impl MakerServer {
                 .wallet
                 .read()
                 .map_err(|_| MakerError::General("Failed to lock wallet"))?;
-            let bond = wallet_read.store.fidelity_bond.get(&i).unwrap().clone();
+            let bond = wallet_read
+                .store
+                .fidelity_bond
+                .get(i as usize)
+                .unwrap()
+                .clone();
             let current_height = wallet_read
                 .rpc
                 .get_block_count()
@@ -772,7 +777,7 @@ impl MakerTrait for MakerServer {
 
     fn get_tweakable_keypair(
         &self,
-    ) -> Result<(bitcoin::secp256k1::SecretKey, PublicKey), MakerError> {
+    ) -> Result<(bitcoin::secp256k1::SecretKey, PublicKey, ChainCode), MakerError> {
         let wallet = self
             .wallet
             .read()
@@ -1172,7 +1177,7 @@ impl MakerTrait for MakerServer {
         );
 
         // Full verification: multisig format, pubkeys, structure, P2WSH output
-        let (tweakable_privkey, tweakable_pubkey) = self.get_tweakable_keypair()?;
+        let (tweakable_privkey, tweakable_pubkey, _) = self.get_tweakable_keypair()?;
         super::legacy_verification::verify_req_contract_sigs_for_sender(
             txs_info,
             &tweakable_pubkey,
@@ -1299,7 +1304,7 @@ impl MakerTrait for MakerServer {
 
             check_reedemscript_is_multisig(&funding_info.multisig_redeemscript)?;
 
-            let (_, tweakable_pubkey) = wallet_read.get_tweakable_keypair()?;
+            let (_, tweakable_pubkey, _) = wallet_read.get_tweakable_keypair()?;
 
             check_multisig_has_pubkey(
                 &funding_info.multisig_redeemscript,
@@ -1519,11 +1524,18 @@ impl MakerRpc for MakerServer {
     }
 
     fn get_tor_hostname(&self) -> Result<String, crate::utill::TorError> {
+        let tor_key_bytes = self
+            .wallet
+            .read()
+            .map_err(|_| crate::utill::TorError::General("wallet lock poisoned".into()))?
+            .derive_tor_key();
+
         crate::utill::get_tor_hostname(
             &self.data_dir,
             self.config.control_port,
             self.config.network_port,
             &self.config.tor_auth_password,
+            tor_key_bytes,
         )
     }
 }
