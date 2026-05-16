@@ -165,7 +165,7 @@ pub fn broadcast_bond_on_nostr(
 
     for relay in relays {
         for attempt in 1..=MAX_RETRIES {
-            log::debug!(
+            log::info!(
                 "Publishing Nostr event | relay={} | attempt={}/{} | payload={}",
                 relay,
                 attempt,
