@@ -192,7 +192,7 @@ impl FileRegistry {
     pub fn load_nostr_cursor(&self, relay_url: &str) -> Option<u64> {
         let cursor = self.with_data(|data| data.nostr_cursors.get(relay_url).copied());
         log::debug!(
-            "Nostr cursor load: relay_url={}, cursor={:?}",
+            "Nostr cursor load | relay={} | cursor={:?}",
             relay_url,
             cursor
         );
@@ -211,7 +211,7 @@ impl FileRegistry {
             (prev, next, next != prev)
         });
         log::debug!(
-            "Nostr cursor save: relay_url={}, incoming={}, previous={}, stored={}, advanced={}",
+            "Nostr cursor save | relay={} | incoming={} | previous={} | stored={} | advanced={}",
             relay_url,
             created_at_secs,
             prev,

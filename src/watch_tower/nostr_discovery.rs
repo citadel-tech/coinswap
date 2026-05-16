@@ -45,9 +45,13 @@ pub fn run_discovery(
     relays: &[String],
     nostr_tor_config: (u16, String),
 ) -> Result<(), WatcherError> {
-    log::info!("Starting market discovery via Nostr");
-
     let kind = Kind::Custom(coinswap_kind(network));
+    log::info!(
+        "Starting market discovery via Nostr | network={} | kind={} | relays={:?}",
+        network,
+        kind,
+        relays
+    );
 
     let seen_txid = Arc::new(Mutex::new(SeenTxids::new()));
     let registry = Arc::new(registry);
@@ -95,7 +99,7 @@ fn run_nostr_session_for_relay(
     initial_sync_complete: &Arc<AtomicBool>,
     nostr_tor_config: (u16, &str),
 ) {
-    log::info!("Starting Nostr session for relay {}", relay_url);
+    log::info!("Starting Nostr session | relay={relay_url}");
 
     while !shutdown.load(Ordering::SeqCst) {
         match connect_and_run_once(
@@ -114,16 +118,14 @@ fn run_nostr_session_for_relay(
             }
             Err(e) => {
                 log::warn!(
-                    "Nostr session error on {}: {:?}, retrying in 5s",
-                    relay_url,
-                    e
+                    "Nostr session error | relay={relay_url} | error={e:?} | retry_in_secs=5"
                 );
                 std::thread::sleep(std::time::Duration::from_secs(5));
             }
         }
     }
 
-    log::info!("Stopped Nostr session for relay {}", relay_url);
+    log::info!("Stopped Nostr session | relay={relay_url}");
 }
 
 /// Establishes websocket connection to single Nostr relay and processes events until error or shutdown.
@@ -162,10 +164,11 @@ fn connect_and_run_once(
     socket.flush()?;
 
     log::info!(
-        "Subscribed to fidelity announcements on {} (kind={}, since={:?})",
+        "Subscribed to fidelity announcements | relay={} | kind={} | since={:?} | request={}",
         relay_url,
         kind,
-        since
+        since,
+        req.as_json()
     );
 
     read_event_loop(
@@ -221,6 +224,13 @@ fn read_event_loop(
             _ => continue,
         };
 
+        log::debug!(
+            "Nostr relay message received | relay={} | bytes={} | payload={}",
+            relay_url,
+            text.len(),
+            text
+        );
+
         let relay_msg = RelayMessage::from_json(&text)?;
 
         handle_relay_message(
@@ -258,8 +268,11 @@ fn handle_relay_message(
 
             if event.is_expired() || event.tags.expiration().is_none() {
                 log::debug!(
-                    "Ignoring expired event or event without expiration tag from {}",
-                    relay_url
+                    "Ignoring expired Nostr event | relay={} | event_id={} | created_at={} | has_expiration={}",
+                    relay_url,
+                    event.id,
+                    event.created_at,
+                    event.tags.expiration().is_some()
                 );
                 return Ok(());
             }
@@ -270,45 +283,104 @@ fn handle_relay_message(
                 > EXPIRATION_SECS
             {
                 log::debug!(
-                    "Skipping stale event from {relay_url} older than {} hours",
+                    "Skipping stale Nostr event | relay={} | event_id={} | created_at={} | max_age_hours={}",
+                    relay_url,
+                    event.id,
+                    event.created_at,
                     EXPIRATION_SECS / 3600
                 );
                 return Ok(());
             }
 
             let Some((txid, vout)) = parse_fidelity_event(&event) else {
+                log::debug!(
+                    "Ignoring unparsable fidelity event | relay={} | event_id={} | content={}",
+                    relay_url,
+                    event.id,
+                    event.content
+                );
                 return Ok(());
             };
+
+            log::debug!(
+                "Parsed fidelity event | relay={} | event_id={} | txid={} | vout={} | created_at={}",
+                relay_url,
+                event.id,
+                txid,
+                vout,
+                event.created_at
+            );
 
             registry.save_nostr_cursor(relay_url, event.created_at.as_secs());
 
             if seen_txid.lock()?.insert(txid) {
-                log::debug!("add new cache {}", txid);
+                log::debug!(
+                    "Cached Nostr fidelity txid | relay={} | event_id={} | txid={}",
+                    relay_url,
+                    event.id,
+                    txid
+                );
                 let Ok(tx) = bitcoin_rpc.get_raw_tx(&txid) else {
-                    log::debug!("Received invalid txid: {txid:?}");
+                    log::debug!(
+                        "Fidelity transaction lookup failed | relay={} | event_id={} | txid={} | vout={}",
+                        relay_url,
+                        event.id,
+                        txid,
+                        vout
+                    );
                     return Ok(());
                 };
 
                 match process_fidelity(&tx) {
                     Some(fidelity) => {
+                        let maker_address = fidelity.onion.clone();
+                        let expires_at_height = fidelity.expires_at_height;
                         if registry.insert_fidelity(txid, fidelity) {
-                            log::info!("Stored verified fidelity via {relay_url}: {txid}:{vout}");
+                            log::info!(
+                                "Stored verified fidelity | relay={} | event_id={} | txid={} | vout={} | maker_address={} | expires_at_height={}",
+                                relay_url,
+                                event.id,
+                                txid,
+                                vout,
+                                maker_address,
+                                expires_at_height
+                            );
                         }
                     }
                     None => {
-                        log::debug!("Invalid fidelity {txid}:{vout} via {relay_url}");
+                        log::debug!(
+                            "Invalid fidelity transaction | relay={} | event_id={} | txid={} | vout={}",
+                            relay_url,
+                            event.id,
+                            txid,
+                            vout
+                        );
                     }
                 }
             } else {
-                log::debug!("Transaction ID already present {txid} via {relay_url}")
+                log::debug!(
+                    "Duplicate fidelity txid ignored | relay={} | event_id={} | txid={} | vout={}",
+                    relay_url,
+                    event.id,
+                    txid,
+                    vout
+                );
             }
         }
 
         RelayMessage::EndOfStoredEvents(sub_id) => {
-            log::info!("EOSE received for subscription {sub_id} via {relay_url}");
+            log::info!(
+                "EOSE received | relay={} | subscription_id={}",
+                relay_url,
+                sub_id
+            );
             if !initial_sync_complete.load(Ordering::SeqCst) {
                 initial_sync_complete.store(true, Ordering::SeqCst);
-                log::info!("Initial Nostr discovery sync complete (triggered by {relay_url})");
+                log::info!(
+                    "Initial Nostr discovery sync complete | relay={} | subscription_id={}",
+                    relay_url,
+                    sub_id
+                );
             }
         }
 

@@ -156,7 +156,7 @@ pub fn broadcast_bond_on_nostr(
 
     let msg = ClientMessage::Event(std::borrow::Cow::Owned(event));
 
-    log::debug!("nostr wire msg: {}", msg.as_json());
+    log::debug!("Nostr wire message built | payload={}", msg.as_json());
 
     const RELAY_DELAY: Duration = Duration::from_secs(2);
     const MAX_RETRIES: usize = 3;
@@ -165,6 +165,13 @@ pub fn broadcast_bond_on_nostr(
 
     for relay in relays {
         for attempt in 1..=MAX_RETRIES {
+            log::debug!(
+                "Publishing Nostr event | relay={} | attempt={}/{} | payload={}",
+                relay,
+                attempt,
+                MAX_RETRIES,
+                msg.as_json()
+            );
             match broadcast_to_relay(relay, &msg, config.socks_port, &config.tor_auth_password) {
                 Ok(()) => {
                     success = true;
@@ -172,7 +179,7 @@ pub fn broadcast_bond_on_nostr(
                 }
                 Err(e) => {
                     log::warn!(
-                        "failed to broadcast to {} (attempt {}/{}): {:?}",
+                        "Nostr event publish failed | relay={} | attempt={}/{} | error={:?}",
                         relay,
                         attempt,
                         MAX_RETRIES,
@@ -203,14 +210,14 @@ fn broadcast_to_relay(
 ) -> Result<(), MakerError> {
     let mut socket =
         connect_nostr_websocket(relay, socks_port, tor_auth_password).map_err(|e| {
-            log::warn!("failed to connect to nostr relay {}: {}", relay, e);
+            log::warn!("Nostr relay connect failed | relay={} | error={}", relay, e);
             MakerError::General("failed to connect to nostr relay")
         })?;
 
     socket
         .write(Message::Text(msg.as_json().into()))
         .map_err(|e| {
-            log::warn!("nostr relay write failed: {}", e);
+            log::warn!("Nostr relay write failed | relay={} | error={}", relay, e);
             MakerError::General("failed to write to nostr relay")
         })?;
     socket.flush().ok();
@@ -224,7 +231,11 @@ fn broadcast_to_relay(
                         status: true,
                         ..
                     } => {
-                        log::info!("nostr relay {} accepted event {}", relay, event_id);
+                        log::info!(
+                            "Nostr relay accepted event | relay={} | event_id={}",
+                            relay,
+                            event_id
+                        );
                         return Ok(());
                     }
                     RelayMessage::Ok {
@@ -233,7 +244,7 @@ fn broadcast_to_relay(
                         message,
                     } => {
                         log::warn!(
-                            "nostr relay {} rejected event {}: {}",
+                            "Nostr relay rejected event | relay={} | event_id={} | message={}",
                             relay,
                             event_id,
                             message
@@ -245,9 +256,9 @@ fn broadcast_to_relay(
         }
         Ok(_) => {}
         Err(e) => {
-            log::warn!("nostr relay {} read error: {}", relay, e);
+            log::warn!("Nostr relay read failed | relay={} | error={}", relay, e);
         }
     }
-    log::warn!("nostr relay {} did not confirm event", relay);
+    log::warn!("Nostr relay did not confirm event | relay={}", relay);
     Err(MakerError::General("nostr relay did not confirm event"))
 }
