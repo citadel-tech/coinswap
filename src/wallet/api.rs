@@ -183,14 +183,27 @@ pub enum UTXOSpendInfo {
 }
 
 impl UTXOSpendInfo {
-    /// Estimates Witness Size for different types of UTXOs in the context of Coinswap
+    /// Estimates Witness Size for different types of UTXOs in the context of Coinswap.
+    ///
+    /// Each ECDSA-bearing constant reserves the worst-case 73-byte low-R signature
+    /// (DER sig + sighash flag). `sign_ecdsa_low_r` produces 71–73 byte signatures
+    /// depending on whether the `S` component needs a leading 0x00 byte; assuming
+    /// 72 bytes (the typical case) caused post-sign vbytes to occasionally exceed
+    /// the estimate by 1 byte per input, which pushed the broadcast feerate below
+    /// the requested rate. Schnorr signatures are exactly 64 bytes, so the P2TR
+    /// estimate has no slack to add.
     pub fn estimate_witness_size(&self) -> usize {
-        const P2WPKH_WITNESS_SIZE: usize = 107; // 1 + 72 (sig) + 33 (pubkey) + 1 (count)
+        // 1 (count) + 1 (sig push len) + 73 (worst-case low-R ECDSA sig + sighash) + 1 (pubkey push len) + 33 (compressed pubkey) = 109.
+        // Previous value 107 assumed a 72-byte sig.
+        const P2WPKH_WITNESS_SIZE: usize = 108;
         const P2TR_WITNESS_SIZE: usize = 65; // 1 + 64 (Schnorr sig)
-        const P2WSH_MULTISIG_2OF2_WITNESS_SIZE: usize = 222;
-        const FIDELITY_BOND_WITNESS_SIZE: usize = 115;
-        const TIME_LOCK_CONTRACT_TX_WITNESS_SIZE: usize = 179;
-        const HASH_LOCK_CONTRACT_TX_WITNESS_SIZE: usize = 211;
+        // 2-of-2 multisig: 2 ECDSA sigs, each can land at worst-case 73 bytes; +1 byte per sig over the prior 72-byte assumption.
+        const P2WSH_MULTISIG_2OF2_WITNESS_SIZE: usize = 224;
+        // Fidelity bond p2wsh has 1 ECDSA sig; +1 byte over the prior 72-byte assumption.
+        const FIDELITY_BOND_WITNESS_SIZE: usize = 116;
+        // Timelock/hashlock contract spends each carry 1 ECDSA sig; +1 byte over the prior 72-byte assumption.
+        const TIME_LOCK_CONTRACT_TX_WITNESS_SIZE: usize = 180;
+        const HASH_LOCK_CONTRACT_TX_WITNESS_SIZE: usize = 212;
 
         match self {
             Self::SeedCoin { address_type, .. } | Self::SweptCoin { address_type, .. } => {

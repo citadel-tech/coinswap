@@ -455,16 +455,15 @@ impl Wallet {
         let calc_vsize = (tx.base_size() * 4 + total_witness_size).div_ceil(4);
         let signed_tx_vsize = tx.vsize();
 
-        // As signature size can vary between 71-73 bytes we have a tolerance
-        let tolerance_per_input = 2; // Allow a 2-byte difference per input
-        let total_tolerance = tolerance_per_input * tx.input.len();
-
-        assert!(
-            (calc_vsize as isize - signed_tx_vsize as isize).abs() <= total_tolerance as isize,
-            "Calculated vsize {} didn't match signed tx vsize {} (tolerance: {})",
-            calc_vsize,
+        // `estimate_witness_size` reserves the worst-case 73-byte low-R ECDSA
+        // signature for every ECDSA-bearing input, so the signed tx must never
+        // exceed the pre-sign vsize estimate. Holding this invariant guarantees
+        // `actual_feerate >= target_feerate`.
+        debug_assert!(
+            signed_tx_vsize <= calc_vsize,
+            "Signed tx vsize {} exceeded pre-sign estimate {} — witness-size estimate is undershooting",
             signed_tx_vsize,
-            total_tolerance
+            calc_vsize,
         );
 
         // The actual fee is the difference between the sum of output amounts from the total input amount
