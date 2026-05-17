@@ -155,10 +155,12 @@ fn test_create_funding_txn_with_varied_distributions() {
             outputs.len()
         );
 
-        // Assert Fee is less than 98% of the expected Fee Rate or equal to MIN_FEE_RATE.
+        // Actual feerate must meet or exceed the requested rate. With the
+        // bumped witness-size constants, the pre-sign vsize estimate is now
+        // an upper bound for ECDSA inputs.
         assert!(
-            actual_feerate > MIN_FEE_RATE * 0.98 || actual_fee == MIN_FEE_RATE as u64,
-            "Fee rate ({}) is not less than 98% of MIN_FEE_RATE ({}) or fee is not equal to MIN_FEE_RATE",
+            actual_feerate >= MIN_FEE_RATE,
+            "Actual fee rate ({}) fell below MIN_FEE_RATE ({})",
             actual_feerate,
             MIN_FEE_RATE
         );
