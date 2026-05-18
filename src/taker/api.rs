@@ -501,16 +501,16 @@ impl Taker {
         std::fs::create_dir_all(&data_dir)?;
 
         let (wallet, rpc_config) = Self::init_wallet(&config, &data_dir)?;
-        let (watch_service, initial_discovery_complete) =
+        let (watch_service, registry, initial_sync_complete) =
             Self::init_watch_service(&config, &rpc_config, &data_dir)?;
         Self::init_taker_config(&config, &data_dir)?;
         let offerbook = OfferBookHandle::load_or_create(&data_dir)?;
         let offer_sync_handle = Self::init_offer_sync(
             &offerbook,
-            &watch_service,
+            registry,
             config.socks_port,
             rpc_config,
-            initial_discovery_complete,
+            initial_sync_complete,
         )?;
         let swap_tracker = Arc::new(Mutex::new(SwapTracker::load_or_create(&data_dir)?));
         swap_tracker.lock().unwrap().cleanup_incomplete();
@@ -611,12 +611,12 @@ impl Taker {
     }
 
     /// Initialize the ZMQ-backed watch service and spawn the watcher thread.
-    /// Returns the watch service and the initial-discovery-complete flag set by Nostr EOSE.
+    /// Returns the watch service, a clone of the registry, and the initial-sync-complete flag.
     fn init_watch_service(
         config: &TakerInitConfig,
         rpc_config: &RPCConfig,
         data_dir: &std::path::Path,
-    ) -> Result<(WatchService, Arc<AtomicBool>), TakerError> {
+    ) -> Result<(WatchService, FileRegistry, Arc<AtomicBool>), TakerError> {
         let backend = ZmqBackend::new(&config.zmq_addr);
         let rpc_backend = BitcoinRest::new(rpc_config.clone())?;
         let blockchain_info = rpc_backend.get_blockchain_info()?;
@@ -624,6 +624,7 @@ impl Taker {
             .join(".taker_watcher")
             .join(blockchain_info.chain.to_string());
         let registry = FileRegistry::load(file_registry);
+        let registry_clone = registry.clone();
 
         let (tx_requests, rx_requests) = mpsc::channel();
         let (tx_events, rx_responses) = crossbeam_channel::unbounded();
@@ -650,6 +651,7 @@ impl Taker {
 
         Ok((
             WatchService::new(tx_requests, rx_responses),
+            registry_clone,
             initial_sync_complete,
         ))
     }
@@ -683,18 +685,18 @@ impl Taker {
     /// Start the background offer sync service.
     fn init_offer_sync(
         offerbook: &OfferBookHandle,
-        watch_service: &WatchService,
+        registry: FileRegistry,
         socks_port: u16,
         rpc_config: RPCConfig,
-        initial_discovery_complete: Arc<AtomicBool>,
+        initial_sync_complete: Arc<AtomicBool>,
     ) -> Result<OfferSyncHandle, TakerError> {
         let rest_backend = BitcoinRest::new(rpc_config)?;
         Ok(OfferSyncService::new(
             offerbook.clone(),
-            watch_service.clone(),
+            registry,
             socks_port,
             rest_backend,
-            initial_discovery_complete,
+            initial_sync_complete,
         )
         .start())
     }
@@ -1115,14 +1117,6 @@ impl Taker {
                 ProtocolVersion::Taproot => MakerProtocol::Taproot,
             };
 
-            // Wait for the initial offer sync to complete before selecting makers.
-            // Without this, we may see only a subset of available makers and miss
-            // spares that are still being discovered asynchronously.
-            log::info!("Waiting for offer sync to complete...");
-            if let Err(e) = self.offer_sync_handle.sync_and_wait() {
-                log::warn!("Offer sync wait failed: {:?}", e);
-            }
-
             let available_makers = self.offerbook.active_makers(&maker_protocol);
 
             if available_makers.is_empty() {
@@ -1171,7 +1165,7 @@ impl Taker {
                         address: oa.address,
                         protocol,
                         tweakable_point: None,
-                        offer: None,
+                        offer: Some(oa.offer),
                         negotiated_timelock: 0,
                         exchange,
                         finalization: FinalizationProgress::default(),

@@ -55,11 +55,6 @@ pub enum WatcherEvent {
         /// Transaction that spent the outpoint, if known.
         spending_tx: Option<Transaction>,
     },
-    /// Maker addresses.
-    MakerAddresses {
-        /// All maker addresses currently recorded in the registry.
-        maker_addresses: Vec<String>,
-    },
     /// Returned when a queried outpoint is not being watched.
     NoOutpoint,
 }
@@ -82,8 +77,6 @@ pub enum WatcherCommand {
         /// Outpoint to stop tracking.
         outpoint: OutPoint,
     },
-    /// Ask for the current maker address list.
-    MakerAddress,
     /// Terminate the watcher loop.
     Shutdown,
 }
@@ -118,9 +111,8 @@ impl<R: Role> Watcher<R> {
         initial_sync_complete: Arc<AtomicBool>,
     ) -> Result<(), WatcherError> {
         log::info!("Watcher initiated");
-        let rest_backend_1 = BitcoinRest::new(rpc_config.clone())?;
-        let rest_backend_2 = BitcoinRest::new(rpc_config)?;
-        let network = match rest_backend_1
+        let rest_backend = BitcoinRest::new(rpc_config)?;
+        let network = match rest_backend
             .get_blockchain_info()?
             .chain
             .to_string()
@@ -138,7 +130,7 @@ impl<R: Role> Watcher<R> {
             }
         };
 
-        if let Err(e) = rest_backend_1.process_mempool(&mut self.registry) {
+        if let Err(e) = rest_backend.process_mempool(&mut self.registry) {
             log::warn!("Failed to process mempool on startup: {}", e);
         }
 
@@ -149,11 +141,10 @@ impl<R: Role> Watcher<R> {
         std::thread::scope(move |s| {
             let discovery_clone = discovery_shutdown.clone();
             if R::RUN_DISCOVERY {
-                let initial_sync_complete = initial_sync_complete.clone();
                 if let Some(nostr_tor_config) = nostr_tor_config {
                     s.spawn(move || {
                         if let Err(e) = nostr_discovery::run_discovery(
-                            rest_backend_1,
+                            rest_backend,
                             network,
                             registry,
                             discovery_shutdown.clone(),
@@ -165,14 +156,11 @@ impl<R: Role> Watcher<R> {
                         }
                     });
                 }
-            } else {
-                // No discovery — mark initial sync as trivially complete.
-                initial_sync_complete.store(true, Ordering::SeqCst);
             }
             loop {
                 match self.rx_requests.try_recv() {
                     Ok(cmd) => {
-                        if !self.handle_command(cmd, &rest_backend_2) {
+                        if !self.handle_command(cmd) {
                             discovery_clone.store(true, Ordering::SeqCst);
                             break;
                         }
@@ -193,7 +181,7 @@ impl<R: Role> Watcher<R> {
     }
 
     #[hotpath::measure]
-    fn handle_command(&mut self, cmd: WatcherCommand, rest_backend: &BitcoinRest) -> bool {
+    fn handle_command(&mut self, cmd: WatcherCommand) -> bool {
         match cmd {
             WatcherCommand::RegisterWatchRequest { outpoint } => {
                 log::info!("Intercepted register watch request: {outpoint}");
@@ -224,23 +212,6 @@ impl<R: Role> Watcher<R> {
             WatcherCommand::Unwatch { outpoint } => {
                 log::info!("Intercepted unwatch request : {outpoint}");
                 self.registry.remove_watch(outpoint);
-            }
-            WatcherCommand::MakerAddress => {
-                log::debug!("Intercepted maker address request");
-                let height = rest_backend
-                    .get_blockchain_info()
-                    .ok()
-                    .map(|v| v.blocks)
-                    .unwrap_or(0);
-                let maker_addresses: Vec<String> = self
-                    .registry
-                    .list_fidelity(height as u32)
-                    .into_iter()
-                    .map(|fidelity| fidelity.onion_address)
-                    .collect();
-                _ = self
-                    .tx_events
-                    .send(WatcherEvent::MakerAddresses { maker_addresses });
             }
             WatcherCommand::Shutdown => return false,
         }

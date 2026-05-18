@@ -6,14 +6,13 @@
 //! It uses asynchronous channels for concurrent processing of maker offers.
 
 use std::{
-    collections::HashSet,
     convert::TryFrom,
     fmt,
     io::BufWriter,
     net::TcpStream,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc, Arc, Mutex, RwLock,
     },
     thread::{sleep, Builder, JoinHandle},
@@ -34,7 +33,7 @@ use crate::{
     },
     utill::{read_message, send_message},
     wallet::verify_fidelity_checks,
-    watch_tower::{rest_backend::BitcoinRest, service::WatchService, watcher::WatcherEvent},
+    watch_tower::{registry_storage::FileRegistry, rest_backend::BitcoinRest},
 };
 
 /// Maximum number of attempts to connect to a maker.
@@ -68,11 +67,12 @@ const UNRESPONSIVE_MAKER_BACKOFF_STEP: Duration = Duration::from_secs(30 * 60);
 #[cfg(feature = "integration-test")]
 const UNRESPONSIVE_MAKER_BACKOFF_STEP: Duration = Duration::from_secs(10);
 
+#[cfg(not(feature = "integration-test"))]
+const DISCOVERY_WAIT_MAX: Duration = Duration::from_secs(150);
+
 #[cfg(feature = "integration-test")]
 const DISCOVERY_WAIT_MAX: Duration = Duration::from_secs(10);
 
-#[cfg(not(feature = "integration-test"))]
-const DISCOVERY_WAIT_MAX: Duration = Duration::from_secs(150);
 /// Represents an offer along with the corresponding maker address.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OfferAndAddress {
@@ -226,9 +226,21 @@ impl TryFrom<&mut TcpStream> for MakerAddress {
 pub struct OfferBookHandle {
     pub(crate) inner: Arc<RwLock<OfferBook>>,
     path: PathBuf,
+    is_syncing: Arc<AtomicBool>,
+    last_sync_ts: Arc<AtomicU64>,
 }
 
 impl OfferBookHandle {
+    /// Returns true if the offerbook sync is currently running.
+    pub fn is_syncing(&self) -> bool {
+        self.is_syncing.load(Ordering::Relaxed)
+    }
+
+    /// Returns the timestamp (unix secs) of the last completed sync, or 0 if never synced.
+    pub fn last_sync_ts(&self) -> u64 {
+        self.last_sync_ts.load(Ordering::Relaxed)
+    }
+
     /// Gets the current snapshot of whole offerbook
     pub fn snapshot(&self) -> OfferBook {
         self.inner.read().unwrap().clone()
@@ -338,6 +350,8 @@ impl OfferBookHandle {
         Ok(Self {
             inner: Arc::new(RwLock::new(offerbook)),
             path,
+            is_syncing: Arc::new(AtomicBool::new(false)),
+            last_sync_ts: Arc::new(AtomicU64::new(0)),
         })
     }
 }
@@ -345,11 +359,11 @@ impl OfferBookHandle {
 /// Service run on taker to check if the offerbook makers are active or not
 pub struct OfferSyncService {
     offerbook: OfferBookHandle,
-    watch_service: WatchService,
+    registry: FileRegistry,
     socks_port: u16,
     rest_backend: BitcoinRest,
     /// Set to `true` by Nostr discovery after the first EOSE is received.
-    initial_discovery_complete: Arc<AtomicBool>,
+    initial_sync_complete: Arc<AtomicBool>,
 }
 
 /// OfferSync handle, use for shutting down OfferSyncService
@@ -383,35 +397,37 @@ impl OfferSyncService {
     /// Constructor method
     pub fn new(
         offerbook: OfferBookHandle,
-        watch_service: WatchService,
+        registry: FileRegistry,
         socks_port: u16,
         rest_backend: BitcoinRest,
-        initial_discovery_complete: Arc<AtomicBool>,
+        initial_sync_complete: Arc<AtomicBool>,
     ) -> Self {
         Self {
             offerbook,
-            watch_service,
+            registry,
             socks_port,
             rest_backend,
-            initial_discovery_complete,
+            initial_sync_complete,
         }
     }
 
     fn run_once(&self) -> Result<(), TakerError> {
+        self.offerbook.is_syncing.store(true, Ordering::Relaxed);
+
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or(Duration::ZERO)
             .as_secs();
 
-        if let Some(WatcherEvent::MakerAddresses { maker_addresses }) =
-            self.watch_service.request_maker_address()
+        let height = self.rest_backend.get_block_count().unwrap_or(0) as u32;
+        let fidelities = self.registry.list_fidelity(height);
         {
             let mut book = self.offerbook.inner.write().unwrap();
-            for addr in maker_addresses {
-                match MakerAddress::try_from(addr) {
+            for fidelity in fidelities {
+                match MakerAddress::try_from(fidelity.onion_address) {
                     Ok(parsed) => book.upsert_address(parsed),
                     Err(e) => {
-                        log::warn!("Skipping invalid maker address from watcher: {e}");
+                        log::warn!("Skipping invalid maker address from registry: {e}");
                     }
                 }
             }
@@ -419,62 +435,101 @@ impl OfferSyncService {
 
         let to_poll = self.offerbook.inner.read().unwrap().makers_to_poll(now);
 
-        if to_poll.is_empty() {
-            return Ok(());
+        if !to_poll.is_empty() {
+            let handles = self.spawn_offer_workers(to_poll);
+            for h in handles {
+                let _ = h.join();
+            }
         }
 
-        let offers = fetch_offer_from_makers(to_poll.clone(), self.socks_port)?;
+        let finished_at = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or(Duration::ZERO)
+            .as_secs();
+        self.offerbook
+            .last_sync_ts
+            .store(finished_at, Ordering::Relaxed);
+        self.offerbook.is_syncing.store(false, Ordering::Relaxed);
 
-        let mut responded = HashSet::with_capacity(offers.len());
-
-        {
-            let mut book = self.offerbook.inner.write().unwrap();
-
-            for oa in offers {
-                responded.insert(oa.address.clone());
-                match self.verify_fidelity_proof(&oa.offer.fidelity, &oa.address.to_string()) {
-                    Ok(_) => {
-                        book.mark_success(&oa.address, oa.offer, oa.protocol, now);
-                    }
-                    Err(_) => {
-                        book.mark_failure(&oa.address, now);
-                    }
-                }
-            }
-
-            for addr in &to_poll {
-                if !responded.contains(addr) {
-                    book.mark_failure(addr, now);
-                }
-            }
-
-            // Persist without re-locking (avoid deadlock via OfferBookHandle::persist()).
-            let path = self.offerbook.path.clone();
-            book.write_to_disk(&path)?;
-        }
         Ok(())
     }
 
-    /// Manual sync path only: wait up to DISCOVERY_WAIT_MAX for initial EOSE.
-    /// Automatic periodic syncs are not gated by this wait.
-    fn wait_for_discovery_for_manual_sync(&self, shutdown_flag: &AtomicBool) {
-        if self.initial_discovery_complete.load(Ordering::SeqCst) {
-            return;
+    /// Spawns worker threads that fetch offers from makers and update the offerbook
+    /// as each result arrives. Returns join handles.
+    fn spawn_offer_workers(&self, makers: Vec<MakerAddress>) -> Vec<JoinHandle<()>> {
+        let workers = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4)
+            .min(makers.len());
+
+        let queue = Arc::new(Mutex::new(makers.into_iter()));
+        let offerbook = self.offerbook.inner.clone();
+        let offerbook_path = self.offerbook.path.clone();
+        let socks_port = self.socks_port;
+        let rest_backend = self.rest_backend.clone();
+
+        let mut handles = Vec::with_capacity(workers);
+
+        for i in 0..workers {
+            let queue = Arc::clone(&queue);
+            let offerbook = Arc::clone(&offerbook);
+            let offerbook_path = offerbook_path.clone();
+            let rest_backend = rest_backend.clone();
+
+            let handle = Builder::new()
+                .name(format!("offer-fetch-worker-{i}"))
+                .spawn(move || loop {
+                    let addr = {
+                        let Ok(mut guard) = queue.lock() else { break };
+                        guard.next()
+                    };
+                    let Some(addr) = addr else { break };
+
+                    let now = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or(Duration::ZERO)
+                        .as_secs();
+
+                    match addr.clone().download_offer_with_retries(socks_port) {
+                        Some(oa) => {
+                            let verified = verify_fidelity_with_backend(
+                                &rest_backend,
+                                &oa.offer.fidelity,
+                                &oa.address.to_string(),
+                            );
+                            let mut book = offerbook.write().unwrap();
+                            match verified {
+                                Ok(_) => {
+                                    book.mark_success(&oa.address, oa.offer, oa.protocol, now);
+                                }
+                                Err(e) => {
+                                    log::warn!(
+                                        "Fidelity verification failed for {}: {:?}",
+                                        oa.address,
+                                        e
+                                    );
+                                    book.mark_failure(&oa.address, now);
+                                }
+                            }
+                            if let Err(e) = book.write_to_disk(&offerbook_path) {
+                                log::warn!("Failed to persist offerbook: {:?}", e);
+                            }
+                        }
+                        None => {
+                            let mut book = offerbook.write().unwrap();
+                            book.mark_failure(&addr, now);
+                            if let Err(e) = book.write_to_disk(&offerbook_path) {
+                                log::warn!("Failed to persist offerbook: {:?}", e);
+                            }
+                        }
+                    }
+                })
+                .expect("failed to spawn offer-fetch-worker");
+
+            handles.push(handle);
         }
 
-        let wait_start = std::time::Instant::now();
-        while !self.initial_discovery_complete.load(Ordering::SeqCst)
-            && !shutdown_flag.load(Ordering::Relaxed)
-        {
-            if wait_start.elapsed() >= DISCOVERY_WAIT_MAX {
-                log::warn!(
-                    "Initial Nostr discovery did not complete in {:?}; running manual offer sync and continuing discovery in background",
-                    DISCOVERY_WAIT_MAX
-                );
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(200));
-        }
+        handles
     }
 
     /// Starts the offerbook service
@@ -502,7 +557,7 @@ impl OfferSyncService {
                         match cmd_rx.try_recv() {
                             Ok(SyncCommand::SyncNow(done_tx)) => {
                                 log::info!("Manual offerbook sync requested");
-                                self.wait_for_discovery_for_manual_sync(&shutdown_flag);
+                                self.wait_for_discovery(&shutdown_flag);
                                 if let Err(e) = self.run_once() {
                                     log::warn!("Manual offer sync failed: {e:?}");
                                 }
@@ -529,26 +584,47 @@ impl OfferSyncService {
         }
     }
 
+    /// Waits up to DISCOVERY_WAIT_MAX for initial Nostr EOSE before running a manual sync.
+    fn wait_for_discovery(&self, shutdown_flag: &AtomicBool) {
+        if self.initial_sync_complete.load(Ordering::SeqCst) {
+            return;
+        }
+
+        let wait_start = std::time::Instant::now();
+        while !self.initial_sync_complete.load(Ordering::SeqCst)
+            && !shutdown_flag.load(Ordering::Relaxed)
+        {
+            if wait_start.elapsed() >= DISCOVERY_WAIT_MAX {
+                log::warn!(
+                    "Initial Nostr discovery did not complete in {:?}; proceeding with manual sync",
+                    DISCOVERY_WAIT_MAX
+                );
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        }
+    }
+
     /// This is used while periodic sync is running and on-demand syncs are initiated, then, acknowledge and discardall queued sync requests.
     fn drain_and_ack(rx: &mpsc::Receiver<SyncCommand>) {
         while let Ok(SyncCommand::SyncNow(done_tx)) = rx.try_recv() {
             let _ = done_tx.send(());
         }
     }
+}
 
-    /// do the fidelity proof
-    fn verify_fidelity_proof(
-        &self,
-        proof: &FidelityProof,
-        onion_addr: &str,
-    ) -> Result<(), TakerError> {
-        let txid = proof.bond.outpoint.txid;
-        let transaction = self.rest_backend.get_raw_tx(&txid)?;
-        let current_height = self.rest_backend.get_block_count()?;
+/// Verifies a fidelity proof against the blockchain using the given REST backend.
+fn verify_fidelity_with_backend(
+    rest_backend: &BitcoinRest,
+    proof: &FidelityProof,
+    onion_addr: &str,
+) -> Result<(), TakerError> {
+    let txid = proof.bond.outpoint.txid;
+    let transaction = rest_backend.get_raw_tx(&txid)?;
+    let current_height = rest_backend.get_block_count()?;
 
-        verify_fidelity_checks(proof, onion_addr, transaction, current_height)
-            .map_err(TakerError::Wallet)
-    }
+    verify_fidelity_checks(proof, onion_addr, transaction, current_height)
+        .map_err(TakerError::Wallet)
 }
 
 /// An ephemeral Offerbook tracking good and bad makers. Currently, Offerbook is initiated
@@ -688,80 +764,6 @@ impl OfferBook {
         let content = std::fs::read_to_string(path)?;
         Ok(serde_json::from_str(&content)?)
     }
-}
-
-/// Synchronizes the offer book with specific maker addresses.
-/// Tries legacy first, then taproot.
-pub(crate) fn fetch_offer_from_makers(
-    maker_addresses: Vec<MakerAddress>,
-    socks_port: u16,
-) -> Result<Vec<OfferAndAddress>, TakerError> {
-    // Limit workers to CPU cores to avoid thread overhead
-    let workers = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(4)
-        .min(maker_addresses.len());
-
-    let queue = Arc::new(Mutex::new(maker_addresses.into_iter()));
-    let (tx, rx) = mpsc::channel();
-    let mut handles = Vec::with_capacity(workers);
-
-    for i in 0..workers {
-        let queue = Arc::clone(&queue);
-        let tx = tx.clone();
-
-        let handle = Builder::new()
-            .name(format!("maker_offer_fetch_worker_{i}"))
-            .spawn(move || -> Result<(), TakerError> {
-                loop {
-                    let addr_opt = {
-                        let mut guard = queue.lock().map_err(|_| {
-                            TakerError::General("Maker queue mutex poisoned".into())
-                        })?;
-                        guard.next()
-                    };
-
-                    let Some(addr) = addr_opt else { break };
-                    if let Some(offer) = addr.download_offer_with_retries(socks_port) {
-                        let _ = tx.send(offer);
-                    }
-                }
-                Ok(())
-            })?;
-
-        handles.push(handle);
-    }
-
-    // Drop original sender so rx knows when all workers are done
-    drop(tx);
-
-    let mut first_err: Option<TakerError> = None;
-    for handle in handles {
-        match handle.join() {
-            Ok(res) => {
-                if let Err(e) = res {
-                    if first_err.is_none() {
-                        first_err = Some(e);
-                    }
-                }
-            }
-            Err(_) => {
-                if first_err.is_none() {
-                    first_err = Some(TakerError::General(
-                        "Offer fetch worker thread panicked".into(),
-                    ));
-                }
-            }
-        }
-    }
-    if let Some(err) = first_err {
-        return Err(err);
-    }
-
-    // Collect all results from channel
-    let offers: Vec<OfferAndAddress> = rx.iter().collect();
-
-    Ok(offers)
 }
 
 impl TryFrom<String> for MakerAddress {
