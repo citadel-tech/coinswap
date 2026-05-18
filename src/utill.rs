@@ -331,7 +331,13 @@ pub(crate) fn parse_toml<P: AsRef<Path>>(path: P) -> io::Result<HashMap<String, 
 
     for line in content.lines().filter(|line| !line.is_empty()) {
         if let Some((key, value)) = line.split_once('=') {
-            config_map.insert(key.trim().to_string(), value.trim().to_string());
+            let value = value.trim();
+            // Strip surrounding double quotes for TOML-style string values.
+            let value = value
+                .strip_prefix('"')
+                .and_then(|v| v.strip_suffix('"'))
+                .unwrap_or(value);
+            config_map.insert(key.trim().to_string(), value.to_string());
         }
     }
 
