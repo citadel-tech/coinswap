@@ -435,7 +435,13 @@ impl OfferSyncService {
             .unwrap_or(Duration::ZERO)
             .as_secs();
 
-        let height = self.rest_backend.get_block_count().unwrap_or(0) as u32;
+        let height = match self.rest_backend.get_block_count() {
+            Ok(h) => h as u32,
+            Err(e) => {
+                log::warn!("get_block_count failed; skipping fidelity prune this cycle: {e}");
+                0
+            }
+        };
         let fidelities = self.registry.list_fidelity(height);
         {
             let mut book = self.offerbook.inner.write().unwrap();
