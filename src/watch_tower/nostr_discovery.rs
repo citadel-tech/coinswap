@@ -280,6 +280,14 @@ fn handle_relay_message(
                 return Ok(false);
             };
 
+            // Check the seen-cache before any RPC work to avoid wasted
+            // `get_raw_tx` calls on duplicate events.
+            if !seen_txid.lock()?.insert(txid) {
+                log::info!("Skipping already-seen txid {txid} via {relay_url}");
+                registry.save_nostr_cursor(relay_url, event.created_at.as_secs());
+                return Ok(false);
+            }
+
             let tx = match bitcoin_rpc.get_raw_tx(&txid) {
                 Ok(tx) => tx,
                 Err(e) => {
@@ -288,20 +296,16 @@ fn handle_relay_message(
                 }
             };
 
-            if seen_txid.lock()?.insert(txid) {
-                log::info!("Added txid to Nostr discovery cache: {txid}");
-                match process_fidelity(&tx) {
-                    Some(fidelity) => {
-                        if registry.insert_fidelity(txid, fidelity) {
-                            log::info!("Stored verified fidelity via {relay_url}: {txid}:{vout}");
-                        }
-                    }
-                    None => {
-                        log::warn!("Invalid fidelity {txid}:{vout} via {relay_url}");
+            log::info!("Added txid to Nostr discovery cache: {txid}");
+            match process_fidelity(&tx) {
+                Some(fidelity) => {
+                    if registry.insert_fidelity(txid, fidelity) {
+                        log::info!("Stored verified fidelity via {relay_url}: {txid}:{vout}");
                     }
                 }
-            } else {
-                log::info!("Skipping already-seen txid {txid} via {relay_url}");
+                None => {
+                    log::warn!("Invalid fidelity {txid}:{vout} via {relay_url}");
+                }
             }
             registry.save_nostr_cursor(relay_url, event.created_at.as_secs());
         }

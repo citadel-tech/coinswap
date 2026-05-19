@@ -356,6 +356,19 @@ impl OfferBookHandle {
     }
 }
 
+/// RAII guard that resets an `AtomicBool` to `false` when dropped.
+/// Used to ensure `OfferBookHandle::is_syncing` is reliably cleared on every
+/// exit path of `OfferSyncService::run_once`, including early returns and panics.
+struct SyncGuard<'a> {
+    flag: &'a AtomicBool,
+}
+
+impl Drop for SyncGuard<'_> {
+    fn drop(&mut self) {
+        self.flag.store(false, Ordering::Relaxed);
+    }
+}
+
 /// Service run on taker to check if the offerbook makers are active or not
 pub struct OfferSyncService {
     offerbook: OfferBookHandle,
@@ -413,6 +426,9 @@ impl OfferSyncService {
 
     fn run_once(&self) -> Result<(), TakerError> {
         self.offerbook.is_syncing.store(true, Ordering::Relaxed);
+        let _guard = SyncGuard {
+            flag: &self.offerbook.is_syncing,
+        };
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -449,7 +465,6 @@ impl OfferSyncService {
         self.offerbook
             .last_sync_ts
             .store(finished_at, Ordering::Relaxed);
-        self.offerbook.is_syncing.store(false, Ordering::Relaxed);
 
         Ok(())
     }
