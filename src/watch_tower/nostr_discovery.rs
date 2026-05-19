@@ -127,7 +127,6 @@ fn run_nostr_session_for_relay(
 }
 
 /// Establishes websocket connection to single Nostr relay and processes events until error or shutdown.
-/// Subscribe to Nostr events on the Coinswap kind for the active network.
 #[hotpath::measure]
 #[allow(clippy::too_many_arguments)]
 fn connect_and_run_once(
@@ -180,7 +179,7 @@ fn connect_and_run_once(
     )
 }
 
-/// Stream all the events from the Nostr relay and deserialize from json until shutdown
+/// Stream all the events from the Nostr relay and deserialize from json until shutdown.
 #[hotpath::measure]
 #[allow(clippy::too_many_arguments)]
 fn read_event_loop(
@@ -223,23 +222,25 @@ fn read_event_loop(
 
         let relay_msg = RelayMessage::from_json(&text)?;
 
-        handle_relay_message(
+        let is_eose = handle_relay_message(
             registry.clone(),
             relay_msg,
             bitcoin_rpc.clone(),
             relay_url,
             kind,
             seen_txid,
-            initial_sync_complete,
         )?;
+
+        if is_eose && !initial_sync_complete.load(Ordering::SeqCst) {
+            initial_sync_complete.store(true, Ordering::SeqCst);
+            log::info!("Initial Nostr discovery sync complete (triggered by {relay_url})");
+        }
     }
 
     Ok(())
 }
 
-/// filter events based on kind and tags
-/// check if event was alredy recived using the cache
-/// Returns the fidelity announcement containing onion address
+/// Processes a single relay message. Returns `Ok(true)` when EOSE is received.
 #[hotpath::measure]
 fn handle_relay_message(
     registry: Arc<FileRegistry>,
@@ -248,12 +249,11 @@ fn handle_relay_message(
     relay_url: &str,
     kind: Kind,
     seen_txid: &Arc<Mutex<SeenTxids>>,
-    initial_sync_complete: &Arc<AtomicBool>,
-) -> Result<(), WatcherError> {
+) -> Result<bool, WatcherError> {
     match msg {
         RelayMessage::Event { event, .. } => {
             if event.kind != kind {
-                return Ok(());
+                return Ok(false);
             }
 
             if event.is_expired() || event.tags.expiration().is_none() {
@@ -261,7 +261,7 @@ fn handle_relay_message(
                     "Ignoring expired event or event without expiration tag from {}",
                     relay_url
                 );
-                return Ok(());
+                return Ok(false);
             }
 
             if Timestamp::now()
@@ -273,47 +273,50 @@ fn handle_relay_message(
                     "Skipping stale event from {relay_url} older than {} hours",
                     EXPIRATION_SECS / 3600
                 );
-                return Ok(());
+                return Ok(false);
             }
 
             let Some((txid, vout)) = parse_fidelity_event(&event) else {
-                return Ok(());
+                return Ok(false);
             };
 
-            registry.save_nostr_cursor(relay_url, event.created_at.as_secs());
+            // Check the seen-cache before any RPC work to avoid wasted
+            // `get_raw_tx` calls on duplicate events.
+            if !seen_txid.lock()?.insert(txid) {
+                log::info!("Skipping already-seen txid {txid} via {relay_url}");
+                registry.save_nostr_cursor(relay_url, event.created_at.as_secs());
+                return Ok(false);
+            }
 
-            if seen_txid.lock()?.insert(txid) {
-                log::debug!("add new cache {}", txid);
-                let Ok(tx) = bitcoin_rpc.get_raw_tx(&txid) else {
-                    log::debug!("Received invalid txid: {txid:?}");
-                    return Ok(());
-                };
+            let tx = match bitcoin_rpc.get_raw_tx(&txid) {
+                Ok(tx) => tx,
+                Err(e) => {
+                    log::warn!("Failed to fetch raw tx {txid:?} via {relay_url}: {e}");
+                    return Ok(false);
+                }
+            };
 
-                match process_fidelity(&tx) {
-                    Some(fidelity) => {
-                        if registry.insert_fidelity(txid, fidelity) {
-                            log::info!("Stored verified fidelity via {relay_url}: {txid}:{vout}");
-                        }
-                    }
-                    None => {
-                        log::debug!("Invalid fidelity {txid}:{vout} via {relay_url}");
+            log::info!("Added txid to Nostr discovery cache: {txid}");
+            match process_fidelity(&tx) {
+                Some(fidelity) => {
+                    if registry.insert_fidelity(txid, fidelity) {
+                        log::info!("Stored verified fidelity via {relay_url}: {txid}:{vout}");
                     }
                 }
-            } else {
-                log::debug!("Transaction ID already present {txid} via {relay_url}")
+                None => {
+                    log::warn!("Invalid fidelity {txid}:{vout} via {relay_url}");
+                }
             }
+            registry.save_nostr_cursor(relay_url, event.created_at.as_secs());
         }
 
         RelayMessage::EndOfStoredEvents(sub_id) => {
             log::info!("EOSE received for subscription {sub_id} via {relay_url}");
-            if !initial_sync_complete.load(Ordering::SeqCst) {
-                initial_sync_complete.store(true, Ordering::SeqCst);
-                log::info!("Initial Nostr discovery sync complete (triggered by {relay_url})");
-            }
+            return Ok(true);
         }
 
         _ => {}
     }
 
-    Ok(())
+    Ok(false)
 }

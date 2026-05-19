@@ -70,12 +70,6 @@ impl WatchService {
         self.rx.recv().ok()
     }
 
-    /// Requests the list of maker addresses.
-    pub fn request_maker_address(&self) -> Option<WatcherEvent> {
-        _ = self.tx.send(WatcherCommand::MakerAddress);
-        self.rx.recv().ok()
-    }
-
     /// Signals the watcher to shut down gracefully.
     pub fn shutdown(&self) {
         let _ = self.tx.send(WatcherCommand::Shutdown);
