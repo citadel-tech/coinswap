@@ -27,11 +27,11 @@ struct MakerBip324Wrapper {
 }
 
 impl MakerBip324Wrapper {
-    fn new(stream: TcpStream, network: bip324::Network) -> Result<Self, ProtocolError> {
+    fn new(stream: TcpStream, network: bitcoin::Network) -> Result<Self, ProtocolError> {
         let reader = stream.try_clone()?;
         let writer = stream;
         let protocol = bip324::io::Protocol::new(
-            network,
+            network.magic(),
             bip324::Role::Responder,
             None,
             None,

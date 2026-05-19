@@ -19,7 +19,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use bip324::Network;
+use bitcoin::Network;
 use serde::{Deserialize, Serialize};
 use socks::Socks5Stream;
 
