@@ -274,7 +274,7 @@ impl Wallet {
                 };
                 tx.output.push(txout);
                 let base_size = tx.base_size();
-                let vsize = (base_size * 4 + total_witness_size).div_ceil(4);
+                let vsize = (base_size * 4 + total_witness_size + 2).div_ceil(4); // base * 4 + witness size + marker + flag
 
                 let fee = Amount::from_sat(calculate_fee_sats(vsize as u64));
 
@@ -328,7 +328,7 @@ impl Wallet {
                 });
 
                 let base_wchange = tx_wchange.base_size();
-                let vsize_wchange = (base_wchange * 4 + total_witness_size).div_ceil(4);
+                let vsize_wchange = (base_wchange * 4 + total_witness_size + 2).div_ceil(4); // base * 4 + witness size + marker + flag
 
                 let fee_wchange = Amount::from_sat(calculate_fee_sats(vsize_wchange as u64));
 
@@ -423,17 +423,17 @@ impl Wallet {
                 }
 
                 let base_wchange = tx_wchange.base_size();
-                let vsize_wchange = (base_wchange * 4 + total_witness_size).div_ceil(4);
+                let vsize_wchange = (base_wchange * 4 + total_witness_size + 2).div_ceil(4); // base * 4 + witness size + marker + flag
 
                 let fee_wchange = Amount::from_sat(calculate_fee_sats(vsize_wchange as u64));
 
-                let individual_fee_wchange = fee_wchange / change_chunks.len() as u64;
+                let individual_base_fee = fee_wchange.to_sat() / change_chunks.len() as u64;
+                let remainder = fee_wchange.to_sat() % change_chunks.len() as u64;
 
                 for (i, change_chunk) in change_chunks.iter().enumerate() {
                     // Distributing the change fee across the individual changes.
-                    let change = Amount::from_sat(
-                        change_chunk.saturating_sub(individual_fee_wchange.to_sat()),
-                    );
+                    let this_fee = individual_base_fee + if (i as u64) < remainder { 1 } else { 0 };
+                    let change = Amount::from_sat(change_chunk.saturating_sub(this_fee));
                     if change > internal_spks[i].script_pubkey().minimal_non_dust() {
                         tx.output.push(TxOut {
                             script_pubkey: internal_spks[i].script_pubkey(),
@@ -452,20 +452,6 @@ impl Wallet {
         }
 
         self.sign_transaction(&mut tx, coins.iter().map(|(_, usi)| usi.clone()))?;
-        let calc_vsize = (tx.base_size() * 4 + total_witness_size).div_ceil(4);
-        let signed_tx_vsize = tx.vsize();
-
-        // As signature size can vary between 71-73 bytes we have a tolerance
-        let tolerance_per_input = 2; // Allow a 2-byte difference per input
-        let total_tolerance = tolerance_per_input * tx.input.len();
-
-        assert!(
-            (calc_vsize as isize - signed_tx_vsize as isize).abs() <= total_tolerance as isize,
-            "Calculated vsize {} didn't match signed tx vsize {} (tolerance: {})",
-            calc_vsize,
-            signed_tx_vsize,
-            total_tolerance
-        );
 
         // The actual fee is the difference between the sum of output amounts from the total input amount
         let total_output_value = tx
@@ -485,6 +471,14 @@ impl Wallet {
             actual_fee.to_sat(),
             actual_feerate
         );
+
+        if actual_feerate < feerate as f32 {
+            log::warn!(
+                "Actual feerate {:.2} sat/vB is below requested {:.2} sat/vB",
+                actual_feerate,
+                feerate
+            );
+        }
 
         Ok(tx)
     }

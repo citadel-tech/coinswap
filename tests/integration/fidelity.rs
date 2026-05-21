@@ -66,7 +66,7 @@ fn test_fidelity() {
     thread::sleep(Duration::from_secs(6));
 
     let log_path = format!("{}/taker/debug.log", test_framework.temp_dir.display());
-    test_framework.assert_log("Send at least 0.01000424 BTC to", &log_path);
+    test_framework.assert_log("Send at least 0.01000426 BTC to", &log_path);
 
     log::info!("Adding sufficient funds for fidelity bond creation");
     // Provide the Maker with more funds.
@@ -252,7 +252,7 @@ fn test_fidelity() {
         let balances = wallet_read.get_balances().unwrap();
 
         assert_eq!(balances.fidelity.to_sat(), 0);
-        assert_eq!(balances.regular.to_sat(), 103998830);
+        assert_eq!(balances.regular.to_sat(), 103998826);
     }
 
     thread::sleep(Duration::from_secs(10));

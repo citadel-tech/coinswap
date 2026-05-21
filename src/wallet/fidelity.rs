@@ -6,6 +6,7 @@ use crate::{
 use bitcoin::{
     absolute::LockTime,
     bip32::{ChildNumber, DerivationPath},
+    consensus::encode::{serialize, VarInt},
     hashes::{sha256d, Hash},
     opcodes::all::{OP_CHECKSIGVERIFY, OP_CLTV},
     script::{Builder, Instruction},
@@ -34,7 +35,7 @@ const BOND_VALUE_EXPONENT: f64 = 1.3;
 const BOND_VALUE_INTEREST_RATE: f64 = 0.015;
 
 /// Constant representing the derivation path for fidelity addresses.
-const FIDELITY_DERIVATION_PATH: &str = "m/0'/2";
+const FIDELITY_DERIVATION_PATH: &str = "m/175'/2";
 // Fidelity Bond relative timelock in number of blocks ( 1 block ~= 10mins)
 // Must be between 12,960 (≈3 months) and 25,920 (≈6 months)
 #[cfg(not(feature = "integration-test"))]
@@ -106,7 +107,7 @@ pub(crate) fn verify_fidelity_checks(
     addr: &str,
     tx: Transaction,
     current_height: u64,
-    tweakable_point: &PublicKey, //can be sent as not referece check once
+    tweakable_point: &PublicKey,
     tweak_chain_code: &bitcoin::bip32::ChainCode,
 ) -> Result<(), WalletError> {
     // Ensure fidelity bond timelock lies within allowed range
@@ -242,7 +243,7 @@ pub struct FidelityBond {
     pub(crate) conf_height: Option<u32>,
     /// Whether this bond is spent or not.
     pub(crate) is_spent: bool,
-    /// The child index used in the HD derivation path `m/0'/2/<bond_index>`.
+    /// The child index used in the HD derivation path `m/175'/2/<bond_index>`.
     /// Note: Fidelity bonds must only be appended to the store; they should never be removed or reordered.
     pub bond_index: u32,
 }
@@ -280,7 +281,7 @@ impl FidelityBond {
         let cert_msg = cert_msg_str.as_bytes();
         let mut btc_signed_msg = Vec::<u8>::new();
         btc_signed_msg.extend("\x18Bitcoin Signed Message:\n".as_bytes());
-        btc_signed_msg.push(cert_msg.len() as u8);
+        btc_signed_msg.extend(serialize(&VarInt(cert_msg.len() as u64)));
         btc_signed_msg.extend(cert_msg);
 
         sha256d::Hash::hash(&btc_signed_msg)

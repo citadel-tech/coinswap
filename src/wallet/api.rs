@@ -188,7 +188,7 @@ impl UTXOSpendInfo {
     pub fn estimate_witness_size(&self) -> usize {
         const P2WPKH_WITNESS_SIZE: usize = 107; // 1 + 72 (sig) + 33 (pubkey) + 1 (count)
         const P2TR_WITNESS_SIZE: usize = 65; // 1 + 64 (Schnorr sig)
-        const P2WSH_MULTISIG_2OF2_WITNESS_SIZE: usize = 222;
+        const P2WSH_MULTISIG_2OF2_WITNESS_SIZE: usize = 218; //1 + 1 + 72 + 72 + 72
         const FIDELITY_BOND_WITNESS_SIZE: usize = 115;
         const TIME_LOCK_CONTRACT_TX_WITNESS_SIZE: usize = 179;
         const HASH_LOCK_CONTRACT_TX_WITNESS_SIZE: usize = 211;
@@ -1573,7 +1573,7 @@ impl Wallet {
         } = self
             .store
             .master_key
-            .derive_priv(&secp, &[ChildNumber::from_hardened_idx(0)?])?;
+            .derive_priv(&secp, &[ChildNumber::from_hardened_idx(175)?])?;
 
         let public_key = PublicKey {
             compressed: true,
@@ -1947,7 +1947,7 @@ impl Wallet {
 
         // Convert weight units to virtual bytes for fee calculation
         // Weight is divided by 4 to get vbytes (BIP 141 standard)
-        let estimated_tx_vbytes: u64 = estimated_tx_weight / 4;
+        let estimated_tx_vbytes: u64 = estimated_tx_weight.div_ceil(4);
 
         // P2WPKH input weight: OutPoint(32) + sequence(4) + vout(4) + empty_scriptsig(1) = 41 bytes
         // Weight = bytes * 4 for non-witness data = 164 WU
@@ -2250,7 +2250,7 @@ impl Wallet {
                 target_value: remaining_target,
                 target_feerate: feerate as f32 / 4.0, //sats per wu
                 long_term_feerate: Some(LONG_TERM_FEERATE),
-                min_absolute_fee: MIN_FEE_RATE as u64 * (tx_base_weight / 4),
+                min_absolute_fee: MIN_FEE_RATE as u64 * tx_base_weight.div_ceil(4),
                 base_weight: tx_base_weight,
                 change_weight: change_weight.to_wu(),
                 change_cost: cost_of_change,
