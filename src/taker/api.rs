@@ -742,6 +742,18 @@ impl Taker {
             )));
         }
 
+        if let Some(preferred_makers) = &params.preferred_makers {
+            let mut seen = HashSet::new();
+            for maker in preferred_makers {
+                if !seen.insert(maker.trim()) {
+                    return Err(TakerError::General(format!(
+                        "Duplicate maker in route: {}",
+                        maker
+                    )));
+                }
+            }
+        }
+
         let mut preimage = [0u8; 32];
         OsRng.fill_bytes(&mut preimage);
 
