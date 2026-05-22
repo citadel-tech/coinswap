@@ -15,6 +15,7 @@ use crate::{
     maker::rpc::server::MakerRpc,
     nostr_coinswap::broadcast_bond_on_nostr,
     protocol::common_messages::{FidelityProof, MakerToTakerMessage, TakerToMakerMessage},
+    utill::HEART_BEAT_INTERVAL,
     wallet::RecoveryReport,
 };
 
@@ -23,9 +24,6 @@ use super::{
     error::MakerError,
     handlers::{handle_message, ConnectionState, Maker},
 };
-
-/// Heartbeat interval for connections.
-pub const HEART_BEAT_INTERVAL: Duration = Duration::from_secs(3);
 
 /// Idle connection timeout (production).
 #[cfg(not(feature = "integration-test"))]
