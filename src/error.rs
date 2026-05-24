@@ -38,6 +38,10 @@ pub enum Bip324Error {
     UnexpectedDecoy,
     /// Error indicating that the protocol was aborted by the peer.
     ProtocolError(bip324::io::ProtocolError),
+    /// Error due to mismatch in session IDs indicates MitM attack
+    SessionIdMismatch,
+    /// Error when session_id signature does not match
+    SessionIdSigInvalid(bitcoin::secp256k1::Error),
 }
 
 impl From<bip324::io::ProtocolError> for Bip324Error {

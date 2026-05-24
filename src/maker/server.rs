@@ -21,18 +21,19 @@ use crate::{
     wallet::RecoveryReport,
 };
 
-use bip324::io::{Payload, ProtocolError};
+use bip324::io::Payload;
 
 struct MakerBip324Wrapper {
     protocol: bip324::io::Protocol<TcpStream, TcpStream>,
 }
 
 impl MakerBip324Wrapper {
-    fn new(stream: TcpStream, network: bitcoin::Network) -> Result<Self, ProtocolError> {
+    fn new(stream: TcpStream, maker: Arc<MakerServer>) -> Result<Self, MakerError> {
         let reader = stream.try_clone()?;
         let writer = stream;
+        let network_magic = maker.config.network.magic();
         let protocol = bip324::io::Protocol::new(
-            network.magic(),
+            network_magic,
             bip324::Role::Responder,
             None,
             None,
@@ -361,7 +362,8 @@ fn handle_connection(maker: Arc<MakerServer>, stream: TcpStream) -> Result<(), M
         "[{}] Starting connection handler",
         maker.config.network_port
     );
-    let mut wrapper = MakerBip324Wrapper::new(stream, maker.config.network)?;
+    let mut wrapper = MakerBip324Wrapper::new(stream, Arc::clone(&maker))?;
+    state.session_id = Some(*wrapper.protocol.session_id());
     loop {
         // Check for shutdown
         if maker.is_shutdown() {
