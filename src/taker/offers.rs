@@ -491,6 +491,7 @@ impl OfferSyncService {
         let offerbook_path = self.offerbook.path.clone();
         let socks_port = self.socks_port;
         let rest_backend = self.rest_backend.clone();
+        let network = self.network;
 
         let mut handles = Vec::with_capacity(workers);
 
@@ -514,7 +515,10 @@ impl OfferSyncService {
                         .unwrap_or(Duration::ZERO)
                         .as_secs();
 
-                    match addr.clone().download_offer_with_retries(socks_port) {
+                    match addr
+                        .clone()
+                        .download_offer_with_retries(socks_port, network)
+                    {
                         Some(oa) => {
                             let verified = verify_fidelity_with_backend(
                                 &rest_backend,
