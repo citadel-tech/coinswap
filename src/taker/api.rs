@@ -35,8 +35,8 @@ use crate::{
     nostr_coinswap::NOSTR_RELAYS,
     protocol::{
         common_messages::{
-            GetOffer, MakerToTakerMessage, Offer, PrivateKeyHandover, ProtocolVersion, SwapDetails,
-            SwapPrivkey, TakerHello, TakerToMakerMessage,
+            AckSwap, GetOffer, MakerToTakerMessage, Offer, PrivateKeyHandover, ProtocolVersion,
+            SwapDetails, SwapPrivkey, TakerHello, TakerToMakerMessage,
         },
         contract::calculate_pubkey_from_nonce,
     },
@@ -1444,10 +1444,10 @@ impl Taker {
         let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
 
         match msg {
-            MakerToTakerMessage::AckSwapDetails(ack) => {
-                if let Some(tweakable_point) = ack.tweakable_point {
+            MakerToTakerMessage::AckSwap(ack) => match ack {
+                AckSwap::Acknowledged(ack_details) => {
                     let swap = self.swap_state_mut()?;
-                    swap.makers[maker_idx].tweakable_point = Some(tweakable_point);
+                    swap.makers[maker_idx].tweakable_point = Some(ack_details.tweakable_point);
                     swap.makers[maker_idx].protocol = negotiated_protocol;
                     swap.makers[maker_idx].negotiated_timelock = timelock;
                     log::info!("Maker {} accepted swap with tweakable point", maker_idx);
@@ -1463,16 +1463,28 @@ impl Taker {
                         ));
                     }
 
+                    let maker_session_id = ack_details.session_id;
+                    let taker_session_id = stream.protocol.session_id();
+                    if &maker_session_id != taker_session_id {
+                        return Err(TakerError::Net(Bip324Error::SessionIdMismatch.into()));
+                    };
+                    let secp = bitcoin::secp256k1::Secp256k1::new();
+                    let sighash = bitcoin::secp256k1::Message::from_digest(maker_session_id);
+                    secp.verify_ecdsa(
+                        &sighash,
+                        &ack_details.session_id_sig,
+                        &ack_details.tweakable_point.inner,
+                    )
+                    .map_err(|e| TakerError::Net(Bip324Error::SessionIdSigInvalid(e).into()))?;
                     Ok(())
-                } else {
-                    Err(TakerError::General(format!(
-                        "Maker {} rejected swap",
-                        maker_idx
-                    )))
                 }
-            }
+                AckSwap::Rejected => Err(TakerError::General(format!(
+                    "Maker {} rejected swap",
+                    maker_idx
+                ))),
+            },
             _ => Err(TakerError::General(format!(
-                "Unexpected message from maker {}: expected AckSwapDetails",
+                "Unexpected message from maker {}: expected AckSwap",
                 maker_idx
             ))),
         }
