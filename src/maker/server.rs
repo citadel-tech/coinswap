@@ -12,12 +12,63 @@ use std::{
 };
 
 use crate::{
+    error::Bip324Error,
     maker::rpc::server::MakerRpc,
     nostr_coinswap::broadcast_bond_on_nostr,
     protocol::common_messages::{FidelityProof, MakerToTakerMessage, TakerToMakerMessage},
     utill::HEART_BEAT_INTERVAL,
     wallet::RecoveryReport,
 };
+
+use bip324::io::Payload;
+
+struct MakerBip324Wrapper {
+    protocol: bip324::io::Protocol<TcpStream, TcpStream>,
+}
+
+impl MakerBip324Wrapper {
+    fn new(stream: TcpStream, maker: Arc<MakerServer>) -> Result<Self, MakerError> {
+        let reader = stream.try_clone()?;
+        let writer = stream;
+        let network_magic = maker.config.network.magic();
+        let protocol = bip324::io::Protocol::new(
+            network_magic,
+            bip324::Role::Responder,
+            None,
+            None,
+            reader,
+            writer,
+        )?;
+        Ok(Self { protocol })
+    }
+
+    #[hotpath::measure]
+    fn read_message(&mut self) -> Result<TakerToMakerMessage, MakerError> {
+        let payload = self.protocol.read()?;
+        let contents = payload.contents();
+        match payload.packet_type() {
+            bip324::PacketType::Decoy => {
+                // TODO implement proper decoy handling
+                log::info!("Received decoy message");
+                Err(Bip324Error::UnexpectedDecoy.into())
+            }
+            bip324::PacketType::Genuine => {
+                let message: TakerToMakerMessage = serde_cbor::from_slice(contents)
+                    .map_err(|_| MakerError::General("Failed to deserialize"))?;
+                Ok(message)
+            }
+        }
+    }
+
+    #[hotpath::measure]
+    fn send_message(&mut self, message: &MakerToTakerMessage) -> Result<(), MakerError> {
+        let buf = serde_cbor::to_vec(message)
+            .map_err(|_| MakerError::General("Failed to serialize message"))?;
+        let payload = Payload::genuine(buf);
+        self.protocol.write(&payload)?;
+        Ok(())
+    }
+}
 
 use super::{
     api::MakerServer,
@@ -284,7 +335,8 @@ fn handle_connection(maker: Arc<MakerServer>, stream: TcpStream) -> Result<(), M
         "[{}] Starting connection handler",
         maker.config.network_port
     );
-
+    let mut wrapper = MakerBip324Wrapper::new(stream, Arc::clone(&maker))?;
+    state.session_id = Some(*wrapper.protocol.session_id());
     loop {
         // Check for shutdown
         if maker.is_shutdown() {
@@ -300,7 +352,7 @@ fn handle_connection(maker: Arc<MakerServer>, stream: TcpStream) -> Result<(), M
             break;
         }
 
-        let message = match read_message(&stream) {
+        let message = match wrapper.read_message() {
             Ok(msg) => msg,
             Err(e) => {
                 log::debug!(
@@ -334,7 +386,7 @@ fn handle_connection(maker: Arc<MakerServer>, stream: TcpStream) -> Result<(), M
                 response
             );
 
-            if let Err(e) = send_message(&stream, &response) {
+            if let Err(e) = wrapper.send_message(&response) {
                 log::error!(
                     "[{}] Failed to send response: {:?}",
                     maker.config.network_port,
@@ -953,52 +1005,6 @@ fn recover_from_swap(
 
         sleep(HEART_BEAT_INTERVAL);
     }
-
-    Ok(())
-}
-
-/// Read a message from a stream.
-#[hotpath::measure]
-fn read_message(stream: &TcpStream) -> Result<TakerToMakerMessage, MakerError> {
-    let mut len_buf = [0u8; 4];
-    use std::io::Read;
-
-    let mut stream_ref = stream;
-    stream_ref
-        .read_exact(&mut len_buf)
-        .map_err(MakerError::IO)?;
-
-    let len = u32::from_be_bytes(len_buf) as usize;
-
-    if len > 10 * 1024 * 1024 {
-        return Err(MakerError::General("Message too large"));
-    }
-
-    let mut buf = vec![0u8; len];
-    stream_ref.read_exact(&mut buf).map_err(MakerError::IO)?;
-
-    let message: TakerToMakerMessage = serde_cbor::from_slice(&buf)
-        .map_err(|_| MakerError::General("Failed to deserialize message"))?;
-
-    Ok(message)
-}
-
-/// Send a message to a stream.
-#[hotpath::measure]
-fn send_message(stream: &TcpStream, message: &MakerToTakerMessage) -> Result<(), MakerError> {
-    let buf = serde_cbor::to_vec(message)
-        .map_err(|_| MakerError::General("Failed to serialize message"))?;
-
-    let len = buf.len() as u32;
-    use std::io::Write;
-
-    let mut stream_ref = stream;
-    stream_ref
-        .write_all(&len.to_be_bytes())
-        .map_err(MakerError::IO)?;
-
-    stream_ref.write_all(&buf).map_err(MakerError::IO)?;
-    stream_ref.flush().map_err(MakerError::IO)?;
 
     Ok(())
 }

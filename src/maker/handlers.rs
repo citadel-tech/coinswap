@@ -8,7 +8,7 @@ use super::error::MakerError;
 use crate::{
     protocol::{
         common_messages::{
-            AckSwapDetails, FidelityProof, GetOffer, MakerHello, MakerToTakerMessage, Offer,
+            AckSwap, FidelityProof, GetOffer, MakerHello, MakerToTakerMessage, Offer,
             ProtocolVersion, SwapDetails, TakerHello, TakerToMakerMessage,
         },
         legacy_messages::LegacyTakerMessage,
@@ -59,6 +59,8 @@ pub const MIN_CONTRACT_REACTION_TIME: u16 = 10;
 pub struct ConnectionState {
     /// Protocol version being used for this connection.
     pub protocol: ProtocolVersion,
+    /// Unique identifier for the connection, None indicates no connection yet
+    pub session_id: Option<[u8; 32]>,
     /// Current phase of the swap.
     pub phase: SwapPhase,
     /// Unique swap identifier.
@@ -110,6 +112,7 @@ impl Default for ConnectionState {
     fn default() -> Self {
         ConnectionState {
             protocol: ProtocolVersion::Legacy,
+            session_id: None,
             phase: SwapPhase::AwaitingHello,
             swap_id: None,
             swap_amount: Amount::ZERO,
@@ -402,7 +405,6 @@ fn handle_taker_hello<M: Maker>(
         Maker::network_port(maker.as_ref()),
         config.supported_protocols
     );
-
     Ok(Some(MakerToTakerMessage::MakerHello(MakerHello {
         supported_protocols: config.supported_protocols,
     })))
@@ -478,7 +480,14 @@ fn handle_swap_details<M: Maker>(
 
     maker.store_connection_state(&details.id, state)?;
 
-    let (_, tweakable_point) = maker.get_tweakable_keypair()?;
+    let (tweakable_privkey, tweakable_point) = maker.get_tweakable_keypair()?;
+
+    let session_id = state.session_id.unwrap();
+    let secp = bitcoin::secp256k1::Secp256k1::new();
+    let session_id_sig = secp.sign_ecdsa_low_r(
+        &bitcoin::secp256k1::Message::from_digest(session_id),
+        &tweakable_privkey,
+    );
 
     log::info!(
         "[{}] Accepting swap (id: {})",
@@ -495,9 +504,11 @@ fn handle_swap_details<M: Maker>(
         return Err(MakerError::General("Test: closing after ack response"));
     }
 
-    Ok(Some(MakerToTakerMessage::AckSwapDetails(
-        AckSwapDetails::accept(tweakable_point),
-    )))
+    Ok(Some(MakerToTakerMessage::AckSwap(AckSwap::accept(
+        tweakable_point,
+        session_id,
+        session_id_sig,
+    ))))
 }
 
 /// Restore connection state if this is a new/reconnected connection.

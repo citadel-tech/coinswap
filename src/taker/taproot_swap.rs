@@ -14,7 +14,7 @@ use crate::{
         contract2::{create_hashlock_script, create_timelock_script},
         taproot_messages::{SerializableScalar, TaprootContractData},
     },
-    utill::{read_message, send_message, MIN_FEE_RATE},
+    utill::MIN_FEE_RATE,
     wallet::{
         swapcoin::{IncomingSwapCoin, OutgoingSwapCoin, WatchOnlySwapCoin},
         Wallet,
@@ -266,15 +266,14 @@ impl Taker {
                 ));
             }
 
-            send_message(
-                &mut stream,
-                &TakerToMakerMessage::TaprootContractData(Box::new(contract_data)),
-            )?;
+            stream.send_message(&TakerToMakerMessage::TaprootContractData(Box::new(
+                contract_data,
+            )))?;
             self.swap_state_mut()?.makers[i]
                 .taproot_exchange_mut()?
                 .contract_data_sent = true;
 
-            let msg_bytes = read_message(&mut stream)?;
+            let msg_bytes = stream.read_message()?;
             let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
 
             match msg {
