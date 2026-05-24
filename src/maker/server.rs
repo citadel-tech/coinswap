@@ -91,7 +91,11 @@ pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
                 out.len()
             );
 
-            let swap_id = format!("reboot-recovery-{}", super::swap_tracker::now_secs());
+            let swap_id = out
+                .first()
+                .and_then(|s| s.swap_id.clone())
+                .or_else(|| inc.first().and_then(|s| s.swap_id.clone()))
+                .unwrap_or_else(|| format!("reboot-recovery-{}", super::swap_tracker::now_secs()));
             let maker_clone = Arc::clone(&maker);
             let handle = thread::Builder::new()
                 .name(format!("reboot-recovery-{}", maker.config.network_port))
@@ -713,18 +717,18 @@ fn recover_from_swap(
         outgoing_swapcoins.len()
     );
 
-    // Check if funding was ever broadcast. If not, there is nothing on-chain
-    // to recover — discard the swapcoins and exit immediately.
+    // Check if funding was ever broadcast. Only an explicit tracker record with
+    // funding_broadcast=false is safe to discard; missing tracker state can
+    // happen after a reboot and must not delete persisted recovery material.
     {
         let funding_broadcast = maker
             .swap_tracker
             .lock()
             .unwrap()
             .get_record(&swap_id)
-            .map(|r| r.funding_broadcast)
-            .unwrap_or(false);
+            .map(|r| r.funding_broadcast);
 
-        if !funding_broadcast {
+        if funding_broadcast == Some(false) {
             log::info!(
                 "[{}] Funding was never broadcast for swap {} — nothing to recover. Discarding swapcoins.",
                 maker.config.network_port,
