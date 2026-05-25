@@ -249,6 +249,9 @@ pub trait Maker: Send + Sync {
     /// Get the data directory path for saving reports.
     fn data_dir(&self) -> &std::path::Path;
 
+    /// Get the active maker wallet file name.
+    fn wallet_name(&self) -> &str;
+
     /// Collect reserved UTXOs from all other active swaps (for concurrent double-spend prevention).
     fn collect_excluded_utxos(&self, current_swap_id: &str) -> Vec<bitcoin::OutPoint>;
 
