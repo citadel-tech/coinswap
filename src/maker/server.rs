@@ -91,21 +91,37 @@ pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
                 out.len()
             );
 
-            let swap_id = out
-                .first()
-                .and_then(|s| s.swap_id.clone())
-                .or_else(|| inc.first().and_then(|s| s.swap_id.clone()))
-                .unwrap_or_else(|| format!("reboot-recovery-{}", super::swap_tracker::now_secs()));
-            let maker_clone = Arc::clone(&maker);
-            let handle = thread::Builder::new()
-                .name(format!("reboot-recovery-{}", maker.config.network_port))
-                .spawn(move || {
-                    if let Err(e) = recover_from_swap(maker_clone, swap_id.clone(), inc, out) {
-                        log::error!("Reboot recovery failed for {}: {:?}", swap_id, e);
-                    }
-                })
-                .map_err(MakerError::IO)?;
-            maker.thread_pool.add_thread(handle);
+            let mut groups = std::collections::HashMap::new();
+            for incoming in inc {
+                groups
+                    .entry(incoming.swap_id.clone())
+                    .or_insert_with(|| (Vec::new(), Vec::new()))
+                    .0
+                    .push(incoming);
+            }
+            for outgoing in out {
+                groups
+                    .entry(outgoing.swap_id.clone())
+                    .or_insert_with(|| (Vec::new(), Vec::new()))
+                    .1
+                    .push(outgoing);
+            }
+
+            for (swap_id, (inc, out)) in groups {
+                let swap_id = swap_id.unwrap_or_else(|| {
+                    format!("reboot-recovery-{}", super::swap_tracker::now_secs())
+                });
+                let maker_clone = Arc::clone(&maker);
+                let handle = thread::Builder::new()
+                    .name(format!("reboot-recovery-{}", maker.config.network_port))
+                    .spawn(move || {
+                        if let Err(e) = recover_from_swap(maker_clone, swap_id.clone(), inc, out) {
+                            log::error!("Reboot recovery failed for {}: {:?}", swap_id, e);
+                        }
+                    })
+                    .map_err(MakerError::IO)?;
+                maker.thread_pool.add_thread(handle);
+            }
         }
     }
 

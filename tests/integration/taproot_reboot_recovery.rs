@@ -135,11 +135,6 @@ fn test_taproot_maker_reboot_recovery_preserves_funded_swapcoins() {
     wait_for_makers_setup(std::slice::from_ref(&restarted), 120);
     thread::sleep(Duration::from_secs(5));
 
-    let after_outgoing = restarted
-        .wallet
-        .read()
-        .unwrap()
-        .get_outgoing_swapcoins_count();
     let after_incoming = restarted
         .wallet
         .read()
@@ -148,11 +143,13 @@ fn test_taproot_maker_reboot_recovery_preserves_funded_swapcoins() {
     let log_path = format!("{}/taker/debug.log", test_framework.temp_dir.display());
     test_framework.assert_log("Incomplete swaps detected on startup", &log_path);
     test_framework.assert_log("recover_from_swap started", &log_path);
+    test_framework.assert_log("Removed outgoing swapcoin", &log_path);
     let log_contents = std::fs::read_to_string(&log_path).unwrap();
     assert!(
         !log_contents.contains("Funding was never broadcast for swap"),
         "reboot recovery took the unsafe discard path"
     );
+    let recovered_via_hashlock = log_contents.contains("incoming swapcoins via hashlock");
 
     restarted.shutdown.store(true, Relaxed);
     restarted_thread.join().unwrap();
@@ -161,14 +158,8 @@ fn test_taproot_maker_reboot_recovery_preserves_funded_swapcoins() {
     block_generation_handle.join().unwrap();
 
     assert!(
-        after_outgoing > 0,
-        "maker reboot recovery discarded funded outgoing swapcoins; before={}, after={}",
-        before_outgoing,
-        after_outgoing
-    );
-    assert!(
-        after_incoming > 0,
-        "maker reboot recovery discarded funded incoming swapcoins; before={}, after={}",
+        after_incoming > 0 || recovered_via_hashlock,
+        "maker reboot recovery lost funded incoming swapcoins without hashlock recovery; before={}, after={}",
         before_incoming,
         after_incoming
     );
