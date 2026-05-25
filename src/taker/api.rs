@@ -2428,6 +2428,8 @@ pub enum TakerBehavior {
     CloseAtAckResponse,
     /// Close connection when sending sender's contract data (taproot taker abort).
     CloseAtSendersContract,
+    /// Send a Taproot contract amount that does not match the transaction output.
+    InvalidTaprootContractAmount,
     /// Close connection when receiving maker's contract data response (taproot taker abort).
     CloseAtSendersContractFromMaker,
 }
