@@ -175,6 +175,12 @@ pub(crate) fn verify_fidelity_checks(
     if tx_out.script_pubkey != derived_script_pubkey {
         return Err(WalletError::Fidelity(FidelityError::BondDoesNotExist));
     }
+    if tx_out.value != proof.bond.amount {
+        return Err(WalletError::Fidelity(FidelityError::General(format!(
+            "Bond amount mismatch: expected {}, actual {}",
+            proof.bond.amount, tx_out.value
+        ))));
+    }
 
     // Verify ECDSA signature
     let cert_message = Message::from_digest_slice(proof.cert_hash.as_byte_array())?;
