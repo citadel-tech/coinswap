@@ -213,8 +213,20 @@ fn process_taproot_contract<M: Maker>(
         );
     }
 
+    #[cfg(feature = "integration-test")]
+    let funding_amount = {
+        use super::handlers::MakerBehavior;
+        if maker.behavior() == MakerBehavior::UnderfundTaprootContract {
+            bitcoin::Amount::from_sat(10_000)
+        } else {
+            outgoing_amount
+        }
+    };
+    #[cfg(not(feature = "integration-test"))]
+    let funding_amount = outgoing_amount;
+
     let (contract_tx, output_pos) = maker.create_funding_transaction(
-        outgoing_amount,
+        funding_amount,
         taproot_address.clone(),
         Some(excluded_utxos),
     )?;
@@ -320,6 +332,18 @@ fn process_taproot_contract<M: Maker>(
     );
 
     let tap_tweak_scalar = tap_info.tap_tweak().to_scalar();
+    #[cfg(feature = "integration-test")]
+    let response_amount = {
+        use super::handlers::MakerBehavior;
+        if maker.behavior() == MakerBehavior::UnderfundTaprootContract {
+            outgoing_amount
+        } else {
+            contract_output_amount
+        }
+    };
+    #[cfg(not(feature = "integration-test"))]
+    let response_amount = contract_output_amount;
+
     let response = TaprootContractData::new(
         data.id.clone(),
         vec![outgoing_pubkey],
@@ -329,7 +353,7 @@ fn process_taproot_contract<M: Maker>(
         hashlock_script,
         timelock_script,
         vec![contract_tx],
-        vec![contract_output_amount],
+        vec![response_amount],
         None, // hashlock_nonce: taker already knows
         None, // next_hashlock_nonce: taker manages all nonces
     );

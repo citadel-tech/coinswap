@@ -49,6 +49,8 @@ pub enum MakerBehavior {
     CloseAfterSweep,
     /// Use an invalid fidelity bond timelock (fidelity timelock violation test).
     InvalidFidelityTimelock,
+    /// Underfund the Taproot contract while claiming the expected amount.
+    UnderfundTaprootContract,
 }
 
 /// Minimum time required to react to contract broadcasts (in blocks).

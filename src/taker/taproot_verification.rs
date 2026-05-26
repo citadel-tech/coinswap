@@ -4,6 +4,8 @@
 
 use bitcoin::{
     hashes::{sha256, Hash},
+    opcodes::all::{OP_CHECKSIG, OP_CLTV, OP_DROP, OP_EQUALVERIFY, OP_SHA256},
+    script::Instruction,
     secp256k1::Secp256k1,
 };
 
@@ -28,6 +30,14 @@ impl Taker {
             return Err(TakerError::General(format!(
                 "Maker {} sent empty Taproot contract data (no contract txs)",
                 maker_idx
+            )));
+        }
+        if contract.contract_txs.len() != contract.amounts.len() {
+            return Err(TakerError::General(format!(
+                "Maker {} Taproot contract_txs count ({}) doesn't match amounts count ({})",
+                maker_idx,
+                contract.contract_txs.len(),
+                contract.amounts.len()
             )));
         }
 
@@ -67,6 +77,31 @@ impl Taker {
                 maker_idx, hashlock_instruction_count
             )));
         }
+        let hashlock_instructions = contract
+            .hashlock_script
+            .instructions()
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| {
+                TakerError::General(format!(
+                    "Maker {} Taproot hashlock script parse error: {:?}",
+                    maker_idx, e
+                ))
+            })?;
+        if !matches!(
+            hashlock_instructions.as_slice(),
+            [
+                Instruction::Op(OP_SHA256),
+                Instruction::PushBytes(hash),
+                Instruction::Op(OP_EQUALVERIFY),
+                Instruction::PushBytes(pubkey),
+                Instruction::Op(OP_CHECKSIG),
+            ] if hash.as_bytes() == expected_hash && pubkey.len() == 32
+        ) {
+            return Err(TakerError::General(format!(
+                "Maker {} Taproot hashlock script has invalid template",
+                maker_idx
+            )));
+        }
 
         // Verify timelock script has expected format (5 instructions):
         // <locktime> OP_CLTV OP_DROP <pubkey> OP_CHECKSIG
@@ -75,6 +110,31 @@ impl Taker {
             return Err(TakerError::General(format!(
                 "Maker {} Taproot timelock script has {} instructions, expected 5",
                 maker_idx, timelock_instruction_count
+            )));
+        }
+        let timelock_instructions = contract
+            .timelock_script
+            .instructions()
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| {
+                TakerError::General(format!(
+                    "Maker {} Taproot timelock script parse error: {:?}",
+                    maker_idx, e
+                ))
+            })?;
+        if !matches!(
+            timelock_instructions.as_slice(),
+            [
+                _,
+                Instruction::Op(OP_CLTV),
+                Instruction::Op(OP_DROP),
+                Instruction::PushBytes(pubkey),
+                Instruction::Op(OP_CHECKSIG),
+            ] if pubkey.len() == 32
+        ) {
+            return Err(TakerError::General(format!(
+                "Maker {} Taproot timelock script has invalid template",
+                maker_idx
             )));
         }
 
@@ -178,6 +238,18 @@ impl Taker {
                         maker_idx, e
                     ))
                 })?;
+            let claimed_tweak = contract.tap_tweak_scalar().map_err(|e| {
+                TakerError::General(format!(
+                    "Maker {} Taproot tweak is invalid: {:?}",
+                    maker_idx, e
+                ))
+            })?;
+            if claimed_tweak != tap_info.tap_tweak().to_scalar() {
+                return Err(TakerError::General(format!(
+                    "Maker {} Taproot tweak does not match internal key and script tree",
+                    maker_idx
+                )));
+            }
             bitcoin::ScriptBuf::new_p2tr_tweaked(tap_info.output_key())
         };
 
@@ -199,6 +271,12 @@ impl Taker {
                     "Maker {} Taproot contract tx {} output scriptpubkey does not match \
                      expected P2TR address derived from (internal_key, script_tree)",
                     maker_idx, i
+                )));
+            }
+            if tx.output[0].value != contract.amounts[i] {
+                return Err(TakerError::General(format!(
+                    "Maker {} Taproot claimed amount {} for contract tx {} does not match output value {}",
+                    maker_idx, contract.amounts[i], i, tx.output[0].value
                 )));
             }
         }

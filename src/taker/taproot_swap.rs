@@ -500,10 +500,11 @@ impl Taker {
                 TakerError::General("No contract tx in contract data".to_string())
             })?;
 
-        let amount =
-            contract.amounts.first().cloned().ok_or_else(|| {
-                TakerError::General("No amount in Taproot contract data".to_string())
-            })?;
+        let amount = contract_tx
+            .output
+            .first()
+            .map(|output| output.value)
+            .ok_or_else(|| TakerError::General("No output in Taproot contract tx".to_string()))?;
 
         // The last maker's outgoing hashlock uses taker's my_pubkey (un-tweaked, no nonce),
         // so my_privkey is the correct signing key for the hashlock script.
