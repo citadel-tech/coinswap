@@ -33,30 +33,39 @@ jobs:
         run: |
           cargo install hotpath --version 0.15.0 --features utils --bin hotpath-utils --locked
 
-      - name: Post PR comment (maker)
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Generate filtered PR comment
         run: |
           set -euo pipefail
-          export GITHUB_BASE_REF=$(cat /tmp/metrics/base_ref.txt)
-          export GITHUB_HEAD_REF=$(cat /tmp/metrics/head_ref.txt)
+          export GITHUB_BASE_REF="$(cat /tmp/metrics/base_ref.txt)"
+          export GITHUB_HEAD_REF="$(cat /tmp/metrics/head_ref.txt)"
+
           hotpath-utils profile-pr \
             --head-metrics /tmp/metrics/head_maker.json \
             --base-metrics /tmp/metrics/base_maker.json \
-            --github-token "$GH_TOKEN" \
-            --pr-number "$(cat /tmp/metrics/pr_number.txt)" \
-            --benchmark-id "maker"
+            --benchmark-id "maker" \
+            --dry-run > /tmp/metrics/maker_comment.md
+          perl -i -pe 's/\([+-]0(?:\.0+)?%\)/" " x length($&)/eg' /tmp/metrics/maker_comment.md
 
-      - name: Post PR comment (taker)
+          hotpath-utils profile-pr \
+            --head-metrics /tmp/metrics/head_taker.json \
+            --base-metrics /tmp/metrics/base_taker.json \
+            --benchmark-id "taker" \
+            --dry-run > /tmp/metrics/taker_comment.md
+          perl -i -pe 's/\([+-]0(?:\.0+)?%\)/" " x length($&)/eg' /tmp/metrics/taker_comment.md
+
+          {
+            echo "<!-- hotpath-profile -->"
+            echo
+            cat /tmp/metrics/maker_comment.md
+            echo
+            cat /tmp/metrics/taker_comment.md
+          } > /tmp/metrics/hotpath_comment.md
+
+      - name: Post PR comment
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          export GITHUB_BASE_REF=$(cat /tmp/metrics/base_ref.txt)
-          export GITHUB_HEAD_REF=$(cat /tmp/metrics/head_ref.txt)
-          hotpath-utils profile-pr \
-            --head-metrics /tmp/metrics/head_taker.json \
-            --base-metrics /tmp/metrics/base_taker.json \
-            --github-token "$GH_TOKEN" \
-            --pr-number "$(cat /tmp/metrics/pr_number.txt)" \
-            --benchmark-id "taker"
+          gh pr comment "$(cat /tmp/metrics/pr_number.txt)" \
+            --edit-last --create-if-none \
+            --body-file /tmp/metrics/hotpath_comment.md
