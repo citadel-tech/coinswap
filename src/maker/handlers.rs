@@ -51,6 +51,8 @@ pub enum MakerBehavior {
     InvalidFidelityTimelock,
     /// Point a Legacy sender contract at a funding output that is not the advertised multisig.
     MalformedLegacyFundingOutput,
+    /// Underfund the Taproot contract while claiming the expected amount.
+    UnderfundTaprootContract,
 }
 
 /// Minimum time required to react to contract broadcasts (in blocks).
