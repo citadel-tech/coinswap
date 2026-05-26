@@ -2243,7 +2243,7 @@ impl Taker {
 
         report.print();
         let data_dir = self.config.data_dir.clone().unwrap_or_else(get_taker_dir);
-        if let Err(e) = report.save_for_wallet(&data_dir, &wallet_file_name) {
+        if let Err(e) = report.save_for_wallet(&data_dir, Some(&wallet_file_name)) {
             log::warn!("Failed to save taker swap report: {:?}", e);
         }
 

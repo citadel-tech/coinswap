@@ -777,7 +777,7 @@ fn emit_maker_success_report<M: Maker>(maker: &Arc<M>, state: &ConnectionState, 
         network,
     );
     report.print();
-    if let Err(e) = report.save_for_wallet(maker.data_dir(), maker.wallet_name()) {
+    if let Err(e) = report.save_for_wallet(maker.data_dir(), Some(maker.wallet_name())) {
         log::warn!("Failed to save maker success report: {:?}", e);
     }
 }
