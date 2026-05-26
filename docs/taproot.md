@@ -143,7 +143,7 @@ PrivateKeyHandover {
 2. **Independent Sweeping**: Each party generates their own nonces and performs MuSig2 aggregation locally
 3. **No Coordination Required**: No need to exchange nonces or partial signatures between parties
 4. **Simplified Protocol**: Reduced from 16 messages to 4 messages (2 per maker)
-5. **Security Note**: Uses master-derived keys (m/0' path) - parties trust each other not to double-spend during the brief handover window
+5. **Security Note**: Uses master-derived keys (m/175' path) - parties trust each other not to double-spend during the brief handover window
 
 ## Spending Transaction Details
 

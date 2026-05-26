@@ -517,6 +517,8 @@ impl OfferSyncService {
                                 &rest_backend,
                                 &oa.offer.fidelity,
                                 &oa.address.to_string(),
+                                &oa.offer.tweakable_point,
+                                &oa.offer.tweak_chain_code,
                             );
                             let mut book = offerbook.write().unwrap();
                             match verified {
@@ -639,13 +641,22 @@ fn verify_fidelity_with_backend(
     rest_backend: &BitcoinRest,
     proof: &FidelityProof,
     onion_addr: &str,
+    tweakable_point: &bitcoin::PublicKey,
+    tweak_chain_code: &bitcoin::bip32::ChainCode,
 ) -> Result<(), TakerError> {
     let txid = proof.bond.outpoint.txid;
     let transaction = rest_backend.get_raw_tx(&txid)?;
     let current_height = rest_backend.get_block_count()?;
 
-    verify_fidelity_checks(proof, onion_addr, transaction, current_height)
-        .map_err(TakerError::Wallet)
+    verify_fidelity_checks(
+        proof,
+        onion_addr,
+        transaction,
+        current_height,
+        tweakable_point,
+        tweak_chain_code,
+    )
+    .map_err(TakerError::Wallet)
 }
 
 /// An ephemeral Offerbook tracking good and bad makers. Currently, Offerbook is initiated
@@ -925,6 +936,7 @@ impl MakerAddress {
                 cert_hash: router_offer.fidelity.cert_hash,
                 cert_sig: router_offer.fidelity.cert_sig,
             },
+            tweak_chain_code: router_offer.tweak_chain_code,
         };
 
         log::info!(
@@ -976,13 +988,11 @@ mod tests {
             lock_time: LockTime::from_height(1000).expect("valid height locktime"),
             pubkey,
             conf_height: Some(1000),
-            cert_expiry: Some(1),
             is_spent: false,
+            bond_index: 0,
         };
 
-        let cert_hash = bond
-            .generate_cert_hash(maker_addr)
-            .expect("cert_expiry set");
+        let cert_hash = bond.generate_cert_hash(maker_addr, &pubkey);
         let msg = Message::from_digest_slice(cert_hash.as_byte_array()).expect("32-byte digest");
         let cert_sig = secp.sign_ecdsa(&msg, &secret_key);
 
@@ -1000,6 +1010,7 @@ mod tests {
                 cert_hash,
                 cert_sig,
             },
+            tweak_chain_code: bitcoin::bip32::ChainCode::from([0u8; 32]),
         }
     }
 

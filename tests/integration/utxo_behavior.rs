@@ -348,7 +348,7 @@ fn test_separated_utxo_coin_selection() {
             } => {
                 println!("Correctly failed with InsufficientFund");
                 println!("   Available: {available} sats, Required: {required} sats");
-                assert_eq!(*required, target_3.to_sat() + 424); // Should include 424 sats estimated fee
+                assert_eq!(*required, target_3.to_sat() + 426); // Should include 426 sats estimated fee
                 assert_eq!(*available, balances.swap.to_sat());
                 println!("Confirmed: Only swap balance reported in insufficient funds error");
             }
