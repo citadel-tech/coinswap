@@ -1154,6 +1154,10 @@ impl MakerTrait for MakerServer {
         &self.data_dir
     }
 
+    fn wallet_name(&self) -> &str {
+        &self.config.wallet_name
+    }
+
     fn collect_excluded_utxos(&self, current_swap_id: &str) -> Vec<OutPoint> {
         let swaps = self.ongoing_swaps.lock().unwrap();
         swaps

@@ -2009,7 +2009,7 @@ impl Taker {
     /// Generate a detailed swap report for audit trail (matches master's `generate_swap_report`).
     ///
     /// Computes UTXO diffs, per-maker fee breakdown, contract txids, and funding txids.
-    /// Prints the report to console and saves a JSON file to `{data_dir}/swap_reports/`.
+    /// Prints the report to console and saves it beside the active wallet file.
     fn generate_swap_report(
         &self,
         initial_utxos: &[ListUnspentResultEntry],
@@ -2070,6 +2070,7 @@ impl Taker {
             .collect();
 
         let network = wallet.store.network;
+        let wallet_file_name = wallet.get_name().to_string();
 
         let output_swap_utxos: Vec<(u64, String)> = wallet
             .list_swept_incoming_swap_utxos()
@@ -2242,7 +2243,7 @@ impl Taker {
 
         report.print();
         let data_dir = self.config.data_dir.clone().unwrap_or_else(get_taker_dir);
-        if let Err(e) = report.save(&data_dir) {
+        if let Err(e) = report.save_for_wallet(&data_dir, Some(&wallet_file_name)) {
             log::warn!("Failed to save taker swap report: {:?}", e);
         }
 
