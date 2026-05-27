@@ -213,6 +213,8 @@ fn process_taproot_contract<M: Maker>(
         );
     }
 
+    // QA: Integration-only malicious maker path for taker validation tests. It
+    // funds less than the amount it will later claim in TaprootContractData.
     #[cfg(feature = "integration-test")]
     let funding_amount = {
         use super::handlers::MakerBehavior;
@@ -332,6 +334,8 @@ fn process_taproot_contract<M: Maker>(
     );
 
     let tap_tweak_scalar = tap_info.tap_tweak().to_scalar();
+    // QA: Keep this claim inconsistent with the funded output when the test
+    // behavior is active, proving the taker binds metadata to transaction value.
     #[cfg(feature = "integration-test")]
     let response_amount = {
         use super::handlers::MakerBehavior;
