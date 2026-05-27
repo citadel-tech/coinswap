@@ -32,6 +32,8 @@ impl Taker {
                 maker_idx
             )));
         }
+        // QA: Maker-controlled Taproot metadata must stay 1:1 with the actual
+        // contract txs, otherwise later amount checks can read the wrong claim.
         if contract.contract_txs.len() != contract.amounts.len() {
             return Err(TakerError::General(format!(
                 "Maker {} Taproot contract_txs count ({}) doesn't match amounts count ({})",
@@ -68,6 +70,8 @@ impl Taker {
             )));
         }
 
+        // QA: Count-only script checks accepted malformed Taproot leaves. Match
+        // the full templates so recovery/cooperative spends use expected paths.
         // Verify hashlock script has expected format (5 instructions):
         // OP_SHA256 <hash> OP_EQUALVERIFY <pubkey> OP_CHECKSIG
         let hashlock_instruction_count = contract.hashlock_script.instructions().count();
@@ -238,6 +242,9 @@ impl Taker {
                         maker_idx, e
                     ))
                 })?;
+
+            // QA: The taker stores the maker-provided tweak for later spending,
+            // so reject tweaks that do not match the verified script tree.
             let claimed_tweak = contract.tap_tweak_scalar().map_err(|e| {
                 TakerError::General(format!(
                     "Maker {} Taproot tweak is invalid: {:?}",
@@ -274,6 +281,8 @@ impl Taker {
                 )));
             }
             if tx.output[0].value != contract.amounts[i] {
+                // QA: Prevent underfunded incoming swapcoins where the maker
+                // claims a larger amount than the confirmed contract output.
                 return Err(TakerError::General(format!(
                     "Maker {} Taproot claimed amount {} for contract tx {} does not match output value {}",
                     maker_idx, contract.amounts[i], i, tx.output[0].value

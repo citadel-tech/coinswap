@@ -27,6 +27,8 @@ fn test_taproot_maker_rejects_contract_amount_mismatch() {
     let bitcoind = &test_framework.bitcoind;
     let taker = takers.get_mut(0).unwrap();
 
+    // Fund the taker and maker with P2TR coins so the swap runs through the
+    // Taproot funding and contract-data exchange path.
     fund_taker(
         taker,
         bitcoind,
@@ -42,6 +44,7 @@ fn test_taproot_maker_rejects_contract_amount_mismatch() {
         AddressType::P2TR,
     );
 
+    // Start the malicious maker server.
     let maker_threads = makers
         .iter()
         .map(|maker| {
@@ -74,6 +77,7 @@ fn test_taproot_maker_rejects_contract_amount_mismatch() {
     let log_path = format!("{}/taker/debug.log", test_framework.temp_dir.display());
     test_framework.assert_log("does not match output value", &log_path);
 
+    // ---- Cleanup ----
     makers
         .iter()
         .for_each(|maker| maker.shutdown.store(true, Relaxed));
