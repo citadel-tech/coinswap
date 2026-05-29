@@ -108,6 +108,19 @@ enum Commands {
 
     /// List makers from the locally cached offerbook without triggering a network sync.
     ListOffers,
+    /// Fetch an offer from a single maker address, verify the fidelity proof, and
+    /// store the result in the offerbook. Adds the maker if absent.
+    PollMaker {
+        /// Maker onion address (e.g. `xyz.onion`).
+        #[clap(long, short = 'm')]
+        address: String,
+    },
+    /// Remove a maker from the local offerbook by address.
+    RemoveMaker {
+        /// Maker onion address (e.g. `xyz.onion`).
+        #[clap(long, short = 'm')]
+        address: String,
+    },
     /// Initiate the coinswap process
     Coinswap {
         /// Sets the Maker count to swap with. Swapping with less than 2 makers is not allowed to maintain client privacy.
@@ -437,6 +450,19 @@ fn main() -> Result<(), TakerError> {
 
             let wallet = taker.get_wallet().read().unwrap();
             display_makers_with_summary(&wallet, &makers)?;
+        }
+        Commands::PollMaker { address } => {
+            let result = taker.poll_maker(address.clone())?;
+            let wallet = taker.get_wallet().read().unwrap();
+            println!("{}", display_offer(&wallet, &result)?);
+        }
+        Commands::RemoveMaker { address } => {
+            let removed = taker.remove_maker(address.clone())?;
+            if removed {
+                println!("Removed maker {address} from offerbook");
+            } else {
+                println!("No maker with address {address} in offerbook");
+            }
         }
         Commands::Coinswap {
             makers,
