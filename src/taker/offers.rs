@@ -49,7 +49,7 @@ enum SyncCommand {
     SyncNow(mpsc::Sender<()>),
     PollMaker {
         address: MakerAddress,
-        done: mpsc::Sender<MakerOfferCandidate>,
+        done: mpsc::Sender<Option<MakerOfferCandidate>>,
     },
 }
 
@@ -421,14 +421,21 @@ impl OfferSyncClient {
 
     /// Run a single-maker offer fetch + fidelity verification cycle for `address`
     /// and block until it completes. If the address is not already in the offerbook
-    /// it is inserted. Returns the maker's final state after the poll.
+    /// it is inserted. Returns the maker's final state after the poll, or an error
+    /// if a concurrent `remove_maker` evicted the entry before its state could be
+    /// captured.
     pub fn poll_maker(&self, address: MakerAddress) -> Result<MakerOfferCandidate, TakerError> {
         let (done_tx, done_rx) = mpsc::channel();
+        let address_str = address.to_string();
         self.cmd_tx.send(SyncCommand::PollMaker {
             address,
             done: done_tx,
         })?;
-        Ok(done_rx.recv()?)
+        done_rx.recv()?.ok_or_else(|| {
+            TakerError::General(format!(
+                "Maker {address_str} was removed before the poll could record a result"
+            ))
+        })
     }
 }
 
@@ -461,15 +468,22 @@ impl OfferSyncHandle {
 
     /// Run a single-maker offer fetch + fidelity verification cycle for `address`
     /// and block until it completes. If the address is not already in the offerbook
-    /// it is inserted. Returns the maker's final state after the poll.
+    /// it is inserted. Returns the maker's final state after the poll, or an error
+    /// if a concurrent `remove_maker` evicted the entry before its state could be
+    /// captured.
     #[hotpath::measure]
     pub fn poll_maker(&self, address: MakerAddress) -> Result<MakerOfferCandidate, TakerError> {
         let (done_tx, done_rx) = mpsc::channel();
+        let address_str = address.to_string();
         self.cmd_tx.send(SyncCommand::PollMaker {
             address,
             done: done_tx,
         })?;
-        Ok(done_rx.recv()?)
+        done_rx.recv()?.ok_or_else(|| {
+            TakerError::General(format!(
+                "Maker {address_str} was removed before the poll could record a result"
+            ))
+        })
     }
 }
 
@@ -545,7 +559,9 @@ impl OfferSyncService {
     /// Fetches an offer from a single maker, verifies its fidelity proof, and
     /// updates the offerbook with the result (mark_success or mark_failure),
     /// then persists the offerbook to disk. Shared by the periodic worker pool
-    /// and the manual `poll_one` path.
+    /// and the manual `poll_one` path. Returns the recorded maker captured under
+    /// the write lock, or `None` if no entry exists for `addr` after the update
+    /// (e.g. a concurrent `remove` raced the poll).
     fn fetch_and_record_one(
         addr: MakerAddress,
         socks_port: u16,
@@ -553,7 +569,7 @@ impl OfferSyncService {
         offerbook: &Arc<RwLock<OfferBook>>,
         offerbook_path: &Path,
         now: u64,
-    ) {
+    ) -> Option<MakerOfferCandidate> {
         let downloaded = addr.clone().download_offer_with_retries(socks_port);
         let mut book = offerbook.write().unwrap();
         match downloaded {
@@ -578,15 +594,20 @@ impl OfferSyncService {
                 book.mark_failure(&addr, now);
             }
         }
+        // Capture the maker's final state while we still hold the write lock so
+        // a concurrent `remove` can't yank it out from under the caller.
+        let captured = book.makers.iter().find(|m| m.address == addr).cloned();
         if let Err(e) = book.write_to_disk(offerbook_path) {
             log::warn!("Failed to persist offerbook: {:?}", e);
         }
+        captured
     }
 
     /// Performs a single offer fetch + fidelity verification cycle for one maker,
     /// updating the offerbook with the result. The maker is inserted if absent.
-    /// Returns the maker's final state after the poll.
-    fn poll_one(&self, address: MakerAddress) -> MakerOfferCandidate {
+    /// Returns the maker's final state after the poll, or `None` if a concurrent
+    /// `remove` evicted the entry before the recorded state could be captured.
+    fn poll_one(&self, address: MakerAddress) -> Option<MakerOfferCandidate> {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or(Duration::ZERO)
@@ -600,23 +621,13 @@ impl OfferSyncService {
             .upsert_address(address.clone());
 
         Self::fetch_and_record_one(
-            address.clone(),
+            address,
             self.socks_port,
             &self.rest_backend,
             &self.offerbook.inner,
             &self.offerbook.path,
             now,
-        );
-
-        self.offerbook
-            .inner
-            .read()
-            .unwrap()
-            .makers
-            .iter()
-            .find(|m| m.address == address)
-            .cloned()
-            .expect("maker was just upserted")
+        )
     }
 
     /// Spawns worker threads that fetch offers from makers and update the offerbook
@@ -655,7 +666,7 @@ impl OfferSyncService {
                         .unwrap_or(Duration::ZERO)
                         .as_secs();
 
-                    Self::fetch_and_record_one(
+                    let _ = Self::fetch_and_record_one(
                         addr,
                         socks_port,
                         &rest_backend,
