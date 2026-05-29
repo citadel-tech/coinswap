@@ -47,6 +47,10 @@ use super::error::TakerError;
 
 enum SyncCommand {
     SyncNow(mpsc::Sender<()>),
+    PollMaker {
+        address: MakerAddress,
+        done: mpsc::Sender<MakerOfferCandidate>,
+    },
 }
 
 #[cfg(not(feature = "integration-test"))]
@@ -321,6 +325,19 @@ impl OfferBookHandle {
         self.inner.read().unwrap().write_to_disk(&self.path)
     }
 
+    /// Remove a maker from the offerbook by address.
+    /// Returns `true` if an entry was removed, `false` if no matching address was found.
+    pub fn remove(&self, address: &MakerAddress) -> Result<bool, TakerError> {
+        let mut book = self.inner.write().unwrap();
+        let before = book.makers.len();
+        book.makers.retain(|m| &m.address != address);
+        let removed = book.makers.len() < before;
+        if removed {
+            book.write_to_disk(&self.path)?;
+        }
+        Ok(removed)
+    }
+
     /// Create or load offerbook on disk
     pub fn load_or_create(data_dir: &Path) -> Result<Self, TakerError> {
         let path = data_dir.join("offerbook.json");
@@ -386,6 +403,35 @@ pub struct OfferSyncHandle {
     cmd_tx: mpsc::Sender<SyncCommand>,
 }
 
+/// Lightweight clone-able client for triggering offer sync operations from
+/// other threads without owning the join handle / shutdown flag.
+#[derive(Clone)]
+pub struct OfferSyncClient {
+    cmd_tx: mpsc::Sender<SyncCommand>,
+}
+
+impl OfferSyncClient {
+    /// Trigger an offerbook sync and block until it completes.
+    pub fn sync_and_wait(&self) -> Result<(), TakerError> {
+        let (done_tx, done_rx) = mpsc::channel();
+        self.cmd_tx.send(SyncCommand::SyncNow(done_tx))?;
+        done_rx.recv()?;
+        Ok(())
+    }
+
+    /// Run a single-maker offer fetch + fidelity verification cycle for `address`
+    /// and block until it completes. If the address is not already in the offerbook
+    /// it is inserted. Returns the maker's final state after the poll.
+    pub fn poll_maker(&self, address: MakerAddress) -> Result<MakerOfferCandidate, TakerError> {
+        let (done_tx, done_rx) = mpsc::channel();
+        self.cmd_tx.send(SyncCommand::PollMaker {
+            address,
+            done: done_tx,
+        })?;
+        Ok(done_rx.recv()?)
+    }
+}
+
 impl OfferSyncHandle {
     /// Shutdown handler
     pub fn shutdown(&mut self) {
@@ -396,6 +442,14 @@ impl OfferSyncHandle {
         }
     }
 
+    /// Return a clone-able client that can trigger sync operations without
+    /// requiring access to the owning `OfferSyncHandle`.
+    pub fn client(&self) -> OfferSyncClient {
+        OfferSyncClient {
+            cmd_tx: self.cmd_tx.clone(),
+        }
+    }
+
     /// Trigger an offerbook sync and block until it completes.
     #[hotpath::measure]
     pub fn sync_and_wait(&self) -> Result<(), TakerError> {
@@ -403,6 +457,19 @@ impl OfferSyncHandle {
         self.cmd_tx.send(SyncCommand::SyncNow(done_tx))?;
         done_rx.recv()?;
         Ok(())
+    }
+
+    /// Run a single-maker offer fetch + fidelity verification cycle for `address`
+    /// and block until it completes. If the address is not already in the offerbook
+    /// it is inserted. Returns the maker's final state after the poll.
+    #[hotpath::measure]
+    pub fn poll_maker(&self, address: MakerAddress) -> Result<MakerOfferCandidate, TakerError> {
+        let (done_tx, done_rx) = mpsc::channel();
+        self.cmd_tx.send(SyncCommand::PollMaker {
+            address,
+            done: done_tx,
+        })?;
+        Ok(done_rx.recv()?)
     }
 }
 
@@ -475,6 +542,83 @@ impl OfferSyncService {
         Ok(())
     }
 
+    /// Fetches an offer from a single maker, verifies its fidelity proof, and
+    /// updates the offerbook with the result (mark_success or mark_failure),
+    /// then persists the offerbook to disk. Shared by the periodic worker pool
+    /// and the manual `poll_one` path.
+    fn fetch_and_record_one(
+        addr: MakerAddress,
+        socks_port: u16,
+        rest_backend: &BitcoinRest,
+        offerbook: &Arc<RwLock<OfferBook>>,
+        offerbook_path: &Path,
+        now: u64,
+    ) {
+        let downloaded = addr.clone().download_offer_with_retries(socks_port);
+        let mut book = offerbook.write().unwrap();
+        match downloaded {
+            Some(oa) => {
+                match verify_fidelity_with_backend(
+                    rest_backend,
+                    &oa.offer.fidelity,
+                    &oa.address.to_string(),
+                    &oa.offer.tweakable_point,
+                    &oa.offer.tweak_chain_code,
+                ) {
+                    Ok(_) => {
+                        book.mark_success(&oa.address, oa.offer, oa.protocol, now);
+                    }
+                    Err(e) => {
+                        log::warn!("Fidelity verification failed for {}: {:?}", oa.address, e);
+                        book.mark_failure(&oa.address, now);
+                    }
+                }
+            }
+            None => {
+                book.mark_failure(&addr, now);
+            }
+        }
+        if let Err(e) = book.write_to_disk(offerbook_path) {
+            log::warn!("Failed to persist offerbook: {:?}", e);
+        }
+    }
+
+    /// Performs a single offer fetch + fidelity verification cycle for one maker,
+    /// updating the offerbook with the result. The maker is inserted if absent.
+    /// Returns the maker's final state after the poll.
+    fn poll_one(&self, address: MakerAddress) -> MakerOfferCandidate {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or(Duration::ZERO)
+            .as_secs();
+
+        // Ensure the maker is present in the offerbook before polling.
+        self.offerbook
+            .inner
+            .write()
+            .unwrap()
+            .upsert_address(address.clone());
+
+        Self::fetch_and_record_one(
+            address.clone(),
+            self.socks_port,
+            &self.rest_backend,
+            &self.offerbook.inner,
+            &self.offerbook.path,
+            now,
+        );
+
+        self.offerbook
+            .inner
+            .read()
+            .unwrap()
+            .makers
+            .iter()
+            .find(|m| m.address == address)
+            .cloned()
+            .expect("maker was just upserted")
+    }
+
     /// Spawns worker threads that fetch offers from makers and update the offerbook
     /// as each result arrives. Returns join handles.
     fn spawn_offer_workers(&self, makers: Vec<MakerAddress>) -> Vec<JoinHandle<()>> {
@@ -511,41 +655,14 @@ impl OfferSyncService {
                         .unwrap_or(Duration::ZERO)
                         .as_secs();
 
-                    match addr.clone().download_offer_with_retries(socks_port) {
-                        Some(oa) => {
-                            let verified = verify_fidelity_with_backend(
-                                &rest_backend,
-                                &oa.offer.fidelity,
-                                &oa.address.to_string(),
-                                &oa.offer.tweakable_point,
-                                &oa.offer.tweak_chain_code,
-                            );
-                            let mut book = offerbook.write().unwrap();
-                            match verified {
-                                Ok(_) => {
-                                    book.mark_success(&oa.address, oa.offer, oa.protocol, now);
-                                }
-                                Err(e) => {
-                                    log::warn!(
-                                        "Fidelity verification failed for {}: {:?}",
-                                        oa.address,
-                                        e
-                                    );
-                                    book.mark_failure(&oa.address, now);
-                                }
-                            }
-                            if let Err(e) = book.write_to_disk(&offerbook_path) {
-                                log::warn!("Failed to persist offerbook: {:?}", e);
-                            }
-                        }
-                        None => {
-                            let mut book = offerbook.write().unwrap();
-                            book.mark_failure(&addr, now);
-                            if let Err(e) = book.write_to_disk(&offerbook_path) {
-                                log::warn!("Failed to persist offerbook: {:?}", e);
-                            }
-                        }
-                    }
+                    Self::fetch_and_record_one(
+                        addr,
+                        socks_port,
+                        &rest_backend,
+                        &offerbook,
+                        &offerbook_path,
+                        now,
+                    );
                 })
                 .expect("failed to spawn offer-fetch-worker");
 
@@ -587,6 +704,11 @@ impl OfferSyncService {
                                 let _ = done_tx.send(());
                                 Self::drain_and_ack(&cmd_rx);
                                 break;
+                            }
+                            Ok(SyncCommand::PollMaker { address, done }) => {
+                                log::info!("Manual maker poll requested: {}", address);
+                                let result = self.poll_one(address);
+                                let _ = done.send(result);
                             }
                             Err(mpsc::TryRecvError::Empty) => {}
                             Err(mpsc::TryRecvError::Disconnected) => return,

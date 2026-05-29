@@ -58,8 +58,8 @@ use super::{
     config::TakerConfig,
     error::TakerError,
     offers::{
-        MakerAddress, MakerProtocol, OfferAndAddress, OfferBook, OfferBookHandle, OfferSyncHandle,
-        OfferSyncService,
+        MakerAddress, MakerOfferCandidate, MakerProtocol, OfferAndAddress, OfferBook,
+        OfferBookHandle, OfferSyncClient, OfferSyncHandle, OfferSyncService,
     },
 };
 
@@ -2386,6 +2386,32 @@ impl Taker {
     /// Triggers a manual offerbook sync and blocks until it completes.
     pub fn sync_offerbook_and_wait(&self) -> Result<(), TakerError> {
         self.offer_sync_handle.sync_and_wait()
+    }
+
+    /// Returns a clone-able client for triggering offer sync operations from
+    /// other threads (e.g. background workers) without requiring access to the
+    /// `Taker` itself. Useful for callers that want to run a manual sync off
+    /// the main thread while leaving the `Taker` free for concurrent reads.
+    pub fn offer_sync_client(&self) -> OfferSyncClient {
+        self.offer_sync_handle.client()
+    }
+
+    /// Fetches the offer from a single maker, verifies its fidelity proof, and
+    /// stores the result in the offerbook. Adds the maker to the offerbook if
+    /// it is not already present. Blocks until the poll completes and returns
+    /// the maker's final state.
+    pub fn poll_maker(&self, address: String) -> Result<MakerOfferCandidate, TakerError> {
+        let parsed = MakerAddress::try_from(address)
+            .map_err(|e| TakerError::General(format!("Invalid maker address: {e}")))?;
+        self.offer_sync_handle.poll_maker(parsed)
+    }
+
+    /// Removes a maker from the offerbook by address. Returns `true` if an
+    /// entry was removed, `false` if no matching address was found.
+    pub fn remove_maker(&self, address: String) -> Result<bool, TakerError> {
+        let parsed = MakerAddress::try_from(address)
+            .map_err(|e| TakerError::General(format!("Invalid maker address: {e}")))?;
+        self.offerbook.remove(&parsed)
     }
 
     /// Restore a wallet from a backup file (static — no taker instance needed).
