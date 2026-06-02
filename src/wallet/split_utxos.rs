@@ -1,8 +1,8 @@
-use super::{AddressType, Wallet};
+use super::{rpc::BlockchainBackend, AddressType, Wallet};
 use crate::wallet::api::UTXOSpendInfo;
 use bip39::rand::{thread_rng, Rng};
 use bitcoin::Amount;
-use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, RpcApi};
+use bitcoind::bitcoincore_rpc::json::ListUnspentResultEntry;
 
 // Used for calculating fee optimization scores
 struct FeeOptimizationResult {
@@ -20,7 +20,7 @@ pub const MAX_SPLITS: usize = 5;
 /// Derived from: P2WPKH dust (294) + estimated max per-chunk fee (~300) = ~594, rounded up.
 const MIN_CHANGE_CHUNK: u64 = 600;
 
-impl Wallet {
+impl<B: BlockchainBackend> Wallet<B> {
     /// Performs simple fee optimization based on the number of selected inputs and target chunks, change chunks
     fn simple_fee_optimization(
         &self,

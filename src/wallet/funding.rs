@@ -8,13 +8,11 @@ use bitcoin::{
     Address, Amount, OutPoint, Transaction,
 };
 
-use bitcoind::bitcoincore_rpc::RpcApi;
-
 use crate::{utill::calculate_fee_sats, wallet::Destination};
 
 use super::Wallet;
 
-use super::{api::infer_address_type, error::WalletError, AddressType};
+use super::{error::WalletError, api::infer_address_type, rpc::BlockchainBackend, AddressType};
 
 #[derive(Debug)]
 pub struct CreateFundingTxesResult {
@@ -23,7 +21,7 @@ pub struct CreateFundingTxesResult {
     pub total_miner_fee: u64,
 }
 
-impl Wallet {
+impl<B: BlockchainBackend> Wallet<B> {
     // Attempts to create the funding transactions.
     /// Returns Ok(None) if there was no error but the wallet was unable to create funding txes
     #[hotpath::measure]
@@ -98,7 +96,7 @@ impl Wallet {
         count: usize,
         total_amount: Amount,
     ) -> Result<Vec<u64>, WalletError> {
-        let mut output_values = Wallet::generate_amount_fractions_without_correction(
+        let mut output_values = Self::generate_amount_fractions_without_correction(
             count,
             total_amount,
             5000, //use 5000 satoshi as the lower limit for now
@@ -217,7 +215,7 @@ impl Wallet {
         manually_selected_outpoints: Option<Vec<OutPoint>>,
         excluded_outpoints: Option<Vec<OutPoint>>,
     ) -> Result<CreateFundingTxesResult, WalletError> {
-        let output_values = Wallet::generate_amount_fractions(destinations.len(), coinswap_amount)?;
+        let output_values = Self::generate_amount_fractions(destinations.len(), coinswap_amount)?;
 
         // Flow of Lock Step 1. Unlock all unspent UTXOs
         self.rpc.unlock_unspent_all()?;

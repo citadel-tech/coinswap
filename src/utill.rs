@@ -3,7 +3,7 @@
 use bitcoin::{
     hashes::Hash,
     key::{rand::thread_rng, Keypair},
-    secp256k1::{Secp256k1, SecretKey},
+    secp256k1::{All, Secp256k1, SecretKey},
     Address, Amount, FeeRate, Network, PublicKey, ScriptBuf, WitnessProgram, WitnessVersion,
 };
 use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, jsonrpc::base64};
@@ -36,6 +36,16 @@ use std::{
 };
 
 static LOGGER: OnceLock<()> = OnceLock::new();
+
+/// Process-wide `Secp256k1<All>` context. `Secp256k1::new()` allocates a ~1.5 MiB
+/// precomputation table; per the upstream secp256k1 docs the recommended
+/// pattern is to construct one context per process and share references. We do
+/// that here so address-derivation hot paths (which can iterate 2,000+ times
+/// per sync at the production gap limit) don't repeatedly allocate.
+pub(crate) fn global_secp() -> &'static Secp256k1<All> {
+    static SECP: OnceLock<Secp256k1<All>> = OnceLock::new();
+    SECP.get_or_init(Secp256k1::new)
+}
 
 use crate::{
     error::NetError,

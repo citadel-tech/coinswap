@@ -2,14 +2,6 @@
 
 use std::time::Duration;
 
-use bitcoin::{
-    hashes::{hash160::Hash as Hash160, Hash},
-    hex::DisplayHex,
-    secp256k1::{self, rand::rngs::OsRng, Secp256k1, SecretKey},
-    Amount, Network, OutPoint, PublicKey, ScriptBuf, Transaction, Txid,
-};
-use bitcoind::bitcoincore_rpc::RpcApi;
-
 use crate::{
     protocol::{
         common_messages::{MakerToTakerMessage, TakerToMakerMessage},
@@ -26,8 +18,14 @@ use crate::{
     utill::{generate_keypair, generate_maker_keys, read_message, send_message, MIN_FEE_RATE},
     wallet::{
         swapcoin::{IncomingSwapCoin, OutgoingSwapCoin, WatchOnlySwapCoin},
-        Wallet, WalletError,
+        BlockchainBackend, Wallet, WalletError,
     },
+};
+use bitcoin::{
+    hashes::{hash160::Hash as Hash160, Hash},
+    hex::DisplayHex,
+    secp256k1::{self, rand::rngs::OsRng, Secp256k1, SecretKey},
+    Amount, Network, OutPoint, PublicKey, ScriptBuf, Transaction, Txid,
 };
 
 use super::{api::Taker, error::TakerError};
@@ -35,11 +33,11 @@ use super::{api::Taker, error::TakerError};
 /// Delay to allow the Maker to broadcast its funding transactions before we poll.
 const MAKER_BROADCAST_DELAY: Duration = Duration::from_secs(2);
 
-impl Taker {
+impl<B: BlockchainBackend> Taker<B> {
     /// Create Legacy (ECDSA) funding transactions and swapcoins (static version).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn funding_create_legacy(
-        wallet: &mut Wallet,
+        wallet: &mut Wallet<B>,
         multisig_pubkeys: &[PublicKey],
         hashlock_pubkeys: &[PublicKey],
         hashvalue: Hash160,
@@ -945,14 +943,20 @@ impl Taker {
                         (((funding_tx, multisig_rs), contract_rs), &multisig_nonce),
                         &hashlock_nonce,
                     )| {
-                        let txids = [funding_tx.compute_txid()];
-                        let merkle_proof = wallet
-                            .rpc
-                            .get_tx_out_proof(&txids, None)
-                            .map_err(WalletError::Rpc)?;
+                        // SPV proof empty on Electrum; maker verifier skips the check.
+                        let funding_tx_merkleproof = if !B::IS_ELECTRUM {
+                            let txids = [funding_tx.compute_txid()];
+                            wallet
+                                .rpc
+                                .get_tx_out_proof(&txids, None)
+                                .map_err(WalletError::Rpc)?
+                                .to_lower_hex_string()
+                        } else {
+                            String::new()
+                        };
                         Ok(FundingTxInfo {
                             funding_tx: funding_tx.clone(),
-                            funding_tx_merkleproof: merkle_proof.to_lower_hex_string(),
+                            funding_tx_merkleproof,
                             multisig_redeemscript: multisig_rs.clone(),
                             multisig_nonce,
                             contract_redeemscript: contract_rs.clone(),

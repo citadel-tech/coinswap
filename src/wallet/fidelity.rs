@@ -1,7 +1,7 @@
 use crate::{
     protocol::common_messages::FidelityProof,
     utill::{redeemscript_to_scriptpubkey, MIN_FEE_RATE},
-    wallet::{infer_address_type, AddressType, Wallet},
+    wallet::{infer_address_type, rpc::BlockchainBackend, AddressType, Wallet},
 };
 use bitcoin::{
     absolute::LockTime,
@@ -13,7 +13,6 @@ use bitcoin::{
     secp256k1::{Keypair, Message, Secp256k1},
     Address, Amount, OutPoint, PublicKey, ScriptBuf, Transaction, Txid,
 };
-use bitcoind::bitcoincore_rpc::RpcApi;
 use serde::{Deserialize, Serialize};
 use std::{
     str::FromStr,
@@ -315,7 +314,7 @@ impl FidelityBond {
 }
 
 // Wallet APIs related to fidelity bonds.
-impl Wallet {
+impl<B: BlockchainBackend> Wallet<B> {
     /// Get a reference to the fidelity bond store
     pub fn get_fidelity_bonds(&self) -> &Vec<FidelityBond> {
         &self.store.fidelity_bond

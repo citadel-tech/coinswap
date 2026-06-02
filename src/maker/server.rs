@@ -16,7 +16,7 @@ use crate::{
     nostr_coinswap::broadcast_bond_on_nostr,
     protocol::common_messages::{FidelityProof, MakerToTakerMessage, TakerToMakerMessage},
     utill::HEART_BEAT_INTERVAL,
-    wallet::RecoveryReport,
+    wallet::{BlockchainBackend, RecoveryReport},
 };
 
 use super::{
@@ -42,7 +42,7 @@ const FIDELITY_BOND_UPDATE_INTERVAL: Duration = Duration::from_secs(30);
 const FIDELITY_BOND_UPDATE_INTERVAL: Duration = Duration::from_secs(600);
 
 /// Start the maker server.
-pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
+pub fn start_server<B: BlockchainBackend>(maker: Arc<MakerServer<B>>) -> Result<(), MakerError> {
     log::info!("[{}] Starting maker server", maker.config.network_port);
 
     let listener = match TcpListener::bind(("127.0.0.1", maker.config.network_port)) {
@@ -245,8 +245,8 @@ pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
 }
 
 /// Spawn a background thread for nostr bond announcements.
-fn spawn_nostr_broadcast_thread(
-    maker: &Arc<MakerServer>,
+fn spawn_nostr_broadcast_thread<B: BlockchainBackend>(
+    maker: &Arc<MakerServer<B>>,
     fidelity: FidelityProof,
 ) -> Result<(), MakerError> {
     log::info!(
@@ -299,7 +299,10 @@ fn spawn_nostr_broadcast_thread(
 
 /// Handle a single connection.
 #[hotpath::measure]
-fn handle_connection(maker: Arc<MakerServer>, stream: TcpStream) -> Result<(), MakerError> {
+fn handle_connection<B: BlockchainBackend>(
+    maker: Arc<MakerServer<B>>,
+    stream: TcpStream,
+) -> Result<(), MakerError> {
     stream.set_nonblocking(false).map_err(MakerError::IO)?;
     stream
         .set_read_timeout(Some(IDLE_CONNECTION_TIMEOUT))
@@ -446,7 +449,9 @@ fn handle_connection(maker: Arc<MakerServer>, stream: TcpStream) -> Result<(), M
 }
 
 /// Background thread that checks for idle swap states and spawns recovery.
-fn check_for_idle_states(maker: Arc<MakerServer>) -> Result<(), MakerError> {
+fn check_for_idle_states<B: BlockchainBackend>(
+    maker: Arc<MakerServer<B>>,
+) -> Result<(), MakerError> {
     use super::swap_tracker::{now_secs, MakerRecoveryState, MakerSwapPhase, MakerSwapRecord};
 
     loop {
@@ -569,8 +574,8 @@ const PREIMAGE_LEN: usize = 32;
 /// Check the watch tower for spends on outgoing contract outputs, extract
 /// preimages from hashlock spends, and update incoming swapcoins in the wallet.
 #[hotpath::measure]
-fn check_for_preimage_via_watchtower(
-    maker: &MakerServer,
+fn check_for_preimage_via_watchtower<B: BlockchainBackend>(
+    maker: &MakerServer<B>,
     outgoing_swapcoins: &[crate::wallet::swapcoin::OutgoingSwapCoin],
     incoming_swapcoins: &[crate::wallet::swapcoin::IncomingSwapCoin],
 ) -> Result<(), MakerError> {
@@ -678,8 +683,8 @@ fn check_for_preimage_via_watchtower(
 ///
 /// Locks the tracker, applies `f` to the record matching `swap_id`, then flushes.
 #[hotpath::measure]
-fn update_tracker(
-    maker: &MakerServer,
+fn update_tracker<B: BlockchainBackend>(
+    maker: &MakerServer<B>,
     swap_id: &str,
     f: impl FnOnce(&mut super::swap_tracker::MakerSwapRecord),
 ) {
@@ -703,14 +708,13 @@ fn update_tracker(
 /// 2. **Timelock** (outgoing swapcoins): After the timelock expires, we reclaim
 ///    our outgoing funds via the timelock spending path.
 #[hotpath::measure]
-fn recover_from_swap(
-    maker: Arc<MakerServer>,
+fn recover_from_swap<B: BlockchainBackend>(
+    maker: Arc<MakerServer<B>>,
     swap_id: String,
     incoming_swapcoins: Vec<crate::wallet::swapcoin::IncomingSwapCoin>,
     outgoing_swapcoins: Vec<crate::wallet::swapcoin::OutgoingSwapCoin>,
 ) -> Result<(), MakerError> {
     use super::swap_tracker::{MakerRecoveryPhase, MakerSwapPhase};
-    use bitcoind::bitcoincore_rpc::RpcApi;
 
     // For Taproot, get_timelock() returns an absolute CLTV height.
     // For Legacy, it returns a relative CSV offset — but Legacy recovery

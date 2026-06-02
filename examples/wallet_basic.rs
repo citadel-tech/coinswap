@@ -23,7 +23,7 @@ use bitcoind::{
 };
 use coinswap::{
     utill::MIN_FEE_RATE,
-    wallet::{AddressType, Destination, RPCConfig, Wallet},
+    wallet::{AddressType, BitcoindBackend, Destination, RPCConfig, Wallet},
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -78,6 +78,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         url: bitcoind.rpc_url().split_at(7).1.to_string(), // Remove "http://" prefix
         auth: Auth::CookieFile(bitcoind.params.cookie_file.clone()),
         wallet_name: "wallet-example".to_string(), // Use specific wallet name
+        ..RPCConfig::default()
     };
 
     // Initialize Wallet using Wallet::init()
@@ -86,7 +87,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Ensure wallet directory exists
     std::fs::create_dir_all(wallet_path.parent().unwrap())?;
 
-    let mut wallet = Wallet::init(&wallet_path, &rpc_config, None).unwrap();
+    let mut wallet = Wallet::<BitcoindBackend>::init(&wallet_path, &rpc_config, None).unwrap();
 
     println!("Wallet initialized successfully!");
 
