@@ -15,11 +15,10 @@ use std::{
 };
 
 use bitcoin::{OutPoint, Txid};
-use bitcoind::bitcoincore_rpc::RpcApi;
 
 use crate::{
     utill::HEART_BEAT_INTERVAL,
-    wallet::{RecoveryReport, Wallet},
+    wallet::{BlockchainBackend, RecoveryReport, Wallet},
     watch_tower::{service::WatchService, watcher::WatcherEvent},
 };
 
@@ -48,8 +47,8 @@ impl RecoveryLoop {
     /// The `swap_tracker` is used to update per-contract resolution outcomes
     /// as contracts are resolved in the background.
     #[hotpath::measure]
-    pub(crate) fn start(
-        wallet: Arc<RwLock<Wallet>>,
+    pub(crate) fn start<B: BlockchainBackend>(
+        wallet: Arc<RwLock<Wallet<B>>>,
         swap_tracker: Arc<Mutex<SwapTracker>>,
         data_dir: PathBuf,
     ) -> Self {

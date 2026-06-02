@@ -9,7 +9,7 @@ use coinswap::{
     maker::{start_server, MakerBehavior, MakerError, MakerServer, MakerServerConfig},
     protocol::common_messages::ProtocolVersion,
     taker::{error::TakerError, SwapParams, TakerBehavior},
-    wallet::{AddressType, WalletError},
+    wallet::{AddressType, BitcoindBackend, WalletError},
 };
 
 use super::test_framework::*;
@@ -104,7 +104,8 @@ fn fidelity_limit_violation() {
 
     // Attempt restart with the corrupted config
     info!("Restarting maker with non-acceptable fidelity_timelock");
-    let restart_result = MakerServerConfig::new(Some(&config_path)).map(MakerServer::init);
+    let restart_result =
+        MakerServerConfig::new(Some(&config_path)).map(MakerServer::<BitcoindBackend>::init);
 
     match restart_result {
         Err(ref e) => {

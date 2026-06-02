@@ -8,14 +8,14 @@ use bitcoin::{
     absolute::LockTime, script::PushBytesBuf, transaction::Version, Address, Amount, OutPoint,
     ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
 };
-use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, RpcApi};
+use bitcoind::bitcoincore_rpc::json::ListUnspentResultEntry;
 
 use crate::{
     utill::calculate_fee_sats,
     wallet::{api::UTXOSpendInfo, FidelityError},
 };
 
-use super::{error::WalletError, AddressType, Wallet};
+use super::{error::WalletError, rpc::BlockchainBackend, AddressType, Wallet};
 
 /// Represents different destination options for a transaction.
 #[derive(Debug, Clone, PartialEq)]
@@ -35,7 +35,7 @@ pub enum Destination {
     MultiDynamic(Amount, Vec<Address>),
 }
 
-impl Wallet {
+impl<B: BlockchainBackend> Wallet<B> {
     /// API to perform spending from wallet UTXOs, including descriptor coins and swap coins.
     ///
     /// The caller needs to specify a list of UTXO data and their corresponding `spend_info`.

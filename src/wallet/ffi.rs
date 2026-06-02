@@ -6,10 +6,12 @@
 use crate::{
     security::{load_sensitive_struct, KeyMaterial, SerdeJson},
     utill::{get_taker_dir, parse_checked_address, MIN_FEE_RATE},
-    wallet::{AddressType, Destination, RPCConfig, Wallet, WalletBackup, WalletError},
+    wallet::{AddressType, Destination, Wallet, WalletBackup, WalletError},
 };
 use bitcoin::{Amount, OutPoint, Txid};
-use bitcoind::bitcoincore_rpc::{json::ListTransactionResult, RpcApi};
+use bitcoind::bitcoincore_rpc::json::ListTransactionResult;
+
+use super::rpc::{BackendConfig, BitcoindBackend, BlockchainBackend};
 use std::path::{Path, PathBuf};
 
 pub use super::report::{
@@ -35,10 +37,10 @@ pub use super::report::{
 /// - `wallet_file_name`: Restored wallet filename, defaults to name from backup if empty
 /// - `backup_file_path`: Path to the JSON file containing the wallet backup (encrypted or plain)
 /// - `password`: Required if backup is encrypted, ignored otherwise
-pub fn restore_wallet_gui_app(
+pub fn restore_wallet_gui_app<B: BlockchainBackend>(
     data_dir: Option<PathBuf>,
     wallet_file_name: Option<String>,
-    rpc_config: RPCConfig,
+    backend: BackendConfig,
     backup_file_path: PathBuf,
     password: Option<String>,
 ) {
@@ -54,19 +56,27 @@ pub fn restore_wallet_gui_app(
         .join("wallets")
         .join(restored_wallet_filename);
 
-    if let Err(e) = Wallet::restore(
-        &backup,
-        &restored_wallet_path,
-        &rpc_config,
-        encryption_material,
-    ) {
+    let mut backend = backend;
+    if let Some(name) = restored_wallet_path.file_name().and_then(|n| n.to_str()) {
+        backend.set_wallet_name(name.to_string());
+    }
+    let cfg = match B::from_backend_config(&backend) {
+        Ok(c) => c.clone(),
+        Err(e) => {
+            log::error!("Wallet restore failed: backend mismatch: {e:?}");
+            return;
+        }
+    };
+
+    if let Err(e) = Wallet::<B>::restore(&backup, &restored_wallet_path, &cfg, encryption_material)
+    {
         log::error!("Wallet restore failed: {e:?}");
     } else {
         println!("Wallet restore succeeded!");
     }
 }
 
-impl Wallet {
+impl Wallet<BitcoindBackend> {
     /// Creates a wallet backup for GUI/FFI applications with optional encryption.
     ///
     /// This is a ffi-only wrapper around [`Wallet::backup`] that handles encryption
@@ -119,7 +129,9 @@ impl Wallet {
             Err(_) => Ok(false), // Failed to parse as EncryptedData = plaintext
         }
     }
+}
 
+impl<B: BlockchainBackend> Wallet<B> {
     /// Returns a list of recent Incoming Transactions (bydefault last 10)
     pub fn get_transactions(
         &self,

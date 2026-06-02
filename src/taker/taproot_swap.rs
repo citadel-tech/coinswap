@@ -6,8 +6,6 @@ use bitcoin::{
     Amount, Network, OutPoint, PublicKey, ScriptBuf,
 };
 
-use bitcoind::bitcoincore_rpc::RpcApi;
-
 use crate::{
     protocol::{
         common_messages::{MakerToTakerMessage, TakerToMakerMessage},
@@ -17,13 +15,13 @@ use crate::{
     utill::{read_message, send_message, MIN_FEE_RATE},
     wallet::{
         swapcoin::{IncomingSwapCoin, OutgoingSwapCoin, WatchOnlySwapCoin},
-        Wallet,
+        BlockchainBackend, Wallet,
     },
 };
 
 use super::{api::Taker, error::TakerError, swap_tracker::SwapPhase};
 
-impl Taker {
+impl<B: BlockchainBackend> Taker<B> {
     /// Build contract data from a previous maker's response (for forwarding to the next maker).
     #[allow(clippy::type_complexity)]
     fn exchange_build_from_response(
@@ -51,7 +49,7 @@ impl Taker {
     #[allow(clippy::too_many_arguments)]
     #[hotpath::measure]
     pub(crate) fn funding_create_taproot(
-        wallet: &mut Wallet,
+        wallet: &mut Wallet<B>,
         multisig_pubkeys: &[PublicKey],
         hashlock_pubkeys: &[PublicKey],
         preimage: [u8; 32],
