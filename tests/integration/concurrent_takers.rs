@@ -39,7 +39,7 @@ fn test_concurrent_takers_legacy() {
 
     // Initialize test framework with 2 takers and 2 makers
     let (test_framework, mut takers, makers, block_generation_handle) =
-        TestFramework::init(makers_config_map, taker_behavior, vec![]);
+        TestFramework::init::<BitcoindBackend>(makers_config_map, taker_behavior, vec![]);
 
     let bitcoind = &test_framework.bitcoind;
 

@@ -40,8 +40,12 @@ use coinswap::{
     protocol::common_messages::ProtocolVersion,
     taker::{Taker, TakerBehavior, TakerInitConfig},
     utill::setup_logger,
-    wallet::{verify_deniability, AddressType, RPCConfig},
+    wallet::{
+        verify_deniability, AddressType, AnyBlockchain, BackendConfig, CoreRPC, CoreRpcConfig,
+        ElectrumConfig,
+    },
 };
+use electrsd::ElectrsD;
 use log::info;
 
 const BITCOIN_VERSION: &str = "28.1";
@@ -125,11 +129,17 @@ fn get_bitcoind_filename(os: &str, arch: &str) -> String {
 pub(crate) fn init_bitcoind(datadir: &std::path::Path, zmq_addr: String) -> BitcoinD {
     let mut conf = bitcoind::Conf::default();
     conf.args.push("-txindex=1"); //txindex is must, or else wallet sync won't work.
-    conf.args.push("-rest=1"); // required for watchtower REST backend
+                                  // Bitcoin Core 28 changed `getblockchaininfo`'s `warnings` field to an array of strings;
+                                  // electrs 0.9.11 (used in the electrum-only test) still expects a string and falls over.
+                                  // The deprecation flag restores the legacy single-string format.
+    conf.args.push("-deprecatedrpc=warnings");
     let raw_tx = format!("-zmqpubrawtx={}", zmq_addr);
     conf.args.push(&raw_tx);
     let block_hash = format!("-zmqpubrawblock={}", zmq_addr);
     conf.args.push(&block_hash);
+    // P2P always enabled — needed so electrs can attach via `--daemon-p2p-addr` in
+    // electrum-only tests; harmless for tests that don't use electrs.
+    conf.p2p = bitcoind::P2P::Yes;
     conf.staticdir = Some(datadir.join(".bitcoin"));
     log::info!(
         "🔗 bitcoind datadir: {:?}",
@@ -187,6 +197,26 @@ pub(crate) fn init_bitcoind(datadir: &std::path::Path, zmq_addr: String) -> Bitc
     log::info!("🚀 bitcoind initiated!!");
 
     bitcoind
+}
+
+/// Spawn an electrs process attached to `bitcoind`. The bitcoind instance must
+/// have been started with P2P enabled (see [`init_bitcoind`] which now does so).
+///
+/// The returned [`ElectrsD`] owns the electrs child process and kills it on drop.
+#[allow(dead_code)]
+pub(crate) fn init_electrsd(bitcoind: &BitcoinD, datadir: &std::path::Path) -> ElectrsD {
+    let exe = electrsd::exe_path().expect(
+        "no electrs binary available: set ELECTRS_EXEC or enable the electrs_0_9_11 feature",
+    );
+    let mut conf = electrsd::Conf::default();
+    let electrs_dir = datadir.join("electrs");
+    std::fs::create_dir_all(&electrs_dir).ok();
+    conf.staticdir = Some(electrs_dir);
+    // Surface electrs stderr only when explicitly requested via env var, to keep test output clean.
+    conf.view_stderr = std::env::var("ELECTRS_LOG").is_ok();
+    let electrsd = ElectrsD::with_conf(exe, bitcoind, &conf).expect("failed to spawn electrs");
+    log::info!("🔌 electrs spawned at {}", electrsd.electrum_url);
+    electrsd
 }
 
 /// Generate Blocks in regtest node.
@@ -253,15 +283,15 @@ pub fn fund_taker(
         let addr = wallet.get_next_external_address(address_type).unwrap();
         send_to_address(bitcoind, &addr, utxo_value);
     }
+    drop(wallet);
 
     generate_blocks(bitcoind, 1);
 
-    wallet.sync_and_save().unwrap();
-
-    // Verify balances
-    let balances = wallet.get_balances().unwrap();
-    let expected_regular = (utxo_value * utxo_count.into()) + prev_balances.regular;
-
+    // Poll sync until the wallet observes the expected balance. With a Bitcoin Core backend
+    // the first iteration succeeds immediately; with an Electrum backend the indexer needs a
+    // moment to pick up the new block.
+    let expected_regular = prev_balances.regular + utxo_value * utxo_count.into();
+    let balances = wait_for_balance(taker.get_wallet(), expected_regular, 30);
     assert_eq!(balances.regular, expected_regular);
 
     info!(
@@ -270,6 +300,28 @@ pub fn fund_taker(
     );
 
     balances.spendable
+}
+
+/// Poll a wallet, calling `sync_and_save`, until its `regular` balance reaches `expected_regular`
+/// or `timeout_secs` elapses. Returns the last observed balances either way.
+fn wait_for_balance(
+    wallet: &std::sync::Arc<std::sync::RwLock<coinswap::wallet::Wallet>>,
+    expected_regular: Amount,
+    timeout_secs: u64,
+) -> coinswap::wallet::Balances {
+    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
+    let mut last;
+    loop {
+        {
+            let mut w = wallet.write().unwrap();
+            w.sync_and_save().unwrap();
+            last = w.get_balances().unwrap();
+        }
+        if last.regular >= expected_regular || Instant::now() >= deadline {
+            return last;
+        }
+        thread::sleep(Duration::from_millis(500));
+    }
 }
 
 /// Fund makers and verify their balances
@@ -286,20 +338,17 @@ pub fn fund_makers(
     let mut spendable_balances = Vec::new();
 
     for maker in makers {
-        let mut wallet = maker.wallet.write().unwrap();
-
-        // Fund with regular UTXOs
+        // Send funds with the wallet locked just long enough to derive each address.
         for _ in 0..utxo_count {
+            let mut wallet = maker.wallet.write().unwrap();
             let addr = wallet.get_next_external_address(address_type).unwrap();
+            drop(wallet);
             send_to_address(bitcoind, &addr, utxo_value);
         }
 
         generate_blocks(bitcoind, 1);
-        wallet.sync_and_save().unwrap();
-
-        // Verify balances
-        let balances = wallet.get_balances().unwrap();
         let expected_regular = utxo_value * utxo_count.into();
+        let balances = wait_for_balance(&maker.wallet, expected_regular, 30);
 
         assert!(
             balances.regular >= expected_regular,
@@ -369,12 +418,64 @@ pub fn verify_maker_pre_swap_balances(makers: &[Arc<MakerServer>]) -> Vec<Amount
     maker_spendable_balance
 }
 
+/// Test-only marker selecting which backend a [`TestFramework::init`] run uses.
+/// `init::<BitcoindBackend>` / `init::<ElectrumBackend>` pick the backend config;
+/// the resulting `Taker`/`MakerServer` are non-generic and resolve the backend
+/// at runtime.
+pub trait TestBackend {
+    fn make_backend_config(
+        rpc_config: &CoreRpcConfig,
+        zmq_addr: &str,
+        ensure_electrum_url: &mut dyn FnMut() -> String,
+    ) -> BackendConfig;
+}
+
+/// Marker selecting the Bitcoin Core backend in tests.
+pub struct BitcoindBackend;
+/// Marker selecting the Electrum backend in tests.
+pub struct ElectrumBackend;
+
+impl TestBackend for BitcoindBackend {
+    fn make_backend_config(
+        rpc_config: &CoreRpcConfig,
+        zmq_addr: &str,
+        _ensure_electrum_url: &mut dyn FnMut() -> String,
+    ) -> BackendConfig {
+        BackendConfig::CoreRpc(CoreRpcConfig {
+            zmq_addr: zmq_addr.to_string(),
+            ..rpc_config.clone()
+        })
+    }
+}
+
+impl TestBackend for ElectrumBackend {
+    fn make_backend_config(
+        _rpc_config: &CoreRpcConfig,
+        _zmq_addr: &str,
+        ensure_electrum_url: &mut dyn FnMut() -> String,
+    ) -> BackendConfig {
+        BackendConfig::Electrum(ElectrumConfig {
+            url: ensure_electrum_url(),
+        })
+    }
+}
+
+/// Blocks mined per tick by the background block-generation thread.
+const BLOCKS_PER_TICK: u64 = 5;
+/// Interval between block-generation ticks. Together with [`BLOCKS_PER_TICK`]
+/// this yields ~1.67 blocks/s, slow enough that block-denominated timelocks
+/// outlast the wall-clock recovery delays exercised by the abort tests.
+const BLOCK_TICK_INTERVAL: Duration = Duration::from_secs(3);
+
 /// The Test Framework.
 ///
 /// Handles initializing, operating and cleaning up of all backend processes. Bitcoind, Taker and Makers.
 #[allow(dead_code)]
 pub struct TestFramework {
     pub(super) bitcoind: BitcoinD,
+    /// Present only in tests started via [`TestFramework::init_electrum`]; otherwise `None`.
+    /// Kept alive here so the electrs child process lives for the duration of the test.
+    pub(super) electrsd: Option<ElectrsD>,
     pub(super) temp_dir: PathBuf,
     pub(super) nostr_relay_url: String,
     shutdown: AtomicBool,
@@ -400,12 +501,14 @@ impl TestFramework {
         }
     }
 
-    /// Initialize test framework for protocol testing.
+    /// Initialize test framework over backend `B`. Complete segregation over the 2 backends.
     ///
     /// This creates Taker and MakerServer instances that support
     /// both Legacy (ECDSA) and Taproot (MuSig2) protocols using message types.
+    ///
+    /// Mines [`BLOCKS_PER_TICK`] blocks every [`BLOCK_TICK_INTERVAL`]. Timelocks
     #[allow(clippy::type_complexity)]
-    pub fn init(
+    pub fn init<B: TestBackend>(
         makers_config_map: Vec<(u16, Option<u16>)>,
         taker_behavior: Vec<TakerBehavior>,
         maker_behaviors: Vec<MakerBehavior>,
@@ -419,92 +522,111 @@ impl TestFramework {
         }
         setup_logger(log::LevelFilter::Info, Some(temp_dir.clone()));
         log::info!("📁 temporary directory : {}", temp_dir.display());
-
-        let port_zmq = 28332 + rand::random::<u16>() % 1000;
-
-        let zmq_addr = format!("tcp://127.0.0.1:{port_zmq}");
-
+        let zmq_addr = format!("tcp://127.0.0.1:{}", 28332 + rand::random::<u16>() % 1000);
         let bitcoind = init_bitcoind(&temp_dir, zmq_addr.clone());
-
+        let rpc_config = CoreRpcConfig {
+            url: bitcoind.rpc_url().split_at(7).1.to_string(),
+            auth: Auth::CookieFile(bitcoind.params.cookie_file.clone()),
+            ..Default::default()
+        };
         let nostr_port = 8000 + rand::random::<u16>() % 1000;
         let nostr_relay_url = format!("ws://127.0.0.1:{nostr_port}");
         let nostr_relay = spawn_nostr_relay(&temp_dir, nostr_port);
         wait_for_relay_healthy(nostr_port);
+        let mut electrsd: Option<ElectrsD> = None;
+        let (takers, makers) = {
+            let mut electrum_url: Option<String> = None;
+            let mut ensure_electrum_url = || -> String {
+                if let Some(url) = electrum_url.as_ref() {
+                    return url.clone();
+                }
+                let e = init_electrsd(&bitcoind, &temp_dir);
+                // Give electrs a moment to index the 101 blocks bitcoind has already mined.
+                thread::sleep(Duration::from_secs(2));
+                let _ = e.trigger();
+                thread::sleep(Duration::from_secs(1));
+                let url = format!("tcp://{}", e.electrum_url);
+                electrsd = Some(e);
+                electrum_url = Some(url.clone());
+                url
+            };
+            let takers: Vec<Taker> = taker_behavior
+                .into_iter()
+                .enumerate()
+                .map(|(i, behavior)| {
+                    let taker_id = format!("taker{}", i + 1);
+                    let backend =
+                        B::make_backend_config(&rpc_config, &zmq_addr, &mut ensure_electrum_url);
+                    let mut config = TakerInitConfig::default()
+                        .with_data_dir(temp_dir.join(&taker_id))
+                        .with_backend(backend)
+                        .with_nostr_relays(vec![nostr_relay_url.clone()]);
+                    config.wallet_name = taker_id;
+                    let mut taker = Taker::init(config).unwrap();
+                    taker.behavior = behavior;
+                    taker
+                })
+                .collect();
 
-        let shutdown = AtomicBool::new(false);
-        let test_framework = Arc::new(Self {
+            let mut base_rpc_port = 4500 + (rand::random::<u16>() % 5000);
+            let base_maker_port = 10000 + rand::random::<u16>() % 40000;
+
+            // Create the MakerServers with message handling
+            let makers: Vec<Arc<MakerServer>> = makers_config_map
+                .into_iter()
+                .enumerate()
+                .map(|(i, _)| {
+                    base_rpc_port += 1;
+                    let network_port = base_maker_port + i as u16;
+                    let maker_id = format!("maker{network_port}");
+                    thread::sleep(Duration::from_secs(5)); // Avoid resource unavailable error
+                    let backend =
+                        B::make_backend_config(&rpc_config, &zmq_addr, &mut ensure_electrum_url);
+                    let config = MakerServerConfig {
+                        data_dir: temp_dir.join(network_port.to_string()),
+                        wallet_name: maker_id,
+                        network_port,
+                        rpc_port: base_rpc_port,
+                        base_fee: 500,
+                        amount_relative_fee_pct: 0.0025,
+                        time_relative_fee_pct: 0.0001,
+                        min_swap_amount: 10_000,
+                        required_confirms: 1,
+                        supported_protocols: vec![
+                            ProtocolVersion::Legacy,
+                            ProtocolVersion::Taproot,
+                        ],
+                        fidelity_amount: 5_000_000, // 0.05 BTC
+                        fidelity_timelock: 950,     // ~950 blocks for test
+                        network: bitcoin::Network::Regtest,
+                        nostr_relays: vec![nostr_relay_url.clone()],
+                        ..MakerServerConfig::default()
+                    }
+                    .with_backend(backend);
+
+                    let mut server = MakerServer::init(config).unwrap();
+                    server.behavior = maker_behaviors.get(i).copied().unwrap_or_default();
+                    Arc::new(server)
+                })
+                .collect();
+
+            (takers, makers)
+        };
+
+        let framework = Arc::new(Self {
             bitcoind,
+            electrsd,
             temp_dir: temp_dir.clone(),
             nostr_relay_url: nostr_relay_url.clone(),
-            shutdown,
+            shutdown: AtomicBool::new(false),
             nostr_relay: Mutex::new(Some(nostr_relay)),
         });
-
-        // Translate a RpcConfig from the test framework.
-        let rpc_config = RPCConfig::from(test_framework.as_ref());
-
-        // Create the Takers
-        let takers = taker_behavior
-            .into_iter()
-            .enumerate()
-            .map(|(i, behavior)| {
-                let taker_id = format!("taker{}", i + 1);
-                let config = TakerInitConfig::default()
-                    .with_data_dir(temp_dir.join(&taker_id))
-                    .with_wallet_name(taker_id)
-                    .with_rpc_config(rpc_config.clone())
-                    .with_zmq_addr(zmq_addr.clone())
-                    .with_nostr_relays(vec![nostr_relay_url.clone()]);
-                let mut taker = Taker::init(config).unwrap();
-                taker.behavior = behavior;
-                taker
-            })
-            .collect::<Vec<_>>();
-
-        let mut base_rpc_port = 4500 + (rand::random::<u16>() % 5000);
-        let base_maker_port = 10000 + rand::random::<u16>() % 40000;
-
-        // Create the MakerServers with message handling
-        let makers = makers_config_map
-            .into_iter()
-            .enumerate()
-            .map(|(i, (_network_port, _socks_port))| {
-                base_rpc_port += 1;
-                let network_port = base_maker_port + i as u16;
-                let maker_id = format!("maker{}", network_port);
-                thread::sleep(Duration::from_secs(5)); // Avoid resource unavailable error
-
-                let config = MakerServerConfig {
-                    data_dir: temp_dir.join(network_port.to_string()),
-                    network_port,
-                    rpc_port: base_rpc_port,
-                    base_fee: 500,
-                    amount_relative_fee_pct: 0.0025,
-                    time_relative_fee_pct: 0.0001,
-                    min_swap_amount: 10_000,
-                    required_confirms: 1,
-                    supported_protocols: vec![ProtocolVersion::Legacy, ProtocolVersion::Taproot],
-                    zmq_addr: zmq_addr.clone(),
-                    fidelity_amount: 5_000_000, // 0.05 BTC
-                    fidelity_timelock: 950,     // ~950 blocks for test
-                    network: bitcoin::Network::Regtest,
-                    wallet_name: maker_id,
-                    rpc_config: rpc_config.clone(),
-                    nostr_relays: vec![nostr_relay_url.clone()],
-                    ..MakerServerConfig::default()
-                };
-
-                let mut server = MakerServer::init(config).unwrap();
-                server.behavior = maker_behaviors.get(i).copied().unwrap_or_default();
-                Arc::new(server)
-            })
-            .collect::<Vec<_>>();
-
-        // Start the block generation thread
-        log::info!("⛏️ Spawning block generation thread");
-        let tf_weak = Arc::downgrade(&test_framework);
+        log::info!(
+            "⛏️ Spawning block generation thread ({BLOCKS_PER_TICK} blocks / {BLOCK_TICK_INTERVAL:?})"
+        );
+        let tf_weak = Arc::downgrade(&framework);
         let generate_blocks_handle = thread::spawn(move || loop {
-            thread::sleep(Duration::from_secs(3));
+            thread::sleep(BLOCK_TICK_INTERVAL);
 
             let Some(tf) = tf_weak.upgrade() else {
                 log::info!("🔚 Test framework dropped, ending block generation thread");
@@ -515,12 +637,13 @@ impl TestFramework {
                 log::info!("🔚 Ending block generation thread");
                 return;
             }
-            generate_blocks(&tf.bitcoind, 10);
+            generate_blocks(&tf.bitcoind, BLOCKS_PER_TICK);
+            if let Some(elec) = tf.electrsd.as_ref() {
+                let _ = elec.trigger();
+            }
         });
-
         log::info!("✅ Test Framework initialization complete");
-
-        (test_framework, takers, makers, generate_blocks_handle)
+        (framework, takers, makers, generate_blocks_handle)
     }
 
     /// Terminate the per-test nostr relay child process, if still running.
@@ -693,12 +816,20 @@ pub fn assert_report_has_deniability_proofs(
         expected_count,
         report_path.display()
     );
+    let rpc_config = CoreRpcConfig {
+        url: bitcoind.rpc_url().split_at(7).1.to_string(),
+        auth: Auth::CookieFile(bitcoind.params.cookie_file.clone()),
+        ..Default::default()
+    };
+    let blockchain = AnyBlockchain::CoreRPC(
+        CoreRPC::new(&rpc_config).expect("failed to connect blockchain backend for verification"),
+    );
     for (i, proof_value) in proofs.iter().enumerate() {
         let swap_id = proof_value
             .get("swap_id")
             .and_then(|v| v.as_str())
             .unwrap_or_else(|| panic!("{} proof {} is missing swap_id", label, i));
-        let verified = verify_deniability(report_path, &bitcoind.client, swap_id)
+        let verified = verify_deniability(report_path, &blockchain, swap_id)
             .unwrap_or_else(|e| panic!("{} proof {} verification error: {}", label, i, e));
         assert!(
             verified,
@@ -715,8 +846,8 @@ pub fn assert_report_has_deniability_proofs(
     );
 }
 
-/// Initializes a [`TestFramework`] given a [`RPCConfig`].
-impl From<&TestFramework> for RPCConfig {
+/// Initializes a [`TestFramework`] given a [`CoreRpcConfig`].
+impl From<&TestFramework> for CoreRpcConfig {
     fn from(value: &TestFramework) -> Self {
         let url = value.bitcoind.rpc_url().split_at(7).1.to_string();
         let auth = Auth::CookieFile(value.bitcoind.params.cookie_file.clone());

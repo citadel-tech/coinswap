@@ -689,7 +689,6 @@ mod test {
         let funding_info = FundingTxInfo {
             funding_tx,
             multisig_redeemscript,
-            funding_tx_merkleproof: String::new(),
             multisig_nonce: SecretKey::new(&mut thread_rng()),
             contract_redeemscript: ScriptBuf::new(),
             hashlock_nonce: SecretKey::new(&mut thread_rng()),
@@ -1232,7 +1231,6 @@ mod test {
         let funding_info_1 = FundingTxInfo {
             funding_tx: funding_tx.clone(),
             multisig_redeemscript: multisig_redeemscript.clone(),
-            funding_tx_merkleproof: String::new(),
             multisig_nonce: SecretKey::new(&mut thread_rng()),
             contract_redeemscript: contract_script_1,
             hashlock_nonce: SecretKey::new(&mut thread_rng()),
@@ -1264,7 +1262,6 @@ mod test {
         let funding_info_2 = FundingTxInfo {
             funding_tx,
             multisig_redeemscript,
-            funding_tx_merkleproof: String::new(),
             multisig_nonce: SecretKey::new(&mut thread_rng()),
             contract_redeemscript: contract_script_2,
             hashlock_nonce: SecretKey::new(&mut thread_rng()),

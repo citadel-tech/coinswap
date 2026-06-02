@@ -3,9 +3,7 @@
 //! Currently, wallet synchronization is exclusively performed through RPC for makers.
 //! In the future, takers might adopt alternative synchronization methods, such as lightweight wallet solutions.
 
-use std::{
-    cmp::max, convert::TryFrom, fmt::Display, path::PathBuf, str::FromStr, thread, time::Duration,
-};
+use std::{cmp::max, fmt::Display, path::PathBuf, str::FromStr, thread, time::Duration};
 
 use std::collections::{HashMap, HashSet};
 
@@ -16,18 +14,24 @@ use bip39::Mnemonic;
 use bitcoin::hashes::{sha512, Hash};
 use bitcoin::{
     bip32::{ChainCode, ChildNumber, DerivationPath, Xpriv, Xpub},
+    block::Header,
     key::TapTweak,
     secp256k1,
     secp256k1::{Keypair, Secp256k1, SecretKey},
     sighash::{EcdsaSighashType, Prevouts, SighashCache, TapSighashType},
     Address, Amount, OutPoint, PublicKey, Script, ScriptBuf, Transaction, TxOut, Txid, Weight,
 };
-use bitcoind::bitcoincore_rpc::{bitcoincore_rpc_json::ListUnspentResultEntry, Client, RpcApi};
+use bitcoind::bitcoincore_rpc::bitcoincore_rpc_json::{ListUnspentResultEntry, ScanningDetails};
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use std::path::Path;
 
-use crate::utill::{
-    compute_checksum, generate_keypair, get_hd_path_from_descriptor, redeemscript_to_scriptpubkey,
+use crate::{
+    protocol::contract::create_multisig_redeemscript,
+    utill::{
+        compute_checksum, generate_keypair, get_hd_path_from_descriptor,
+        redeemscript_to_scriptpubkey, HEART_BEAT_INTERVAL,
+    },
 };
 
 use rust_coinselect::{
@@ -37,8 +41,8 @@ use rust_coinselect::{
 };
 
 use super::{
+    blockchain::{AnyBlockchain, Blockchain, HdOrigin},
     error::WalletError,
-    rpc::RPCConfig,
     storage::{AddressType, WalletStore},
 };
 
@@ -46,6 +50,17 @@ use super::{
 // data in the bitcoin core wallet
 // for example which privkey corresponds to a scriptpubkey is stored in hd paths
 
+/// Address gap limit of 20 from [BIP-44](https://github.com/bitcoin/bips/blob/master/bip-0044.mediawiki#address-gap-limit):
+/// the rolling watch/import window always extends this many unused addresses
+/// beyond the last used one per keychain (see [`Wallet::max_watch_index`]).
+pub(crate) const ADDRESS_IMPORT_COUNT: u32 = 20;
+/// Wider gap used while syncing a wallet restored from backup. The backup
+/// carries no hand-out counters, so index gaps left by aborted multi-tx
+/// funding (see [`Wallet::get_next_internal_addresses`]) must be bridged by
+/// scanning alone; a run of unused indices longer than the gap would otherwise
+/// end discovery early and strand funds past it. Only costs restore-time
+/// queries — regular syncs stay at [`ADDRESS_IMPORT_COUNT`].
+pub(crate) const RESTORE_ADDRESS_GAP: u32 = 100;
 /// BIP-84 derivation path for P2WPKH (Native SegWit)
 const HARDENDED_DERIVATION_P2WPKH: &str = "m/84'/1'/0'";
 /// BIP-86 derivation path for P2TR (Taproot key-path)
@@ -62,16 +77,33 @@ const LEGACY_TIMELOCK_VSIZE: u64 = 142;
 const TAPROOT_TIMELOCK_VSIZE: u64 = 140;
 
 /// Represents a Bitcoin wallet with associated functionality and data.
-#[derive(Debug)]
 pub struct Wallet {
-    pub(crate) rpc: Client,
+    pub(crate) blockchain: AnyBlockchain,
     pub(crate) wallet_file_path: PathBuf,
     pub(crate) store: WalletStore,
     /// Optional encryption material derived from the user’s passphrase.
     /// If present, wallet data will be encrypted/decrypted using AES-GCM.
     /// The original passphrase is never stored—only the derived key is kept in memory.
     pub(crate) store_enc_material: Option<KeyMaterial>,
+    /// Wallet-side set of outpoints excluded from coin selection.
+    pub(crate) locked_utxos: HashSet<OutPoint>,
+    /// Transient (never persisted): widens the gap-limit window to
+    /// [`RESTORE_ADDRESS_GAP`] while the restore sync runs. Set only by
+    /// [`Wallet::restore`].
+    pub(crate) restore_scan: bool,
 }
+
+/// Manual impl: `AnyBlockchain` (and the encryption material) carry no useful
+/// or safe-to-print state, so only the file path and store are shown.
+impl std::fmt::Debug for Wallet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Wallet")
+            .field("wallet_file_path", &self.wallet_file_path)
+            .field("store", &self.store)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Compares two wallets for cryptographic equivalence.
 ///
 /// This comparison checks fields relevant to the cryptographic and functional
@@ -116,12 +148,6 @@ impl PartialEq for Wallet {
 pub(crate) enum KeychainKind {
     External = 0isize,
     Internal,
-}
-
-#[derive(Deserialize)]
-struct LockedUtxo {
-    txid: Txid,
-    vout: u32,
 }
 
 impl KeychainKind {
@@ -311,11 +337,10 @@ impl Wallet {
     #[hotpath::measure]
     pub fn init(
         path: &Path,
-        rpc_config: &RPCConfig,
+        blockchain: AnyBlockchain,
         store_enc_material: Option<KeyMaterial>,
     ) -> Result<Self, WalletError> {
-        let rpc = Client::try_from(rpc_config)?;
-        let network = rpc.get_blockchain_info()?.chain;
+        let network = blockchain.get_blockchain_info()?.chain;
 
         // Generate Master key
         let master_key = {
@@ -332,7 +357,7 @@ impl Wallet {
             .expect("expected")
             .to_string();
 
-        let wallet_birthday = rpc.get_block_count()?;
+        let wallet_birthday = blockchain.get_block_count()?;
         let store = WalletStore::init(
             file_name,
             path,
@@ -341,24 +366,20 @@ impl Wallet {
             Some(wallet_birthday),
             &store_enc_material,
         )?;
-        let last_synced_height_val = match store.last_synced_height {
-            Some(height) => height.to_string(),
-            None => "None".to_string(),
-        };
-
         log::info!(
-            "Wallet birth_height = {}, wallet last_sync_height = {}",
-            wallet_birthday,
-            last_synced_height_val
+            "Wallet birth_height = {wallet_birthday}, last_synced_height = {:?}",
+            store.last_synced_height
         );
-
         Ok(Self {
-            rpc,
+            blockchain,
             wallet_file_path: path.to_path_buf(),
             store,
             store_enc_material,
+            locked_utxos: HashSet::new(),
+            restore_scan: false,
         })
     }
+
     /// Get the wallet name
     pub fn get_name(&self) -> &str {
         &self.store.file_name
@@ -376,33 +397,35 @@ impl Wallet {
             .parent()
             .ok_or_else(|| std::io::Error::other("wallet path has no parent directory"))?
             .join(format!("{stem}_swap_report.json"));
-        crate::wallet::deniability::verify_deniability(&report_path, &self.rpc, swap_id)
+        crate::wallet::deniability::verify_deniability(&report_path, &self.blockchain, swap_id)
     }
 
-    /// Load wallet data from file and connect to a core RPC.
-    /// The core rpc wallet name, and wallet_id field in the file should match.
+    /// Load wallet data from file and connect to a blockchain backend.
+    /// In case of core rpc, core wallet name, and wallet_id field in the file should match.
     /// If encryption material is provided, decrypt the wallet store using it.
     pub(crate) fn load(
         path: &Path,
-        rpc_config: &RPCConfig,
+        blockchain: AnyBlockchain,
         password: Option<String>,
-    ) -> Result<Wallet, WalletError> {
+    ) -> Result<Self, WalletError> {
         let (store, store_enc_material) =
             WalletStore::read_from_disk(path, password.unwrap_or_default())?;
 
-        if rpc_config.wallet_name != store.file_name {
-            return Err(WalletError::General(format!(
-                "Wallet name of database file and core mismatch, expected {}, found {}",
-                rpc_config.wallet_name, store.file_name
-            )));
+        if let AnyBlockchain::CoreRPC(core) = &blockchain {
+            if core.wallet_name() != store.file_name {
+                return Err(WalletError::General(format!(
+                    "Wallet name of database file and core mismatch, expected {}, found {}",
+                    core.wallet_name(),
+                    store.file_name
+                )));
+            }
         }
-        let rpc = Client::try_from(rpc_config)?;
-        let network = rpc.get_blockchain_info()?.chain;
+        let network = blockchain.get_blockchain_info()?.chain;
 
         // Check if the backend node is running on correct network. Or else hard error.
         if store.network != network {
             log::error!(
-                "Wallet file is created for {}, backend Bitcoin Core is running on {}",
+                "Wallet file is created for {}, backend is running on {}",
                 store.network,
                 network
             );
@@ -415,12 +438,13 @@ impl Wallet {
             store.incoming_swapcoins.len(),
             store.outgoing_swapcoins.len()
         );
-
         Ok(Self {
-            rpc,
+            blockchain,
             wallet_file_path: path.to_path_buf(),
             store,
             store_enc_material,
+            locked_utxos: HashSet::new(),
+            restore_scan: false,
         })
     }
 
@@ -429,14 +453,14 @@ impl Wallet {
     /// Prompts the user for an encryption passphrase (unless running tests),
     /// derives encryption key material if a passphrase is provided,
     /// and either loads or creates the wallet accordingly.
-    pub(crate) fn load_or_init_wallet(
+    pub(crate) fn load_or_init(
         path: &Path,
-        rpc_config: &RPCConfig,
+        blockchain: AnyBlockchain,
         password: Option<String>,
     ) -> Result<Wallet, WalletError> {
         let wallet = if path.exists() {
             // wallet already exists, load the wallet
-            let wallet = Wallet::load(path, rpc_config, password)?;
+            let wallet = Wallet::load(path, blockchain, password)?;
             log::info!("Wallet file at {path:?} successfully loaded.");
             wallet
         } else {
@@ -444,7 +468,7 @@ impl Wallet {
 
             let store_enc_material = KeyMaterial::new_from_password(password);
 
-            let wallet = Wallet::init(path, rpc_config, store_enc_material)?;
+            let wallet = Wallet::init(path, blockchain, store_enc_material)?;
 
             log::info!("New Wallet created at : {path:?}");
             wallet
@@ -517,10 +541,7 @@ impl Wallet {
                 if let (Some(my_pubkey), Some(other_pubkey)) =
                     (swapcoin.my_pubkey, swapcoin.other_pubkey)
                 {
-                    let computed_script = crate::protocol::contract::create_multisig_redeemscript(
-                        &my_pubkey,
-                        &other_pubkey,
-                    );
+                    let computed_script = create_multisig_redeemscript(&my_pubkey, &other_pubkey);
                     if &computed_script == multisig_redeemscript {
                         return Some(swapcoin);
                     }
@@ -540,10 +561,7 @@ impl Wallet {
                 if let (Some(my_pubkey), Some(other_pubkey)) =
                     (swapcoin.my_pubkey, swapcoin.other_pubkey)
                 {
-                    let computed_script = crate::protocol::contract::create_multisig_redeemscript(
-                        &my_pubkey,
-                        &other_pubkey,
-                    );
+                    let computed_script = create_multisig_redeemscript(&my_pubkey, &other_pubkey);
                     if &computed_script == multisig_redeemscript {
                         return Some(swapcoin);
                     }
@@ -661,7 +679,7 @@ impl Wallet {
         let mut outcome = RecoveryOutcome::default();
         let mut recovered_keys = Vec::new();
 
-        let current_height = self.rpc.get_block_count()? as u32;
+        let current_height = self.blockchain.get_block_count()? as u32;
 
         let mut to_recover = Vec::new();
 
@@ -713,7 +731,7 @@ impl Wallet {
                 let contract_txid = swapcoin.contract_tx.compute_txid();
                 let contract_vout = swapcoin.get_contract_output_vout();
                 match self
-                    .rpc
+                    .blockchain
                     .get_tx_out(&contract_txid, contract_vout, Some(false))
                 {
                     Ok(Some(_)) => {
@@ -729,7 +747,7 @@ impl Wallet {
 
                         // First, check if the contract tx exists on-chain at all.
                         let contract_tx_on_chain = self
-                            .rpc
+                            .blockchain
                             .get_raw_transaction_info(&contract_txid, None)
                             .ok()
                             .and_then(|info| info.confirmations)
@@ -753,7 +771,7 @@ impl Wallet {
                         // the tx was never broadcast and funds are still ours.
                         let input_outpoint = swapcoin.contract_tx.input[0].previous_output;
                         let input_still_unspent = matches!(
-                            self.rpc.get_tx_out(
+                            self.blockchain.get_tx_out(
                                 &input_outpoint.txid,
                                 input_outpoint.vout,
                                 Some(true)
@@ -854,7 +872,7 @@ impl Wallet {
                         timelock_value // CSV needs this many confirmations
                     };
                 match self
-                    .rpc
+                    .blockchain
                     .get_tx_out(&contract_txid, contract_vout, Some(false))
                 {
                     Ok(Some(utxo_info)) if utxo_info.confirmations >= required_confirmations => {
@@ -1068,18 +1086,6 @@ impl Wallet {
         })
     }
 
-    /// Dynamic address import count function. 10 for tests, 5000 for production.
-    pub(crate) fn get_addrss_import_count(&self) -> u32 {
-        #[cfg(feature = "integration-test")]
-        {
-            10
-        }
-        #[cfg(not(feature = "integration-test"))]
-        {
-            5000
-        }
-    }
-
     /// Stores an entry into [`WalletStore`]'s prevout-to-contract map.
     /// If the prevout already existed with a contract script, this will update the existing contract.
     pub(crate) fn cache_prevout_to_contract(
@@ -1140,31 +1146,33 @@ impl Wallet {
             .collect()
     }
 
-    /// Checks if the addresses derived from the wallet descriptor is imported upto full index range.
-    /// Returns the list of descriptors not imported yet. Max index range is as below:
-    /// Production => 5000
-    /// Integration Tests => 6
+    /// Checks if the addresses derived from the wallet descriptor is imported upto the
+    /// rolling gap-limit window ([`Wallet::max_watch_index`]).
+    /// Returns the list of descriptors not imported yet.
     pub(super) fn get_unimported_wallet_desc(
         &self,
         address_type: AddressType,
     ) -> Result<Vec<String>, WalletError> {
         let mut unimported = Vec::new();
-        for (_, descriptor) in self.get_wallet_descriptors(address_type)? {
-            let first_addr = self.rpc.derive_addresses(&descriptor, Some([0, 0]))?[0].clone();
+        for (keychain, descriptor) in self.get_wallet_descriptors(address_type)? {
+            let first_addr = self
+                .blockchain
+                .derive_addresses(&descriptor, Some([0, 0]))?[0]
+                .clone();
 
-            let last_index = self.get_addrss_import_count() - 1;
+            let last_index = self.max_watch_index(keychain)?;
             let last_addr = self
-                .rpc
+                .blockchain
                 .derive_addresses(&descriptor, Some([last_index, last_index]))?[0]
                 .clone();
 
             let first_addr_imported = self
-                .rpc
+                .blockchain
                 .get_address_info(&first_addr.assume_checked())?
                 .is_watchonly
                 .unwrap_or(false);
             let last_addr_imported = self
-                .rpc
+                .blockchain
                 .get_address_info(&last_addr.assume_checked())?
                 .is_watchonly
                 .unwrap_or(false);
@@ -1190,13 +1198,11 @@ impl Wallet {
     }
 
     /// Locks the fidelity and live_contract utxos which are not considered for spending from the wallet.
-    pub fn lock_unspendable_utxos(&self) -> Result<(), WalletError> {
-        self.rpc.unlock_unspent_all()?;
+    pub fn lock_unspendable_utxos(&mut self) -> Result<(), WalletError> {
+        self.locked_utxos.clear();
 
-        let all_unspents = self
-            .rpc
-            .list_unspent(Some(0), Some(9999999), None, None, None)?;
-        let utxos_to_lock = &all_unspents
+        let all_unspents = self.blockchain.list_unspent(Some(0), Some(9999999))?;
+        let utxos_to_lock = all_unspents
             .into_iter()
             .filter(|u| {
                 self.check_and_derive_descriptor_utxo_or_swap_coin(u)
@@ -1208,22 +1214,25 @@ impl Wallet {
                 vout: u.vout,
             })
             .collect::<Vec<OutPoint>>();
-        self.rpc.lock_unspent(utxos_to_lock)?;
+        self.lock_utxos(&utxos_to_lock);
         Ok(())
     }
 
-    fn list_lock_unspent(&self) -> Result<Vec<OutPoint>, WalletError> {
-        // Call the RPC method "listlockunspent" with no parameters.
-        let locked_utxos: Vec<LockedUtxo> = self.rpc.call("listlockunspent", &[])?;
+    /// Add `outpoints` to the wallet-side lock set so [`Wallet::coin_select`]
+    /// skips them. See [`Wallet::locked_utxos`].
+    pub(crate) fn lock_utxos(&mut self, outpoints: &[OutPoint]) {
+        self.locked_utxos.extend(outpoints.iter().copied());
+    }
 
-        // Convert each LockedUtxo into an OutPoint.
-        Ok(locked_utxos
-            .into_iter()
-            .map(|lu| OutPoint {
-                txid: lu.txid,
-                vout: lu.vout,
-            })
-            .collect())
+    /// Clear the wallet-side lock set, making every coin selectable again.
+    pub(crate) fn unlock_all_utxos(&mut self) {
+        self.locked_utxos.clear();
+    }
+
+    /// Outpoints currently held in the wallet-side lock set (see
+    /// [`Wallet::locked_utxos`]).
+    fn list_lock_unspent(&self) -> Vec<OutPoint> {
+        self.locked_utxos.iter().copied().collect()
     }
 
     /// Checks if a UTXO belongs to fidelity bonds, and then returns corresponding UTXOSpendInfo
@@ -1249,26 +1258,40 @@ impl Wallet {
         &self,
         utxo: &ListUnspentResultEntry,
     ) -> Option<UTXOSpendInfo> {
-        if self
+        if !self
             .store
             .swept_incoming_swapcoins
             .contains(&utxo.script_pub_key)
         {
-            if let Some(descriptor) = &utxo.descriptor {
-                if let Some((_, addr_type, index)) = get_hd_path_from_descriptor(descriptor) {
-                    let path = format!("m/{addr_type}/{index}");
-                    let address_type = if descriptor.starts_with("tr(") {
-                        AddressType::P2TR
-                    } else {
-                        AddressType::P2WPKH
-                    };
-                    return Some(UTXOSpendInfo::SweptCoin {
-                        input_value: utxo.amount,
-                        path,
-                        address_type,
-                    });
-                }
+            return None;
+        }
+        // Bitcoin Core path: HD origin lives in the descriptor string.
+        if let Some(descriptor) = &utxo.descriptor {
+            if let Some((_, addr_type, index)) = get_hd_path_from_descriptor(descriptor) {
+                let address_type = if descriptor.starts_with("tr(") {
+                    AddressType::P2TR
+                } else {
+                    AddressType::P2WPKH
+                };
+                return Some(UTXOSpendInfo::SweptCoin {
+                    input_value: utxo.amount,
+                    path: format!("m/{addr_type}/{index}"),
+                    address_type,
+                });
             }
+        }
+        // Electrum Path: HD Origin is stored internally for each script pubkey.
+        if let Some(hd) = self.blockchain.hd_origin_for_script(&utxo.script_pub_key) {
+            let address_type = if hd.is_taproot {
+                AddressType::P2TR
+            } else {
+                AddressType::P2WPKH
+            };
+            return Some(UTXOSpendInfo::SweptCoin {
+                input_value: utxo.amount,
+                path: format!("m/{}/{}", hd.keychain_idx, hd.index),
+                address_type,
+            });
         }
         None
     }
@@ -1323,6 +1346,59 @@ impl Wallet {
         // First check if it's a swept incoming swap coin (V1)
         if let Some(swept_info) = self.check_if_swept_incoming_swapcoin(utxo) {
             return Ok(Some(swept_info));
+        }
+
+        // Electrum surfaces HD origin out-of-band rather than via the descriptor
+        // string (which is empty for Electrum UTXOs).
+        if let Some(hd) = self.blockchain.hd_origin_for_script(&utxo.script_pub_key) {
+            let address_type = if hd.is_taproot {
+                AddressType::P2TR
+            } else {
+                AddressType::P2WPKH
+            };
+            let secp = Secp256k1::new();
+            let derivation_path = Self::get_derivation_path(address_type);
+            let master_private_key = self
+                .store
+                .master_key
+                .derive_priv(&secp, &DerivationPath::from_str(derivation_path)?)?;
+            if hd.fingerprint == master_private_key.fingerprint(&secp).to_string() {
+                return Ok(Some(UTXOSpendInfo::SeedCoin {
+                    path: format!("m/{}/{}", hd.keychain_idx, hd.index),
+                    input_value: utxo.amount,
+                    address_type,
+                }));
+            }
+        }
+
+        // Bitcoin Core populates `witness_script` via importdescriptors; Electrum
+        // doesn't. Fall back to deriving the redeem script from our swap-coin
+        // records and matching by scriptPubKey.
+        if utxo.witness_script.is_none() {
+            let spk = utxo.script_pub_key.as_script();
+            let legacy = crate::protocol::ProtocolVersion::Legacy;
+            let match_rs = |my: Option<PublicKey>, other: Option<PublicKey>| -> Option<ScriptBuf> {
+                let rs = create_multisig_redeemscript(&my?, &other?);
+                (ScriptBuf::new_p2wsh(&rs.wscript_hash()).as_script() == spk).then_some(rs)
+            };
+            for sc in self.store.incoming_swapcoins.values() {
+                if sc.protocol == legacy && sc.other_privkey.is_some() {
+                    if let Some(rs) = match_rs(sc.my_pubkey, sc.other_pubkey) {
+                        return Ok(Some(UTXOSpendInfo::IncomingSwapCoin {
+                            multisig_redeemscript: rs,
+                        }));
+                    }
+                }
+            }
+            for sc in self.store.outgoing_swapcoins.values() {
+                if sc.protocol == legacy && sc.hash_preimage.is_some() {
+                    if let Some(rs) = match_rs(sc.my_pubkey, sc.other_pubkey) {
+                        return Ok(Some(UTXOSpendInfo::OutgoingSwapCoin {
+                            multisig_redeemscript: rs,
+                        }));
+                    }
+                }
+            }
         }
 
         // Existing logic for other UTXO types
@@ -1551,22 +1627,46 @@ impl Wallet {
         let mut swap_coin_utxo = self.list_swap_coin_utxo_spend_info();
         utxos.append(&mut swap_coin_utxo);
 
+        let target = keychain.index_num();
         for (utxo, _) in utxos {
-            if utxo.descriptor.is_none() {
+            // The HD path comes from the UTXO's descriptor string on Bitcoin Core;
+            // Electrum attaches no descriptor, so fall back to the backend's
+            // script -> HdOrigin map populated by `watch_wallet_scripts`.
+            let (kc_idx, index) = if let Some(d) = &utxo.descriptor {
+                match get_hd_path_from_descriptor(d) {
+                    Some((_, kc, i)) => (kc, i),
+                    None => continue,
+                }
+            } else if let Some(hd) = self.blockchain.hd_origin_for_script(&utxo.script_pub_key) {
+                (hd.keychain_idx, hd.index as i32)
+            } else {
                 continue;
+            };
+            if kc_idx == target {
+                max_index = std::cmp::max(max_index, index);
             }
-            let descriptor = utxo.descriptor.expect("its not none");
-            let ret = get_hd_path_from_descriptor(&descriptor);
-            if ret.is_none() {
-                continue;
-            }
-            let (_, addr_type, index) = ret.expect("its not none");
-            if addr_type != keychain.index_num() {
-                continue;
-            }
-            max_index = std::cmp::max(max_index, index);
         }
         Ok((max_index + 1) as u32)
+    }
+
+    /// Highest HD index (inclusive) to watch/import on a keychain, keeping the
+    /// BIP-44 gap of [`ADDRESS_IMPORT_COUNT`] unused addresses beyond the last
+    /// used one.
+    pub(crate) fn max_watch_index(&self, keychain: KeychainKind) -> Result<u32, WalletError> {
+        let handed_out = match keychain {
+            KeychainKind::External => self.store.external_index,
+            KeychainKind::Internal => self.store.internal_index,
+        };
+        // Take the max because each side misses addresses the other knows:
+        // the UTXO scan can't see addresses that are handed out but not yet
+        // funded, and the store counters can't see on-chain funds past them.
+        let used = self.find_hd_next_index(keychain)?.max(handed_out);
+        let gap = if self.restore_scan {
+            RESTORE_ADDRESS_GAP
+        } else {
+            ADDRESS_IMPORT_COUNT
+        };
+        Ok(used + gap - 1)
     }
 
     /// Gets the next external address from the HD keychain. Saves the wallet to disk
@@ -1578,7 +1678,7 @@ impl Wallet {
         let receive_branch_descriptor = descriptors
             .get(&KeychainKind::External)
             .expect("external keychain expected");
-        let receive_address = self.rpc.derive_addresses(
+        let receive_address = self.blockchain.derive_addresses(
             receive_branch_descriptor,
             Some([self.store.external_index, self.store.external_index]),
         )?[0]
@@ -1600,9 +1700,12 @@ impl Wallet {
             .get(&KeychainKind::Internal)
             .expect("Internal Keychain expected");
         let addresses = self
-            .rpc
+            .blockchain
             .derive_addresses(change_branch_descriptor, Some([start, start + count - 1]))?;
 
+        // Deliberate: the counter advances at hand-out time (multi-tx funding
+        // needs a batch up front), so aborted attempts leave unused index gaps.
+        // The rolling watch window follows the counter, so funds stay visible;
         self.store.internal_index += count;
         self.save_to_disk()?;
 
@@ -2003,7 +2106,7 @@ impl Wallet {
         let change_output_weight = (Amount::SIZE as u64 + 1 + 34u64) * 4;
 
         // 1. Drop locked and explicitly excluded UTXOs from consideration.
-        let locked_utxos = self.list_lock_unspent()?;
+        let locked_utxos = self.list_lock_unspent();
         let excluded: std::collections::HashSet<OutPoint> =
             excluded_outpoints.unwrap_or_default().into_iter().collect();
         let filter_locked = |utxos: Vec<(ListUnspentResultEntry, UTXOSpendInfo)>| {
@@ -2331,20 +2434,35 @@ impl Wallet {
     ) -> Result<(Address, SecretKey), WalletError> {
         let (my_pubkey, my_privkey) = generate_keypair();
 
-        let descriptor = self
-            .rpc
-            .get_descriptor_info(&format!("wsh(sortedmulti(2,{my_pubkey},{other_pubkey}))"))?
-            .descriptor;
-        self.import_descriptors(std::slice::from_ref(&descriptor), None, None)?;
+        // Derive the wsh(multi(2,...)) address locally — Electrum has no
+        // getdescriptorinfo/deriveaddresses. Sort keys per BIP67 to match the
+        // redeem-script ordering so descriptor + address stay in lockstep.
+        let redeem_script = create_multisig_redeemscript(&my_pubkey, other_pubkey);
+        let network = self.store.network;
+        let address = Address::p2wsh(&redeem_script, network);
 
-        // redeemscript and descriptor show up in `getaddressinfo` only after
-        // the address gets outputs on it-
-        Ok((
-            self.rpc.derive_addresses(&descriptor[..], None)?[0]
-                .clone()
-                .assume_checked(),
-            my_privkey,
-        ))
+        let (k1, k2) = {
+            let (a, b) = (my_pubkey, *other_pubkey);
+            if a.inner.serialize()[..] < b.inner.serialize()[..] {
+                (a, b)
+            } else {
+                (b, a)
+            }
+        };
+        let descriptor_without_checksum = format!("wsh(multi(2,{k1},{k2}))");
+        let descriptor = format!(
+            "{descriptor_without_checksum}#{}",
+            compute_checksum(&descriptor_without_checksum)?
+        );
+        debug_assert_eq!(
+            address.script_pubkey(),
+            ScriptBuf::new_p2wsh(&redeem_script.wscript_hash()),
+            "descriptor key order must reproduce the redeem-script p2wsh"
+        );
+        self.import_descriptors(std::slice::from_ref(&descriptor), None, None)?;
+        self.blockchain.watch_script(&address.script_pubkey(), None);
+
+        Ok((address, my_privkey))
     }
 
     pub(crate) fn descriptors_to_import(&self) -> Result<Vec<String>, WalletError> {
@@ -2417,7 +2535,7 @@ impl Wallet {
     /// Uses internal RPC client to broadcast a transaction
     #[hotpath::measure]
     pub fn send_tx(&self, tx: &Transaction) -> Result<Txid, WalletError> {
-        Ok(self.rpc.send_raw_transaction(tx)?)
+        self.blockchain.send_raw_transaction(tx)
     }
     /// Sweeps all completed incoming swap coins.
     #[hotpath::measure]
@@ -2506,14 +2624,15 @@ impl Wallet {
             // Verify the UTXO actually exists on chain before attempting to spend.
             // First check confirmed UTXOs, then fall back to mempool.
             let utxo_confirmed = matches!(
-                self.rpc.get_tx_out(&utxo_txid, utxo_vout, Some(false)),
+                self.blockchain
+                    .get_tx_out(&utxo_txid, utxo_vout, Some(false)),
                 Ok(Some(_))
             );
 
             if !utxo_confirmed {
                 // UTXO not yet confirmed. Check if it's at least in the mempool.
                 let in_mempool = matches!(
-                    self.rpc.get_tx_out(&utxo_txid, utxo_vout, None),
+                    self.blockchain.get_tx_out(&utxo_txid, utxo_vout, None),
                     Ok(Some(_))
                 );
 
@@ -2533,7 +2652,8 @@ impl Wallet {
                     let mut wait_secs = 0u64;
                     loop {
                         if matches!(
-                            self.rpc.get_tx_out(&utxo_txid, utxo_vout, Some(false)),
+                            self.blockchain
+                                .get_tx_out(&utxo_txid, utxo_vout, Some(false)),
                             Ok(Some(_))
                         ) {
                             log::info!(
@@ -2598,7 +2718,8 @@ impl Wallet {
 
                     // Re-check UTXO availability (including mempool) after broadcast
                     let utxo_available = matches!(
-                        self.rpc.get_tx_out(&utxo_txid, utxo_vout, Some(true)),
+                        self.blockchain
+                            .get_tx_out(&utxo_txid, utxo_vout, Some(true)),
                         Ok(Some(_))
                     );
                     if !utxo_available {
@@ -2735,7 +2856,7 @@ impl Wallet {
             let mut max_confirm_height: u32 = 0;
 
             for txid in txids {
-                match self.rpc.get_raw_transaction_info(txid, None) {
+                match self.blockchain.get_raw_transaction_info(txid, None) {
                     Ok(tx_info) => {
                         let confirms: u32 = tx_info.confirmations.unwrap_or(0);
                         if confirms < required_confirms {
@@ -2755,7 +2876,7 @@ impl Wallet {
                                 ))
                             })?;
                             let confirm_height =
-                                self.rpc.get_block_header_info(&block_hash)?.height as u32;
+                                self.blockchain.get_block_header_info(&block_hash)?.height as u32;
                             max_confirm_height = max_confirm_height.max(confirm_height);
                         }
                     }
@@ -2790,5 +2911,301 @@ impl Wallet {
                 thread::sleep(Duration::from_secs(1));
             }
         }
+    }
+}
+
+/// Wallet synchronization APIs.
+impl Wallet {
+    /// Register every wallet-owned scriptPubKey with the backend: HD-derived
+    /// receive/change addresses (up to the rolling gap-limit window, see
+    /// [`Wallet::max_watch_index`]), fidelity bonds, and persisted swapcoin SPKs.
+    /// No-op on Bitcoin Core (server-side wallet tracks these); on Electrum this
+    /// populates the local watch set so `list_unspent` returns the right UTXOs.
+    pub(crate) fn watch_wallet_scripts(&self) -> Result<(), WalletError> {
+        let secp = crate::utill::global_secp();
+        let max_watch_indices = [
+            self.max_watch_index(KeychainKind::External)?,
+            self.max_watch_index(KeychainKind::Internal)?,
+        ];
+        for address_type in [AddressType::P2WPKH, AddressType::P2TR] {
+            // Derive the account-level Xpriv once per address_type; every
+            // (keychain, index) below it is then a cheap child derive.
+            let account = self.store.master_key.derive_priv(
+                secp,
+                &DerivationPath::from_str(Self::get_derivation_path(address_type))?,
+            )?;
+            let fingerprint = account.fingerprint(secp).to_string();
+            let is_taproot = matches!(address_type, AddressType::P2TR);
+            for keychain in [KeychainKind::External, KeychainKind::Internal] {
+                for index in 0..=max_watch_indices[keychain.index_num() as usize] {
+                    let child = account.derive_priv(
+                        secp,
+                        &DerivationPath::from(vec![
+                            ChildNumber::from_normal_idx(keychain.index_num())?,
+                            ChildNumber::from_normal_idx(index)?,
+                        ]),
+                    )?;
+                    let script = match address_type {
+                        AddressType::P2WPKH => {
+                            let pk = PublicKey {
+                                compressed: true,
+                                inner: child.private_key.public_key(secp),
+                            };
+                            ScriptBuf::new_p2wpkh(
+                                &pk.wpubkey_hash()
+                                    .expect("compressed key always has wpubkey hash"),
+                            )
+                        }
+                        AddressType::P2TR => {
+                            let keypair = Keypair::from_secret_key(secp, &child.private_key);
+                            let (xonly, _parity) = keypair.x_only_public_key();
+                            ScriptBuf::new_p2tr(secp, xonly, None)
+                        }
+                    };
+                    self.blockchain.watch_script(
+                        &script,
+                        Some(HdOrigin {
+                            fingerprint: fingerprint.clone(),
+                            keychain_idx: keychain.index_num(),
+                            index,
+                            is_taproot,
+                        }),
+                    );
+                }
+            }
+        }
+        // Non-HD scripts: fidelity bonds, then per-swapcoin multisig + contract SPKs.
+        // Required on Electrum for restart-recovery; no-op on Bitcoin Core.
+        for bond in self.store.fidelity_bond.iter() {
+            self.blockchain.watch_script(&bond.script_pub_key(), None);
+        }
+
+        let register_swap_scripts =
+            |my_pubkey: Option<PublicKey>,
+             other_pubkey: Option<PublicKey>,
+             contract_redeemscript: Option<&ScriptBuf>| {
+                if let (Some(mine), Some(other)) = (my_pubkey, other_pubkey) {
+                    let multisig_redeem = create_multisig_redeemscript(&mine, &other);
+                    let multisig_spk = ScriptBuf::new_p2wsh(&multisig_redeem.wscript_hash());
+                    self.blockchain.watch_script(&multisig_spk, None);
+                }
+                if let Some(redeem) = contract_redeemscript {
+                    if let Ok(contract_spk) = redeemscript_to_scriptpubkey(redeem) {
+                        self.blockchain.watch_script(&contract_spk, None);
+                    }
+                }
+            };
+        let incoming = self.store.incoming_swapcoins.values().map(|sc| {
+            (
+                sc.my_pubkey,
+                sc.other_pubkey,
+                sc.contract_redeemscript.as_ref(),
+            )
+        });
+        let outgoing = self.store.outgoing_swapcoins.values().map(|sc| {
+            (
+                sc.my_pubkey,
+                sc.other_pubkey,
+                sc.contract_redeemscript.as_ref(),
+            )
+        });
+        for (mine, other, redeem) in incoming.chain(outgoing) {
+            register_swap_scripts(mine, other, redeem);
+        }
+
+        Ok(())
+    }
+
+    /// Sync the wallet, then persist to disk.
+    pub fn sync_and_save(&mut self) -> Result<(), WalletError> {
+        log::info!("Sync Started for {:?}", self.store.file_name);
+        self.sync_no_fail();
+        self.save_to_disk()?;
+        log::info!("Synced & Saved {:?}", self.store.file_name);
+        Ok(())
+    }
+
+    /// Get all utxos tracked by the backend.
+    ///
+    /// Returns the full unspent set; coin locking is applied wallet-side at
+    /// selection time (see [`Wallet::coin_select`]), not by filtering here.
+    fn get_all_utxo_from_rpc(&self) -> Result<Vec<ListUnspentResultEntry>, WalletError> {
+        let all_utxos = self.blockchain.list_unspent(Some(0), Some(9999999))?;
+        Ok(all_utxos)
+    }
+
+    /// Bitcoin Core's importdescriptors + scan vs Electrum's scripthash-history walk.
+    fn sync(&mut self) -> Result<(), WalletError> {
+        if self.blockchain.is_electrum() {
+            return self.sync_no_rescan();
+        }
+        // Create or load the watch-only Bitcoin Core wallet.
+        self.blockchain
+            .prepare_backend_wallet(&self.store.file_name)?;
+
+        let mut descriptors_to_import = self.descriptors_to_import()?;
+
+        if descriptors_to_import.is_empty() {
+            return Ok(());
+        }
+
+        // Sometimes in tests multiple wallet scans can occur at the same time, resulting in error.
+        let mut last_synced_height = self
+            .store
+            .last_synced_height
+            .unwrap_or(0)
+            .max(self.store.wallet_birthday.unwrap_or(0));
+        let node_synced = self.blockchain.get_block_count()?;
+
+        // If the chain is shorter than the wallet's last synced height (e.g. node
+        // restarted with a fresh chain or a reorg), reset to rescan from the start.
+        if last_synced_height > node_synced {
+            log::warn!(
+                "Wallet last_synced_height ({}) exceeds chain height ({}), resetting to 0",
+                last_synced_height,
+                node_synced
+            );
+            last_synced_height = 0;
+            self.store.last_synced_height = Some(0);
+        }
+
+        log::info!("Re-scanning Blockchain from:{last_synced_height} to:{node_synced}");
+
+        let block_hash = self.blockchain.get_block_hash(last_synced_height)?;
+        let Header { time, .. } = self.blockchain.get_block_header(&block_hash)?;
+
+        // Rolling gap limit: a scan can reveal used addresses near the edge of
+        // the imported window, widening it (e.g. after a seed restore) — then
+        // re-import the wider range and rescan, until the window stops moving.
+        // The import timestamp stays anchored to the pre-sync height so the
+        // widened range is scanned over the same blocks.
+        let mut prev_window = (
+            self.max_watch_index(KeychainKind::External)?,
+            self.max_watch_index(KeychainKind::Internal)?,
+        );
+        loop {
+            let _ = self.import_descriptors(&descriptors_to_import, Some(time), None);
+
+            // Returns when the scanning is completed.
+            loop {
+                match self.blockchain.wallet_scanning_status()? {
+                    Some(ScanningDetails::Scanning { duration, .. }) => {
+                        // Todo: Show scan progress
+                        log::info!("Scanning for {}s", duration);
+                        thread::sleep(HEART_BEAT_INTERVAL);
+                        continue;
+                    }
+                    Some(ScanningDetails::NotScanning(_)) => {
+                        log::info!("Scanning completed");
+                        break;
+                    }
+                    None => {
+                        log::info!("No scan is in progress or Scanning completed");
+                        break;
+                    }
+                }
+            }
+            self.update_utxo_cache(self.get_all_utxo_from_rpc()?);
+            let window = (
+                self.max_watch_index(KeychainKind::External)?,
+                self.max_watch_index(KeychainKind::Internal)?,
+            );
+            if window == prev_window {
+                break;
+            }
+            prev_window = window;
+            descriptors_to_import = self.descriptors_to_import()?;
+        }
+        self.post_sync_updates()
+    }
+
+    /// Electrum-style sync: register every wallet-owned script client-side, then
+    /// list UTXOs via per-scripthash queries.
+    fn sync_no_rescan(&mut self) -> Result<(), WalletError> {
+        // Rolling gap limit: watching a wider window can reveal UTXOs at
+        // higher indices, which widens the window again (e.g. after a seed
+        // restore) — repeat until it stops moving.
+        let mut prev_window = (
+            self.max_watch_index(KeychainKind::External)?,
+            self.max_watch_index(KeychainKind::Internal)?,
+        );
+        loop {
+            self.watch_wallet_scripts()?;
+            self.update_utxo_cache(self.get_all_utxo_from_rpc()?);
+            let window = (
+                self.max_watch_index(KeychainKind::External)?,
+                self.max_watch_index(KeychainKind::Internal)?,
+            );
+            if window == prev_window {
+                break;
+            }
+            prev_window = window;
+        }
+        self.post_sync_updates()
+    }
+
+    /// Shared tail of both sync paths: record the synced tip, advance the
+    /// keychain indices, and recompute the offer-max cache. Both callers
+    /// refresh the UTXO cache inside their gap-limit loops before calling this.
+    fn post_sync_updates(&mut self) -> Result<(), WalletError> {
+        self.store.last_synced_height = Some(self.blockchain.get_block_count()?);
+        // Monotonic: on-chain discovery may advance the indices but never
+        // rewind them below addresses already handed out (they may be funded
+        // later). Internal only lags after a seed restore; advancing it there
+        // avoids reusing old change addresses.
+        let max_external_index = self.find_hd_next_index(KeychainKind::External)?;
+        self.store.external_index = max_external_index.max(self.store.external_index);
+        let max_internal_index = self.find_hd_next_index(KeychainKind::Internal)?;
+        self.store.internal_index = max_internal_index.max(self.store.internal_index);
+        self.refresh_offer_maxsize_cache()
+    }
+
+    /// Retry sync forever; handles transient backend errors.
+    fn sync_no_fail(&mut self) {
+        while let Err(e) = self.sync() {
+            log::error!("Blockchain sync failed. Retrying. | {e:?}");
+            thread::sleep(HEART_BEAT_INTERVAL);
+        }
+    }
+
+    /// Build descriptor import requests and hand them to the backend. Does not
+    /// check whether the descriptors were already imported. Scans blocks from a
+    /// given timestamp. No-op on Electrum (which pre-registers scripts instead).
+    pub(crate) fn import_descriptors(
+        &self,
+        descriptors_to_import: &[String],
+        time: Option<u32>,
+        address_label: Option<String>,
+    ) -> Result<(), WalletError> {
+        let address_label = address_label.unwrap_or(self.get_core_wallet_label());
+
+        // Offset by +2h because importdescriptors applies a default -2h to the timestamp.
+        let time_stamp = time.map(|t| json!(t + 7200)).unwrap_or(json!("now"));
+
+        // Ranged (HD) descriptors are imported up to the rolling gap-limit
+        // window; a single range covering both keychains keeps the import flat.
+        let max_index = self
+            .max_watch_index(KeychainKind::External)?
+            .max(self.max_watch_index(KeychainKind::Internal)?);
+
+        let import_requests: Vec<Value> = descriptors_to_import
+            .iter()
+            .map(|desc| {
+                if desc.contains("/*") {
+                    json!({
+                        "timestamp": time_stamp,
+                        "desc": desc,
+                        "range": max_index
+                    })
+                } else {
+                    json!({
+                        "timestamp": time_stamp,
+                        "desc": desc,
+                        "label": address_label
+                    })
+                }
+            })
+            .collect();
+        self.blockchain.import_descriptors(&import_requests)
     }
 }

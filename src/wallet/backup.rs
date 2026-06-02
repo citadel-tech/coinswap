@@ -1,13 +1,15 @@
-use std::{convert::TryFrom, env, ffi::OsStr, fs, io::Write, path::PathBuf};
+use std::{env, ffi::OsStr, fs, io::Write, path::PathBuf};
 
 use crate::{
     security::{encrypt_struct, load_sensitive_struct, KeyMaterial, SerdeJson},
     wallet::{Wallet, WalletError},
 };
 
-use super::{rpc::RPCConfig, storage::WalletStore};
+use super::{
+    blockchain::{AnyBlockchain, BackendConfig},
+    storage::WalletStore,
+};
 use bitcoin::{bip32::Xpriv, Network};
-use bitcoind::bitcoincore_rpc::Client;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -80,7 +82,7 @@ impl Wallet {
     /// Restores a `Wallet` from this backup to a specified path.
     ///
     /// Initializes a new wallet instance using the data from the backup and syncs
-    /// it with the blockchain using the provided RPC configuration.
+    /// it with the blockchain using the provided backend configuration.
     ///
     /// # Returns
     ///
@@ -89,12 +91,12 @@ impl Wallet {
     /// # Behavior
     ///
     /// If `wallet_path` does not contain a file name, `wallet_backup.file_name` will be used.
-    /// The method initializes the wallet store, connects to the blockchain node via RPC,
+    /// The method initializes the wallet store, connects to the blockchain backend,
     /// syncs wallet data, and saves the state to disk.
     pub fn restore(
         wallet_backup: &WalletBackup,
         wallet_path: &Path,
-        rpc_config: &RPCConfig,
+        backend_config: &BackendConfig,
         restored_enc_material: Option<KeyMaterial>,
     ) -> Result<Wallet, WalletError> {
         let wallet_file_name = wallet_path
@@ -104,10 +106,14 @@ impl Wallet {
             .unwrap()
             .to_string();
 
-        let mut rpc_config_test = rpc_config.clone();
-        rpc_config_test.wallet_name = wallet_file_name.clone();
+        // For the Core backend, rebind the node wallet name to the restored
+        // wallet's filename. Electrum has no server-side wallet, so nothing to do.
+        let mut backend_config_test = backend_config.clone();
+        if let BackendConfig::CoreRpc(cfg) = &mut backend_config_test {
+            cfg.wallet_name = wallet_file_name.clone();
+        }
 
-        let rpc = Client::try_from(&rpc_config_test)?;
+        let blockchain = AnyBlockchain::from_config(&backend_config_test)?;
 
         // Initialise wallet
         let store = WalletStore::init(
@@ -120,12 +126,16 @@ impl Wallet {
         )?;
 
         let mut tmp_wallet = Wallet {
-            rpc,
+            blockchain,
             wallet_file_path: wallet_path.to_path_buf(),
             store,
             store_enc_material: restored_enc_material,
+            locked_utxos: std::collections::HashSet::new(),
+            // Flag to use the RESTORE_ADDRESS_GAP instead of normal gap while restoring.
+            restore_scan: true,
         };
         tmp_wallet.sync_and_save()?;
+        tmp_wallet.restore_scan = false;
 
         Ok(tmp_wallet)
     }
@@ -146,7 +156,7 @@ impl Wallet {
     /// - Saves the restored wallet to disk.
     pub fn restore_interactive(
         backup_file_path: &PathBuf,
-        rpc_config: &RPCConfig,
+        backend: &BackendConfig,
         restored_path: &Path,
     ) {
         log::info!(
@@ -162,7 +172,7 @@ impl Wallet {
         // Attempt to restore the wallet.
         // Since this is an interactive, one-shot restore, the program will exit after this,
         // so these messages are the last feedback the user will see.
-        if let Err(e) = Wallet::restore(&backup, restored_path, rpc_config, restore_enc_material) {
+        if let Err(e) = Wallet::restore(&backup, restored_path, backend, restore_enc_material) {
             log::error!("Wallet restore failed: {e:?}");
         } else {
             println!("Wallet restore succeeded!");

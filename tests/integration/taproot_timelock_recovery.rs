@@ -41,7 +41,7 @@ fn test_taproot_timelock_recovery() {
     ];
 
     let (test_framework, mut takers, makers, block_generation_handle) =
-        TestFramework::init(makers_config_map, taker_behavior, maker_behaviors);
+        TestFramework::init::<BitcoindBackend>(makers_config_map, taker_behavior, maker_behaviors);
 
     let bitcoind = &test_framework.bitcoind;
     let taker = takers.get_mut(0).unwrap();
@@ -115,8 +115,8 @@ fn test_taproot_timelock_recovery() {
     taker.log_tracker_state();
 
     // Wait for makers to timeout and blocks to mature timelocks.
-    // Maker timeout is 60s in tests; block generation thread mines 10 blocks every 3s,
-    // so 150s ~ 500 blocks -- more than enough for the CSV timelock.
+    // Maker timeout is 60s in tests; block generation thread mines 5 blocks every 3s,
+    // so 150s ~ 250 blocks -- more than enough for the CSV timelock.
     info!("Waiting for makers to timeout and blocks to mature timelocks...");
     thread::sleep(Duration::from_secs(150));
 

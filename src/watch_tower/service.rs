@@ -1,6 +1,6 @@
 //! Public watchtower service for sending commands to and receiving events from the watcher.
 
-use bitcoin::OutPoint;
+use bitcoin::{OutPoint, ScriptBuf};
 use crossbeam_channel::{unbounded, Receiver as CbReceiver};
 use std::{
     path::Path,
@@ -13,13 +13,11 @@ use std::{
 };
 
 use crate::{
-    wallet::RPCConfig,
+    wallet::{AnyBlockchain, BackendConfig, Blockchain},
     watch_tower::{
         registry_storage::FileRegistry,
-        rest_backend::BitcoinRest,
         watcher::{Role, Watcher, WatcherCommand, WatcherEvent},
         watcher_error::WatcherError,
-        zmq_backend::ZmqBackend,
     },
 };
 
@@ -44,10 +42,11 @@ impl WatchService {
     }
 
     /// Registers an outpoint to be monitored for future spends.
-    pub fn register_watch_request(&self, outpoint: OutPoint) {
-        let _ = self
-            .tx
-            .send(WatcherCommand::RegisterWatchRequest { outpoint });
+    pub fn register_watch_request(&self, outpoint: OutPoint, script_pubkey: ScriptBuf) {
+        let _ = self.tx.send(WatcherCommand::RegisterWatchRequest {
+            outpoint,
+            script_pubkey,
+        });
     }
 
     /// Queries whether a previously registered outpoint has been spent.
@@ -55,9 +54,14 @@ impl WatchService {
         let _ = self.tx.send(WatcherCommand::WatchRequest { outpoint });
     }
 
-    /// Stops monitoring an outpoint by removing its watch entry from the registry.
-    pub fn unwatch(&self, outpoint: OutPoint) {
-        let _ = self.tx.send(WatcherCommand::Unwatch { outpoint });
+    /// Stops monitoring an outpoint by removing its watch entry from the
+    /// registry. The `scriptPubKey` lets the watcher drop the Electrum
+    /// subscription too without re-resolving it from the network.
+    pub fn unwatch(&self, outpoint: OutPoint, script_pubkey: ScriptBuf) {
+        let _ = self.tx.send(WatcherCommand::Unwatch {
+            outpoint,
+            script_pubkey,
+        });
     }
 
     /// Attempts a non-blocking receive; returns `None` if no event is pending.
@@ -78,35 +82,33 @@ impl WatchService {
 
 /// Starts the Maker Watch Service
 pub fn start_maker_watch_service(
-    zmq_addr: &str,
-    rpc_config: &RPCConfig,
+    backend: &BackendConfig,
     data_dir: &Path,
     network_port: u16,
 ) -> Result<WatchService, WatcherError> {
-    // Backends
-    let backend = ZmqBackend::new(zmq_addr);
-    let rpc_backend = BitcoinRest::new(rpc_config.clone())?;
-    let blockchain_info = rpc_backend.get_blockchain_info()?;
+    let blockchain = AnyBlockchain::from_config(backend)?;
 
-    // Registry
     let file_registry = data_dir
         .join(format!(".maker_{}_watcher", network_port))
-        .join(blockchain_info.chain.to_string());
+        .join(blockchain.chain_name()?);
     let registry = FileRegistry::load(file_registry);
 
     // Channels
     let (tx_requests, rx_requests) = mpsc::channel();
     let (tx_events, rx_responses) = unbounded();
-
-    // Watcher
-    let rpc_config_watcher = rpc_config.clone();
-    let mut watcher =
-        Watcher::<MakerRole>::new(backend, registry, rx_requests, tx_events, Vec::new(), None);
+    let mut watcher = Watcher::<MakerRole>::new(
+        blockchain,
+        registry,
+        rx_requests,
+        tx_events,
+        Vec::new(),
+        None,
+    );
 
     // Makers don't run discovery, so pass an already-complete flag.
     thread::Builder::new()
         .name("Watcher thread".to_string())
-        .spawn(move || watcher.run(rpc_config_watcher, Arc::new(AtomicBool::new(true))))
+        .spawn(move || watcher.run(Arc::new(AtomicBool::new(true))))
         .expect("failed to spawn watcher thread");
 
     Ok(WatchService::new(tx_requests, rx_responses))

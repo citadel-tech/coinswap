@@ -5,8 +5,6 @@
 
 use std::fmt;
 
-use bitcoind::bitcoincore_rpc::RpcApi;
-
 use bitcoin::{
     ecdsa,
     hashes::{sha256, Hash},
@@ -27,6 +25,7 @@ use crate::{
 };
 
 use super::{
+    blockchain::{AnyBlockchain, Blockchain},
     report::SwapRole,
     swapcoin::{IncomingSwapCoin, OutgoingSwapCoin},
     WalletError,
@@ -464,7 +463,7 @@ pub(crate) fn proof_from_swapcoins(
 /// or an outer `Err` if the file cannot be read, parsed, or the swap_id is not found.
 pub fn verify_deniability(
     report_path: &std::path::Path,
-    rpc: &bitcoind::bitcoincore_rpc::Client,
+    blockchain: &AnyBlockchain,
     swap_id: &str,
 ) -> Result<bool, std::io::Error> {
     let content = std::fs::read_to_string(report_path)?;
@@ -480,7 +479,7 @@ pub fn verify_deniability(
         })?;
 
     let outpoint = proof.proven_outpoint();
-    let tx_info = rpc
+    let tx_info = blockchain
         .get_raw_transaction_info(&outpoint.txid, None)
         .map_err(|e| std::io::Error::other(format!("RPC: {e}")))?;
     if tx_info.confirmations.unwrap_or(0) == 0 {

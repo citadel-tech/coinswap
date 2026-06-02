@@ -229,11 +229,14 @@ fn process_proof_of_funding<M: Maker>(
     // if the taker broadcasts the maker's incoming contract tx.
     for incoming in &state.incoming_swapcoins {
         let txid = incoming.contract_tx.compute_txid();
-        for (vout, _) in incoming.contract_tx.output.iter().enumerate() {
-            maker.register_watch_outpoint(bitcoin::OutPoint {
-                txid,
-                vout: vout as u32,
-            });
+        for (vout, txout) in incoming.contract_tx.output.iter().enumerate() {
+            maker.register_watch_outpoint(
+                bitcoin::OutPoint {
+                    txid,
+                    vout: vout as u32,
+                },
+                txout.script_pubkey.clone(),
+            );
         }
     }
 
@@ -555,11 +558,14 @@ fn process_resp_contract_sigs_for_recvr_and_sender<M: Maker>(
         // Register outgoing contract output with watchtower EARLY so it can
         // detect hashlock spends by the taker before recovery starts.
         let contract_txid = outgoing.contract_tx.compute_txid();
-        for (vout, _) in outgoing.contract_tx.output.iter().enumerate() {
-            maker.register_watch_outpoint(bitcoin::OutPoint {
-                txid: contract_txid,
-                vout: vout as u32,
-            });
+        for (vout, txout) in outgoing.contract_tx.output.iter().enumerate() {
+            maker.register_watch_outpoint(
+                bitcoin::OutPoint {
+                    txid: contract_txid,
+                    vout: vout as u32,
+                },
+                txout.script_pubkey.clone(),
+            );
         }
     }
 

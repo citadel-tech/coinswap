@@ -41,7 +41,7 @@ fn maker_abort3_case3() {
     let maker_behaviors = vec![MakerBehavior::Normal, MakerBehavior::CloseAtHashPreimage];
 
     let (test_framework, mut takers, makers, block_generation_handle) =
-        TestFramework::init(makers_config_map, taker_behavior, maker_behaviors);
+        TestFramework::init::<BitcoindBackend>(makers_config_map, taker_behavior, maker_behaviors);
 
     let bitcoind = &test_framework.bitcoind;
     let taker = takers.get_mut(0).unwrap();
@@ -115,7 +115,7 @@ fn maker_abort3_case3() {
     taker.log_tracker_state();
 
     // Wait for timelocks to mature. Maker timeout is 60s in tests;
-    // block generation thread mines 10 blocks every 3s, so 150s ~ 500 blocks.
+    // block generation thread mines 5 blocks every 3s, so 150s ~ 250 blocks.
     info!("Waiting for makers to timeout and blocks to mature timelocks...");
     thread::sleep(Duration::from_secs(150));
 

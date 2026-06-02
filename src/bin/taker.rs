@@ -8,7 +8,7 @@ use coinswap::{
         TakerInitConfig,
     },
     utill::{parse_proxy_auth, setup_taker_logger, UTXO},
-    wallet::{AddressType, RPCConfig, Wallet},
+    wallet::{AddressType, CoreRpcConfig, Wallet},
 };
 use log::LevelFilter;
 use serde_json::{json, to_string_pretty};
@@ -16,8 +16,10 @@ use std::{path::PathBuf, str::FromStr};
 
 /// A simple command line app to operate as coinswap client.
 ///
-/// The app works as a regular Bitcoin wallet with the added capability to perform coinswaps. The app
-/// requires a running Bitcoin Core node with RPC access. It currently only runs on Testnet4.
+/// The app works as a regular Bitcoin wallet with the added capability to perform coinswaps.
+/// It can talk to either a Bitcoin Core node (over RPC + ZMQ — the default) or an
+/// Electrum-protocol server (via `--electrum-url`). Both paths support the full swap flow
+/// and the `restore` subcommand. It currently only runs on Testnet4.
 /// Suggested faucet for getting Signet coins (tor browser required): <http://s2ncekhezyo2tkwtftti3aiukfpqmxidatjrdqmwie6xnf2dfggyscad.onion/>
 ///
 /// For more detailed usage information, please refer: <https://github.com/citadel-tech/coinswap/blob/master/docs/taker.md>
@@ -31,7 +33,7 @@ struct Cli {
     #[clap(long, short = 'd')]
     data_directory: Option<PathBuf>,
 
-    /// Bitcoin Core RPC address:port value
+    /// Bitcoin Core RPC address:port value. Ignored when `--electrum-url` is set.
     #[clap(
         name = "ADDRESS:PORT",
         long,
@@ -40,7 +42,7 @@ struct Cli {
     )]
     pub rpc: String,
 
-    /// Bitcoin Core ZMQ address:port value
+    /// Bitcoin Core ZMQ address:port value. Ignored when `--electrum-url` is set.
     #[clap(
         name = "ZMQ",
         long,
@@ -49,11 +51,17 @@ struct Cli {
     )]
     pub zmq: String,
 
-    /// Bitcoin Core RPC authentication string. Ex: username:password
+    /// Bitcoin Core RPC authentication string. Ex: username:password.
+    /// Ignored when `--electrum-url` is set.
     #[clap(name="USER:PASSWORD",short='a',long, value_parser = parse_proxy_auth, default_value = "user:password")]
     pub auth: (String, String),
     #[clap(long, short = 't')]
     pub tor_auth: Option<String>,
+
+    /// Electrum server URL (e.g. `tcp://localhost:50001`). When set, the wallet
+    /// is initialised against an Electrum backend instead of Bitcoin Core.
+    #[clap(name = "ELECTRUM_URL", long)]
+    pub electrum_url: Option<String>,
 
     /// Sets the taker wallet's name. If the wallet file already exists, it will load that wallet. Default: taker-wallet
     #[clap(name = "WALLET", long, short = 'w')]
@@ -306,33 +314,42 @@ fn main() -> Result<(), TakerError> {
         args.data_directory.clone(), // default path handled inside the function.
     );
 
-    let rpc_config = RPCConfig {
-        url: args.rpc,
-        auth: Auth::UserPass(args.auth.0, args.auth.1),
-        wallet_name: "random_1".to_string(), // updated during init
+    let wallet_name = args
+        .wallet_name
+        .clone()
+        .unwrap_or_else(|| "taker-wallet".to_string());
+    // Build the unified taker config (also used by the Restore branch).
+    // `--electrum-url` selects the Electrum backend; otherwise Bitcoin Core.
+    let backend = match args.electrum_url.as_ref() {
+        Some(url) => coinswap::wallet::BackendConfig::Electrum(coinswap::wallet::ElectrumConfig {
+            url: url.clone(),
+        }),
+        None => coinswap::wallet::BackendConfig::CoreRpc(CoreRpcConfig {
+            url: args.rpc.clone(),
+            auth: Auth::UserPass(args.auth.0.clone(), args.auth.1.clone()),
+            wallet_name: wallet_name.clone(),
+            zmq_addr: args.zmq.clone(),
+        }),
     };
 
-    // Handle Restore before taker init (wallet may not exist yet)
     if let Commands::Restore { ref backup_file } = args.command {
-        Taker::restore_wallet(
+        coinswap::taker::Taker::restore_wallet(
             args.data_directory,
             args.wallet_name,
-            Some(rpc_config),
+            backend,
             backup_file,
         );
         return Ok(());
     }
 
-    // Build unified taker config
     let config = TakerInitConfig {
         data_dir: args.data_directory.clone(),
-        wallet_file_name: args.wallet_name,
-        rpc_config: Some(rpc_config),
-        tor_auth_password: args.tor_auth,
-        zmq_addr: args.zmq,
-        password: args.password,
+        tor_auth_password: args.tor_auth.clone(),
+        password: args.password.clone(),
+        wallet_name: wallet_name.clone(),
         ..TakerInitConfig::default()
-    };
+    }
+    .with_backend(backend.clone());
 
     let mut taker = Taker::init(config)?;
 
