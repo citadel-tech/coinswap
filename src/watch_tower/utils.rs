@@ -184,6 +184,11 @@ impl SeenTxids {
         }
     }
 
+    /// Returns true if `txid` is already in the seen-cache.
+    pub fn contains(&self, txid: &Txid) -> bool {
+        self.seen.contains(txid)
+    }
+
     /// Returns true if txid was newly inserted (not seen before).
     /// Returns false if txid was already present.
     /// Uses FIFO eviction when capacity is exceeded.
@@ -353,6 +358,7 @@ mod tests {
         };
         reg.upsert_watch(&WatchRequest {
             outpoint: watched,
+            script_pubkey: Some(ScriptBuf::new()),
             in_block: false,
             spent_tx: None,
         });

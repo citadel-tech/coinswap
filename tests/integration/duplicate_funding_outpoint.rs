@@ -26,7 +26,7 @@ fn makers_reject_duplicate_funding_outpoints() {
     let maker_behaviors = vec![MakerBehavior::Normal, MakerBehavior::Normal];
 
     let (test_framework, mut takers, makers, block_generation_handle) =
-        TestFramework::init(makers_config_map, taker_behaviors, maker_behaviors);
+        TestFramework::init::<BitcoindBackend>(makers_config_map, taker_behaviors, maker_behaviors);
 
     let bitcoind = &test_framework.bitcoind;
     for taker in &mut takers {

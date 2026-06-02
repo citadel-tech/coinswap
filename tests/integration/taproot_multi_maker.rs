@@ -32,7 +32,7 @@ fn test_taproot_multi_maker_coinswap() {
 
     // Initialize test framework with 1 taker and 4 makers
     let (test_framework, mut takers, makers, block_generation_handle) =
-        TestFramework::init(makers_config_map, taker_behavior, vec![]);
+        TestFramework::init::<BitcoindBackend>(makers_config_map, taker_behavior, vec![]);
 
     let bitcoind = &test_framework.bitcoind;
     let taker = takers.get_mut(0).unwrap();

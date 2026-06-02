@@ -1,17 +1,21 @@
-//! Integration test: Maker abort3 case 2 (Legacy).
+//! Abort 1 (Electrum backend): TAKER Drops After Full Setup.
 //!
-//! Maker drops at ReqContractSigsForRecvr after funding is on-chain.
-//! Recovery via timelock.
+//! Same scenario as `abort1.rs`, but every participant runs on the Electrum
+//! backend, and the scenario runs over both protocols (Taproot and Legacy).
+//! This is the most Electrum-critical abort case: the taker vanishes after
+//! broadcasting the funding transactions, so the makers must detect the
+//! failure autonomously and recover via the preimage/hashlock cascade or
+//! timelock. On Electrum that detection path has no ZMQ and no mempool scan —
+//! it depends entirely on script subscriptions (`subscribe_script`/`poll_event`),
+//! `get_tx_out` confirmation gating, and header-by-hash resolution.
 //!
-//! Route: Taker -> Maker1 (Normal) -> Maker2 (CloseAtContractSigsForRecvr) -> Taker
+//! The Taker drops the connection after broadcasting all the funding transactions.
+//! The Makers identify this and wait for a timeout (60s in test) for the Taker to come back.
+//! If the Taker doesn't return, the Makers broadcast the contract transactions and reclaim
+//! their funds via timelock.
 //!
-//! Scenario:
-//! 1. Taker initiates a Legacy coinswap with 2 makers.
-//! 2. Funding transactions are broadcast and confirmed.
-//! 3. Maker2 drops the connection at ReqContractSigsForRecvr.
-//! 4. Taker detects the failure and calls `recover_active_swap()`.
-//! 5. Everyone falls back to timelock recovery.
-//! 6. After blocks mature, verify: taker recovered funds (minus fees), no contract balance.
+//! The Taker after coming live again will see unfinished coinswaps in its wallet.
+//! It can reclaim funds via broadcasting contract transactions and claiming via timelock.
 
 use bitcoin::Amount;
 use coinswap::{
@@ -30,26 +34,53 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// Test: Maker drops at ReqContractSigsForRecvr after funding. Recovery via timelock.
-#[test]
-fn maker_abort3_case2() {
-    // ---- Setup ----
-    warn!("Running Test: Maker Abort3 Case 2 - CloseAtContractSigsForRecvr");
+/// Exact post-recovery balances for one protocol run. Fees differ between the
+/// Legacy and Taproot transaction shapes (and locktime values), so each
+/// protocol pins its own values.
+struct ExpectedBalances {
+    taker_regular: u64,
+    taker_swap: u64,
+    taker_spendable_diff: u64,
+    maker_regular: [u64; 2],
+    maker_swap: [u64; 2],
+    maker_spendable: [u64; 2],
+}
 
-    let makers_config_map = vec![(6402, Some(19401)), (16402, Some(19402))];
-    let taker_behavior = vec![TakerBehavior::Normal];
-    let maker_behaviors = vec![
-        MakerBehavior::Normal,
-        MakerBehavior::CloseAtContractSigsForRecvr,
-    ];
+const LEGACY_EXPECTED: ExpectedBalances = ExpectedBalances {
+    taker_regular: 14499076,
+    taker_swap: 493687,
+    taker_spendable_diff: 7237,
+    maker_regular: [14500865, 14503103],
+    maker_swap: [498200, 495925],
+    maker_spendable: [14999065, 14999028],
+};
+
+const TAPROOT_EXPECTED: ExpectedBalances = ExpectedBalances {
+    taker_regular: 14499076,
+    taker_swap: 494744,
+    taker_spendable_diff: 6180,
+    maker_regular: [14500753, 14502916],
+    maker_swap: [499070, 496907],
+    maker_spendable: [14999823, 14999823],
+};
+
+/// Run the abort1 scenario (taker drops after funds broadcast) on the Electrum
+/// backend with the given protocol and assert the exact recovery balances.
+fn run_electrum_abort1(protocol: ProtocolVersion, expected: &ExpectedBalances) {
+    // ---- Setup ----
+    warn!("Running Test: Taker Drops After Full Setup (Electrum backend, {protocol:?})");
+
+    let makers_config_map = vec![(6102, None), (16102, None)];
+    let taker_behavior = vec![TakerBehavior::DropAfterFundsBroadcast];
+    let maker_behaviors = vec![MakerBehavior::Normal, MakerBehavior::Normal];
 
     let (test_framework, mut takers, makers, block_generation_handle) =
-        TestFramework::init::<BitcoindBackend>(makers_config_map, taker_behavior, maker_behaviors);
+        TestFramework::init::<ElectrumBackend>(makers_config_map, taker_behavior, maker_behaviors);
 
     let bitcoind = &test_framework.bitcoind;
     let taker = takers.get_mut(0).unwrap();
 
-    // Fund the taker with 3 UTXOs of 0.05 BTC each (P2TR for Legacy)
+    // Fund the taker with 3 UTXOs of 0.05 BTC each
     let taker_original_balance = fund_taker(
         taker,
         bitcoind,
@@ -68,7 +99,7 @@ fn maker_abort3_case2() {
     );
 
     // Start the maker server threads
-    log::info!("Starting Maker servers...");
+    log::info!("Initiating Maker servers");
 
     let maker_threads = makers
         .iter()
@@ -88,42 +119,38 @@ fn maker_abort3_case2() {
         maker.wallet.write().unwrap().sync_and_save().unwrap();
     }
 
-    // Use post-fidelity, pre-swap balances as the correct baseline
     verify_maker_pre_swap_balances(&makers);
-    log::info!("Starting Legacy abort3 case 2 test...");
 
-    // Start periodic swap tracker logging (every 10s)
-    let tracker_logger = spawn_tracker_logger(
-        test_framework.temp_dir.join("taker1"),
-        Duration::from_secs(10),
-    );
+    // Initiate Coinswap
+    info!("Initiating coinswap protocol");
 
-    // Swap params for coinswap (Legacy)
-    let swap_params = SwapParams::new(ProtocolVersion::Legacy, Amount::from_sat(500000), 2)
+    let swap_params = SwapParams::new(protocol, Amount::from_sat(500000), 2)
         .with_tx_count(3)
         .with_required_confirms(1);
 
     generate_blocks(bitcoind, 1);
 
-    // Prepare should succeed; execution should fail because Maker2 drops
+    // Start periodic swap tracker logging
+    let tracker_logger = spawn_tracker_logger(
+        test_framework.temp_dir.join("taker1"),
+        Duration::from_secs(10),
+    );
+
+    // Prepare should succeed; execution should fail with DropAfterFundsBroadcast
     let summary = taker
         .prepare_coinswap(swap_params)
         .expect("Prepare should succeed");
     let swap_result = taker.start_coinswap(&summary.swap_id);
     assert!(
         swap_result.is_err(),
-        "Swap should fail due to Maker2 closing at ReqContractSigsForRecvr"
+        "Swap should fail due to DropAfterFundsBroadcast behavior"
     );
     info!("Swap failed as expected: {:?}", swap_result.err().unwrap());
     taker.log_tracker_state();
 
-    // Wait for timelocks to mature. Maker timeout is 60s in tests;
-    // block generation thread mines 5 blocks every 3s (~1.67 blk/s).
-    // Recovery starts at ~60s (idle detection), needs 150 CSV blocks (~90s).
-    // Total: ~150s minimum — too close to a 180s sleep on a slow CI runner.
-    // Use 300s for a comfortable margin.
+    // Wait for makers to timeout and broadcast contracts, then blocks mature timelocks.
     info!("Waiting for makers to timeout and blocks to mature timelocks...");
-    thread::sleep(Duration::from_secs(300));
+    thread::sleep(Duration::from_secs(150));
 
     // Shut down makers
     makers
@@ -156,8 +183,7 @@ fn maker_abort3_case2() {
 
     info!("Makers shut down. Waiting for background recovery loop to complete...");
 
-    // The background recovery loop (spawned by recover_active_swap) periodically
-    // retries timelock recovery. Wait for it to finish.
+    // Wait for taker's background recovery loop to finish
     let recovery_timeout = Duration::from_secs(120);
     let recovery_start = Instant::now();
     while !taker.is_recovery_complete() {
@@ -185,12 +211,12 @@ fn maker_abort3_case2() {
 
     assert_eq!(
         taker_balances.regular.to_sat(),
-        14499076,
+        expected.taker_regular,
         "Taker regular balance mismatch"
     );
     assert_eq!(
         taker_balances.swap.to_sat(),
-        493687,
+        expected.taker_swap,
         "Taker swap balance mismatch"
     );
     assert_eq!(
@@ -202,7 +228,7 @@ fn maker_abort3_case2() {
 
     let balance_diff = taker_original_balance
         .checked_sub(taker_balances.spendable)
-        .unwrap_or(Amount::ZERO);
+        .unwrap();
 
     info!(
         "Taker balance diff: {} sats (original: {}, current: {})",
@@ -213,25 +239,34 @@ fn maker_abort3_case2() {
 
     assert_eq!(
         balance_diff.to_sat(),
-        7237,
+        expected.taker_spendable_diff,
         "Taker spendable balance change mismatch"
     );
 
-    // Verify maker balances
+    // Verify maker balances - makers should have recovered via timelock
     for (i, maker) in makers.iter().enumerate() {
         maker.wallet.write().unwrap().sync_and_save().unwrap();
         let maker_balances = maker.wallet.read().unwrap().get_balances().unwrap();
-        let expected_regular = [14500865u64, 14503103][i];
-        let expected_swap = [498200u64, 495925][i];
+
+        info!(
+            "Maker {} balances: Regular: {}, Swap: {}, Contract: {}, Fidelity: {}, Spendable: {}",
+            i,
+            maker_balances.regular,
+            maker_balances.swap,
+            maker_balances.contract,
+            maker_balances.fidelity,
+            maker_balances.spendable,
+        );
+
         assert_eq!(
             maker_balances.regular.to_sat(),
-            expected_regular,
+            expected.maker_regular[i],
             "Maker {} regular balance mismatch",
             i
         );
         assert_eq!(
             maker_balances.swap.to_sat(),
-            expected_swap,
+            expected.maker_swap[i],
             "Maker {} swap balance mismatch",
             i
         );
@@ -243,19 +278,24 @@ fn maker_abort3_case2() {
         );
         assert_eq!(maker_balances.fidelity, Amount::from_btc(0.05).unwrap());
 
-        let expected_spendable = [14999065u64, 14999028][i];
         assert_eq!(
             maker_balances.spendable.to_sat(),
-            expected_spendable,
+            expected.maker_spendable[i],
             "Maker {} spendable balance mismatch",
             i,
         );
     }
 
     taker.log_tracker_state();
-    info!("Legacy abort3 case 2 test completed successfully!");
+    info!("Electrum abort1 test ({protocol:?}) completed successfully!");
 
     tracker_logger.stop();
     test_framework.stop();
     block_generation_handle.join().unwrap();
+}
+
+#[test]
+fn electrum_taker_abort1() {
+    run_electrum_abort1(ProtocolVersion::Taproot, &TAPROOT_EXPECTED);
+    run_electrum_abort1(ProtocolVersion::Legacy, &LEGACY_EXPECTED);
 }

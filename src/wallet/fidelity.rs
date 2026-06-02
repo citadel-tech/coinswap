@@ -1,7 +1,7 @@
 use crate::{
     protocol::common_messages::FidelityProof,
     utill::{redeemscript_to_scriptpubkey, MIN_FEE_RATE},
-    wallet::{infer_address_type, AddressType, Wallet},
+    wallet::{infer_address_type, AddressType, Blockchain, Wallet},
 };
 use bitcoin::{
     absolute::LockTime,
@@ -13,7 +13,6 @@ use bitcoin::{
     secp256k1::{Keypair, Message, Secp256k1},
     Address, Amount, OutPoint, PublicKey, ScriptBuf, Transaction, Txid,
 };
-use bitcoind::bitcoincore_rpc::RpcApi;
 use serde::{Deserialize, Serialize};
 use std::{
     str::FromStr,
@@ -437,16 +436,16 @@ impl Wallet {
             .as_secs();
 
         let hash = self
-            .rpc
+            .blockchain
             .get_block_hash(bond.conf_height.ok_or(FidelityError::BondDoesNotExist)? as u64)?;
 
-        let confirmation_time = self.rpc.get_block_header_info(&hash)?.time as u64;
+        let confirmation_time = self.blockchain.get_block_header_info(&hash)?.time as u64;
 
         let locktime = match bond.lock_time {
             LockTime::Blocks(blocks) => {
-                let tip_hash = self.rpc.get_blockchain_info()?.best_block_hash;
+                let tip_hash = self.blockchain.get_blockchain_info()?.best_block_hash;
                 let (tip_height, tip_time) = {
-                    let info = self.rpc.get_block_header_info(&tip_hash)?;
+                    let info = self.blockchain.get_block_header_info(&tip_hash)?;
                     (info.height, info.time as u64)
                 };
                 // Estimated locktime from block height = [current-time + (maturity-height - block-count) * 10 * 60] sec
@@ -550,7 +549,7 @@ impl Wallet {
         &mut self,
         destination_address_type: AddressType,
     ) -> Result<(), WalletError> {
-        let curr_height = self.rpc.get_block_count()? as u32;
+        let curr_height = self.blockchain.get_block_count()? as u32;
 
         let expired_bond_indices = self
             .store

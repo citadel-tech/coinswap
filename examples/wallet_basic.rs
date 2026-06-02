@@ -23,7 +23,7 @@ use bitcoind::{
 };
 use coinswap::{
     utill::MIN_FEE_RATE,
-    wallet::{AddressType, Destination, RPCConfig, Wallet},
+    wallet::{AddressType, AnyBlockchain, CoreRPC, CoreRpcConfig, Destination, Wallet},
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -74,10 +74,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Bitcoin Core started and initial blocks generated");
 
     // Create RPC config from bitcoind instance
-    let rpc_config = RPCConfig {
+    let rpc_config = CoreRpcConfig {
         url: bitcoind.rpc_url().split_at(7).1.to_string(), // Remove "http://" prefix
         auth: Auth::CookieFile(bitcoind.params.cookie_file.clone()),
         wallet_name: "wallet-example".to_string(), // Use specific wallet name
+        ..CoreRpcConfig::default()
     };
 
     // Initialize Wallet using Wallet::init()
@@ -86,7 +87,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Ensure wallet directory exists
     std::fs::create_dir_all(wallet_path.parent().unwrap())?;
 
-    let mut wallet = Wallet::init(&wallet_path, &rpc_config, None).unwrap();
+    let backend = AnyBlockchain::CoreRPC(CoreRPC::new(&rpc_config).unwrap());
+    let mut wallet = Wallet::init(&wallet_path, backend, None).unwrap();
+
+    // Swap the two lines above for these to drive the same wallet through an electrs server instead of bitcoind RPC.
+    //     use coinswap::wallet::{Electrum, ElectrumConfig};
+    //     let electrum_config = ElectrumConfig {
+    //         url: "tcp://127.0.0.1:60401".to_string(),
+    //     };
+    //     let backend = AnyBlockchain::Electrum(Electrum::new(&electrum_config).unwrap());
+    //     let mut wallet = Wallet::init(&wallet_path, backend, None).unwrap();
 
     println!("Wallet initialized successfully!");
 
