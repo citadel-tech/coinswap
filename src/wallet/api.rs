@@ -3,9 +3,7 @@
 //! Currently, wallet synchronization is exclusively performed through RPC for makers.
 //! In the future, takers might adopt alternative synchronization methods, such as lightweight wallet solutions.
 
-use std::{
-    cmp::max, convert::TryFrom, fmt::Display, path::PathBuf, str::FromStr, thread, time::Duration,
-};
+use std::{cmp::max, fmt::Display, path::PathBuf, str::FromStr, thread, time::Duration};
 
 use std::collections::HashMap;
 
@@ -21,7 +19,7 @@ use bitcoin::{
     sighash::{EcdsaSighashType, Prevouts, SighashCache, TapSighashType},
     Address, Amount, OutPoint, PublicKey, Script, ScriptBuf, Transaction, TxOut, Txid, Weight,
 };
-use bitcoind::bitcoincore_rpc::{bitcoincore_rpc_json::ListUnspentResultEntry, Client, RpcApi};
+use bitcoind::bitcoincore_rpc::bitcoincore_rpc_json::ListUnspentResultEntry;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -41,7 +39,7 @@ use rust_coinselect::{
 
 use super::{
     error::WalletError,
-    rpc::RPCConfig,
+    rpc::{BitcoindBackend, BlockchainBackend, HdOrigin},
     storage::{AddressType, WalletStore},
 };
 
@@ -55,9 +53,14 @@ const HARDENDED_DERIVATION_P2WPKH: &str = "m/84'/1'/0'";
 const HARDENDED_DERIVATION_P2TR: &str = "m/86'/1'/0'";
 
 /// Represents a Bitcoin wallet with associated functionality and data.
+///
+/// `B` is the blockchain backend driving RPC calls. It defaults to
+/// [`BitcoindBackend`] (Bitcoin Core JSON-RPC) so existing call sites that
+/// name `Wallet` keep their current behaviour. To use an alternative
+/// backend parameterise the type explicitly like `Wallet<ElectrumBackend>`.
 #[derive(Debug)]
-pub struct Wallet {
-    pub(crate) rpc: Client,
+pub struct Wallet<B: BlockchainBackend = BitcoindBackend> {
+    pub(crate) rpc: B,
     pub(crate) wallet_file_path: PathBuf,
     pub(crate) store: WalletStore,
     /// Optional encryption material derived from the user’s passphrase.
@@ -84,7 +87,7 @@ pub struct Wallet {
 ///
 /// This allows comparing whether two wallets represent the same core cryptographic
 /// identity and logic state, regardless of runtime or file system differences.
-impl PartialEq for Wallet {
+impl<B: BlockchainBackend> PartialEq for Wallet<B> {
     fn eq(&self, other: &Self) -> bool {
         //self.store == other.store
         //avoided filename
@@ -262,21 +265,19 @@ pub struct Balances {
     pub spendable: Amount,
 }
 
-impl Wallet {
-    /// Initialize the wallet at a given path.
-    ///
-    /// The path should include the full path for a wallet file.
-    /// If the wallet file doesn't exist it will create a new wallet file.
+/// Backend-agnostic constructors. The concrete backend type is selected at the
+/// call site via `Wallet::<MyBackend>::init(...)`; the [`BlockchainBackend::Config`]
+/// associated type then locks in the correct config shape.
+impl<B: BlockchainBackend> Wallet<B> {
+    /// Create a fresh wallet at `path`. Overwrites any existing file.
     #[hotpath::measure]
     pub fn init(
         path: &Path,
-        rpc_config: &RPCConfig,
+        config: &B::Config,
         store_enc_material: Option<KeyMaterial>,
     ) -> Result<Self, WalletError> {
-        let rpc = Client::try_from(rpc_config)?;
+        let rpc = B::from_config(config)?;
         let network = rpc.get_blockchain_info()?.chain;
-
-        // Generate Master key
         let master_key = {
             let mnemonic = Mnemonic::generate(12)?;
             let words = mnemonic.words().collect::<Vec<_>>();
@@ -284,15 +285,12 @@ impl Wallet {
             let seed = mnemonic.to_entropy();
             Xpriv::new_master(network, &seed)?
         };
-
-        // Initialise wallet
         let file_name = path
             .file_name()
             .expect("file name expected")
             .to_str()
             .expect("expected")
             .to_string();
-
         let wallet_birthday = rpc.get_block_count()?;
         let store = WalletStore::init(
             file_name,
@@ -302,17 +300,10 @@ impl Wallet {
             Some(wallet_birthday),
             &store_enc_material,
         )?;
-        let last_synced_height_val = match store.last_synced_height {
-            Some(height) => height.to_string(),
-            None => "None".to_string(),
-        };
-
         log::info!(
-            "Wallet birth_height = {}, wallet last_sync_height = {}",
-            wallet_birthday,
-            last_synced_height_val
+            "Wallet birth_height = {wallet_birthday}, last_synced_height = {:?}",
+            store.last_synced_height
         );
-
         Ok(Self {
             rpc,
             wallet_file_path: path.to_path_buf(),
@@ -320,39 +311,23 @@ impl Wallet {
             store_enc_material,
         })
     }
-    /// Get the wallet name
-    pub fn get_name(&self) -> &str {
-        &self.store.file_name
-    }
 
-    /// Load wallet data from file and connect to a core RPC.
-    /// The core rpc wallet name, and wallet_id field in the file should match.
-    /// If encryption material is provided, decrypt the wallet store using it.
-    pub(crate) fn load(
+    /// Load an existing on-disk wallet, verifying the backend network matches.
+    /// Internal — call [`Wallet::load_or_init`] from outside the wallet module.
+    pub fn load(
         path: &Path,
-        rpc_config: &RPCConfig,
+        config: &B::Config,
         password: Option<String>,
-    ) -> Result<Wallet, WalletError> {
+    ) -> Result<Self, WalletError> {
         let (store, store_enc_material) =
             WalletStore::read_from_disk(path, password.unwrap_or_default())?;
-
-        if rpc_config.wallet_name != store.file_name {
-            return Err(WalletError::General(format!(
-                "Wallet name of database file and core mismatch, expected {}, found {}",
-                rpc_config.wallet_name, store.file_name
-            )));
-        }
-        let rpc = Client::try_from(rpc_config)?;
+        let rpc = B::from_config(config)?;
         let network = rpc.get_blockchain_info()?.chain;
-
-        // Check if the backend node is running on correct network. Or else hard error.
         if store.network != network {
-            log::error!(
-                "Wallet file is created for {}, backend Bitcoin Core is running on {}",
-                store.network,
-                network
-            );
-            return Err(WalletError::General("Wrong Bitcoin Network".to_string()));
+            return Err(WalletError::General(format!(
+                "Wrong Bitcoin Network: wallet file is for {}, backend is on {network}",
+                store.network
+            )));
         }
         log::debug!(
             "Loaded wallet file {} | External Index = {} | Incoming = {} | Outgoing = {}",
@@ -361,7 +336,6 @@ impl Wallet {
             store.incoming_swapcoins.len(),
             store.outgoing_swapcoins.len()
         );
-
         Ok(Self {
             rpc,
             wallet_file_path: path.to_path_buf(),
@@ -370,33 +344,31 @@ impl Wallet {
         })
     }
 
-    /// Loads an existing wallet from the given path or initializes a new one if none exists.
-    ///
-    /// Prompts the user for an encryption passphrase (unless running tests),
-    /// derives encryption key material if a passphrase is provided,
-    /// and either loads or creates the wallet accordingly.
-    pub(crate) fn load_or_init_wallet(
+    /// Load existing wallet at `path`, otherwise initialize a new one. The
+    /// passphrase derives encryption material via [`KeyMaterial::new_from_password`]
+    /// on the create path.
+    pub fn load_or_init(
         path: &Path,
-        rpc_config: &RPCConfig,
+        config: &B::Config,
         password: Option<String>,
-    ) -> Result<Wallet, WalletError> {
-        let wallet = if path.exists() {
-            // wallet already exists, load the wallet
-            let wallet = Wallet::load(path, rpc_config, password)?;
+    ) -> Result<Self, WalletError> {
+        if path.exists() {
+            let wallet = Self::load(path, config, password)?;
             log::info!("Wallet file at {path:?} successfully loaded.");
-            wallet
+            Ok(wallet)
         } else {
-            // wallet doesn't exists at the given path, create a new one
+            let km = KeyMaterial::new_from_password(password);
+            let wallet = Self::init(path, config, km)?;
+            log::info!("New Wallet created at: {path:?}");
+            Ok(wallet)
+        }
+    }
+}
 
-            let store_enc_material = KeyMaterial::new_from_password(password);
-
-            let wallet = Wallet::init(path, rpc_config, store_enc_material)?;
-
-            log::info!("New Wallet created at : {path:?}");
-            wallet
-        };
-
-        Ok(wallet)
+impl<B: BlockchainBackend> Wallet<B> {
+    /// Get the wallet name
+    pub fn get_name(&self) -> &str {
+        &self.store.file_name
     }
 
     /// Persist wallet data to disk, creating missing parent directories and file as needed.
@@ -1002,12 +974,15 @@ impl Wallet {
         })
     }
 
-    /// Dynamic address import count function. 10 for tests, 5000 for production.
+    /// HD-chain gap limit — the number of consecutive look-ahead addresses to
+    /// pre-derive and scan on each keychain. 10 in tests (smaller for speed),
+    /// 500 in production (25× BIP-44's recommended floor of 20, gives heavy
+    /// coinswap users multi-week headroom before they'd outgrow the scan window).
     pub(crate) fn get_addrss_import_count(&self) -> u32 {
         if cfg!(feature = "integration-test") {
             10
         } else {
-            5000
+            500
         }
     }
 
@@ -1032,6 +1007,128 @@ impl Wallet {
             AddressType::P2WPKH => HARDENDED_DERIVATION_P2WPKH,
             AddressType::P2TR => HARDENDED_DERIVATION_P2TR,
         }
+    }
+
+    /// Derive the scriptPubKey for `(keychain, index)` under a precomputed
+    /// account-level `Xpriv`. Hot-loop callers (e.g.
+    /// [`Self::populate_backend_watched_scripts`]) compute the account once
+    /// and reuse it across all indices, avoiding redundant BIP32 CKD work.
+    fn script_from_account(
+        secp: &Secp256k1<bitcoin::secp256k1::All>,
+        account: &Xpriv,
+        address_type: AddressType,
+        keychain: KeychainKind,
+        index: u32,
+    ) -> Result<ScriptBuf, WalletError> {
+        let child = account.derive_priv(
+            secp,
+            &DerivationPath::from(vec![
+                ChildNumber::from_normal_idx(keychain.index_num())?,
+                ChildNumber::from_normal_idx(index)?,
+            ]),
+        )?;
+        Ok(match address_type {
+            AddressType::P2WPKH => {
+                let pk = PublicKey {
+                    compressed: true,
+                    inner: child.private_key.public_key(secp),
+                };
+                ScriptBuf::new_p2wpkh(
+                    &pk.wpubkey_hash()
+                        .expect("compressed key always has wpubkey hash"),
+                )
+            }
+            AddressType::P2TR => {
+                let keypair = Keypair::from_secret_key(secp, &child.private_key);
+                let (xonly, _parity) = keypair.x_only_public_key();
+                ScriptBuf::new_p2tr(secp, xonly, None)
+            }
+        })
+    }
+
+    /// Iterate every wallet-owned `(address_type, keychain, index)` up to the
+    /// current gap limit and register each script with the backend. For
+    /// Bitcoin Core this is a no-op (server-side wallet does the tracking);
+    /// for Electrum this populates the local watch set so subsequent
+    /// `list_unspent` queries return the right UTXOs.
+    pub(crate) fn populate_backend_watched_scripts(&self) -> Result<(), WalletError> {
+        let secp = crate::utill::global_secp();
+        let count = self.get_addrss_import_count();
+        for address_type in [AddressType::P2WPKH, AddressType::P2TR] {
+            // Account-level Xpriv (e.g. m/84'/1'/0') derived once per address_type —
+            // every (keychain, index) under it is then a cheap child derive instead of
+            // redoing CKD-from-master each iteration.
+            //
+            // The fingerprint used in `check_and_derive_descriptor_utxo_or_swap_coin`
+            // is the *account-level* key's fingerprint, not the master's.
+            let account = self.store.master_key.derive_priv(
+                secp,
+                &DerivationPath::from_str(Self::get_derivation_path(address_type))?,
+            )?;
+            let fingerprint = account.fingerprint(secp).to_string();
+            let is_taproot = matches!(address_type, AddressType::P2TR);
+            for keychain in [KeychainKind::External, KeychainKind::Internal] {
+                for index in 0..count {
+                    let script =
+                        Self::script_from_account(secp, &account, address_type, keychain, index)?;
+                    self.rpc.watch_script(
+                        &script,
+                        Some(HdOrigin {
+                            fingerprint: fingerprint.clone(),
+                            keychain_idx: keychain.index_num(),
+                            index,
+                            is_taproot,
+                        }),
+                    );
+                }
+            }
+        }
+        // Fidelity bond scripts aren't derivable from the HD chain, but the bond UTXOs must
+        // still appear in `list_unspent` so `check_if_fidelity` can classify them. Register
+        // each known bond's scriptPubKey explicitly.
+        for bond in self.store.fidelity_bond.iter() {
+            self.rpc.watch_script(&bond.script_pub_key(), None);
+        }
+
+        // Persisted swap state. The Bitcoind sync path imports the equivalent set
+        // via `descriptors_to_import`. Without this on Electrum, after a restart:
+        //   - Live multisig UTXOs (pre-contract-broadcast) vanish from `list_unspent`.
+        //   - Contract UTXOs awaiting hashlock/timelock claim aren't visible to
+        //     `check_and_derive_live_contract_spend_info`, blocking recovery.
+        // Two scriptPubKeys per swapcoin: the 2-of-2 multisig SPK (P2WSH of the
+        // `sortedmulti`) and the contract output SPK (P2WSH of the contract redeem
+        // script). Neither is HD-derived; pass `None` for the HD-origin hint —
+        // the wallet's classifier already has dedicated paths for both.
+        let register_swap_scripts = |my_pubkey: Option<PublicKey>,
+                                     other_pubkey: Option<PublicKey>,
+                                     contract_redeemscript: Option<&ScriptBuf>| {
+            if let (Some(mine), Some(other)) = (my_pubkey, other_pubkey) {
+                let multisig_redeem =
+                    crate::protocol::contract::create_multisig_redeemscript(&mine, &other);
+                let multisig_spk = ScriptBuf::new_p2wsh(&multisig_redeem.wscript_hash());
+                self.rpc.watch_script(&multisig_spk, None);
+            }
+            if let Some(redeem) = contract_redeemscript {
+                if let Ok(contract_spk) = redeemscript_to_scriptpubkey(redeem) {
+                    self.rpc.watch_script(&contract_spk, None);
+                }
+            }
+        };
+        let incoming = self
+            .store
+            .incoming_swapcoins
+            .values()
+            .map(|sc| (sc.my_pubkey, sc.other_pubkey, sc.contract_redeemscript.as_ref()));
+        let outgoing = self
+            .store
+            .outgoing_swapcoins
+            .values()
+            .map(|sc| (sc.my_pubkey, sc.other_pubkey, sc.contract_redeemscript.as_ref()));
+        for (mine, other, redeem) in incoming.chain(outgoing) {
+            register_swap_scripts(mine, other, redeem);
+        }
+
+        Ok(())
     }
 
     /// Wallet descriptors are derivable. Currently only supports two KeychainKind. Internal and External.
@@ -1073,7 +1170,7 @@ impl Wallet {
 
     /// Checks if the addresses derived from the wallet descriptor is imported upto full index range.
     /// Returns the list of descriptors not imported yet. Max index range is as below:
-    /// Production => 5000
+    /// Production => 2000 (500 (gap limit) * 4 (external/internal * p2wpkh/p2tr))
     /// Integration Tests => 6
     pub(super) fn get_unimported_wallet_desc(
         &self,
@@ -1180,26 +1277,39 @@ impl Wallet {
         &self,
         utxo: &ListUnspentResultEntry,
     ) -> Option<UTXOSpendInfo> {
-        if self
+        if !self
             .store
             .swept_incoming_swapcoins
             .contains(&utxo.script_pub_key)
         {
-            if let Some(descriptor) = &utxo.descriptor {
-                if let Some((_, addr_type, index)) = get_hd_path_from_descriptor(descriptor) {
-                    let path = format!("m/{addr_type}/{index}");
-                    let address_type = if descriptor.starts_with("tr(") {
-                        AddressType::P2TR
-                    } else {
-                        AddressType::P2WPKH
-                    };
-                    return Some(UTXOSpendInfo::SweptCoin {
-                        input_value: utxo.amount,
-                        path,
-                        address_type,
-                    });
-                }
+            return None;
+        }
+        // Bitcoin Core path: HD origin lives in the descriptor string.
+        if let Some(descriptor) = &utxo.descriptor {
+            if let Some((_, addr_type, index)) = get_hd_path_from_descriptor(descriptor) {
+                let address_type = if descriptor.starts_with("tr(") {
+                    AddressType::P2TR
+                } else {
+                    AddressType::P2WPKH
+                };
+                return Some(UTXOSpendInfo::SweptCoin {
+                    input_value: utxo.amount,
+                    path: format!("m/{addr_type}/{index}"),
+                    address_type,
+                });
             }
+        }
+        if let Some(hd) = self.rpc.hd_origin_for_script(&utxo.script_pub_key) {
+            let address_type = if hd.is_taproot {
+                AddressType::P2TR
+            } else {
+                AddressType::P2WPKH
+            };
+            return Some(UTXOSpendInfo::SweptCoin {
+                input_value: utxo.amount,
+                path: format!("m/{}/{}", hd.keychain_idx, hd.index),
+                address_type,
+            });
         }
         None
     }
@@ -1254,6 +1364,59 @@ impl Wallet {
         // First check if it's a swept incoming swap coin (V1)
         if let Some(swept_info) = self.check_if_swept_incoming_swapcoin(utxo) {
             return Ok(Some(swept_info));
+        }
+
+        // Electrum surfaces HD origin out-of-band rather than via the descriptor
+        // string (which is empty for Electrum UTXOs).
+        if let Some(hd) = self.rpc.hd_origin_for_script(&utxo.script_pub_key) {
+            let address_type = if hd.is_taproot {
+                AddressType::P2TR
+            } else {
+                AddressType::P2WPKH
+            };
+            let secp = Secp256k1::new();
+            let derivation_path = Self::get_derivation_path(address_type);
+            let master_private_key = self
+                .store
+                .master_key
+                .derive_priv(&secp, &DerivationPath::from_str(derivation_path)?)?;
+            if hd.fingerprint == master_private_key.fingerprint(&secp).to_string() {
+                return Ok(Some(UTXOSpendInfo::SeedCoin {
+                    path: format!("m/{}/{}", hd.keychain_idx, hd.index),
+                    input_value: utxo.amount,
+                    address_type,
+                }));
+            }
+        }
+
+        // Bitcoin Core populates `witness_script` via importdescriptors; Electrum
+        // doesn't. Fall back to deriving the redeem script from our swap-coin
+        // records and matching by scriptPubKey.
+        if utxo.witness_script.is_none() {
+            let spk = utxo.script_pub_key.as_script();
+            let legacy = crate::protocol::ProtocolVersion::Legacy;
+            let match_rs = |my: Option<PublicKey>, other: Option<PublicKey>| -> Option<ScriptBuf> {
+                let rs = crate::protocol::contract::create_multisig_redeemscript(&my?, &other?);
+                (ScriptBuf::new_p2wsh(&rs.wscript_hash()).as_script() == spk).then_some(rs)
+            };
+            for sc in self.store.incoming_swapcoins.values() {
+                if sc.protocol == legacy && sc.other_privkey.is_some() {
+                    if let Some(rs) = match_rs(sc.my_pubkey, sc.other_pubkey) {
+                        return Ok(Some(UTXOSpendInfo::IncomingSwapCoin {
+                            multisig_redeemscript: rs,
+                        }));
+                    }
+                }
+            }
+            for sc in self.store.outgoing_swapcoins.values() {
+                if sc.protocol == legacy && sc.hash_preimage.is_some() {
+                    if let Some(rs) = match_rs(sc.my_pubkey, sc.other_pubkey) {
+                        return Ok(Some(UTXOSpendInfo::OutgoingSwapCoin {
+                            multisig_redeemscript: rs,
+                        }));
+                    }
+                }
+            }
         }
 
         // Existing logic for other UTXO types
@@ -1482,20 +1645,21 @@ impl Wallet {
         let mut swap_coin_utxo = self.list_swap_coin_utxo_spend_info();
         utxos.append(&mut swap_coin_utxo);
 
+        let target = keychain.index_num();
         for (utxo, _) in utxos {
-            if utxo.descriptor.is_none() {
+            let (kc_idx, index) = if let Some(d) = &utxo.descriptor {
+                match get_hd_path_from_descriptor(d) {
+                    Some((_, kc, i)) => (kc, i),
+                    None => continue,
+                }
+            } else if let Some(hd) = self.rpc.hd_origin_for_script(&utxo.script_pub_key) {
+                (hd.keychain_idx, hd.index as i32)
+            } else {
                 continue;
+            };
+            if kc_idx == target {
+                max_index = std::cmp::max(max_index, index);
             }
-            let descriptor = utxo.descriptor.expect("its not none");
-            let ret = get_hd_path_from_descriptor(&descriptor);
-            if ret.is_none() {
-                continue;
-            }
-            let (_, addr_type, index) = ret.expect("its not none");
-            if addr_type != keychain.index_num() {
-                continue;
-            }
-            max_index = std::cmp::max(max_index, index);
         }
         Ok((max_index + 1) as u32)
     }
@@ -2308,20 +2472,41 @@ impl Wallet {
     ) -> Result<(Address, SecretKey), WalletError> {
         let (my_pubkey, my_privkey) = generate_keypair();
 
-        let descriptor = self
-            .rpc
-            .get_descriptor_info(&format!("wsh(sortedmulti(2,{my_pubkey},{other_pubkey}))"))?
-            .descriptor;
-        self.import_descriptors(std::slice::from_ref(&descriptor), None, None)?;
+        // Compute the wsh(sortedmulti(2,K1,K2)) address locally so it works on
+        // both backends. `getdescriptorinfo`/`deriveaddresses` are Bitcoin Core
+        // RPCs that Electrum doesn't expose; the redeem script + p2wsh address
+        // only depend on the two pubkeys so there's no reason to ask the node.
+        let redeem_script =
+            crate::protocol::contract::create_multisig_redeemscript(&my_pubkey, other_pubkey);
+        let network = self.store.network;
+        let address = Address::p2wsh(&redeem_script, network);
 
-        // redeemscript and descriptor show up in `getaddressinfo` only after
-        // the address gets outputs on it-
-        Ok((
-            self.rpc.derive_addresses(&descriptor[..], None)?[0]
-                .clone()
-                .assume_checked(),
-            my_privkey,
-        ))
+        // Sort the pubkeys lexicographically to match `create_multisig_redeemscript`'s
+        // BIP67 ordering, then emit a plain `multi` descriptor. Using `sortedmulti`
+        // here would re-sort, but matching the redeem-script's order explicitly
+        // means the descriptor and address can never disagree on which key is which.
+        let (k1, k2) = {
+            let (a, b) = (my_pubkey, *other_pubkey);
+            if a.inner.serialize()[..] < b.inner.serialize()[..] {
+                (a, b)
+            } else {
+                (b, a)
+            }
+        };
+        let descriptor_without_checksum = format!("wsh(multi(2,{k1},{k2}))");
+        let descriptor = format!(
+            "{descriptor_without_checksum}#{}",
+            compute_checksum(&descriptor_without_checksum)?
+        );
+        debug_assert_eq!(
+            address.script_pubkey(),
+            ScriptBuf::new_p2wsh(&redeem_script.wscript_hash()),
+            "descriptor key order must reproduce the redeem-script p2wsh"
+        );
+        self.import_descriptors(std::slice::from_ref(&descriptor), None, None)?;
+        self.rpc.watch_script(&address.script_pubkey(), None);
+
+        Ok((address, my_privkey))
     }
 
     pub(crate) fn descriptors_to_import(&self) -> Result<Vec<String>, WalletError> {

@@ -3,7 +3,7 @@ use clap::Parser;
 use coinswap::{
     maker::{bind_port_retry, start_server, MakerError, MakerServer, MakerServerConfig},
     utill::{parse_proxy_auth, setup_maker_logger},
-    wallet::RPCConfig,
+    wallet::{BackendConfig, BitcoindBackend, ElectrumBackend, ElectrumConfig, RPCConfig},
 };
 use std::{path::PathBuf, sync::Arc};
 
@@ -52,6 +52,10 @@ struct Cli {
         default_value = "user:password",
     )]
     pub auth: (String, String),
+    /// Electrum server URL (e.g. `tcp://localhost:50001`). When set, the wallet
+    /// is initialised against an Electrum backend instead of Bitcoin Core.
+    #[clap(name = "ELECTRUM_URL", long)]
+    pub electrum_url: Option<String>,
     #[clap(long, short = 't')]
     pub tor_auth: Option<String>,
     /// Optional wallet name. If the wallet exists, load the wallet, else create a new wallet with the given name. Default: maker-wallet
@@ -97,19 +101,24 @@ fn main() -> Result<(), MakerError> {
 
     // Override with CLI / runtime args
     config.data_dir = data_dir;
-    config.wallet_name = args
+    let wallet_name = args
         .wallet_name
         .unwrap_or_else(|| "maker-wallet".to_string());
-    config.rpc_config = RPCConfig {
-        url: args.rpc,
-        auth: Auth::UserPass(args.auth.0, args.auth.1),
-        wallet_name: "random".to_string(), // updated during init
-    };
-    config.zmq_addr = args.zmq;
     config.password = args.password;
     if let Some(tor_auth) = args.tor_auth {
         config.tor_auth_password = tor_auth;
     }
+
+    // Set backend from CLI flags: --electrum-url takes precedence; otherwise Bitcoin Core.
+    config.backend = match args.electrum_url {
+        Some(url) => BackendConfig::Electrum(ElectrumConfig { url, wallet_name }),
+        None => BackendConfig::Bitcoind(RPCConfig {
+            url: args.rpc,
+            auth: Auth::UserPass(args.auth.0, args.auth.1),
+            wallet_name,
+            zmq_addr: args.zmq,
+        }),
+    };
 
     // First run: discover available port and save to config
     const DEFAULT_NETWORK_PORT: u16 = 6102;
@@ -124,8 +133,16 @@ fn main() -> Result<(), MakerError> {
     config.rpc_port = rpc_port;
     config.write_to_file(&config_path)?;
 
-    let maker = Arc::new(MakerServer::init(config)?);
-    start_server(maker)?;
+    match config.backend {
+        BackendConfig::Electrum(_) => {
+            let maker = Arc::new(MakerServer::<ElectrumBackend>::init(config)?);
+            start_server(maker)?;
+        }
+        BackendConfig::Bitcoind(_) => {
+            let maker = Arc::new(MakerServer::<BitcoindBackend>::init(config)?);
+            start_server(maker)?;
+        }
+    }
 
     Ok(())
 }

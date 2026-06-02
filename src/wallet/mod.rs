@@ -21,6 +21,8 @@ pub(crate) use fidelity::{
     verify_fidelity_checks, FidelityError, MAX_FIDELITY_TIMELOCK, MIN_FIDELITY_TIMELOCK,
 };
 pub use report::{MakerFeeInfo, MakerReport, RecoveryReport, SwapRole, SwapStatus, TakerReport};
-pub use rpc::RPCConfig;
+pub use rpc::{
+    BackendConfig, BitcoindBackend, BlockchainBackend, ElectrumBackend, ElectrumConfig, RPCConfig,
+};
 pub use spend::Destination;
 pub use storage::AddressType;
