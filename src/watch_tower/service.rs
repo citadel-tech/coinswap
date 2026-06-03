@@ -1,6 +1,6 @@
 //! Public watchtower service for sending commands to and receiving events from the watcher.
 
-use bitcoin::OutPoint;
+use bitcoin::{OutPoint, ScriptBuf};
 use crossbeam_channel::{unbounded, Receiver as CbReceiver};
 use std::{
     path::Path,
@@ -43,11 +43,15 @@ impl WatchService {
         Self { tx, rx }
     }
 
-    /// Registers an outpoint to be monitored for future spends.
-    pub fn register_watch_request(&self, outpoint: OutPoint) {
-        let _ = self
-            .tx
-            .send(WatcherCommand::RegisterWatchRequest { outpoint });
+    /// Registers an outpoint to be monitored for future spends. The caller
+    /// supplies the outpoint's `scriptPubKey` so the watcher's hot loop never
+    /// does a network fetch — callers always have the parent tx in scope when
+    /// they decide to start watching one of its outputs.
+    pub fn register_watch_request(&self, outpoint: OutPoint, script_pubkey: ScriptBuf) {
+        let _ = self.tx.send(WatcherCommand::RegisterWatchRequest {
+            outpoint,
+            script_pubkey,
+        });
     }
 
     /// Queries whether a previously registered outpoint has been spent.
@@ -55,9 +59,14 @@ impl WatchService {
         let _ = self.tx.send(WatcherCommand::WatchRequest { outpoint });
     }
 
-    /// Stops monitoring an outpoint by removing its watch entry from the registry.
-    pub fn unwatch(&self, outpoint: OutPoint) {
-        let _ = self.tx.send(WatcherCommand::Unwatch { outpoint });
+    /// Stops monitoring an outpoint by removing its watch entry from the
+    /// registry. The `scriptPubKey` lets the watcher drop the Electrum
+    /// subscription too without re-resolving it from the network.
+    pub fn unwatch(&self, outpoint: OutPoint, script_pubkey: ScriptBuf) {
+        let _ = self.tx.send(WatcherCommand::Unwatch {
+            outpoint,
+            script_pubkey,
+        });
     }
 
     /// Attempts a non-blocking receive; returns `None` if no event is pending.

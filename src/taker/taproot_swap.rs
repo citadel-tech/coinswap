@@ -554,7 +554,11 @@ impl<B: BlockchainBackend> Taker<B> {
                 .position(|o| o.value == swapcoin.funding_amount)
                 .unwrap_or(0) as u32;
             let outpoint = OutPoint { txid, vout };
-            self.watch_service.register_watch_request(outpoint);
+            let script_pubkey = swapcoin.contract_tx.output[vout as usize]
+                .script_pubkey
+                .clone();
+            self.watch_service
+                .register_watch_request(outpoint, script_pubkey);
         }
 
         wallet.save_to_disk()?;

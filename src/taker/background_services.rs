@@ -451,20 +451,22 @@ impl BreachDetector {
 
     /// Register funding outpoints as sentinels with the WatchService.
     ///
-    /// Each sentinel is a `(funding_outpoint, expected_contract_txid)` pair.
-    /// Only a spend matching the contract txid is considered adversarial;
-    /// cooperative spends (after finalization) produce a different txid and are ignored.
+    /// Each sentinel is a `(funding_outpoint, expected_contract_txid,
+    /// funding_script_pubkey)` triple. Only a spend matching the contract
+    /// txid is considered adversarial; cooperative spends (after
+    /// finalization) produce a different txid and are ignored.
     #[hotpath::measure]
     pub(crate) fn add_sentinels(
         &self,
         watch_service: &WatchService,
-        sentinels: &[(OutPoint, Txid)],
+        sentinels: &[(OutPoint, Txid, bitcoin::ScriptBuf)],
     ) {
-        for (outpoint, _) in sentinels {
-            watch_service.register_watch_request(*outpoint);
+        for (outpoint, _, spk) in sentinels {
+            watch_service.register_watch_request(*outpoint, spk.clone());
         }
         if let Ok(mut guard) = self.sentinels.lock() {
-            guard.extend_from_slice(sentinels);
+            let storage: Vec<_> = sentinels.iter().map(|(op, txid, _)| (*op, *txid)).collect();
+            guard.extend_from_slice(&storage);
         }
     }
 
