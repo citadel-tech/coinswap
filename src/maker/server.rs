@@ -372,20 +372,26 @@ fn handle_connection<B: BlockchainBackend>(
             // Unwatch all contract outputs now that the swap is complete.
             for incoming in &state.incoming_swapcoins {
                 let txid = incoming.contract_tx.compute_txid();
-                for (vout, _) in incoming.contract_tx.output.iter().enumerate() {
-                    maker.unwatch_outpoint(bitcoin::OutPoint {
-                        txid,
-                        vout: vout as u32,
-                    });
+                for (vout, txout) in incoming.contract_tx.output.iter().enumerate() {
+                    maker.unwatch_outpoint(
+                        bitcoin::OutPoint {
+                            txid,
+                            vout: vout as u32,
+                        },
+                        txout.script_pubkey.clone(),
+                    );
                 }
             }
             for outgoing in &state.outgoing_swapcoins {
                 let txid = outgoing.contract_tx.compute_txid();
-                for (vout, _) in outgoing.contract_tx.output.iter().enumerate() {
-                    maker.unwatch_outpoint(bitcoin::OutPoint {
-                        txid,
-                        vout: vout as u32,
-                    });
+                for (vout, txout) in outgoing.contract_tx.output.iter().enumerate() {
+                    maker.unwatch_outpoint(
+                        bitcoin::OutPoint {
+                            txid,
+                            vout: vout as u32,
+                        },
+                        txout.script_pubkey.clone(),
+                    );
                 }
             }
 

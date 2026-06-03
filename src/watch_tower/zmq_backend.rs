@@ -121,14 +121,9 @@ impl ElectrumNotifier {
     /// Subscribe to a scriptPubKey so future history changes (mempool entry,
     /// confirmation, or reorg) surface as `TxSeen` events via `poll`.
     ///
-    /// The script's *current* history is also fetched and queued as `TxSeen`
+    /// The script's current history is also fetched and queued as `TxSeen`
     /// events — this covers the crash-recovery case where a spend of a
-    /// watched outpoint landed in the mempool while the maker was down. The
-    /// funding tx itself is enqueued too, but `process_transaction` walks
-    /// inputs only, so an unrelated tx-in-history is a no-op.
-    ///
-    /// Idempotent: calling twice for the same scriptPubKey doesn't re-arm or
-    /// re-emit.
+    /// watched outpoint landed in the mempool while the maker was down.
     pub fn subscribe_script(&mut self, spk: &Script) -> Result<(), electrum_client::Error> {
         if self.subscriptions.contains_key(spk) {
             return Ok(());
@@ -138,27 +133,38 @@ impl ElectrumNotifier {
         // discard it and walk the explicit history below so each tx flows
         // through the standard TxSeen path.
         let _ = self.inner.script_subscribe(spk)?;
-        if let Ok(hist) = self.inner.script_get_history(spk) {
-            let seen = self
-                .subscriptions
-                .get_mut(spk)
-                .expect("just inserted above");
-            for h in hist {
-                if !seen.insert(h.tx_hash) {
-                    continue;
-                }
-                match self.inner.transaction_get(&h.tx_hash) {
-                    Ok(tx) => self.pending.push_back(BackendEvent::TxSeen {
-                        raw_tx: serialize(&tx),
-                    }),
-                    Err(_) => {
-                        // Couldn't fetch right now — roll back so we retry on the
-                        // next poll/notification.
-                        seen.remove(&h.tx_hash);
-                    }
+        let hist = self.inner.script_get_history(spk)?;
+        let seen = self
+            .subscriptions
+            .get_mut(spk)
+            .expect("just inserted above");
+        for h in hist {
+            if !seen.insert(h.tx_hash) {
+                continue;
+            }
+            match self.inner.transaction_get(&h.tx_hash) {
+                Ok(tx) => self.pending.push_back(BackendEvent::TxSeen {
+                    raw_tx: serialize(&tx),
+                }),
+                Err(_) => {
+                    // Couldn't fetch right now, roll back so we retry on the
+                    // next poll/notification.
+                    seen.remove(&h.tx_hash);
                 }
             }
         }
+        Ok(())
+    }
+
+    /// Drop a previously-armed subscription for `spk`. This is invoked when the corresponding watch is removed (`WatcherCommand::Unwatch`) so long-lived
+    /// watchtowers don't accumulate stale subscriptions that keep `script_pop`/`script_get_history` polling forever for completed swaps.
+    pub fn unsubscribe_script(&mut self, spk: &Script) -> Result<(), electrum_client::Error> {
+        // Local state
+        if self.subscriptions.remove(spk).is_none() {
+            return Ok(());
+        }
+        // Server state. If this call fails (say, due to a network hiccup), we've still freed our local state so `poll` won't walk this script anymore.
+        let _ = self.inner.script_unsubscribe(spk)?;
         Ok(())
     }
 
@@ -239,6 +245,16 @@ impl NotificationBackend {
         match self {
             Self::Zmq(_) => Ok(()),
             Self::Electrum(n) => n.subscribe_script(spk),
+        }
+    }
+
+    /// Drop a previously-armed subscription for `spk`. No-op on the ZMQ
+    /// backend (no per-script subscriptions exist there). On Electrum,
+    /// removes the local subscription bookkeeping and tells the server.
+    pub fn unsubscribe_script(&mut self, spk: &Script) -> Result<(), electrum_client::Error> {
+        match self {
+            Self::Zmq(_) => Ok(()),
+            Self::Electrum(n) => n.unsubscribe_script(spk),
         }
     }
 }
