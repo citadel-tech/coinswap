@@ -1165,31 +1165,36 @@ impl<B: BlockchainBackend> Wallet<B> {
         // `sortedmulti`) and the contract output SPK (P2WSH of the contract redeem
         // script). Neither is HD-derived; pass `None` for the HD-origin hint —
         // the wallet's classifier already has dedicated paths for both.
-        let register_swap_scripts = |my_pubkey: Option<PublicKey>,
-                                     other_pubkey: Option<PublicKey>,
-                                     contract_redeemscript: Option<&ScriptBuf>| {
-            if let (Some(mine), Some(other)) = (my_pubkey, other_pubkey) {
-                let multisig_redeem =
-                    crate::protocol::contract::create_multisig_redeemscript(&mine, &other);
-                let multisig_spk = ScriptBuf::new_p2wsh(&multisig_redeem.wscript_hash());
-                self.rpc.watch_script(&multisig_spk, None);
-            }
-            if let Some(redeem) = contract_redeemscript {
-                if let Ok(contract_spk) = redeemscript_to_scriptpubkey(redeem) {
-                    self.rpc.watch_script(&contract_spk, None);
+        let register_swap_scripts =
+            |my_pubkey: Option<PublicKey>,
+             other_pubkey: Option<PublicKey>,
+             contract_redeemscript: Option<&ScriptBuf>| {
+                if let (Some(mine), Some(other)) = (my_pubkey, other_pubkey) {
+                    let multisig_redeem =
+                        crate::protocol::contract::create_multisig_redeemscript(&mine, &other);
+                    let multisig_spk = ScriptBuf::new_p2wsh(&multisig_redeem.wscript_hash());
+                    self.rpc.watch_script(&multisig_spk, None);
                 }
-            }
-        };
-        let incoming = self
-            .store
-            .incoming_swapcoins
-            .values()
-            .map(|sc| (sc.my_pubkey, sc.other_pubkey, sc.contract_redeemscript.as_ref()));
-        let outgoing = self
-            .store
-            .outgoing_swapcoins
-            .values()
-            .map(|sc| (sc.my_pubkey, sc.other_pubkey, sc.contract_redeemscript.as_ref()));
+                if let Some(redeem) = contract_redeemscript {
+                    if let Ok(contract_spk) = redeemscript_to_scriptpubkey(redeem) {
+                        self.rpc.watch_script(&contract_spk, None);
+                    }
+                }
+            };
+        let incoming = self.store.incoming_swapcoins.values().map(|sc| {
+            (
+                sc.my_pubkey,
+                sc.other_pubkey,
+                sc.contract_redeemscript.as_ref(),
+            )
+        });
+        let outgoing = self.store.outgoing_swapcoins.values().map(|sc| {
+            (
+                sc.my_pubkey,
+                sc.other_pubkey,
+                sc.contract_redeemscript.as_ref(),
+            )
+        });
         for (mine, other, redeem) in incoming.chain(outgoing) {
             register_swap_scripts(mine, other, redeem);
         }

@@ -1010,13 +1010,14 @@ impl<B: BlockchainBackend> MakerTrait for MakerServer<B> {
     }
 
     #[hotpath::measure]
-    fn register_watch_outpoint(&self, outpoint: OutPoint) {
-        self.watch_service.register_watch_request(outpoint);
+    fn register_watch_outpoint(&self, outpoint: OutPoint, script_pubkey: bitcoin::ScriptBuf) {
+        self.watch_service
+            .register_watch_request(outpoint, script_pubkey);
     }
 
     #[hotpath::measure]
-    fn unwatch_outpoint(&self, outpoint: OutPoint) {
-        self.watch_service.unwatch(outpoint);
+    fn unwatch_outpoint(&self, outpoint: OutPoint, script_pubkey: bitcoin::ScriptBuf) {
+        self.watch_service.unwatch(outpoint, script_pubkey);
     }
 
     #[hotpath::measure]

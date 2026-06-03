@@ -174,8 +174,7 @@ fn electrum_client(url: &str) -> Result<Arc<ElectrumClient>, WatcherError> {
     if let Some(c) = g.get(url) {
         return Ok(c.clone());
     }
-    let c =
-        Arc::new(ElectrumClient::new(url).map_err(|e| WatcherError::General(format!("{e}")))?);
+    let c = Arc::new(ElectrumClient::new(url).map_err(|e| WatcherError::General(format!("{e}")))?);
     g.insert(url.to_string(), c.clone());
     Ok(c)
 }

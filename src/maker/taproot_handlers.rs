@@ -373,7 +373,10 @@ fn process_taproot_contract<M: Maker>(
                 );
             }
         }
-        maker.register_watch_outpoint(*contract_outpoint);
+        let contract_spk = outgoing.contract_tx.output[contract_outpoint.vout as usize]
+            .script_pubkey
+            .clone();
+        maker.register_watch_outpoint(*contract_outpoint, contract_spk);
     }
 
     state.funding_broadcast = true;

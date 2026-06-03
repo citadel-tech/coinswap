@@ -339,17 +339,22 @@ impl<B: BlockchainBackend> Taker<B> {
                 self.persist_progress()?;
 
                 // Register outgoing funding outpoints as sentinels with the breach detector.
-                // Each sentinel maps a funding outpoint to its expected contract txid.
-                // Only a spend matching the contract txid is adversarial.
-                let sentinels: Vec<(OutPoint, bitcoin::Txid)> = self
+                // Each sentinel = (funding outpoint, expected contract txid, funding SPK).
+                // The SPK is read straight off the funding tx the swapcoin already carries.
+                let sentinels: Vec<(OutPoint, bitcoin::Txid, bitcoin::ScriptBuf)> = self
                     .swap_state()?
                     .outgoing_swapcoins
                     .iter()
-                    .map(|sc| {
-                        (
-                            sc.contract_tx.input[0].previous_output,
-                            sc.contract_tx.compute_txid(),
-                        )
+                    .filter_map(|sc| {
+                        let funding_outpoint = sc.contract_tx.input[0].previous_output;
+                        let funding_spk = sc
+                            .funding_tx
+                            .as_ref()?
+                            .output
+                            .get(funding_outpoint.vout as usize)?
+                            .script_pubkey
+                            .clone();
+                        Some((funding_outpoint, sc.contract_tx.compute_txid(), funding_spk))
                     })
                     .collect();
                 if let Some(ref detector) = self.breach_detector {
@@ -688,13 +693,17 @@ impl<B: BlockchainBackend> Taker<B> {
 
             // Register this maker's funding outpoints as sentinels for subsequent waits.
             // Each sentinel maps a funding outpoint to its expected contract txid.
-            let maker_sentinels: Vec<(bitcoin::OutPoint, bitcoin::Txid)> =
+            let maker_sentinels: Vec<(bitcoin::OutPoint, bitcoin::Txid, bitcoin::ScriptBuf)> =
                 senders_contract_txs_info
                     .iter()
                     .map(|info| {
+                        let funding_spk = bitcoin::ScriptBuf::new_p2wsh(
+                            &info.multisig_redeemscript.wscript_hash(),
+                        );
                         (
                             info.contract_tx.input[0].previous_output,
                             info.contract_tx.compute_txid(),
+                            funding_spk,
                         )
                     })
                     .collect();
