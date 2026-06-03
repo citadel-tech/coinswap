@@ -579,7 +579,8 @@ impl OfferSyncService {
     fn fetch_and_record_one(
         addr: MakerAddress,
         socks_port: u16,
-        rest_backend: &BitcoinRest,
+        rest_backend: Option<&BitcoinRest>,
+        electrum_url: Option<&str>,
         offerbook: &Arc<RwLock<OfferBook>>,
         offerbook_path: &Path,
         now: u64,
@@ -590,6 +591,7 @@ impl OfferSyncService {
             Some(oa) => {
                 match verify_fidelity_with_backend(
                     rest_backend,
+                    electrum_url,
                     &oa.offer.fidelity,
                     &oa.address.to_string(),
                     &oa.offer.tweakable_point,
@@ -637,7 +639,8 @@ impl OfferSyncService {
         Self::fetch_and_record_one(
             address,
             self.socks_port,
-            &self.rest_backend,
+            self.rest_backend.as_ref(),
+            self.electrum_url.as_deref(),
             &self.offerbook.inner,
             &self.offerbook.path,
             now,

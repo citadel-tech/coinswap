@@ -43,10 +43,7 @@ impl WatchService {
         Self { tx, rx }
     }
 
-    /// Registers an outpoint to be monitored for future spends. The caller
-    /// supplies the outpoint's `scriptPubKey` so the watcher's hot loop never
-    /// does a network fetch — callers always have the parent tx in scope when
-    /// they decide to start watching one of its outputs.
+    /// Registers an outpoint to be monitored for future spends.
     pub fn register_watch_request(&self, outpoint: OutPoint, script_pubkey: ScriptBuf) {
         let _ = self.tx.send(WatcherCommand::RegisterWatchRequest {
             outpoint,

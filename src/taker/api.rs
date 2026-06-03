@@ -2404,6 +2404,7 @@ impl<B: BlockchainBackend> Taker<B> {
             .map_err(|e| TakerError::General(format!("Invalid maker address: {e}")))?;
         self.offerbook.remove(&parsed)
     }
+}
 
 impl<B: BlockchainBackend> Taker<B> {
     /// Restore a wallet from a backup file (static — no taker instance needed).
