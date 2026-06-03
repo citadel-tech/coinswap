@@ -689,7 +689,7 @@ impl OfferSyncService {
                         addr,
                         socks_port,
                         rest_backend.as_ref(),
-                                electrum_url.as_deref(),
+                        electrum_url.as_deref(),
                         &offerbook,
                         &offerbook_path,
                         now,
