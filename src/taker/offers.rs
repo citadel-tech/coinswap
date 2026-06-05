@@ -119,9 +119,7 @@ impl MakerOfferCandidate {
         self.protocol = Some(protocol);
         self.last_offer_update_ts = Some(now_ts);
         self.next_offer_check_ts = None;
-        if self.state != MakerState::Bad {
-            self.state = MakerState::Good;
-        }
+        self.state = MakerState::Good;
     }
 
     fn mark_failure(&mut self, now_ts: u64) {
@@ -1187,7 +1185,7 @@ mod tests {
     }
 
     #[test]
-    fn mark_success_does_not_unstick_bad_state() {
+    fn mark_success_rehabilitates_bad_state() {
         let now_ts = 170000;
         let mut candidate = MakerOfferCandidate {
             address: addr("6105"),
@@ -1203,7 +1201,9 @@ mod tests {
             MakerProtocol::Taproot,
             now_ts,
         );
-        assert_eq!(candidate.state, MakerState::Bad);
+        assert_eq!(candidate.state, MakerState::Good);
+        assert_eq!(candidate.next_offer_check_ts, None);
+        assert_eq!(candidate.last_offer_update_ts, Some(now_ts));
     }
 
     #[test]
