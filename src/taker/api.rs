@@ -1030,6 +1030,7 @@ impl Taker {
 
         // Success path: sweep + report (shared by both protocols)
         let swap_id_owned = swap_id.to_string();
+        let expected_incoming_swapcoins = self.swap_state()?.incoming_swapcoins.len();
         let swept = {
             let mut wallet = self.write_wallet()?;
             let swept = wallet.sweep_incoming_swapcoins(2.0)?;
@@ -1037,6 +1038,19 @@ impl Taker {
             wallet.sync_and_save()?;
             swept
         };
+        if expected_incoming_swapcoins == 0 || swept.resolved.len() < expected_incoming_swapcoins {
+            let err = TakerError::General(format!(
+                "Swap finalization swept {}/{} incoming swapcoins",
+                swept.resolved.len(),
+                expected_incoming_swapcoins
+            ));
+            self.emit_failure_report(&initial_utxos, swap_start_time, &err);
+            self.persist_failure(SwapPhase::Finalizing, &err);
+            if let Err(re) = self.recover_active_swap() {
+                log::error!("Recovery failed: {:?}", re);
+            }
+            return Err(err);
+        }
 
         self.populate_success_outcomes(&swap_id_owned, &swept)?;
 
