@@ -66,6 +66,8 @@ struct SwapState {
     reserve_utxo: Vec<OutPoint>,
     /// Last activity timestamp.
     last_activity: Instant,
+    /// Time when this swap was accepted by the maker.
+    swap_start_time: Instant,
 }
 
 impl Default for SwapState {
@@ -82,6 +84,7 @@ impl Default for SwapState {
             contract_feerate: 0.0,
             reserve_utxo: Vec::new(),
             last_activity: Instant::now(),
+            swap_start_time: Instant::now(),
         }
     }
 }
@@ -1115,6 +1118,7 @@ impl MakerTrait for MakerServer {
         swap_state.contract_feerate = state.contract_feerate;
         swap_state.reserve_utxo = state.reserve_utxo.clone();
         swap_state.last_activity = Instant::now();
+        swap_state.swap_start_time = state.swap_start_time;
         log::debug!(
             "[{}] Stored connection state for {}: amount={}, timelock={}, protocol={:?}, outgoing_count={}",
             self.config.network_port,
@@ -1142,6 +1146,7 @@ impl MakerTrait for MakerServer {
             state.funding_broadcast = s.funding_broadcast;
             state.contract_feerate = s.contract_feerate;
             state.reserve_utxo = s.reserve_utxo.clone();
+            state.swap_start_time = s.swap_start_time;
             state
         })
     }

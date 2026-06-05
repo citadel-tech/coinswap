@@ -478,6 +478,7 @@ fn handle_swap_details<M: Maker>(
     state.timelock = details.timelock;
     state.refund_locktime_offset = details.refund_locktime_offset;
     state.protocol = details.protocol_version;
+    state.swap_start_time = Instant::now();
     state.phase = SwapPhase::AwaitingContractData;
 
     maker.store_connection_state(&details.id, state)?;
@@ -528,6 +529,7 @@ fn restore_state_if_needed<M: Maker>(maker: &Arc<M>, state: &mut ConnectionState
             state.pending_funding_txes = stored.pending_funding_txes;
             state.funding_broadcast = stored.funding_broadcast;
             state.contract_feerate = stored.contract_feerate;
+            state.swap_start_time = stored.swap_start_time;
         }
     }
 }
