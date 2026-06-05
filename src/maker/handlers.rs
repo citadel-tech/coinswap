@@ -496,7 +496,9 @@ fn handle_swap_details<M: Maker>(
 
     let (tweakable_privkey, tweakable_point, _) = maker.get_tweakable_keypair()?;
 
-    let session_id = state.session_id.unwrap();
+    let session_id = state
+        .session_id
+        .ok_or(MakerError::General("Connection did not start"))?;
     let secp = bitcoin::secp256k1::Secp256k1::new();
     let session_id_sig = secp.sign_ecdsa_low_r(
         &bitcoin::secp256k1::Message::from_digest(session_id),
