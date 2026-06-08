@@ -91,17 +91,43 @@ pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
                 out.len()
             );
 
-            let swap_id = format!("reboot-recovery-{}", super::swap_tracker::now_secs());
-            let maker_clone = Arc::clone(&maker);
-            let handle = thread::Builder::new()
-                .name(format!("reboot-recovery-{}", maker.config.network_port))
-                .spawn(move || {
-                    if let Err(e) = recover_from_swap(maker_clone, swap_id.clone(), inc, out) {
-                        log::error!("Reboot recovery failed for {}: {:?}", swap_id, e);
-                    }
-                })
-                .map_err(MakerError::IO)?;
-            maker.thread_pool.add_thread(handle);
+            // QA: Reboot recovery could discard funded swapcoins after treating
+            // the swap as "funding was never broadcast". Group unfinished coins
+            // by swap id before recovery so each discard/recovery decision is
+            // scoped to the swap being evaluated, preserving funded recovery
+            // material across restarts.
+            // Regression coverage: `tests/integration/taproot_reboot_recovery.rs`.
+            let mut groups = std::collections::HashMap::new();
+            for incoming in inc {
+                groups
+                    .entry(incoming.swap_id.clone())
+                    .or_insert_with(|| (Vec::new(), Vec::new()))
+                    .0
+                    .push(incoming);
+            }
+            for outgoing in out {
+                groups
+                    .entry(outgoing.swap_id.clone())
+                    .or_insert_with(|| (Vec::new(), Vec::new()))
+                    .1
+                    .push(outgoing);
+            }
+
+            for (swap_id, (inc, out)) in groups {
+                let swap_id = swap_id.unwrap_or_else(|| {
+                    format!("reboot-recovery-{}", super::swap_tracker::now_secs())
+                });
+                let maker_clone = Arc::clone(&maker);
+                let handle = thread::Builder::new()
+                    .name(format!("reboot-recovery-{}", maker.config.network_port))
+                    .spawn(move || {
+                        if let Err(e) = recover_from_swap(maker_clone, swap_id.clone(), inc, out) {
+                            log::error!("Reboot recovery failed for {}: {:?}", swap_id, e);
+                        }
+                    })
+                    .map_err(MakerError::IO)?;
+                maker.thread_pool.add_thread(handle);
+            }
         }
     }
 
@@ -713,18 +739,18 @@ fn recover_from_swap(
         outgoing_swapcoins.len()
     );
 
-    // Check if funding was ever broadcast. If not, there is nothing on-chain
-    // to recover — discard the swapcoins and exit immediately.
+    // Check if funding was ever broadcast. Only an explicit tracker record with
+    // funding_broadcast=false is safe to discard; missing tracker state can
+    // happen after a reboot and must not delete persisted recovery material.
     {
         let funding_broadcast = maker
             .swap_tracker
             .lock()
             .unwrap()
             .get_record(&swap_id)
-            .map(|r| r.funding_broadcast)
-            .unwrap_or(false);
+            .map(|r| r.funding_broadcast);
 
-        if !funding_broadcast {
+        if funding_broadcast == Some(false) {
             log::info!(
                 "[{}] Funding was never broadcast for swap {} — nothing to recover. Discarding swapcoins.",
                 maker.config.network_port,
