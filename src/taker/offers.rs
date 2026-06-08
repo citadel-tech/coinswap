@@ -19,6 +19,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use bitcoin::{OutPoint, Txid};
 use serde::{Deserialize, Serialize};
 use socks::Socks5Stream;
 
@@ -97,6 +98,9 @@ pub struct MakerOfferCandidate {
     /// Maker address (hostname)
     pub address: MakerAddress,
 
+    /// Fidelity bond outpoint (txid from registry, vout is always 0).
+    pub fidelity_outpoint: Option<OutPoint>,
+
     /// Latest offer, if successfully fetched
     pub offer: Option<Offer>,
 
@@ -115,6 +119,7 @@ pub struct MakerOfferCandidate {
 
 impl MakerOfferCandidate {
     fn mark_success(&mut self, offer: Offer, protocol: MakerProtocol, now_ts: u64) {
+        self.fidelity_outpoint = Some(offer.fidelity.bond.outpoint());
         self.offer = Some(offer);
         self.protocol = Some(protocol);
         self.last_offer_update_ts = Some(now_ts);
@@ -526,7 +531,7 @@ impl OfferSyncService {
             let mut book = self.offerbook.inner.write().unwrap();
             for fidelity in fidelities {
                 match MakerAddress::try_from(fidelity.onion_address) {
-                    Ok(parsed) => book.upsert_address(parsed),
+                    Ok(parsed) => book.upsert_address(parsed, Some(fidelity.txid)),
                     Err(e) => {
                         log::warn!("Skipping invalid maker address from registry: {e}");
                     }
@@ -616,7 +621,7 @@ impl OfferSyncService {
             .inner
             .write()
             .unwrap()
-            .upsert_address(address.clone());
+            .upsert_address(address.clone(), None);
 
         Self::fetch_and_record_one(
             address,
@@ -798,13 +803,14 @@ pub struct OfferBook {
 }
 
 impl OfferBook {
-    fn upsert_address(&mut self, address: MakerAddress) {
+    fn upsert_address(&mut self, address: MakerAddress, txid: Option<Txid>) {
         if self.makers.iter().any(|m| m.address == address) {
             return;
         }
 
         self.makers.push(MakerOfferCandidate {
             address,
+            fidelity_outpoint: txid.map(|t| OutPoint::new(t, 0)),
             offer: None,
             state: MakerState::Unresponsive { retries: 0 },
             protocol: None,
@@ -1150,6 +1156,7 @@ mod tests {
         let now_ts = 170000;
         let mut candidate = MakerOfferCandidate {
             address: addr("6104"),
+            fidelity_outpoint: Some(OutPoint::new(Txid::from_slice(&[1; 32]).unwrap(), 0)),
             offer: None,
             state: MakerState::Good,
             protocol: None,
@@ -1189,6 +1196,7 @@ mod tests {
         let now_ts = 170000;
         let mut candidate = MakerOfferCandidate {
             address: addr("6105"),
+            fidelity_outpoint: Some(OutPoint::new(Txid::from_slice(&[1; 32]).unwrap(), 0)),
             offer: None,
             state: MakerState::Bad,
             protocol: None,
@@ -1212,6 +1220,7 @@ mod tests {
         let mut book = OfferBook { makers: vec![] };
         book.makers.push(MakerOfferCandidate {
             address: addr("6103"),
+            fidelity_outpoint: Some(OutPoint::new(Txid::from_slice(&[1; 32]).unwrap(), 0)),
             offer: None,
             state: MakerState::Unresponsive { retries: 3 },
             protocol: None,
