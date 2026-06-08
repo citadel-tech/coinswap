@@ -134,7 +134,10 @@ pub fn setup_taker_logger(filter: LevelFilter, is_stdout: bool, datadir: Option<
             Root::builder().appender("file").build(filter)
         };
 
-        let config = config.build(root_logger).unwrap();
+        let config = config
+            .logger(Logger::builder().build("bitcoincore_rpc", LevelFilter::Off))
+            .build(root_logger)
+            .unwrap();
         match log4rs::init_config(config) {
             Ok(_) => log::info!("✅ Logger initialized successfully"),
             Err(e) => log::error!("❌ Failed to initialize logger: {e}"),
@@ -158,6 +161,7 @@ pub fn setup_maker_logger(filter: LevelFilter, data_dir: Option<PathBuf>) {
         let config = Config::builder()
             .appender(Appender::builder().build("stdout", Box::new(stdout)))
             .appender(Appender::builder().build("file", Box::new(file_appender)))
+            .logger(Logger::builder().build("bitcoincore_rpc", LevelFilter::Off))
             .logger(
                 Logger::builder()
                     .appender("file")
