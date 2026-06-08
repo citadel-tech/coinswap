@@ -284,9 +284,9 @@ $ taker fetch-offers
 
 ```json
 {
-  "base_fee": 100,
-  "amount_relative_fee_pct": 0.1,
-  "time_relative_fee_pct": 0.005,
+  "base_fee": 500,
+  "amount_relative_fee_pct": 0.0025,
+  "time_relative_fee_pct": 0.0001,
   "required_confirms": 1,
   "minimum_locktime": 20,
   "max_size": 49949540,

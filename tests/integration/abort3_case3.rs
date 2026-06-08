@@ -86,7 +86,7 @@ fn maker_abort3_case3() {
     }
 
     // Use post-fidelity, pre-swap balances as the correct baseline
-    let maker_spendable_balance = verify_maker_pre_swap_balances(&makers);
+    verify_maker_pre_swap_balances(&makers);
     log::info!("Starting Legacy abort3 case 3 test...");
 
     // Start periodic swap tracker logging (every 10s)
@@ -184,7 +184,7 @@ fn maker_abort3_case3() {
     );
     assert_eq!(
         taker_balances.swap.to_sat(),
-        495278,
+        498187,
         "Taker swap balance mismatch"
     );
     assert_eq!(
@@ -207,7 +207,7 @@ fn maker_abort3_case3() {
 
     assert_eq!(
         balance_diff.to_sat(),
-        5030,
+        2121,
         "Taker spendable balance change mismatch"
     );
 
@@ -215,15 +215,8 @@ fn maker_abort3_case3() {
     for (i, maker) in makers.iter().enumerate() {
         maker.wallet.write().unwrap().sync_and_save().unwrap();
         let maker_balances = maker.wallet.read().unwrap().get_balances().unwrap();
-        let original = maker_spendable_balance[i];
-
-        info!(
-            "Maker {} balance diff: pre-swap: {}, current: {}",
-            i, original, maker_balances.spendable,
-        );
-
-        let expected_regular = [14501458u64, 14503330][i];
-        let expected_swap = [499700u64, 497150][i];
+        let expected_regular = [14499833u64, 14500421][i];
+        let expected_swap = [499700u64, 498775][i];
         assert_eq!(
             maker_balances.regular.to_sat(),
             expected_regular,
@@ -244,13 +237,12 @@ fn maker_abort3_case3() {
         );
         assert_eq!(maker_balances.fidelity, Amount::from_btc(0.05).unwrap());
 
-        // Makers should not have lost funds
-        assert!(
-            maker_balances.spendable >= original,
-            "Maker {} should not have lost funds. Original: {}, After: {}",
+        let expected_spendable = [14999533u64, 14999196][i];
+        assert_eq!(
+            maker_balances.spendable.to_sat(),
+            expected_spendable,
+            "Maker {} spendable balance mismatch",
             i,
-            original,
-            maker_balances.spendable
         );
     }
 

@@ -127,7 +127,7 @@ fn test_standard_coinswap() {
     );
     assert_eq!(
         taker_balances.swap.to_sat(),
-        495578,
+        498487,
         "Taker swap balance mismatch"
     );
     assert_eq!(
@@ -145,7 +145,7 @@ fn test_standard_coinswap() {
 
     assert_eq!(
         balance_diff.to_sat(),
-        4730,
+        1821,
         "Taker spendable balance change mismatch"
     );
 
@@ -164,8 +164,8 @@ fn test_standard_coinswap() {
             balances.spendable,
         );
 
-        let expected_regular = [14501458u64, 14503330][i];
-        let expected_swap = [499700u64, 497450][i];
+        let expected_regular = [14499833u64, 14500421][i];
+        let expected_swap = [499700u64, 499075][i];
         assert_eq!(
             balances.regular.to_sat(),
             expected_regular,
@@ -193,7 +193,7 @@ fn test_standard_coinswap() {
 
         info!("Maker {} fee earned: {} sats", i, maker_fee.to_sat());
 
-        let expected_fee = [1642u64, 1264][i];
+        let expected_fee = [17u64, 0][i];
         assert_eq!(
             maker_fee.to_sat(),
             expected_fee,

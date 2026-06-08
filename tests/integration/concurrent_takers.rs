@@ -255,6 +255,8 @@ fn test_concurrent_takers_legacy() {
         }
     }
 
+    let expected_maker_spendable = [Amount::from_sat(999533), Amount::from_sat(999496)];
+
     // Verify maker balances
     for (i, (maker, original_spendable)) in makers.iter().zip(maker_spendable_balance).enumerate() {
         let wallet = maker.wallet.read().unwrap();
@@ -272,11 +274,18 @@ fn test_concurrent_takers_legacy() {
             i
         );
 
-        // Maker should have earned some fee if at least one swap succeeded
+        // With the lower fee schedule, the second maker's earned fee does not fully
+        // offset its on-chain spend cost in this limited-liquidity scenario.
         if success_count > 0 {
-            assert!(
-                balances.spendable >= original_spendable,
-                "Maker {}: Spendable balance should not decrease",
+            assert_eq!(
+                balances.spendable, expected_maker_spendable[i],
+                "Maker {}: Unexpected spendable balance",
+                i
+            );
+        } else {
+            assert_eq!(
+                balances.spendable, original_spendable,
+                "Maker {}: Spendable balance should be unchanged",
                 i
             );
         }

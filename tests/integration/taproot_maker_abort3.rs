@@ -129,7 +129,7 @@ fn test_taproot_maker_abort3() {
 
     assert_eq!(
         taker_balances.spendable.to_sat(),
-        14997142,
+        14998366,
         "Taker spendable balance mismatch"
     );
     assert_eq!(
@@ -146,7 +146,7 @@ fn test_taproot_maker_abort3() {
             "Maker {} balances: original={}, after={}",
             i, original, balances.spendable
         );
-        let expected_spendable = [15000033, 14999516, 15000033];
+        let expected_spendable = [14999421, 14999516, 14999421];
         assert_eq!(
             balances.spendable.to_sat(),
             expected_spendable[i],

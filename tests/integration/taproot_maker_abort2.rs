@@ -185,7 +185,7 @@ fn test_taproot_maker_abort2() {
     );
     assert_eq!(
         taker_balances.swap.to_sat(),
-        497450,
+        498674,
         "Taker swap balance mismatch"
     );
     assert_eq!(
@@ -208,7 +208,7 @@ fn test_taproot_maker_abort2() {
 
     assert_eq!(
         balance_diff.to_sat(),
-        2858,
+        1634,
         "Taker spendable balance change mismatch"
     );
 
@@ -223,14 +223,14 @@ fn test_taproot_maker_abort2() {
             i, original, maker_balances.spendable,
         );
 
-        let expected_regular = [14500333, 14501458];
+        let expected_regular = [14499721, 14500234];
         assert_eq!(
             maker_balances.regular.to_sat(),
             expected_regular[i],
             "Maker {} regular balance mismatch",
             i
         );
-        let expected_swap = [499700, 498575];
+        let expected_swap = [499700, 499187];
         assert_eq!(
             maker_balances.swap.to_sat(),
             expected_swap[i],
@@ -245,7 +245,7 @@ fn test_taproot_maker_abort2() {
         );
         assert_eq!(maker_balances.fidelity, Amount::from_btc(0.05).unwrap());
 
-        let expected_spendable = [15000033, 15000033];
+        let expected_spendable = [14999421, 14999421];
         assert_eq!(
             maker_balances.spendable.to_sat(),
             expected_spendable[i],

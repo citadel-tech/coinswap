@@ -142,7 +142,7 @@ fn test_malice2_maker_broadcast_contract() {
             maker_balances.contract,
             maker_balances.spendable,
         );
-        let expected_regular = [14998608u64, 14503330][i];
+        let expected_regular = [14998608u64, 14500421][i];
         assert_eq!(
             maker_balances.regular.to_sat(),
             expected_regular,
