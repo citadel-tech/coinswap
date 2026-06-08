@@ -142,6 +142,9 @@ pub struct TaprootExchangeProgress {
     pub maker_contract_received: bool,
     /// Incoming or watch-only swapcoins created from maker's response.
     pub swapcoins_created: bool,
+    /// Maker's funding (contract) tx confirmed on-chain.
+    #[serde(default)]
+    pub maker_funding_confirmed: bool,
 }
 
 /// Protocol-specific exchange progress.
@@ -313,6 +316,7 @@ impl fmt::Display for MakerProgress {
                     ("s", t.contract_data_sent),
                     ("r", t.maker_contract_received),
                     ("w", t.swapcoins_created),
+                    ("m", t.maker_funding_confirmed),
                 ];
                 flags
                     .iter()

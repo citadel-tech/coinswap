@@ -183,7 +183,10 @@ impl Taker {
         // own outgoing, so we must broadcast first.
         self.swap_state_mut()?.phase = SwapPhase::FundsBroadcast;
         self.persist_swap(SwapPhase::FundsBroadcast)?;
-        self.funding_broadcast()?;
+        // funding_broadcast opens maker 0's connection before the
+        // confirmation wait and keeps it warm with keepalives, returning the
+        // live stream so the contract exchange reuses it (no cold reconnect).
+        let maker0_stream = self.funding_broadcast()?;
 
         // Phase 2: Exchange contract data with makers.
         log::info!("Exchanging contract data with makers...");
@@ -192,11 +195,20 @@ impl Taker {
         let hashlock_nonces = self.swap_state()?.hashlock_nonces.clone();
         let mut received_contracts: Vec<TaprootContractData> = Vec::new();
 
+        let mut maker0_stream = Some(maker0_stream);
+
         for i in 0..num_makers {
             let maker_address = self.swap_state()?.makers[i].address.to_string();
-            let mut stream = self.net_connect(&maker_address)?;
-
-            self.net_handshake(&mut stream)?;
+            let mut stream = if i == 0 {
+                // Reuse the warm, already-handshaked connection from funding_broadcast.
+                maker0_stream
+                    .take()
+                    .ok_or_else(|| TakerError::General("Missing warm maker 0 stream".to_string()))?
+            } else {
+                let mut stream = self.net_connect(&maker_address)?;
+                self.net_handshake(&mut stream)?;
+                stream
+            };
             self.swap_state_mut()?.makers[i]
                 .taproot_exchange_mut()?
                 .connected = true;
@@ -399,10 +411,51 @@ impl Taker {
                         self.swap_state_mut()?.watchonly_swapcoins.push(watchonly);
                     }
 
+                    // Wait for this maker's funding (contract) tx to be broadcast and
+                    // confirmed before moving on. In Taproot the contract tx IS the
+                    // funding tx; the maker broadcasts it before responding, but it may
+                    // not yet be visible/confirmed on the taker's node. Without this
+                    // wait, finalization races ahead and the incoming-swapcoin sweep
+                    // fails with "swept 0/1 incoming swapcoins".
+                    let maker_funding_txids: Vec<bitcoin::Txid> = maker_contract
+                        .contract_txs
+                        .iter()
+                        .map(|tx| tx.compute_txid())
+                        .collect();
+                    let required_confirms = self.swap_state()?.params.required_confirms;
+                    log::info!(
+                        "Waiting for maker {}'s Taproot funding to confirm ({} tx)...",
+                        i,
+                        maker_funding_txids.len()
+                    );
+                    let abort_check = || {
+                        self.breach_detector
+                            .as_ref()
+                            .is_some_and(|d| d.is_breached())
+                    };
+                    {
+                        let wallet = self.read_wallet()?;
+                        match wallet.wait_for_tx_confirmation(
+                            &maker_funding_txids,
+                            required_confirms,
+                            None,
+                            Some(&abort_check),
+                        ) {
+                            Ok(_) => {}
+                            Err(crate::wallet::WalletError::Interrupted(_)) => {
+                                return Err(TakerError::ContractsBroadcasted(vec![]));
+                            }
+                            Err(e) => return Err(e.into()),
+                        }
+                    }
+
                     received_contracts.push(*maker_contract);
                     self.swap_state_mut()?.makers[i]
                         .taproot_exchange_mut()?
                         .swapcoins_created = true;
+                    self.swap_state_mut()?.makers[i]
+                        .taproot_exchange_mut()?
+                        .maker_funding_confirmed = true;
                     self.persist_progress()?;
                 }
                 _ => {
@@ -535,9 +588,16 @@ impl Taker {
         Ok(())
     }
 
-    /// Broadcast contract transactions (Taproot).
+    /// Broadcast contract transactions (Taproot) and wait for them to confirm.
+    ///
+    /// Opens the first maker's connection *before* the confirmation wait and
+    /// keeps it alive with `WaitingFundingConfirmation` keepalives, returning
+    /// the live stream so the contract exchange can reuse it. This prevents the
+    /// maker's swap session from going stale during the wait, which previously
+    /// caused a cold reconnect onto a dead session and surfaced as an
+    /// `UnexpectedEof` ("failed to fill whole buffer") on the contract exchange.
     #[hotpath::measure]
-    fn funding_broadcast(&mut self) -> Result<(), TakerError> {
+    fn funding_broadcast(&mut self) -> Result<std::net::TcpStream, TakerError> {
         log::info!("Broadcasting contract transactions...");
 
         let wallet = self.write_wallet()?;
@@ -569,12 +629,85 @@ impl Taker {
             .map(|sc| sc.contract_tx.compute_txid())
             .collect();
         let required_confirms = self.swap_state()?.params.required_confirms;
-        {
-            let wallet = self.read_wallet()?;
-            wallet.wait_for_tx_confirmation(&contract_txids, required_confirms, None, None)?;
-        }
+
+        // Open and handshake maker 0's connection up front so we can keep it
+        // warm while waiting for our funding tx to confirm.
+        let swap_id = self.swap_state()?.id.clone();
+        let maker0_address = self.swap_state()?.makers[0].address.to_string();
+        let mut stream = self.net_connect(&maker0_address)?;
+        self.net_handshake(&mut stream)?;
+
+        self.wait_for_funding_with_keepalive(
+            &mut stream,
+            &contract_txids,
+            required_confirms,
+            &swap_id,
+        )?;
 
         log::info!("Contract transactions broadcast and confirmed");
-        Ok(())
+        Ok(stream)
+    }
+
+    /// Wait for the taker's outgoing contract (funding) txs to reach
+    /// `required_confirms`, sending periodic `WaitingFundingConfirmation`
+    /// keepalives to maker 0 so its swap session stays alive across the wait.
+    fn wait_for_funding_with_keepalive(
+        &self,
+        stream: &mut std::net::TcpStream,
+        contract_txids: &[bitcoin::Txid],
+        required_confirms: u32,
+        swap_id: &str,
+    ) -> Result<(), TakerError> {
+        if required_confirms == 0 || contract_txids.is_empty() {
+            return Ok(());
+        }
+
+        log::info!(
+            "Waiting for {} confirmation(s) on {} contract tx(s), keeping maker 0 warm...",
+            required_confirms,
+            contract_txids.len()
+        );
+
+        loop {
+            if self
+                .breach_detector
+                .as_ref()
+                .is_some_and(|d| d.is_breached())
+            {
+                return Err(TakerError::ContractsBroadcasted(vec![]));
+            }
+
+            let all_confirmed = {
+                let wallet = self.read_wallet()?;
+                contract_txids.iter().all(|txid| {
+                    wallet
+                        .rpc
+                        .get_raw_transaction_info(txid, None)
+                        .ok()
+                        .and_then(|info| info.confirmations)
+                        .is_some_and(|c| c >= required_confirms)
+                })
+            };
+
+            if all_confirmed {
+                return Ok(());
+            }
+
+            // Ping the maker so it doesn't treat the swap session as idle.
+            if let Err(e) = send_message(
+                stream,
+                &TakerToMakerMessage::WaitingFundingConfirmation(swap_id.to_string()),
+            ) {
+                // The maker dropped the connection — fail fast with a clear
+                // error instead of waiting out the full confirmation and then
+                // hitting EOF on the contract exchange.
+                return Err(TakerError::General(format!(
+                    "Maker 0 closed connection during funding wait: {:?}",
+                    e
+                )));
+            }
+
+            std::thread::sleep(crate::utill::HEART_BEAT_INTERVAL);
+        }
     }
 }
