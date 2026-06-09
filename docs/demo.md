@@ -1,6 +1,6 @@
 <div align="center">
 
-# <img src="https://citadelfoss.xyz/coinswap-bw.svg" alt="Coinswap" height="36" style="vertical-align: middle;"/> Coinswap Live Demo
+# Coinswap Live Demo
 
 ### Prerequisites & Setup Guide
 
