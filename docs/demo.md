@@ -34,7 +34,7 @@ Start `bitcoind` with the following `bitcoin.conf`:
 ```ini
 signet=1
 [signet]
-signetchallenge=0014a3f29c87ab7cc55d5541b7fb1a88df500ba19235
+signetchallenge=0014a3ec9c731da66d9725d54947aede5c830623f33d
 addnode=170.75.166.88:38333
 dnsseed=0
 signetblocktime=30
