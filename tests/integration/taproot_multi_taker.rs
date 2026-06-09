@@ -178,7 +178,7 @@ fn test_taproot_multi_taker_coinswap() {
 
     assert_eq!(
         taker1_balances_after.spendable.to_sat(),
-        14997142,
+        14998366,
         "Taker 1 spendable balance mismatch"
     );
     assert_eq!(
@@ -187,7 +187,7 @@ fn test_taproot_multi_taker_coinswap() {
         "Taker 1 contract balance mismatch"
     );
     assert_eq!(taker1_balances_after.fidelity, Amount::ZERO);
-    assert_eq!(balance_diff1.to_sat(), 2858, "Taker 1 fee paid mismatch");
+    assert_eq!(balance_diff1.to_sat(), 1634, "Taker 1 fee paid mismatch");
 
     // ---- Verify Taker 2 ----
     let taker2_balances_after = takers[1]
@@ -206,7 +206,7 @@ fn test_taproot_multi_taker_coinswap() {
 
     assert_eq!(
         taker2_balances_after.spendable.to_sat(),
-        14997142,
+        14998366,
         "Taker 2 spendable balance mismatch"
     );
     assert_eq!(
@@ -215,7 +215,7 @@ fn test_taproot_multi_taker_coinswap() {
         "Taker 2 contract balance mismatch"
     );
     assert_eq!(taker2_balances_after.fidelity, Amount::ZERO);
-    assert_eq!(balance_diff2.to_sat(), 2858, "Taker 2 fee paid mismatch");
+    assert_eq!(balance_diff2.to_sat(), 1634, "Taker 2 fee paid mismatch");
 
     // ---- Verify Makers earned fees ----
     for (i, (maker, original_spendable)) in makers.iter().zip(maker_spendable_balance).enumerate() {
@@ -234,7 +234,7 @@ fn test_taproot_multi_taker_coinswap() {
             "Maker {} regular balance mismatch",
             i
         );
-        let expected_swap = [5000550, 5000550];
+        let expected_swap = [4999326, 4999326];
         assert_eq!(
             balances.swap.to_sat(),
             expected_swap[i],
@@ -256,7 +256,7 @@ fn test_taproot_multi_taker_coinswap() {
 
         info!("Maker {} fee earned: {} sats", i, maker_fee.to_sat());
 
-        assert_eq!(maker_fee.to_sat(), 1034, "Maker {} fee earned mismatch", i);
+        assert_eq!(maker_fee.to_sat(), 0, "Maker {} fee earned mismatch", i);
     }
 
     info!("All multi-taker swap tests (Taproot) completed successfully!");

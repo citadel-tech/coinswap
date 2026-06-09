@@ -119,7 +119,7 @@ fn maker_abort2_case1() {
 
     assert_eq!(
         taker_balances.spendable.to_sat(),
-        14995270,
+        14998179,
         "Taker spendable balance mismatch"
     );
     assert_eq!(
@@ -136,7 +136,7 @@ fn maker_abort2_case1() {
             "Maker {} balances: original={}, after={}",
             i, original, balances.spendable
         );
-        let expected_spendable = [15001158u64, 14999516, 15000780][i];
+        let expected_spendable = [14999533u64, 14999516, 14999496][i];
         assert_eq!(
             balances.spendable.to_sat(),
             expected_spendable,

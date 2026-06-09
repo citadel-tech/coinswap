@@ -27,8 +27,9 @@ min_swap_amount = 10000
 fidelity_amount = 50000
 fidelity_timelock = 13104
 connection_type = TOR
-base_fee = 100,
-amount_relative_fee_pct = 0.1,
+base_fee = 500
+amount_relative_fee_pct = 0.0025
+time_relative_fee_pct = 0.0001
 ```
 - `network_port`: TCP port where the Maker listens for incoming Coinswap protocol messages.
 - `rpc_port`: The port through which `makerd` listens for RPC commands from `maker-cli`.
@@ -41,6 +42,7 @@ amount_relative_fee_pct = 0.1,
 - `connection_type`: Specifies the network mode; set to "TOR" in production for privacy, or "CLEARNET" during testing.
 - `base_fee`: A fixed fee charged by the Maker for providing its services (in satoshis).
 - `amount_relative_fee_pct`: A percentage fee based on the swap amount.
+- `time_relative_fee_pct`: A percentage fee based on the swap duration.
 
 
 
