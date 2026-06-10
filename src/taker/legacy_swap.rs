@@ -2,14 +2,6 @@
 
 use std::{net::TcpStream, time::Duration};
 
-use bitcoin::{
-    hashes::{hash160::Hash as Hash160, Hash},
-    hex::DisplayHex,
-    secp256k1::{self, rand::rngs::OsRng, Secp256k1, SecretKey},
-    Amount, Network, OutPoint, PublicKey, ScriptBuf, Transaction, Txid,
-};
-use bitcoind::bitcoincore_rpc::RpcApi;
-
 use crate::{
     protocol::{
         common_messages::{MakerToTakerMessage, TakerToMakerMessage},
@@ -26,8 +18,14 @@ use crate::{
     utill::{generate_keypair, generate_maker_keys, read_message, send_message, MIN_FEE_RATE},
     wallet::{
         swapcoin::{IncomingSwapCoin, OutgoingSwapCoin, WatchOnlySwapCoin},
-        Wallet, WalletError,
+        BlockchainBackend, Wallet, WalletError,
     },
+};
+use bitcoin::{
+    hashes::{hash160::Hash as Hash160, Hash},
+    hex::DisplayHex,
+    secp256k1::{self, rand::rngs::OsRng, Secp256k1, SecretKey},
+    Amount, Network, OutPoint, PublicKey, ScriptBuf, Transaction, Txid,
 };
 
 use super::{api::Taker, error::TakerError};
@@ -35,11 +33,11 @@ use super::{api::Taker, error::TakerError};
 /// Delay to allow the Maker to broadcast its funding transactions before we poll.
 const MAKER_BROADCAST_DELAY: Duration = Duration::from_secs(2);
 
-impl Taker {
+impl<B: BlockchainBackend> Taker<B> {
     /// Create Legacy (ECDSA) funding transactions and swapcoins (static version).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn funding_create_legacy(
-        wallet: &mut Wallet,
+        wallet: &mut Wallet<B>,
         multisig_pubkeys: &[PublicKey],
         hashlock_pubkeys: &[PublicKey],
         hashvalue: Hash160,
@@ -328,17 +326,22 @@ impl Taker {
                 self.persist_progress()?;
 
                 // Register outgoing funding outpoints as sentinels with the breach detector.
-                // Each sentinel maps a funding outpoint to its expected contract txid.
-                // Only a spend matching the contract txid is adversarial.
-                let sentinels: Vec<(OutPoint, bitcoin::Txid)> = self
+                // Each sentinel = (funding outpoint, expected contract txid, funding SPK).
+                // The SPK is read straight off the funding tx the swapcoin already carries.
+                let sentinels: Vec<(OutPoint, bitcoin::Txid, bitcoin::ScriptBuf)> = self
                     .swap_state()?
                     .outgoing_swapcoins
                     .iter()
-                    .map(|sc| {
-                        (
-                            sc.contract_tx.input[0].previous_output,
-                            sc.contract_tx.compute_txid(),
-                        )
+                    .filter_map(|sc| {
+                        let funding_outpoint = sc.contract_tx.input[0].previous_output;
+                        let funding_spk = sc
+                            .funding_tx
+                            .as_ref()?
+                            .output
+                            .get(funding_outpoint.vout as usize)?
+                            .script_pubkey
+                            .clone();
+                        Some((funding_outpoint, sc.contract_tx.compute_txid(), funding_spk))
                     })
                     .collect();
                 if let Some(ref detector) = self.breach_detector {
@@ -670,13 +673,17 @@ impl Taker {
 
             // Register this maker's funding outpoints as sentinels for subsequent waits.
             // Each sentinel maps a funding outpoint to its expected contract txid.
-            let maker_sentinels: Vec<(bitcoin::OutPoint, bitcoin::Txid)> =
+            let maker_sentinels: Vec<(bitcoin::OutPoint, bitcoin::Txid, bitcoin::ScriptBuf)> =
                 senders_contract_txs_info
                     .iter()
                     .map(|info| {
+                        let funding_spk = bitcoin::ScriptBuf::new_p2wsh(
+                            &info.multisig_redeemscript.wscript_hash(),
+                        );
                         (
                             info.contract_tx.input[0].previous_output,
                             info.contract_tx.compute_txid(),
+                            funding_spk,
                         )
                     })
                     .collect();
@@ -917,14 +924,20 @@ impl Taker {
                         (((funding_tx, multisig_rs), contract_rs), &multisig_nonce),
                         &hashlock_nonce,
                     )| {
-                        let txids = [funding_tx.compute_txid()];
-                        let merkle_proof = wallet
-                            .rpc
-                            .get_tx_out_proof(&txids, None)
-                            .map_err(WalletError::Rpc)?;
+                        // SPV proof empty on Electrum; maker verifier skips the check.
+                        let funding_tx_merkleproof = if !B::IS_ELECTRUM {
+                            let txids = [funding_tx.compute_txid()];
+                            wallet
+                                .rpc
+                                .get_tx_out_proof(&txids, None)
+                                .map_err(WalletError::Rpc)?
+                                .to_lower_hex_string()
+                        } else {
+                            String::new()
+                        };
                         Ok(FundingTxInfo {
                             funding_tx: funding_tx.clone(),
-                            funding_tx_merkleproof: merkle_proof.to_lower_hex_string(),
+                            funding_tx_merkleproof,
                             multisig_redeemscript: multisig_rs.clone(),
                             multisig_nonce,
                             contract_redeemscript: contract_rs.clone(),

@@ -17,12 +17,14 @@ use crate::{
     utill::{
         parse_checked_address, read_message, send_message, TorError, HEART_BEAT_INTERVAL, UTXO,
     },
-    wallet::{AddressType, Destination, Wallet},
+    wallet::{AddressType, BlockchainBackend, Destination, Wallet},
 };
 use std::{path::Path, sync::RwLock};
 
 pub trait MakerRpc {
-    fn wallet(&self) -> &RwLock<Wallet>;
+    /// The blockchain backend driving the maker's wallet.
+    type Backend: BlockchainBackend;
+    fn wallet(&self) -> &RwLock<Wallet<Self::Backend>>;
     fn data_dir(&self) -> &Path;
     fn config(&self) -> &MakerServerConfig;
     fn shutdown(&self) -> &AtomicBool;

@@ -1,6 +1,6 @@
 //! Public watchtower service for sending commands to and receiving events from the watcher.
 
-use bitcoin::OutPoint;
+use bitcoin::{OutPoint, ScriptBuf};
 use crossbeam_channel::{unbounded, Receiver as CbReceiver};
 use std::{
     path::Path,
@@ -16,10 +16,10 @@ use crate::{
     wallet::RPCConfig,
     watch_tower::{
         registry_storage::FileRegistry,
-        rest_backend::BitcoinRest,
+        rest_backend::{electrum_chain_name, BitcoinRest},
         watcher::{Role, Watcher, WatcherCommand, WatcherEvent},
         watcher_error::WatcherError,
-        zmq_backend::ZmqBackend,
+        zmq_backend::{ElectrumNotifier, NotificationBackend, ZmqBackend},
     },
 };
 
@@ -44,10 +44,11 @@ impl WatchService {
     }
 
     /// Registers an outpoint to be monitored for future spends.
-    pub fn register_watch_request(&self, outpoint: OutPoint) {
-        let _ = self
-            .tx
-            .send(WatcherCommand::RegisterWatchRequest { outpoint });
+    pub fn register_watch_request(&self, outpoint: OutPoint, script_pubkey: ScriptBuf) {
+        let _ = self.tx.send(WatcherCommand::RegisterWatchRequest {
+            outpoint,
+            script_pubkey,
+        });
     }
 
     /// Queries whether a previously registered outpoint has been spent.
@@ -55,9 +56,14 @@ impl WatchService {
         let _ = self.tx.send(WatcherCommand::WatchRequest { outpoint });
     }
 
-    /// Stops monitoring an outpoint by removing its watch entry from the registry.
-    pub fn unwatch(&self, outpoint: OutPoint) {
-        let _ = self.tx.send(WatcherCommand::Unwatch { outpoint });
+    /// Stops monitoring an outpoint by removing its watch entry from the
+    /// registry. The `scriptPubKey` lets the watcher drop the Electrum
+    /// subscription too without re-resolving it from the network.
+    pub fn unwatch(&self, outpoint: OutPoint, script_pubkey: ScriptBuf) {
+        let _ = self.tx.send(WatcherCommand::Unwatch {
+            outpoint,
+            script_pubkey,
+        });
     }
 
     /// Attempts a non-blocking receive; returns `None` if no event is pending.
@@ -76,23 +82,40 @@ impl WatchService {
     }
 }
 
-/// Starts the Maker Watch Service
+/// Starts the Maker Watch Service.
+///
+/// Exactly one of `rpc_config` / `electrum_url` should be provided.
+/// `zmq_addr` is consulted only in the Bitcoin Core branch.
 #[hotpath::measure]
 pub fn start_maker_watch_service(
     zmq_addr: &str,
-    rpc_config: &RPCConfig,
+    rpc_config: Option<&RPCConfig>,
     data_dir: &Path,
     network_port: u16,
+    electrum_url: Option<&str>,
 ) -> Result<WatchService, WatcherError> {
-    // Backends
-    let backend = ZmqBackend::new(zmq_addr);
-    let rpc_backend = BitcoinRest::new(rpc_config.clone())?;
-    let blockchain_info = rpc_backend.get_blockchain_info()?;
+    // Notification backend + chain name for registry path.
+    let (backend, chain_name) = if let Some(url) = electrum_url {
+        let notif = NotificationBackend::Electrum(Box::new(
+            ElectrumNotifier::new(url)
+                .map_err(|e| WatcherError::General(format!("electrum notifier: {e:?}")))?,
+        ));
+        (notif, electrum_chain_name(url)?)
+    } else {
+        let rpc = rpc_config.ok_or_else(|| {
+            WatcherError::General(
+                "start_maker_watch_service: RPCConfig required when not in electrum mode".into(),
+            )
+        })?;
+        let notif = NotificationBackend::Zmq(ZmqBackend::new(zmq_addr));
+        let info = BitcoinRest::new(rpc.clone())?.get_blockchain_info()?;
+        (notif, info.chain.to_string())
+    };
 
     // Registry
     let file_registry = data_dir
         .join(format!(".maker_{}_watcher", network_port))
-        .join(blockchain_info.chain.to_string());
+        .join(chain_name);
     let registry = FileRegistry::load(file_registry);
 
     // Channels
@@ -100,9 +123,16 @@ pub fn start_maker_watch_service(
     let (tx_events, rx_responses) = unbounded();
 
     // Watcher
-    let rpc_config_watcher = rpc_config.clone();
-    let mut watcher =
-        Watcher::<MakerRole>::new(backend, registry, rx_requests, tx_events, Vec::new(), None);
+    let rpc_config_watcher = rpc_config.cloned();
+    let mut watcher = Watcher::<MakerRole>::new(
+        backend,
+        registry,
+        rx_requests,
+        tx_events,
+        Vec::new(),
+        None,
+        electrum_url.map(str::to_string),
+    );
 
     // Makers don't run discovery, so pass an already-complete flag.
     thread::Builder::new()
