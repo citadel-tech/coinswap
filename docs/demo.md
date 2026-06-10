@@ -17,9 +17,11 @@ Get your system ready to participate in the **Coinswap Live Demo** — run a mak
 | 🗄️ **Maker Dashboard** | GUI to run and monitor your maker server | [`citadel-tech/maker-dashboard`](https://github.com/citadel-tech/maker-dashboard) |
 | 📱 **Taker App** | GUI client to fund a wallet and perform swaps | [`citadel-tech/taker-app`](https://github.com/citadel-tech/taker-app) |
 
-> 📥 **Recommended — download a pre-compiled binary.** No toolchain required; just grab the binary for your OS from **<https://citadelfoss.xyz/downloads>** and run it.
+> 🐳 **Maker Dashboard — run with Docker.** No toolchain required; just install Docker and pull the image (see below).
 >
-> 🛠️ Prefer to **build from source**? That option is available for each app below (needs the Rust, node, and some more pre-requisites).
+> 📥 **Taker App — download a pre-compiled binary.** Grab the binary for your OS from the **[latest release](https://github.com/stark-3k/taker-app/releases/tag/v0.2.2-test1)** and run it.
+>
+> 🛠️ Prefer to **build from source**? That option is available for each app below (needs Rust, Node.js, and some more pre-requisites).
 
 ---
 
@@ -67,7 +69,19 @@ Start `bitcoind` in a dedicated terminal and let it sync.
 
 ---
 
-### 2. Build-from-Source Prerequisites — *only if you self-compile*
+### 2. Docker — *required for the Maker Dashboard*
+
+The Maker Dashboard runs as a Docker container. Install Docker Engine for your platform by following the official guide at <https://docs.docker.com/engine/install/>, then verify:
+
+```bash
+docker --version
+```
+
+> 💡 On Linux, you may need to add your user to the `docker` group (or prefix commands with `sudo`) to run Docker without root. See <https://docs.docker.com/engine/install/linux-postinstall/>.
+
+---
+
+### 3. Build-from-Source Prerequisites — *only if you self-compile*
 
 > ⏭️ **Skip this entire subsection if you're using the pre-compiled binaries.** The tools below are only needed to build the Maker Dashboard or Taker App yourself.
 
@@ -95,18 +109,18 @@ npm --version
 
 #### Native build tools for Tor (`libtor`)
 
-Both apps compile and bundle Tor from source via `libtor`, which needs a C toolchain plus autotools, `pkg-config`, and OpenSSL. Install the packages for your platform:
+Both apps compile and bundle Tor from source via `libtor`, which needs a C toolchain plus autotools, `cmake`, `pkg-config`, and OpenSSL. Install the packages for your platform:
 
 - **Linux (Debian / Ubuntu):**
 
   ```bash
-  sudo apt install build-essential automake autoconf libtool pkg-config libssl-dev
+  sudo apt install -y build-essential cmake pkg-config libssl-dev autoconf automake libtool file
   ```
 
 - **macOS** (via [Homebrew](https://brew.sh)):
 
   ```sh
-  brew install automake autoconf libtool pkg-config openssl
+  brew install automake autoconf libtool pkg-config openssl cmake
   ```
 
 ---
@@ -115,20 +129,45 @@ Both apps compile and bundle Tor from source via `libtor`, which needs a C toolc
 
 A GUI for running and monitoring your maker server.
 
-### 📥 Download Pre-compiled Binary (Recommended)
+### 🐳 Run with Docker (Recommended)
 
-1. Visit **<https://citadelfoss.xyz/downloads>**.
-2. Download the **Maker Dashboard** binary for your operating system.
-3. Run the binary. Open your browser and navigate to <http://localhost:3000> to access the dashboard.
+Make sure [Docker is installed](#2-docker--required-for-the-maker-dashboard), then start the dashboard container:
+
+- **Linux:**
+
+  ```bash
+  docker run -d --name maker-dashboard --network host \
+    --volume ~/.config/maker-dashboard:/root/.config/maker-dashboard \
+    --volume ~/.coinswap:/root/.coinswap \
+    --env MAKER_DASHBOARD_HOST=127.0.0.1 \
+    coinswap/maker-dashboard:master
+  ```
+
+- **macOS:**
+
+  Docker Desktop on macOS doesn't support `--network host`, so publish the port explicitly and bind the dashboard to `0.0.0.0` inside the container:
+
+  ```bash
+  docker run -d --name maker-dashboard -p 127.0.0.1:3000:3000 \
+    --volume ~/.config/maker-dashboard:/root/.config/maker-dashboard \
+    --volume ~/.coinswap:/root/.coinswap \
+    --env MAKER_DASHBOARD_HOST=0.0.0.0 \
+    coinswap/maker-dashboard:master
+  ```
+
+Open your browser and navigate to <http://localhost:3000> to access the dashboard.
+
+> 💡 The `--volume` mounts persist your dashboard config and wallet data on the host across container restarts. View logs with `docker logs -f maker-dashboard`, and stop the container with `docker stop maker-dashboard`.
 
 ### 🛠️ Build from Source
 
-> Requires the [build-from-source prerequisites](#2-build-from-source-prerequisites--only-if-you-self-compile) above (Rust, Node.js v18+, and the `libtor` native build tools).
+> Requires the [build-from-source prerequisites](#3-build-from-source-prerequisites--only-if-you-self-compile) above (Rust, Node.js v18+, and the `libtor` native build tools).
 
 ```bash
 git clone https://github.com/citadel-tech/maker-dashboard.git
 cd maker-dashboard
 make build
+make run
 ```
 
 `make build` compiles the Rust backend (`cargo build --release`) and the frontend (`cd frontend && npm install && npm run build`). See the project's [README](https://github.com/citadel-tech/maker-dashboard#readme) for advanced/per-component steps.
@@ -141,13 +180,13 @@ A GUI swap client to fund a wallet and perform Coinswaps.
 
 ### 📥 Download Pre-compiled Binary (Recommended)
 
-1. Visit **<https://citadelfoss.xyz/downloads>**.
+1. Visit the **[latest release](https://github.com/stark-3k/taker-app/releases/tag/v0.2.2-test1)**.
 2. Download the **Taker App** binary for your operating system.
 3. Run the binary and follow the on-screen onboarding steps.
 
 ### 🛠️ Build from Source
 
-> Requires the [build-from-source prerequisites](#2-build-from-source-prerequisites--only-if-you-self-compile) above (Rust, Node.js v18+, and the `libtor` native build tools).
+> Requires the [build-from-source prerequisites](#3-build-from-source-prerequisites--only-if-you-self-compile) above (Rust, Node.js v18+, and the `libtor` native build tools).
 
 ```bash
 git clone https://github.com/citadel-tech/taker-app.git
