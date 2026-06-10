@@ -180,7 +180,7 @@ A GUI swap client to fund a wallet and perform Coinswaps.
 
 ### 📥 Download Pre-compiled Binary (Recommended)
 
-1. Visit the **[latest release](https://github.com/stark-3k/taker-app/releases/tag/v0.2.2-test1)**.
+1. Visit the **[latest release](https://github.com/0xEgao/taker-app/actions/runs/27262064424)**.
 2. Download the **Taker App** binary for your operating system.
 3. Run the binary and follow the on-screen onboarding steps.
 
