@@ -49,6 +49,8 @@ pub enum MakerBehavior {
     CloseAfterSweep,
     /// Use an invalid fidelity bond timelock (fidelity timelock violation test).
     InvalidFidelityTimelock,
+    /// Point a Legacy sender contract at a funding output that is not the advertised multisig.
+    MalformedLegacyFundingOutput,
 }
 
 /// Minimum time required to react to contract broadcasts (in blocks).
