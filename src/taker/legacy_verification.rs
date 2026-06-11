@@ -9,13 +9,16 @@ use bitcoin::{
     Amount, PublicKey, ScriptBuf, Transaction,
 };
 
-use crate::protocol::{
-    contract::{
-        check_reedemscript_is_multisig, read_contract_locktime, read_hashlock_pubkey_from_contract,
-        read_hashvalue_from_contract, read_pubkeys_from_multisig_redeemscript,
-        validate_contract_tx, verify_contract_tx_sig,
+use crate::{
+    protocol::{
+        contract::{
+            check_reedemscript_is_multisig, read_contract_locktime,
+            read_hashlock_pubkey_from_contract, read_hashvalue_from_contract,
+            read_pubkeys_from_multisig_redeemscript, validate_contract_tx, verify_contract_tx_sig,
+        },
+        legacy_messages::SenderContractTxInfo,
     },
-    legacy_messages::SenderContractTxInfo,
+    utill::redeemscript_to_scriptpubkey,
 };
 
 use super::{api::Taker, error::TakerError};
@@ -201,6 +204,30 @@ impl Taker {
                 return Err(TakerError::General(format!(
                     "Sender contract {} contract_tx references wrong funding tx: expected {}, got {}",
                     i, expected_funding_txid, contract_input_txid
+                )));
+            }
+            // QA: A malicious Legacy maker can provide a real funding tx while
+            // making the contract spend a different output than the advertised
+            // 2-of-2 multisig. Bind the contract input to the exact funding
+            // output script and value before accepting maker sender data.
+            let funding_vout = info.contract_tx.input[0].previous_output.vout as usize;
+            let funding_output = info.funding_tx.output.get(funding_vout).ok_or_else(|| {
+                TakerError::General(format!(
+                    "Sender contract {} references missing funding output {}",
+                    i, funding_vout
+                ))
+            })?;
+            let expected_multisig_spk = redeemscript_to_scriptpubkey(&info.multisig_redeemscript)?;
+            if funding_output.script_pubkey != expected_multisig_spk {
+                return Err(TakerError::General(format!(
+                    "Sender contract {} funding output does not pay to advertised multisig",
+                    i
+                )));
+            }
+            if funding_output.value != info.funding_amount {
+                return Err(TakerError::General(format!(
+                    "Sender contract {} funding output value {} does not match advertised amount {}",
+                    i, funding_output.value, info.funding_amount
                 )));
             }
 

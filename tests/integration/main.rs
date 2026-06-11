@@ -35,6 +35,7 @@ mod fidelity_timelock_violation;
 mod funding_dynamic_splits;
 #[cfg(feature = "hotpath")]
 mod hotpath_profile;
+mod legacy_malformed_contract;
 mod liquidity_test;
 mod offerbook_sync_race;
 mod taker_cli;
