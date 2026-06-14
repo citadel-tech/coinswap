@@ -12,6 +12,7 @@ mod spend;
 mod split_utxos;
 mod storage;
 pub(crate) mod swapcoin;
+pub mod electrum_backend;
 
 pub use api::{Balances, RecoveryOutcome, UTXOSpendInfo, Wallet};
 pub use backup::WalletBackup;
