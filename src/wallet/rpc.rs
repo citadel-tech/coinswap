@@ -35,13 +35,11 @@ use super::{error::WalletError, Wallet};
 /// Bitcoin Core JSON-RPC backend
 pub type BitcoindBackend = bitcoind::bitcoincore_rpc::Client;
 
-/// Backend abstraction over a blockchain RPC source. Inherits [`RpcApi`] so
-/// wallet code stays uniform. `IS_ELECTRUM` drives the two places sync/SPV
-/// behavior differs: Electrum has no server-side rescan and no `gettxoutproof`.
+/// Backend abstraction over a blockchain RPC source. Inherits [`RpcApi`] so wallet calls stay uniform.
 pub trait BlockchainBackend: RpcApi + Debug + Send + Sync + 'static {
     /// Per-backend connection config (e.g. [`RPCConfig`], [`ElectrumConfig`]).
     type Config: Clone;
-    /// True only for [`ElectrumBackend`]. Toggles the sync path and SPV skip.
+    /// True only for [`ElectrumBackend`]. Selects the sync implementation.
     const IS_ELECTRUM: bool = false;
 
     /// Construct the backend client from its config.
@@ -52,14 +50,11 @@ pub trait BlockchainBackend: RpcApi + Debug + Send + Sync + 'static {
     /// Borrow the matching variant out of a [`BackendConfig`].
     fn from_backend_config(backend: &BackendConfig) -> Result<&Self::Config, WalletError>;
 
-    /// Register a scriptPubKey for UTXO lookups. No-op on Bitcoin Core; Electrum
-    /// stores it locally along with an optional HD-origin hint.
+    /// Register a scriptPubKey for UTXO lookups. No-op on Bitcoin Core; Electrum  stores it locally along with an optional HD-origin hint.
     fn watch_script(&self, _script: &Script, _hd: Option<HdOrigin>) {}
 
-    /// HD-origin recorded for `script_pubkey` (Electrum only). Bitcoin Core
-    /// exposes the same info via the descriptor string on each UTXO, so the
-    /// default returns `None`. Used by the wallet's UTXO classifier to recognise
-    /// Electrum-sourced seed coins without round-tripping through a descriptor.
+    /// HD-origin recorded for `script_pubkey` (Electrum only). Bitcoin Core exposes the same info via the descriptor string on each UTXO, so the
+    /// default returns `None`. Used by the wallet's UTXO classifier to recognise Electrum-sourced seed coins without round-tripping through a descriptor.
     fn hd_origin_for_script(&self, _script: &Script) -> Option<HdOrigin> {
         None
     }
@@ -122,8 +117,7 @@ impl BackendConfig {
     }
 
     /// Overwrite the wallet name on whichever variant is set. Used by
-    /// interactive restore where the wallet name is derived from the
-    /// restored path rather than supplied separately.
+    /// interactive restore where the wallet name is derived from the restored path.
     pub fn set_wallet_name(&mut self, name: String) {
         match self {
             BackendConfig::Bitcoind(c) => c.wallet_name = name,
@@ -215,30 +209,14 @@ impl ElectrumBackend {
         let features = inner
             .server_features()
             .map_err(|e| WalletError::General(format!("electrum server_features: {e}")))?;
-        // Electrum servers return `genesis_hash` in display (big-endian) byte order, while
-        // `to_byte_array()` returns the internal little-endian bytes. Reverse before comparing.
-        let network = [
-            bitcoin::Network::Bitcoin,
-            bitcoin::Network::Testnet,
-            bitcoin::Network::Signet,
-            bitcoin::Network::Regtest,
-        ]
-        .iter()
-        .copied()
-        .find(|n| {
-            let mut local = bitcoin::constants::genesis_block(*n)
-                .block_hash()
-                .to_raw_hash()
-                .to_byte_array();
-            local.reverse();
-            local == features.genesis_hash
-        })
-        .ok_or_else(|| {
-            WalletError::General(format!(
-                "unknown genesis from electrum server: {:?}",
-                features.genesis_hash
-            ))
-        })?;
+        let network =
+            crate::watch_tower::rest_backend::network_from_electrum_genesis(&features.genesis_hash)
+                .ok_or_else(|| {
+                    WalletError::General(format!(
+                        "unknown genesis from electrum server: {:?}",
+                        features.genesis_hash
+                    ))
+                })?;
         Ok(Self {
             inner,
             watched: Mutex::new(HashSet::new()),
@@ -788,8 +766,7 @@ impl<B: BlockchainBackend> Wallet<B> {
         Ok(all_utxos)
     }
 
-    /// Sync the wallet. Bitcoin Core runs `importdescriptors` + scanning;
-    /// Electrum walks script histories on the client.
+    /// Bitcoin Core's importdescriptors + scan vs Electrum's walks scripthhash history.
     fn sync(&mut self) -> Result<(), WalletError> {
         if B::IS_ELECTRUM {
             return self.sync_no_rescan();

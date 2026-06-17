@@ -349,14 +349,7 @@ impl ThreadPool {
     }
 }
 
-/// Maker server
-///
-/// This implements the `Maker` trait with actual swap logic.
-///
-/// Parameterised by the wallet's blockchain backend `B`; defaults to
-/// [`BitcoindBackend`]. Construct `MakerServer<ElectrumBackend>` to
-/// drive the wallet through an Electrum endpoint — set `config.backend`
-/// to `BackendConfig::Electrum(...)` and call `MakerServer::<ElectrumBackend>::init(config)`.
+/// Maker server, parameterised by the wallet's blockchain backend `B`.
 pub struct MakerServer<B: BlockchainBackend = BitcoindBackend> {
     /// Configuration.
     pub config: MakerServerConfig,
@@ -402,70 +395,6 @@ pub struct IdleSwapData {
 }
 
 impl<B: BlockchainBackend> MakerServer<B> {
-    /// Backend-agnostic assembly: takes a constructed wallet plus the
-    /// (still-required) Bitcoin Core RPC config used by the watch
-    /// service, completes the rest of the server setup.
-    fn from_wallet(
-        mut config: MakerServerConfig,
-        mut wallet: Wallet<B>,
-    ) -> Result<Self, MakerError> {
-        let data_dir = config.data_dir.clone();
-        log::info!("Sync at:----MakerServer init----");
-        wallet.sync_and_save()?;
-        let wallet_network = wallet.store.network;
-        if config.network != wallet_network {
-            log::info!(
-                "Maker config network ({:?}) differs from wallet network ({:?}); using wallet network",
-                config.network,
-                wallet_network
-            );
-            config.network = wallet_network;
-        }
-
-        let (zmq_addr, rpc_watch, electrum_url) = match &config.backend {
-            BackendConfig::Bitcoind(rpc) => {
-                (rpc.zmq_addr.clone(), Some(rpc.clone()), None::<String>)
-            }
-            BackendConfig::Electrum(ecfg) => (String::new(), None, Some(ecfg.url.clone())),
-        };
-        let watch_service = crate::watch_tower::service::start_maker_watch_service(
-            &zmq_addr,
-            rpc_watch.as_ref(),
-            &data_dir,
-            config.network_port,
-            electrum_url.as_deref(),
-        )
-        .map_err(MakerError::Watcher)?;
-
-        let swap_tracker = MakerSwapTracker::load_or_create(&data_dir)?;
-        let incomplete = swap_tracker.incomplete_swaps();
-        if !incomplete.is_empty() {
-            log::info!(
-                "[{}] Loaded {} incomplete swap records from previous run",
-                config.network_port,
-                incomplete.len()
-            );
-            swap_tracker.log_state();
-        }
-
-        let nostr_relays = config.nostr_relays.clone();
-        Ok(MakerServer {
-            config: config.clone(),
-            wallet: Arc::new(RwLock::new(wallet)),
-            shutdown: AtomicBool::new(false),
-            is_setup_complete: AtomicBool::new(false),
-            highest_fidelity_proof: RwLock::new(None),
-            ongoing_swaps: Mutex::new(HashMap::new()),
-            watch_service,
-            thread_pool: Arc::new(ThreadPool::new(config.network_port)),
-            data_dir,
-            swap_tracker: Mutex::new(swap_tracker),
-            nostr_relays,
-            #[cfg(feature = "integration-test")]
-            behavior: MakerBehavior::default(),
-        })
-    }
-
     /// Check if shutdown has been requested.
     pub fn is_shutdown(&self) -> bool {
         self.shutdown.load(Ordering::Relaxed)
@@ -772,6 +701,81 @@ impl<B: BlockchainBackend> MakerServer<B> {
             .read()
             .map_err(|e| std::io::Error::other(format!("wallet lock poisoned: {e}")))?
             .verify_deniability(swap_id)
+    /// Initialize a maker server. Backend `B` is picked at the call site via turbofish;
+    /// the matching variant is pulled from `config.backend`.
+    #[hotpath::measure]
+    pub fn init(mut config: MakerServerConfig) -> Result<Self, MakerError> {
+        std::fs::create_dir_all(&config.data_dir).map_err(MakerError::IO)?;
+        let wallet_path = config
+            .data_dir
+            .join("wallets")
+            .join(config.backend.wallet_name());
+        let backend_cfg = B::from_backend_config(&config.backend).map_err(MakerError::Wallet)?;
+        let mut wallet =
+            Wallet::<B>::load_or_init(&wallet_path, backend_cfg, config.password.clone())?;
+        let data_dir = config.data_dir.clone();
+        log::info!("Sync at:----MakerServer init----");
+        wallet.sync_and_save()?;
+        let wallet_network = wallet.store.network;
+        if config.network != wallet_network {
+            log::info!(
+                "Maker config network ({:?}) differs from wallet network ({:?}); using wallet network",
+                config.network,
+                wallet_network
+            );
+            config.network = wallet_network;
+        }
+
+        let (zmq_addr, electrum_url, chain) = match &config.backend {
+            BackendConfig::Bitcoind(rpc) => {
+                let rest = crate::watch_tower::rest_backend::BitcoinRest::new(rpc.clone())
+                    .map_err(MakerError::Watcher)?;
+                (
+                    rpc.zmq_addr.clone(),
+                    None::<String>,
+                    crate::watch_tower::zmq_backend::ChainSource::Rest(rest),
+                )
+            }
+            BackendConfig::Electrum(ecfg) => (
+                String::new(),
+                Some(ecfg.url.clone()),
+                crate::watch_tower::zmq_backend::ChainSource::Electrum(ecfg.url.clone()),
+            ),
+        };
+        let watch_service = crate::watch_tower::service::start_maker_watch_service(
+            &zmq_addr,
+            chain,
+            &data_dir,
+            config.network_port,
+            electrum_url.as_deref(),
+        )
+        .map_err(MakerError::Watcher)?;
+        let swap_tracker = MakerSwapTracker::load_or_create(&data_dir)?;
+        let incomplete = swap_tracker.incomplete_swaps();
+        if !incomplete.is_empty() {
+            log::info!(
+                "[{}] Loaded {} incomplete swap records from previous run",
+                config.network_port,
+                incomplete.len()
+            );
+            swap_tracker.log_state();
+        }
+        let nostr_relays = config.nostr_relays.clone();
+        Ok(MakerServer {
+            config: config.clone(),
+            wallet: Arc::new(RwLock::new(wallet)),
+            shutdown: AtomicBool::new(false),
+            is_setup_complete: AtomicBool::new(false),
+            highest_fidelity_proof: RwLock::new(None),
+            ongoing_swaps: Mutex::new(HashMap::new()),
+            watch_service,
+            thread_pool: Arc::new(ThreadPool::new(config.network_port)),
+            data_dir,
+            swap_tracker: Mutex::new(swap_tracker),
+            nostr_relays,
+            #[cfg(feature = "integration-test")]
+            behavior: MakerBehavior::default(),
+        })
     }
 }
 
@@ -1332,8 +1336,8 @@ impl<B: BlockchainBackend> MakerTrait for MakerServer<B> {
                 return Err(MakerError::General("Funding tx output doesn't exist"));
             }
 
-            // SPV proof skipped on Electrum (no `gettxoutproof`).
-            if !B::IS_ELECTRUM {
+            // The taker sends one when its backend can produce it (Bitcoind's `gettxoutproof`) and an empty string otherwise (Electrum).
+            if !funding_info.funding_tx_merkleproof.is_empty() {
                 wallet_read
                     .verify_tx_out_proof(&funding_txid, &funding_info.funding_tx_merkleproof)?;
             }
@@ -1574,24 +1578,5 @@ impl<B: BlockchainBackend> MakerRpc for MakerServer<B> {
             &self.config.tor_auth_password,
             tor_key_bytes,
         )
-    }
-}
-
-/// Initialize a maker server. The backend type is picked at the call site via
-/// turbofish (`MakerServer::<BitcoindBackend>::init` / `MakerServer::<ElectrumBackend>::init`);
-/// the matching variant is pulled from `config.backend`.
-impl<B: BlockchainBackend> MakerServer<B> {
-    /// Initialize a maker server. The matching backend variant is pulled from
-    /// `config.backend`; errors if it doesn't match the type-level `B`.
-    #[hotpath::measure]
-    pub fn init(config: MakerServerConfig) -> Result<Self, MakerError> {
-        std::fs::create_dir_all(&config.data_dir).map_err(MakerError::IO)?;
-        let wallet_path = config
-            .data_dir
-            .join("wallets")
-            .join(config.backend.wallet_name());
-        let backend_cfg = B::from_backend_config(&config.backend).map_err(MakerError::Wallet)?;
-        let wallet = Wallet::<B>::load_or_init(&wallet_path, backend_cfg, config.password.clone())?;
-        Self::from_wallet(config, wallet)
     }
 }

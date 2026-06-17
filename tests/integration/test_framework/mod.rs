@@ -35,6 +35,7 @@ use bitcoind::{
     BitcoinD,
 };
 
+pub use coinswap::wallet::{BitcoindBackend, ElectrumBackend};
 use coinswap::{
     maker::{MakerBehavior, MakerServer, MakerServerConfig},
     protocol::common_messages::ProtocolVersion,
@@ -424,6 +425,45 @@ pub fn verify_maker_pre_swap_balances<B: BlockchainBackend>(
     maker_spendable_balance
 }
 
+/// Generic over electrum and bitcoind backends.
+pub trait TestBackend: BlockchainBackend {
+    fn make_backend_config(
+        wallet_name: String,
+        rpc_config: &RPCConfig,
+        zmq_addr: &str,
+        ensure_electrum_url: &mut dyn FnMut() -> String,
+    ) -> BackendConfig;
+}
+
+impl TestBackend for BitcoindBackend {
+    fn make_backend_config(
+        wallet_name: String,
+        rpc_config: &RPCConfig,
+        zmq_addr: &str,
+        _ensure_electrum_url: &mut dyn FnMut() -> String,
+    ) -> BackendConfig {
+        BackendConfig::Bitcoind(RPCConfig {
+            zmq_addr: zmq_addr.to_string(),
+            wallet_name,
+            ..rpc_config.clone()
+        })
+    }
+}
+
+impl TestBackend for ElectrumBackend {
+    fn make_backend_config(
+        wallet_name: String,
+        _rpc_config: &RPCConfig,
+        _zmq_addr: &str,
+        ensure_electrum_url: &mut dyn FnMut() -> String,
+    ) -> BackendConfig {
+        BackendConfig::Electrum(ElectrumConfig {
+            url: ensure_electrum_url(),
+            wallet_name,
+        })
+    }
+}
+
 /// The Test Framework.
 ///
 /// Handles initializing, operating and cleaning up of all backend processes. Bitcoind, Taker and Makers.
@@ -458,16 +498,21 @@ impl TestFramework {
         }
     }
 
-    /// Initialize test framework for protocol testing.
+    /// Initialize test framework over backend `B`. Complete segregation over the 2 backends.
     ///
     /// This creates Taker and MakerServer instances that support
     /// both Legacy (ECDSA) and Taproot (MuSig2) protocols using message types.
     #[allow(clippy::type_complexity)]
-    pub fn init(
+    pub fn init<B: TestBackend>(
         makers_config_map: Vec<(u16, Option<u16>)>,
         taker_behavior: Vec<TakerBehavior>,
         maker_behaviors: Vec<MakerBehavior>,
-    ) -> (Arc<Self>, Vec<Taker>, Vec<Arc<MakerServer>>, JoinHandle<()>) {
+    ) -> (
+        Arc<Self>,
+        Vec<Taker<B>>,
+        Vec<Arc<MakerServer<B>>>,
+        JoinHandle<()>,
+    ) {
         // Setup directory — use a unique suffix so tests can run in parallel
         let unique_id = format!("coinswap-{}", rand::random::<u64>());
         let temp_dir = env::temp_dir().join(unique_id);
@@ -477,98 +522,116 @@ impl TestFramework {
         }
         setup_logger(log::LevelFilter::Info, Some(temp_dir.clone()));
         log::info!("📁 temporary directory : {}", temp_dir.display());
-
-        let port_zmq = 28332 + rand::random::<u16>() % 1000;
-
-        let zmq_addr = format!("tcp://127.0.0.1:{port_zmq}");
-
+        let zmq_addr = format!("tcp://127.0.0.1:{}", 28332 + rand::random::<u16>() % 1000);
         let bitcoind = init_bitcoind(&temp_dir, zmq_addr.clone());
-
+        let rpc_config = RPCConfig {
+            url: bitcoind.rpc_url().split_at(7).1.to_string(),
+            auth: Auth::CookieFile(bitcoind.params.cookie_file.clone()),
+            ..Default::default()
+        };
         let nostr_port = 8000 + rand::random::<u16>() % 1000;
         let nostr_relay_url = format!("ws://127.0.0.1:{nostr_port}");
         let nostr_relay = spawn_nostr_relay(&temp_dir, nostr_port);
         wait_for_relay_healthy(nostr_port);
+        let mut electrsd: Option<ElectrsD> = None;
+        let (takers, makers) = {
+            let mut electrum_url: Option<String> = None;
+            let mut ensure_electrum_url = || -> String {
+                if let Some(url) = electrum_url.as_ref() {
+                    return url.clone();
+                }
+                let e = init_electrsd(&bitcoind, &temp_dir);
+                // Give electrs a moment to index the 101 blocks bitcoind has already mined.
+                thread::sleep(Duration::from_secs(2));
+                let _ = e.trigger();
+                thread::sleep(Duration::from_secs(1));
+                let url = format!("tcp://{}", e.electrum_url);
+                electrsd = Some(e);
+                electrum_url = Some(url.clone());
+                url
+            };
+            let takers: Vec<Taker<B>> = taker_behavior
+                .into_iter()
+                .enumerate()
+                .map(|(i, behavior)| {
+                    let taker_id = format!("taker{}", i + 1);
+                    let backend = B::make_backend_config(
+                        taker_id.clone(),
+                        &rpc_config,
+                        &zmq_addr,
+                        &mut ensure_electrum_url,
+                    );
+                    let config = TakerInitConfig::default()
+                        .with_data_dir(temp_dir.join(&taker_id))
+                        .with_backend(backend)
+                        .with_nostr_relays(vec![nostr_relay_url.clone()]);
+                    let mut taker = Taker::<B>::init(config).unwrap();
+                    taker.behavior = behavior;
+                    taker
+                })
+                .collect();
 
-        let shutdown = AtomicBool::new(false);
-        let test_framework = Arc::new(Self {
+            let mut base_rpc_port = 4500 + (rand::random::<u16>() % 5000);
+            let base_maker_port = 10000 + rand::random::<u16>() % 40000;
+
+            // Create the MakerServers with message handling
+            let makers: Vec<Arc<MakerServer<B>>> = makers_config_map
+                .into_iter()
+                .enumerate()
+                .map(|(i, _)| {
+                    base_rpc_port += 1;
+                    let network_port = base_maker_port + i as u16;
+                    let maker_id = format!("maker{network_port}");
+                    thread::sleep(Duration::from_secs(5)); // Avoid resource unavailable error
+                    let backend = B::make_backend_config(
+                        maker_id,
+                        &rpc_config,
+                        &zmq_addr,
+                        &mut ensure_electrum_url,
+                    );
+                    let config = MakerServerConfig {
+                        data_dir: temp_dir.join(network_port.to_string()),
+                        network_port,
+                        rpc_port: base_rpc_port,
+                        base_fee: 500,
+                        amount_relative_fee_pct: 0.0025,
+                        time_relative_fee_pct: 0.0001,
+                        min_swap_amount: 10_000,
+                        required_confirms: 1,
+                        supported_protocols: vec![
+                            ProtocolVersion::Legacy,
+                            ProtocolVersion::Taproot,
+                        ],
+                        fidelity_amount: 5_000_000, // 0.05 BTC
+                        fidelity_timelock: 950,     // ~950 blocks for test
+                        network: bitcoin::Network::Regtest,
+                        backend,
+                        nostr_relays: vec![nostr_relay_url.clone()],
+                        ..MakerServerConfig::default()
+                    };
+
+                    let mut server = MakerServer::<B>::init(config).unwrap();
+                    server.behavior = maker_behaviors.get(i).copied().unwrap_or_default();
+                    Arc::new(server)
+                })
+                .collect();
+
+            (takers, makers)
+        };
+
+        let framework = Arc::new(Self {
             bitcoind,
-            electrsd: None,
+            electrsd,
             temp_dir: temp_dir.clone(),
-            nostr_relay_url: nostr_relay_url.clone(),
-            shutdown,
-            nostr_relay: Mutex::new(Some(nostr_relay)),
+            nostr_relay_url,
+            shutdown: AtomicBool::new(false),
+            nostr_relay_shutdown,
+            nostr_relay_handle: Some(nostr_relay_handle),
         });
-
-        // Translate a RpcConfig from the test framework.
-        let rpc_config = RPCConfig::from(test_framework.as_ref());
-
-        // Create the Takers
-        let takers = taker_behavior
-            .into_iter()
-            .enumerate()
-            .map(|(i, behavior)| {
-                let taker_id = format!("taker{}", i + 1);
-                let config = TakerInitConfig::default()
-                    .with_data_dir(temp_dir.join(&taker_id))
-                    .with_backend(BackendConfig::Bitcoind(RPCConfig {
-                        zmq_addr: zmq_addr.clone(),
-                        wallet_name: taker_id,
-                        ..rpc_config.clone()
-                    }))
-                    .with_nostr_relays(vec![nostr_relay_url.clone()]);
-                let mut taker = Taker::<BitcoindBackend>::init(config).unwrap();
-                taker.behavior = behavior;
-                taker
-            })
-            .collect::<Vec<_>>();
-
-        let mut base_rpc_port = 4500 + (rand::random::<u16>() % 5000);
-        let base_maker_port = 10000 + rand::random::<u16>() % 40000;
-
-        // Create the MakerServers with message handling
-        let makers = makers_config_map
-            .into_iter()
-            .enumerate()
-            .map(|(i, (_network_port, _socks_port))| {
-                base_rpc_port += 1;
-                let network_port = base_maker_port + i as u16;
-                let maker_id = format!("maker{}", network_port);
-                thread::sleep(Duration::from_secs(5)); // Avoid resource unavailable error
-
-                let config = MakerServerConfig {
-                    data_dir: temp_dir.join(network_port.to_string()),
-                    network_port,
-                    rpc_port: base_rpc_port,
-                    base_fee: 500,
-                    amount_relative_fee_pct: 0.0025,
-                    time_relative_fee_pct: 0.0001,
-                    min_swap_amount: 10_000,
-                    required_confirms: 1,
-                    supported_protocols: vec![ProtocolVersion::Legacy, ProtocolVersion::Taproot],
-                    fidelity_amount: 5_000_000, // 0.05 BTC
-                    fidelity_timelock: 950,     // ~950 blocks for test
-                    network: bitcoin::Network::Regtest,
-                    backend: BackendConfig::Bitcoind(RPCConfig {
-                        zmq_addr: zmq_addr.clone(),
-                        wallet_name: maker_id,
-                        ..rpc_config.clone()
-                    }),
-                    nostr_relays: vec![nostr_relay_url.clone()],
-                    ..MakerServerConfig::default()
-                };
-
-                let mut server = MakerServer::<BitcoindBackend>::init(config).unwrap();
-                server.behavior = maker_behaviors.get(i).copied().unwrap_or_default();
-                Arc::new(server)
-            })
-            .collect::<Vec<_>>();
-
-        // Start the block generation thread
         log::info!("⛏️ Spawning block generation thread");
-        let tf_clone = test_framework.clone();
+        let tf_clone = framework.clone();
         let generate_blocks_handle = thread::spawn(move || loop {
             thread::sleep(Duration::from_secs(3));
-
             if tf_clone.shutdown.load(Relaxed) {
                 log::info!("🔚 Ending block generation thread");
                 return;
@@ -578,7 +641,6 @@ impl TestFramework {
                 let _ = elec.trigger();
             }
         });
-
         log::info!("✅ Test Framework initialization complete");
 
         (test_framework, takers, makers, generate_blocks_handle)

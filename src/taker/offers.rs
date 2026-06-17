@@ -34,10 +34,7 @@ use crate::{
     },
     utill::{read_message, send_message},
     wallet::verify_fidelity_checks,
-    watch_tower::{
-        registry_storage::FileRegistry,
-        rest_backend::{electrum_block_count, electrum_get_raw_tx, BitcoinRest},
-    },
+    watch_tower::{registry_storage::FileRegistry, zmq_backend::ChainSource},
 };
 
 /// Maximum number of attempts to connect to a maker.
@@ -412,15 +409,11 @@ impl Drop for SyncGuard<'_> {
 }
 
 /// Service run on taker to check if the offerbook makers are active or not.
-///
-/// Exactly one of `rest_backend` / `electrum_url` is `Some`, depending on which
-/// chain source the taker was initialized with.
 pub struct OfferSyncService {
     offerbook: OfferBookHandle,
     registry: FileRegistry,
     socks_port: u16,
-    rest_backend: Option<BitcoinRest>,
-    electrum_url: Option<String>,
+    chain: ChainSource,
     /// Set to `true` by Nostr discovery after the first EOSE is received.
     initial_sync_complete: Arc<AtomicBool>,
 }
@@ -517,26 +510,19 @@ impl OfferSyncHandle {
 }
 
 impl OfferSyncService {
-    /// Constructor method. Pass `Some(rest_backend)` for Bitcoin Core, or
-    /// `Some(electrum_url)` for Electrum — exactly one must be set.
+    /// Construct an offer-sync service backed by the given `ChainSource`.
     pub fn new(
         offerbook: OfferBookHandle,
         registry: FileRegistry,
         socks_port: u16,
-        rest_backend: Option<BitcoinRest>,
-        electrum_url: Option<String>,
+        chain: ChainSource,
         initial_sync_complete: Arc<AtomicBool>,
     ) -> Self {
-        debug_assert!(
-            rest_backend.is_some() ^ electrum_url.is_some(),
-            "exactly one of rest_backend / electrum_url must be set"
-        );
         Self {
             offerbook,
             registry,
             socks_port,
-            rest_backend,
-            electrum_url,
+            chain,
             initial_sync_complete,
         }
     }
@@ -601,7 +587,7 @@ impl OfferSyncService {
     fn fetch_and_record_one(
         addr: MakerAddress,
         socks_port: u16,
-        rest_backend: &BitcoinRest,
+        chain: &ChainSource,
         offerbook: &Arc<RwLock<OfferBook>>,
         offerbook_path: &Path,
         now: u64,
@@ -611,7 +597,7 @@ impl OfferSyncService {
         match downloaded {
             Some(oa) => {
                 match verify_fidelity_with_backend(
-                    rest_backend,
+                    chain,
                     &oa.offer.fidelity,
                     &oa.address.to_string(),
                     &oa.offer.tweakable_point,
@@ -659,7 +645,7 @@ impl OfferSyncService {
         Self::fetch_and_record_one(
             address,
             self.socks_port,
-            &self.rest_backend,
+            &self.chain,
             &self.offerbook.inner,
             &self.offerbook.path,
             now,
@@ -678,8 +664,7 @@ impl OfferSyncService {
         let offerbook = self.offerbook.inner.clone();
         let offerbook_path = self.offerbook.path.clone();
         let socks_port = self.socks_port;
-        let rest_backend = self.rest_backend.clone();
-        let electrum_url = self.electrum_url.clone();
+        let chain = self.chain.clone();
 
         let mut handles = Vec::with_capacity(workers);
 
@@ -687,8 +672,7 @@ impl OfferSyncService {
             let queue = Arc::clone(&queue);
             let offerbook = Arc::clone(&offerbook);
             let offerbook_path = offerbook_path.clone();
-            let rest_backend = rest_backend.clone();
-            let electrum_url = electrum_url.clone();
+            let chain = chain.clone();
 
             let handle = Builder::new()
                 .name(format!("offer-fetch-worker-{i}"))
@@ -707,8 +691,7 @@ impl OfferSyncService {
                     let _ = Self::fetch_and_record_one(
                         addr,
                         socks_port,
-                        rest_backend.as_ref(),
-                                electrum_url.as_deref(),
+                        &chain,
                         &offerbook,
                         &offerbook_path,
                         now,
@@ -808,21 +791,13 @@ impl OfferSyncService {
     }
 
     fn current_height(&self) -> Result<u64, TakerError> {
-        match (&self.rest_backend, self.electrum_url.as_deref()) {
-            (Some(rest), _) => Ok(rest.get_block_count()?),
-            (None, Some(url)) => electrum_block_count(url).map_err(TakerError::Watcher),
-            (None, None) => Err(TakerError::General(
-                "OfferSyncService configured with no chain source".into(),
-            )),
-        }
+        self.chain.block_count().map_err(TakerError::Watcher)
     }
 }
 
-/// Verifies a fidelity proof against the blockchain. Exactly one of `rest_backend`
-/// / `electrum_url` is expected.
+/// Verifies a fidelity proof against the blockchain.
 fn verify_fidelity_with_backend(
-    rest_backend: Option<&BitcoinRest>,
-    electrum_url: Option<&str>,
+    chain: &ChainSource,
     proof: &FidelityProof,
     onion_addr: &str,
     tweakable_point: &bitcoin::PublicKey,

@@ -18,7 +18,7 @@ use crate::{
     utill::{generate_keypair, generate_maker_keys, read_message, send_message, MIN_FEE_RATE},
     wallet::{
         swapcoin::{IncomingSwapCoin, OutgoingSwapCoin, WatchOnlySwapCoin},
-        BlockchainBackend, Wallet, WalletError,
+        BlockchainBackend, Wallet,
     },
 };
 use bitcoin::{
@@ -952,17 +952,12 @@ impl<B: BlockchainBackend> Taker<B> {
                         (((funding_tx, multisig_rs), contract_rs), &multisig_nonce),
                         &hashlock_nonce,
                     )| {
-                        // SPV proof empty on Electrum; maker verifier skips the check.
-                        let funding_tx_merkleproof = if !B::IS_ELECTRUM {
-                            let txids = [funding_tx.compute_txid()];
-                            wallet
-                                .rpc
-                                .get_tx_out_proof(&txids, None)
-                                .map_err(WalletError::Rpc)?
-                                .to_lower_hex_string()
-                        } else {
-                            String::new()
-                        };
+                        // Try to produce a `gettxoutproof`-style SPV proof. Bitcoind succeeds; Electrum has no equivalent RPC and returns an error
+                        let funding_tx_merkleproof = wallet
+                            .rpc
+                            .get_tx_out_proof(&[funding_tx.compute_txid()], None)
+                            .map(|p| p.to_lower_hex_string())
+                            .unwrap_or_default();
                         Ok(FundingTxInfo {
                             funding_tx: funding_tx.clone(),
                             funding_tx_merkleproof,

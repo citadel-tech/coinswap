@@ -49,10 +49,10 @@ use crate::{
     },
     watch_tower::{
         registry_storage::FileRegistry,
-        rest_backend::{electrum_chain_name, BitcoinRest},
+        rest_backend::BitcoinRest,
         service::WatchService,
         watcher::{Role, Watcher},
-        zmq_backend::{ElectrumNotifier, NotificationBackend, ZmqBackend},
+        zmq_backend::{ChainSource, ElectrumNotifier, NotificationBackend, ZmqBackend},
     },
 };
 
@@ -501,11 +501,21 @@ impl<B: BlockchainBackend> Taker<B> {
             BackendConfig::Bitcoind(rpc) => (Some(rpc.clone()), None),
             BackendConfig::Electrum(ecfg) => (None, Some(ecfg.url.clone())),
         };
+        let chain = match (&rpc_config, &electrum_url) {
+            (Some(rpc), _) => ChainSource::Rest(BitcoinRest::new(rpc.clone())?),
+            (None, Some(url)) => ChainSource::Electrum(url.clone()),
+            (None, None) => {
+                return Err(TakerError::General(
+                    "Taker config has no chain source".into(),
+                ))
+            }
+        };
 
         let (watch_service, registry, initial_sync_complete) = Self::init_watch_service(
             &config,
             rpc_config.as_ref(),
             electrum_url.as_deref(),
+            chain.clone(),
             &data_dir,
         )?;
         Self::init_taker_config(&config, &data_dir)?;
@@ -514,8 +524,7 @@ impl<B: BlockchainBackend> Taker<B> {
             &offerbook,
             registry,
             config.socks_port,
-            rpc_config,
-            electrum_url,
+            chain,
             initial_sync_complete,
         )?;
         let swap_tracker = Arc::new(Mutex::new(SwapTracker::load_or_create(&data_dir)?));
@@ -599,31 +608,27 @@ impl<B: BlockchainBackend> Taker<B> {
         config: &TakerInitConfig,
         rpc_config: Option<&RPCConfig>,
         electrum_url: Option<&str>,
+        chain: ChainSource,
         data_dir: &std::path::Path,
     ) -> Result<(WatchService, FileRegistry, Arc<AtomicBool>), TakerError> {
-        let (backend, chain_name) = if let Some(url) = electrum_url {
-            let notif = NotificationBackend::Electrum(Box::new(
+        let backend = if let Some(url) = electrum_url {
+            NotificationBackend::Electrum(Box::new(
                 ElectrumNotifier::new(url)
                     .map_err(|e| TakerError::General(format!("electrum notifier: {e:?}")))?,
-            ));
-            let name = electrum_chain_name(url)?;
-            (notif, name)
+            ))
         } else {
             let rpc = rpc_config.ok_or_else(|| {
                 TakerError::General("RPC configuration required for ZMQ watch service".into())
             })?;
-            let notif = NotificationBackend::Zmq(ZmqBackend::new(&rpc.zmq_addr));
-            let info = BitcoinRest::new(rpc.clone())?.get_blockchain_info()?;
-            (notif, info.chain.to_string())
+            NotificationBackend::Zmq(ZmqBackend::new(&rpc.zmq_addr))
         };
 
-        let file_registry = data_dir.join(".taker_watcher").join(chain_name);
+        let file_registry = data_dir.join(".taker_watcher").join(chain.chain_name()?);
         let registry = FileRegistry::load(file_registry);
         let registry_clone = registry.clone();
 
         let (tx_requests, rx_requests) = mpsc::channel();
         let (tx_events, rx_responses) = crossbeam_channel::unbounded();
-        let rpc_config_watcher = rpc_config.cloned();
 
         let initial_sync_complete = Arc::new(AtomicBool::new(false));
         let initial_sync_clone = initial_sync_complete.clone();
@@ -639,11 +644,11 @@ impl<B: BlockchainBackend> Taker<B> {
                 config.socks_port,
                 config.tor_auth_password.clone().unwrap_or_default(),
             )),
-            electrum_url.map(str::to_string),
+            chain,
         );
         let _ = thread::Builder::new()
             .name("Watcher thread".to_string())
-            .spawn(move || watcher.run(rpc_config_watcher, initial_sync_clone));
+            .spawn(move || watcher.run(initial_sync_clone));
 
         Ok((
             WatchService::new(tx_requests, rx_responses),
@@ -683,17 +688,14 @@ impl<B: BlockchainBackend> Taker<B> {
         offerbook: &OfferBookHandle,
         registry: FileRegistry,
         socks_port: u16,
-        rpc_config: Option<RPCConfig>,
-        electrum_url: Option<String>,
+        chain: ChainSource,
         initial_sync_complete: Arc<AtomicBool>,
     ) -> Result<OfferSyncHandle, TakerError> {
-        let rest_backend = rpc_config.map(BitcoinRest::new).transpose()?;
         Ok(OfferSyncService::new(
             offerbook.clone(),
             registry,
             socks_port,
-            rest_backend,
-            electrum_url,
+            chain,
             initial_sync_complete,
         )
         .start())
@@ -2527,6 +2529,7 @@ impl<B: BlockchainBackend> Taker<B> {
             .map_err(|e| TakerError::General(format!("Invalid maker address: {e}")))?;
         self.offerbook.remove(&parsed)
     }
+}
 
 impl<B: BlockchainBackend> Taker<B> {
     /// Restore a wallet from a backup file (static — no taker instance needed).

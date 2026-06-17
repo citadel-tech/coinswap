@@ -27,17 +27,16 @@ use crate::{
     nostr_coinswap::{coinswap_kind, connect_nostr_websocket, EXPIRATION_SECS},
     watch_tower::{
         registry_storage::FileRegistry,
-        rest_backend::{electrum_get_raw_tx, BitcoinRest},
         utils::{parse_fidelity_event, process_fidelity, SeenTxids},
         watcher_error::WatcherError,
+        zmq_backend::ChainSource,
     },
 };
 
 // ## TODO: Instead of looping over relay's have a connection Pool.
 /// Runs the main discovery routine for maker's fidelity bonds by subscribing to network-specific Nostr events.
 pub fn run_discovery(
-    bitcoin_rpc: Option<BitcoinRest>,
-    electrum_url: Option<String>,
+    chain: ChainSource,
     network: Network,
     registry: FileRegistry,
     shutdown: Arc<AtomicBool>,
@@ -55,14 +54,13 @@ pub fn run_discovery(
 
     let seen_txid = Arc::new(Mutex::new(SeenTxids::new()));
     let registry = Arc::new(registry);
-    let bitcoin_rpc: Option<Arc<BitcoinRest>> = bitcoin_rpc.map(Arc::new);
+    let chain = Arc::new(chain);
 
     for relay in relays {
         let relay = relay.to_string();
         let shutdown = shutdown.clone();
         let registry = Arc::clone(&registry);
-        let bitcoin_rpc = bitcoin_rpc.clone();
-        let electrum_url = electrum_url.clone();
+        let chain = Arc::clone(&chain);
         let seen_txid = Arc::clone(&seen_txid);
         let initial_sync_complete = initial_sync_complete.clone();
         let nostr_tor_config = nostr_tor_config.clone();
@@ -75,8 +73,7 @@ pub fn run_discovery(
                     kind,
                     registry,
                     shutdown,
-                    bitcoin_rpc,
-                    electrum_url,
+                    chain,
                     &seen_txid,
                     &initial_sync_complete,
                     (nostr_tor_config.0, nostr_tor_config.1.as_str()),
@@ -95,8 +92,7 @@ fn run_nostr_session_for_relay(
     kind: Kind,
     registry: Arc<FileRegistry>,
     shutdown: Arc<AtomicBool>,
-    bitcoin_rpc: Option<Arc<BitcoinRest>>,
-    electrum_url: Option<String>,
+    chain: Arc<ChainSource>,
     seen_txid: &Arc<Mutex<SeenTxids>>,
     initial_sync_complete: &Arc<AtomicBool>,
     nostr_tor_config: (u16, &str),
@@ -109,8 +105,7 @@ fn run_nostr_session_for_relay(
             kind,
             registry.clone(),
             shutdown.clone(),
-            bitcoin_rpc.clone(),
-            electrum_url.clone(),
+            chain.clone(),
             seen_txid,
             initial_sync_complete,
             nostr_tor_config,
@@ -138,8 +133,7 @@ fn connect_and_run_once(
     kind: Kind,
     registry: Arc<FileRegistry>,
     shutdown: Arc<AtomicBool>,
-    bitcoin_rpc: Option<Arc<BitcoinRest>>,
-    electrum_url: Option<String>,
+    chain: Arc<ChainSource>,
     seen_txid: &Arc<Mutex<SeenTxids>>,
     initial_sync_complete: &Arc<AtomicBool>,
     nostr_tor_config: (u16, &str),
@@ -177,8 +171,7 @@ fn connect_and_run_once(
         registry,
         socket,
         shutdown,
-        bitcoin_rpc,
-        electrum_url,
+        chain,
         relay_url,
         kind,
         seen_txid,
@@ -192,8 +185,7 @@ fn read_event_loop(
     registry: Arc<FileRegistry>,
     mut socket: tungstenite::WebSocket<MaybeTlsStream<TcpStream>>,
     shutdown: Arc<AtomicBool>,
-    bitcoin_rpc: Option<Arc<BitcoinRest>>,
-    electrum_url: Option<String>,
+    chain: Arc<ChainSource>,
     relay_url: &str,
     kind: Kind,
     seen_txid: &Arc<Mutex<SeenTxids>>,
@@ -239,8 +231,7 @@ fn read_event_loop(
         let is_eose = handle_relay_message(
             registry.clone(),
             relay_msg,
-            bitcoin_rpc.clone(),
-            electrum_url.clone(),
+            chain.clone(),
             relay_url,
             kind,
             seen_txid,
@@ -259,8 +250,7 @@ fn read_event_loop(
 fn handle_relay_message(
     registry: Arc<FileRegistry>,
     msg: RelayMessage,
-    bitcoin_rpc: Option<Arc<BitcoinRest>>,
-    electrum_url: Option<String>,
+    chain: Arc<ChainSource>,
     relay_url: &str,
     kind: Kind,
     seen_txid: &Arc<Mutex<SeenTxids>>,
@@ -329,27 +319,11 @@ fn handle_relay_message(
                 return Ok(false);
             }
 
-            let tx = if let Some(ref url) = electrum_url {
-                match electrum_get_raw_tx(url, &txid) {
-                    Ok(tx) => tx,
-                    Err(e) => {
-                        log::warn!(
-                            "Failed to fetch raw tx {txid:?} via electrum ({relay_url}): {e}"
-                        );
-                        return Ok(false);
-                    }
-                }
-            } else {
-                match bitcoin_rpc.as_ref().map(|r| r.get_raw_tx(&txid)) {
-                    Some(Ok(tx)) => tx,
-                    Some(Err(e)) => {
-                        log::warn!("Failed to fetch raw tx {txid:?} via {relay_url}: {e}");
-                        return Ok(false);
-                    }
-                    None => {
-                        log::warn!("No backend available to fetch tx {txid:?}");
-                        return Ok(false);
-                    }
+            let tx = match chain.get_raw_tx(&txid) {
+                Ok(tx) => tx,
+                Err(e) => {
+                    log::warn!("Failed to fetch raw tx {txid:?} via {relay_url}: {e}");
+                    return Ok(false);
                 }
             };
 

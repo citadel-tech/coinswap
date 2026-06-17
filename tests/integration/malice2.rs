@@ -43,7 +43,7 @@ fn test_malice2_maker_broadcast_contract() {
     ];
 
     let (test_framework, mut takers, makers, block_generation_handle) =
-        TestFramework::init(makers_config_map, taker_behavior, maker_behaviors);
+        TestFramework::init::<BitcoindBackend>(makers_config_map, taker_behavior, maker_behaviors);
 
     let bitcoind = &test_framework.bitcoind;
     let taker = takers.get_mut(0).unwrap();

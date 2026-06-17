@@ -9,6 +9,7 @@ use coinswap::{
 };
 use serde_json::Value;
 use std::{env, path::PathBuf, sync::atomic::Ordering::Relaxed, thread};
+use test_framework::BitcoindBackend;
 
 fn write_filtered_report_by_prefixes(
     input_report_path: &std::path::Path,
@@ -75,7 +76,11 @@ fn hotpath_profile_swap() {
     let maker_behaviors = vec![MakerBehavior::Normal, MakerBehavior::Normal];
 
     let (test_framework, mut takers, makers, block_generation_handle) =
-        test_framework::TestFramework::init(makers_config_map, taker_behavior, maker_behaviors);
+        test_framework::TestFramework::init::<BitcoindBackend>(
+            makers_config_map,
+            taker_behavior,
+            maker_behaviors,
+        );
 
     let bitcoind = &test_framework.bitcoind;
     let taker = takers.get_mut(0).expect("taker must exist");

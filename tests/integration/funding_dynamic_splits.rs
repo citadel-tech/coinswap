@@ -46,7 +46,7 @@ fn test_create_funding_txn_with_varied_distributions() {
 
     // Initialize the test framework with a single taker with Normal behavior, no makers
     let (test_framework, mut takers, _makers, _block_generation_handle) =
-        TestFramework::init(vec![], vec![TakerBehavior::Normal], vec![]);
+        TestFramework::init::<BitcoindBackend>(vec![], vec![TakerBehavior::Normal], vec![]);
 
     let bitcoind = &test_framework.bitcoind;
     let taker = &mut takers[0];
