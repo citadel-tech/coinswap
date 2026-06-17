@@ -221,8 +221,7 @@ pub trait Maker: Send + Sync {
     /// Save outgoing swapcoin to wallet.
     fn save_outgoing_swapcoin(&self, swapcoin: &OutgoingSwapCoin) -> Result<(), MakerError>;
 
-    /// Register outpoint for watching. Caller supplies the outpoint's
-    /// scriptPubKey so the watcher hot path stays purely local.
+    /// Register outpoint for watching.
     fn register_watch_outpoint(
         &self,
         outpoint: bitcoin::OutPoint,

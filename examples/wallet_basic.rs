@@ -89,6 +89,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut wallet = Wallet::<BitcoindBackend>::init(&wallet_path, &rpc_config, None).unwrap();
 
+    // Swap the two lines above for these to drive the same wallet through an electrs server instead of bitcoind RPC.
+    //     use coinswap::wallet::{ElectrumBackend, ElectrumConfig};
+    //     let electrum_config = ElectrumConfig {
+    //         url: "tcp://127.0.0.1:60401".to_string(),
+    //         wallet_name: "wallet-example".to_string(),
+    //     };
+    //     let mut wallet = Wallet::<ElectrumBackend>::init(&wallet_path, &electrum_config, None).unwrap();
+
     println!("Wallet initialized successfully!");
 
     // Sync wallet first

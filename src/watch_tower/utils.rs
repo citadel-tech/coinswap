@@ -356,6 +356,7 @@ mod tests {
         };
         reg.upsert_watch(&WatchRequest {
             outpoint: watched,
+            script_pubkey: Some(ScriptBuf::new()),
             in_block: false,
             spent_tx: None,
         });

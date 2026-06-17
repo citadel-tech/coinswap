@@ -1009,58 +1009,16 @@ impl<B: BlockchainBackend> Wallet<B> {
         }
     }
 
-    /// Derive the scriptPubKey for `(keychain, index)` under a precomputed
-    /// account-level `Xpriv`. Hot-loop callers (e.g.
-    /// [`Self::populate_backend_watched_scripts`]) compute the account once
-    /// and reuse it across all indices, avoiding redundant BIP32 CKD work.
-    fn script_from_account(
-        secp: &Secp256k1<bitcoin::secp256k1::All>,
-        account: &Xpriv,
-        address_type: AddressType,
-        keychain: KeychainKind,
-        index: u32,
-    ) -> Result<ScriptBuf, WalletError> {
-        let child = account.derive_priv(
-            secp,
-            &DerivationPath::from(vec![
-                ChildNumber::from_normal_idx(keychain.index_num())?,
-                ChildNumber::from_normal_idx(index)?,
-            ]),
-        )?;
-        Ok(match address_type {
-            AddressType::P2WPKH => {
-                let pk = PublicKey {
-                    compressed: true,
-                    inner: child.private_key.public_key(secp),
-                };
-                ScriptBuf::new_p2wpkh(
-                    &pk.wpubkey_hash()
-                        .expect("compressed key always has wpubkey hash"),
-                )
-            }
-            AddressType::P2TR => {
-                let keypair = Keypair::from_secret_key(secp, &child.private_key);
-                let (xonly, _parity) = keypair.x_only_public_key();
-                ScriptBuf::new_p2tr(secp, xonly, None)
-            }
-        })
-    }
-
-    /// Iterate every wallet-owned `(address_type, keychain, index)` up to the
-    /// current gap limit and register each script with the backend. For
-    /// Bitcoin Core this is a no-op (server-side wallet does the tracking);
-    /// for Electrum this populates the local watch set so subsequent
-    /// `list_unspent` queries return the right UTXOs.
+    /// Register every wallet-owned scriptPubKey with the backend: HD-derived
+    /// receive/change addresses, fidelity bonds, and persisted swapcoin SPKs.
+    /// No-op on Bitcoin Core (server-side wallet tracks these); on Electrum this
+    /// populates the local watch set so `list_unspent` returns the right UTXOs.
     pub(crate) fn populate_backend_watched_scripts(&self) -> Result<(), WalletError> {
         let secp = crate::utill::global_secp();
         let count = self.get_addrss_import_count();
         for address_type in [AddressType::P2WPKH, AddressType::P2TR] {
-            // Account-level Xpriv (e.g. m/84'/1'/0') derived once per address_type —
-            // every (keychain, index) under it is then a cheap child derive instead of
-            // redoing CKD-from-master each iteration.
-            //
-            // The fingerprint used in `check_and_derive_descriptor_utxo_or_swap_coin`
-            // is the *account-level* key's fingerprint, not the master's.
+            // Derive the account-level Xpriv once per address_type; every
+            // (keychain, index) below it is then a cheap child derive.
             let account = self.store.master_key.derive_priv(
                 secp,
                 &DerivationPath::from_str(Self::get_derivation_path(address_type))?,
@@ -1069,8 +1027,30 @@ impl<B: BlockchainBackend> Wallet<B> {
             let is_taproot = matches!(address_type, AddressType::P2TR);
             for keychain in [KeychainKind::External, KeychainKind::Internal] {
                 for index in 0..count {
-                    let script =
-                        Self::script_from_account(secp, &account, address_type, keychain, index)?;
+                    let child = account.derive_priv(
+                        secp,
+                        &DerivationPath::from(vec![
+                            ChildNumber::from_normal_idx(keychain.index_num())?,
+                            ChildNumber::from_normal_idx(index)?,
+                        ]),
+                    )?;
+                    let script = match address_type {
+                        AddressType::P2WPKH => {
+                            let pk = PublicKey {
+                                compressed: true,
+                                inner: child.private_key.public_key(secp),
+                            };
+                            ScriptBuf::new_p2wpkh(
+                                &pk.wpubkey_hash()
+                                    .expect("compressed key always has wpubkey hash"),
+                            )
+                        }
+                        AddressType::P2TR => {
+                            let keypair = Keypair::from_secret_key(secp, &child.private_key);
+                            let (xonly, _parity) = keypair.x_only_public_key();
+                            ScriptBuf::new_p2tr(secp, xonly, None)
+                        }
+                    };
                     self.rpc.watch_script(
                         &script,
                         Some(HdOrigin {
@@ -1083,22 +1063,12 @@ impl<B: BlockchainBackend> Wallet<B> {
                 }
             }
         }
-        // Fidelity bond scripts aren't derivable from the HD chain, but the bond UTXOs must
-        // still appear in `list_unspent` so `check_if_fidelity` can classify them. Register
-        // each known bond's scriptPubKey explicitly.
+        // Non-HD scripts: fidelity bonds, then per-swapcoin multisig + contract SPKs.
+        // Required on Electrum for restart-recovery; no-op on Bitcoin Core.
         for bond in self.store.fidelity_bond.iter() {
             self.rpc.watch_script(&bond.script_pub_key(), None);
         }
 
-        // Persisted swap state. The Bitcoind sync path imports the equivalent set
-        // via `descriptors_to_import`. Without this on Electrum, after a restart:
-        //   - Live multisig UTXOs (pre-contract-broadcast) vanish from `list_unspent`.
-        //   - Contract UTXOs awaiting hashlock/timelock claim aren't visible to
-        //     `check_and_derive_live_contract_spend_info`, blocking recovery.
-        // Two scriptPubKeys per swapcoin: the 2-of-2 multisig SPK (P2WSH of the
-        // `sortedmulti`) and the contract output SPK (P2WSH of the contract redeem
-        // script). Neither is HD-derived; pass `None` for the HD-origin hint —
-        // the wallet's classifier already has dedicated paths for both.
         let register_swap_scripts =
             |my_pubkey: Option<PublicKey>,
              other_pubkey: Option<PublicKey>,
@@ -2477,19 +2447,14 @@ impl<B: BlockchainBackend> Wallet<B> {
     ) -> Result<(Address, SecretKey), WalletError> {
         let (my_pubkey, my_privkey) = generate_keypair();
 
-        // Compute the wsh(sortedmulti(2,K1,K2)) address locally so it works on
-        // both backends. `getdescriptorinfo`/`deriveaddresses` are Bitcoin Core
-        // RPCs that Electrum doesn't expose; the redeem script + p2wsh address
-        // only depend on the two pubkeys so there's no reason to ask the node.
+        // Derive the wsh(multi(2,...)) address locally — Electrum has no
+        // getdescriptorinfo/deriveaddresses. Sort keys per BIP67 to match the
+        // redeem-script ordering so descriptor + address stay in lockstep.
         let redeem_script =
             crate::protocol::contract::create_multisig_redeemscript(&my_pubkey, other_pubkey);
         let network = self.store.network;
         let address = Address::p2wsh(&redeem_script, network);
 
-        // Sort the pubkeys lexicographically to match `create_multisig_redeemscript`'s
-        // BIP67 ordering, then emit a plain `multi` descriptor. Using `sortedmulti`
-        // here would re-sort, but matching the redeem-script's order explicitly
-        // means the descriptor and address can never disagree on which key is which.
         let (k1, k2) = {
             let (a, b) = (my_pubkey, *other_pubkey);
             if a.inner.serialize()[..] < b.inner.serialize()[..] {

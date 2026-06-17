@@ -329,42 +329,38 @@ fn main() -> Result<(), TakerError> {
         None => coinswap::wallet::BackendConfig::Bitcoind(rpc_config),
     };
 
-    // Handle Restore before taker init (wallet may not exist yet). Works for
-    // both Bitcoin Core and Electrum backends.
-    if let Commands::Restore { ref backup_file } = args.command {
-        if args.electrum_url.is_some() {
-            coinswap::taker::Taker::<coinswap::wallet::ElectrumBackend>::restore_wallet(
-                args.data_directory,
-                args.wallet_name,
-                backend,
-                backup_file,
-            );
-        } else {
-            coinswap::taker::Taker::<coinswap::wallet::BitcoindBackend>::restore_wallet(
-                args.data_directory,
-                args.wallet_name,
-                backend,
-                backup_file,
-            );
-        }
-        return Ok(());
-    }
-
     let config = TakerInitConfig {
         data_dir: args.data_directory.clone(),
-        backend,
+        backend: backend.clone(),
         tor_auth_password: args.tor_auth.clone(),
         password: args.password.clone(),
         ..TakerInitConfig::default()
     };
 
+    // `dispatch_backend` monomorphizes per backend, so the rest of the code (restore + init + run_commands) is written once over generic `B`.
     if args.electrum_url.is_some() {
-        let taker = Taker::<coinswap::wallet::ElectrumBackend>::init(config)?;
-        run_commands(taker, &args)
+        dispatch_backend::<coinswap::wallet::ElectrumBackend>(args, config, backend)
     } else {
-        let taker = Taker::<coinswap::wallet::BitcoindBackend>::init(config)?;
-        run_commands(taker, &args)
+        dispatch_backend::<coinswap::wallet::BitcoindBackend>(args, config, backend)
     }
+}
+
+fn dispatch_backend<B: coinswap::wallet::BlockchainBackend>(
+    args: Cli,
+    config: TakerInitConfig,
+    backend: coinswap::wallet::BackendConfig,
+) -> Result<(), TakerError> {
+    if let Commands::Restore { ref backup_file } = args.command {
+        coinswap::taker::Taker::<B>::restore_wallet(
+            args.data_directory,
+            args.wallet_name,
+            backend,
+            backup_file,
+        );
+        return Ok(());
+    }
+    let taker = Taker::<B>::init(config)?;
+    run_commands(taker, &args)
 }
 
 fn run_commands<B: coinswap::wallet::BlockchainBackend>(

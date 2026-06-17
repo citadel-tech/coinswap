@@ -6,7 +6,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use bitcoin::{BlockHash, OutPoint, Transaction, Txid};
+use bitcoin::{BlockHash, OutPoint, ScriptBuf, Transaction, Txid};
 use serde::{Deserialize, Serialize};
 
 use crate::watch_tower::utils::FidelityAnnouncement;
@@ -16,6 +16,9 @@ use crate::watch_tower::utils::FidelityAnnouncement;
 pub struct WatchRequest {
     /// UTXO being watched.
     pub outpoint: OutPoint,
+    /// Persists `scriptPubKey` for the watched UTXO. Removes the roundtrip via `get_raw_tx` on restart.
+    #[serde(default)]
+    pub script_pubkey: Option<ScriptBuf>,
     /// Whether the spend was seen in a block (`true`) or only in the mempool.
     pub in_block: bool,
     /// Optional full transaction that spent the outpoint.
@@ -279,6 +282,7 @@ mod tests {
         let outpoint = dummy_outpoint(1);
         let req = WatchRequest {
             outpoint,
+            script_pubkey: Some(ScriptBuf::new()),
             in_block: false,
             spent_tx: None,
         };
@@ -289,6 +293,7 @@ mod tests {
 
         assert_eq!(watches.len(), 1);
         assert_eq!(watches[0].outpoint, outpoint);
+        assert_eq!(watches[0].script_pubkey, Some(ScriptBuf::new()));
     }
 
     #[test]
@@ -301,6 +306,7 @@ mod tests {
 
         let req = WatchRequest {
             outpoint,
+            script_pubkey: Some(ScriptBuf::new()),
             in_block: true,
             spent_tx: None,
         };

@@ -12,15 +12,11 @@ use std::{
     thread,
 };
 
-use crate::{
-    wallet::RPCConfig,
-    watch_tower::{
-        registry_storage::FileRegistry,
-        rest_backend::{electrum_chain_name, BitcoinRest},
-        watcher::{Role, Watcher, WatcherCommand, WatcherEvent},
-        watcher_error::WatcherError,
-        zmq_backend::{ElectrumNotifier, NotificationBackend, ZmqBackend},
-    },
+use crate::watch_tower::{
+    registry_storage::FileRegistry,
+    watcher::{Role, Watcher, WatcherCommand, WatcherEvent},
+    watcher_error::WatcherError,
+    zmq_backend::{ChainSource, ElectrumNotifier, NotificationBackend, ZmqBackend},
 };
 
 /// Marker type for the Maker role in the watchtower.
@@ -43,10 +39,7 @@ impl WatchService {
         Self { tx, rx }
     }
 
-    /// Registers an outpoint to be monitored for future spends. The caller
-    /// supplies the outpoint's `scriptPubKey` so the watcher's hot loop never
-    /// does a network fetch — callers always have the parent tx in scope when
-    /// they decide to start watching one of its outputs.
+    /// Registers an outpoint to be monitored for future spends.
     pub fn register_watch_request(&self, outpoint: OutPoint, script_pubkey: ScriptBuf) {
         let _ = self.tx.send(WatcherCommand::RegisterWatchRequest {
             outpoint,
@@ -87,46 +80,32 @@ impl WatchService {
 
 /// Starts the Maker Watch Service.
 ///
-/// Exactly one of `rpc_config` / `electrum_url` should be provided.
-/// `zmq_addr` is consulted only in the Bitcoin Core branch.
+/// `zmq_addr` is consulted only when `chain` is `ChainSource::Rest`.
 #[hotpath::measure]
 pub fn start_maker_watch_service(
     zmq_addr: &str,
-    rpc_config: Option<&RPCConfig>,
+    chain: ChainSource,
     data_dir: &Path,
     network_port: u16,
     electrum_url: Option<&str>,
 ) -> Result<WatchService, WatcherError> {
-    // Notification backend + chain name for registry path.
-    let (backend, chain_name) = if let Some(url) = electrum_url {
-        let notif = NotificationBackend::Electrum(Box::new(
+    let backend = if let Some(url) = electrum_url {
+        NotificationBackend::Electrum(Box::new(
             ElectrumNotifier::new(url)
                 .map_err(|e| WatcherError::General(format!("electrum notifier: {e:?}")))?,
-        ));
-        (notif, electrum_chain_name(url)?)
+        ))
     } else {
-        let rpc = rpc_config.ok_or_else(|| {
-            WatcherError::General(
-                "start_maker_watch_service: RPCConfig required when not in electrum mode".into(),
-            )
-        })?;
-        let notif = NotificationBackend::Zmq(ZmqBackend::new(zmq_addr));
-        let info = BitcoinRest::new(rpc.clone())?.get_blockchain_info()?;
-        (notif, info.chain.to_string())
+        NotificationBackend::Zmq(ZmqBackend::new(zmq_addr))
     };
 
-    // Registry
     let file_registry = data_dir
         .join(format!(".maker_{}_watcher", network_port))
-        .join(chain_name);
+        .join(chain.chain_name()?);
     let registry = FileRegistry::load(file_registry);
 
     // Channels
     let (tx_requests, rx_requests) = mpsc::channel();
     let (tx_events, rx_responses) = unbounded();
-
-    // Watcher
-    let rpc_config_watcher = rpc_config.cloned();
     let mut watcher = Watcher::<MakerRole>::new(
         backend,
         registry,
@@ -134,13 +113,13 @@ pub fn start_maker_watch_service(
         tx_events,
         Vec::new(),
         None,
-        electrum_url.map(str::to_string),
+        chain,
     );
 
     // Makers don't run discovery, so pass an already-complete flag.
     thread::Builder::new()
         .name("Watcher thread".to_string())
-        .spawn(move || watcher.run(rpc_config_watcher, Arc::new(AtomicBool::new(true))))
+        .spawn(move || watcher.run(Arc::new(AtomicBool::new(true))))
         .expect("failed to spawn watcher thread");
 
     Ok(WatchService::new(tx_requests, rx_responses))

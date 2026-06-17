@@ -95,6 +95,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let taker = Taker::<BitcoindBackend>::init(config).unwrap();
 
+    // Swap the two lines above for these to drive the same wallet through an electrs server instead of bitcoind RPC.
+    //     use coinswap::wallet::{ElectrumBackend, ElectrumConfig};
+    //     let electrum_config = ElectrumConfig {
+    //         url: "tcp://127.0.0.1:60401".to_string(),
+    //         wallet_name: "taker-example".to_string(),
+    //     };
+    //     let config = TakerInitConfig::default().with_backend(BackendConfig::Electrum(electrum_config));
+    //     let taker = Taker::<ElectrumBackend>::init(config).unwrap();
+
     println!("Taker initialized successfully!");
 
     // Check initial wallet balance and UTXOs

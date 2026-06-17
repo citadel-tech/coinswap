@@ -8,8 +8,61 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use bitcoin::{consensus::encode::serialize, Script, ScriptBuf, Txid};
+use bitcoin::{consensus::encode::serialize, Script, ScriptBuf, Transaction, Txid};
 use electrum_client::{Client as ElectrumClient, ElectrumApi};
+
+use super::{
+    rest_backend::{
+        chain_name_for, network_from_electrum_genesis, with_electrum_client, BitcoinRest,
+    },
+    watcher_error::WatcherError,
+};
+
+#[derive(Clone)]
+/// Chain State for either Bitcoin Core REST or Electrum protocol. Used by the watcher to query chain state for spends and block height.
+pub enum ChainSource {
+    /// Bitcoin Core REST.
+    Rest(BitcoinRest),
+    /// Electrum protocol.
+    Electrum(String),
+}
+
+impl ChainSource {
+    /// Current chain tip height.
+    pub fn block_count(&self) -> Result<u64, WatcherError> {
+        match self {
+            Self::Rest(r) => r.get_block_count(),
+            Self::Electrum(url) => with_electrum_client(url, |c| {
+                c.block_headers_subscribe().map(|h| h.height as u64)
+            }),
+        }
+    }
+
+    /// Fetch a raw transaction by txid.
+    pub fn get_raw_tx(&self, txid: &Txid) -> Result<Transaction, WatcherError> {
+        match self {
+            Self::Rest(r) => r.get_raw_tx(txid),
+            Self::Electrum(url) => with_electrum_client(url, |c| c.transaction_get(txid)),
+        }
+    }
+
+    /// Bitcoin Core chain name: "main", "test", "signet", "regtest".
+    pub fn chain_name(&self) -> Result<String, WatcherError> {
+        match self {
+            Self::Rest(r) => Ok(r.get_blockchain_info()?.chain.to_string()),
+            Self::Electrum(url) => {
+                let genesis = with_electrum_client(url, |c| c.server_features())?.genesis_hash;
+                network_from_electrum_genesis(&genesis)
+                    .map(|n| chain_name_for(n).to_string())
+                    .ok_or_else(|| {
+                        WatcherError::General(format!(
+                            "unknown genesis hash from electrum: {genesis:?}"
+                        ))
+                    })
+            }
+        }
+    }
+}
 
 /// Reference to a block received via the notification backend.
 #[derive(Debug, Clone)]
@@ -84,24 +137,13 @@ impl ZmqBackend {
         }
     }
 }
-/// Electrum-protocol notification backend.
-///
-/// Drives two Electrum subscriptions:
-/// - `blockchain.headers.subscribe` → tip advances (emitted as `BlockConnected`)
-/// - `blockchain.scripthash.subscribe` for each watched scriptPubKey →
-///   per-script history changes (each new tx is fetched and emitted as
-///   `TxSeen { raw_tx }`, including mempool entries).
-///
-/// `subscribe_script` is idempotent and seeds the per-script "already seen"
-/// set from the current history, so the first call doesn't fire spurious
-/// `TxSeen` for transactions that were on-chain at subscription time.
+/// Electrum-protocol notification backend. Drives `headers.subscribe` and one `scripthash.subscribe` per watched SPK.
 pub struct ElectrumNotifier {
     inner: ElectrumClient,
     last_height: i64,
     /// Txids already surfaced for each subscribed scriptPubKey.
     subscriptions: HashMap<ScriptBuf, HashSet<Txid>>,
-    /// Events buffered between `poll` calls (one notification can yield many
-    /// new transactions; we return them one at a time).
+    /// Events buffered between `poll` calls (one notification can yield many new transactions; we return them one at a time).
     pending: VecDeque<BackendEvent>,
 }
 
@@ -118,20 +160,15 @@ impl ElectrumNotifier {
         })
     }
 
-    /// Subscribe to a scriptPubKey so future history changes (mempool entry,
-    /// confirmation, or reorg) surface as `TxSeen` events via `poll`.
-    ///
-    /// The script's current history is also fetched and queued as `TxSeen`
-    /// events — this covers the crash-recovery case where a spend of a
-    /// watched outpoint landed in the mempool while the maker was down.
+    /// Subscribe to a scriptPubKey. Idempotent; seeds the seen-set from current
+    /// history so the first call doesn't fire `TxSeen` for already-mined txs.
+    /// Mempool entries from the seeded history do re-emit, that's the
+    /// crash-recovery path for a spend that landed while the maker was down.
     pub fn subscribe_script(&mut self, spk: &Script) -> Result<(), electrum_client::Error> {
         if self.subscriptions.contains_key(spk) {
             return Ok(());
         }
         self.subscriptions.insert(spk.to_owned(), HashSet::new());
-        // Arming the subscription returns the current status snapshot; we
-        // discard it and walk the explicit history below so each tx flows
-        // through the standard TxSeen path.
         let _ = self.inner.script_subscribe(spk)?;
         let hist = self.inner.script_get_history(spk)?;
         let seen = self

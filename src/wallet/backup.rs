@@ -41,16 +41,9 @@ impl<B: BlockchainBackend> From<&Wallet<B>> for WalletBackup {
     }
 }
 impl<B: BlockchainBackend> Wallet<B> {
-    /// Creates a backup of the wallet and writes it to the given path.
-    ///
-    /// The backup is saved as a `.json` file. If encryption material is provided,
+    /// Creates a backup of the wallet and writes it to the given path. The
+    /// backup is saved as a `.json` file. If encryption material is provided,
     /// the backup content is encrypted before being written.
-    ///
-    /// # Behavior
-    ///
-    /// - If encryption is used, the backup content is encrypted and serialized.
-    /// - If not, a warning is printed, and the backup is stored unencrypted.
-    /// - The final backup file will have a `.json` extension.
     pub fn backup(
         &self,
         path: &Path,
@@ -78,9 +71,7 @@ impl<B: BlockchainBackend> Wallet<B> {
 
         Ok(())
     }
-}
 
-impl<B: BlockchainBackend> Wallet<B> {
     /// Restore a wallet from a [`WalletBackup`]. The caller must set the wallet
     /// name in `config` to match `wallet_path.file_name()` before calling.
     pub fn restore(
@@ -113,13 +104,10 @@ impl<B: BlockchainBackend> Wallet<B> {
         tmp_wallet.sync_and_save()?;
         Ok(tmp_wallet)
     }
-}
 
-impl<B: BlockchainBackend> Wallet<B> {
     /// Interactive restore against the backend variant matching `B`. Prompts
     /// for an optional decryption passphrase, derives the wallet name from
-    /// `restored_path`, and writes the restored wallet to disk. Works for
-    /// both Bitcoin Core and Electrum backends.
+    /// `restored_path`, and writes the restored wallet to disk.
     pub fn restore_interactive(
         backup_file_path: &PathBuf,
         backend: &BackendConfig,
@@ -135,9 +123,8 @@ impl<B: BlockchainBackend> Wallet<B> {
             "Enter restored wallet encryption passphrase (empty for no encryption): ".to_string(),
         ));
 
-        // Take the matching backend variant and rebind its wallet name to the
-        // restored path's filename. `Wallet::restore` does no rebinding of its
-        // own — the caller is responsible for matching name ↔ path.
+        // Rebind the backend's wallet_name to the restored path's filename.
+        // `Wallet::restore` doesn't rebind on its own.
         let mut backend = backend.clone();
         if let Some(name) = restored_path.file_name().and_then(|n| n.to_str()) {
             backend.set_wallet_name(name.to_string());
@@ -156,20 +143,9 @@ impl<B: BlockchainBackend> Wallet<B> {
             println!("Wallet restore succeeded!");
         }
     }
-}
 
-impl<B: BlockchainBackend> Wallet<B> {
-    /// Interactively creates a wallet backup, optionally encrypted.
-    ///
-    /// This is a user-friendly version of the [`Wallet::backup`] method, which:
-    /// - Uses the current working directory as the backup location.
-    /// - Prompts the user to input encryption material (if `encrypt` is `true`).
-    ///
-    /// # Behavior
-    ///
-    /// - Prompts for encryption key if `encrypt == true`.
-    /// - Names the backup file as `{wallet_name}-backup.json`.
-    /// - Writes the backup to the current working directory.
+    /// Interactively creates a wallet backup in the current working directory,
+    /// optionally encrypted. File name is `{wallet_name}-backup.json`.
     pub fn backup_interactive(wallet: &Self, encrypt: bool) {
         log::info!("Initiating wallet backup!");
         let backup_name = format!("{}-backup", wallet.get_name());
@@ -189,9 +165,6 @@ impl<B: BlockchainBackend> Wallet<B> {
         };
 
         let backup_path = working_directory.join(backup_name);
-        // Attempt to back up the wallet.
-        // Since this is a one-shot operation, the program will exit after this,
-        // so these messages are the last feedback the user will see.
         if let Err(e) = wallet.backup(&backup_path, backup_enc_material) {
             log::error!("Wallet backup failed: {e:?}");
         } else {
