@@ -18,15 +18,14 @@ use std::{
     io::{BufReader, Read},
     net::TcpStream,
     path::{Path, PathBuf},
+    process::{Child, Command, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering::Relaxed},
-        mpsc, Arc,
+        Arc, Mutex,
     },
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
-
-use nostr_rs_relay::{config, server::start_server};
 
 use flate2::read::GzDecoder;
 use tar::Archive;
@@ -382,8 +381,7 @@ pub struct TestFramework {
     pub(super) temp_dir: PathBuf,
     pub(super) nostr_relay_url: String,
     shutdown: AtomicBool,
-    nostr_relay_shutdown: mpsc::Sender<()>,
-    nostr_relay_handle: Option<JoinHandle<()>>,
+    nostr_relay: Mutex<Option<Child>>,
 }
 
 impl TestFramework {
@@ -433,7 +431,7 @@ impl TestFramework {
 
         let nostr_port = 8000 + rand::random::<u16>() % 1000;
         let nostr_relay_url = format!("ws://127.0.0.1:{nostr_port}");
-        let (nostr_relay_shutdown, nostr_relay_handle) = spawn_nostr_relay(&temp_dir, nostr_port);
+        let nostr_relay = spawn_nostr_relay(&temp_dir, nostr_port);
         wait_for_relay_healthy(nostr_port);
 
         let shutdown = AtomicBool::new(false);
@@ -442,8 +440,7 @@ impl TestFramework {
             temp_dir: temp_dir.clone(),
             nostr_relay_url: nostr_relay_url.clone(),
             shutdown,
-            nostr_relay_shutdown,
-            nostr_relay_handle: Some(nostr_relay_handle),
+            nostr_relay: Mutex::new(Some(nostr_relay)),
         });
 
         // Translate a RpcConfig from the test framework.
@@ -524,11 +521,19 @@ impl TestFramework {
         (test_framework, takers, makers, generate_blocks_handle)
     }
 
+    /// Terminate the per-test nostr relay child process, if still running.
+    fn kill_relay(&self) {
+        if let Some(mut child) = self.nostr_relay.lock().unwrap().take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+
     /// Stop bitcoind, nostr relay, and clean up all test data.
     pub fn stop(&self) {
         log::info!("🛑 Stopping Test Framework");
         self.shutdown.store(true, Relaxed);
-        _ = self.nostr_relay_shutdown.send(());
+        self.kill_relay();
         let _ = self.bitcoind.client.stop().unwrap();
         std::thread::sleep(std::time::Duration::from_secs(3));
         if self.temp_dir.exists() {
@@ -540,12 +545,7 @@ impl TestFramework {
 impl Drop for TestFramework {
     fn drop(&mut self) {
         self.shutdown.store(true, Relaxed);
-        _ = self.nostr_relay_shutdown.send(());
-        if let Some(handle) = self.nostr_relay_handle.take() {
-            if let Err(e) = handle.join() {
-                log::error!("Nostr relay thread join failed: {:?}", e);
-            }
-        }
+        self.kill_relay();
         let _ = self.bitcoind.client.stop();
         std::thread::sleep(std::time::Duration::from_secs(3));
         if self.temp_dir.exists() {
@@ -615,25 +615,40 @@ pub fn spawn_tracker_logger(data_dir: PathBuf, interval: Duration) -> TrackerLog
     }
 }
 
-fn spawn_nostr_relay(temp_dir: &Path, port: u16) -> (mpsc::Sender<()>, JoinHandle<()>) {
+/// Spawns a dedicated `nostr-rs-relay` process for a single test.
+///
+/// Each test gets its own relay on its own random port with an in-memory
+/// database, so concurrently running tests never share nostr state. The relay
+/// binary is located via the `COINSWAP_TEST_NOSTR_RELAY_BIN` env var, falling
+/// back to `nostr-rs-relay` on `PATH`.
+fn spawn_nostr_relay(temp_dir: &Path, port: u16) -> Child {
     let data_dir = temp_dir.join("nostr-relay");
     std::fs::create_dir_all(&data_dir).unwrap();
 
-    let mut settings = config::Settings::default();
-    settings.network.address = "127.0.0.1".to_string();
-    settings.network.port = port;
-    settings.database.min_conn = 4;
-    settings.database.max_conn = 8;
-    settings.database.in_memory = true;
-    settings.diagnostics.tracing = true;
+    // Minimal per-test relay config: bind the random port and use an in-memory
+    // SQLite DB so nothing persists across or leaks between tests.
+    let config_path = data_dir.join("config.toml");
+    let config = format!(
+        "[network]\naddress = \"127.0.0.1\"\nport = {port}\n\n[database]\ndata_directory = \"{data_dir}\"\nin_memory = true\nmin_conn = 4\nmax_conn = 8\n\n[diagnostics]\ntracing = false\n",
+        data_dir = data_dir.display()
+    );
+    std::fs::write(&config_path, config).unwrap();
 
-    let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>();
+    let bin =
+        env::var("COINSWAP_TEST_NOSTR_RELAY_BIN").unwrap_or_else(|_| "nostr-rs-relay".to_string());
 
-    let handle = thread::spawn(move || {
-        start_server(&settings, shutdown_rx).expect("nostr relay crashed");
-    });
-
-    (shutdown_tx, handle)
+    Command::new(&bin)
+        .arg("--config")
+        .arg(&config_path)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap_or_else(|e| {
+            panic!(
+                "failed to spawn nostr relay binary '{}': {}. Install it with `cargo install nostr-rs-relay` or set COINSWAP_TEST_NOSTR_RELAY_BIN.",
+                bin, e
+            )
+        })
 }
 
 fn wait_for_relay_healthy(port: u16) {
