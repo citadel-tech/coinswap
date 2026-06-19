@@ -42,11 +42,19 @@ pub enum Bip324Error {
     SessionIdMismatch,
     /// Error when session_id signature does not match
     SessionIdSigInvalid(bitcoin::secp256k1::Error),
+    /// Client cleanly disconnected (EOF)
+    ConnectionClosed,
 }
 
 impl From<bip324::io::ProtocolError> for Bip324Error {
     fn from(value: bip324::io::ProtocolError) -> Self {
-        Self::ProtocolError(value)
+        match value {
+            bip324::io::ProtocolError::Io(
+                ref io_err,
+                bip324::io::ProtocolFailureSuggestion::RetryV1,
+            ) if io_err.kind() == std::io::ErrorKind::UnexpectedEof => Self::ConnectionClosed,
+            _ => Self::ProtocolError(value),
+        }
     }
 }
 
@@ -76,7 +84,7 @@ impl From<serde_cbor::Error> for NetError {
 
 impl From<bip324::io::ProtocolError> for NetError {
     fn from(value: bip324::io::ProtocolError) -> Self {
-        Self::Bip324Error(Bip324Error::ProtocolError(value))
+        Self::Bip324Error(value.into())
     }
 }
 

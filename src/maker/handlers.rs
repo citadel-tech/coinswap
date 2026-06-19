@@ -8,7 +8,7 @@ use super::error::MakerError;
 use crate::{
     protocol::{
         common_messages::{
-            AckSwap, FidelityProof, GetOffer, MakerHello, MakerToTakerMessage, Offer,
+            AckSwapDetails, FidelityProof, GetOffer, MakerHello, MakerToTakerMessage, Offer,
             ProtocolVersion, SwapDetails, TakerHello, TakerToMakerMessage,
         },
         legacy_messages::LegacyTakerMessage,
@@ -520,7 +520,7 @@ fn handle_swap_details<M: Maker>(
         return Err(MakerError::General("Test: closing after ack response"));
     }
 
-    Ok(Some(MakerToTakerMessage::AckSwap(AckSwap::accept(
+    Ok(Some(MakerToTakerMessage::AckSwap(AckSwapDetails::accept(
         tweakable_point,
         session_id,
         session_id_sig,

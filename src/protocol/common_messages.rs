@@ -103,15 +103,6 @@ pub struct SwapDetails {
 
 /// Acknowledgment of swap details from Maker.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum AckSwap {
-    /// Maker accepted the swap and provides the tweakable point, session ID, and session ID signature.
-    Acknowledged(AckSwapDetails),
-    /// Maker rejected the swap.
-    Rejected,
-}
-
-/// Acknowledgment of swap details from Maker.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AckSwapDetails {
     /// contains the tweakable
     pub tweakable_point: PublicKey,
@@ -121,18 +112,18 @@ pub struct AckSwapDetails {
     pub session_id_sig: bitcoin::secp256k1::ecdsa::Signature,
 }
 
-impl AckSwap {
+impl AckSwapDetails {
     /// Create an acceptance response.
     pub fn accept(
         tweakable_point: PublicKey,
         session_id: [u8; 32],
         session_id_sig: bitcoin::secp256k1::ecdsa::Signature,
     ) -> Self {
-        AckSwap::Acknowledged(AckSwapDetails {
+        AckSwapDetails {
             tweakable_point,
             session_id,
             session_id_sig,
-        })
+        }
     }
 }
 
@@ -189,7 +180,7 @@ pub enum MakerToTakerMessage {
     /// Maker's offer (fees, limits, fidelity bond).
     Offer(Box<Offer>),
     /// Acknowledgment of swap parameters.
-    AckSwap(AckSwap),
+    AckSwap(AckSwapDetails),
     /// Response with signatures for sender's contract.
     RespContractSigsForSender(RespContractSigsForSender),
     /// Request signatures for both receiver and sender contracts.

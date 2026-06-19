@@ -17,7 +17,6 @@ use super::swap_tracker::{
     SwapTracker, TaprootExchangeProgress,
 };
 
-use bip324::io::{Payload, ProtocolError};
 use bitcoin::{
     hashes::{hash160::Hash as Hash160, Hash},
     hex::DisplayHex,
@@ -32,16 +31,16 @@ use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, RpcApi};
 use socks::Socks5Stream;
 
 use crate::{
-    error::{Bip324Error, NetError},
+    error::Bip324Error,
     nostr_coinswap::NOSTR_RELAYS,
     protocol::{
         common_messages::{
-            AckSwap, GetOffer, MakerToTakerMessage, Offer, PrivateKeyHandover, ProtocolVersion,
-            SwapDetails, SwapPrivkey, TakerHello, TakerToMakerMessage,
+            GetOffer, MakerToTakerMessage, Offer, PrivateKeyHandover, ProtocolVersion, SwapDetails,
+            SwapPrivkey, TakerHello, TakerToMakerMessage,
         },
         contract::calculate_pubkey_from_nonce,
     },
-    utill::{estimate_funding_tx_fee_sats, generate_maker_keys, get_taker_dir},
+    utill::{estimate_funding_tx_fee_sats, generate_maker_keys, get_taker_dir, Bip324Stream},
     wallet::{
         swapcoin::{IncomingSwapCoin, OutgoingSwapCoin, WatchOnlySwapCoin},
         MakerFeeInfo as ReportMakerFeeInfo, RPCConfig, RecoveryOutcome, SwapStatus, TakerReport,
@@ -367,53 +366,6 @@ impl MakerConnection {
                 "Expected Taproot exchange progress".to_string(),
             )),
         }
-    }
-}
-
-pub(crate) struct TakerBip324Wrapper {
-    protocol: bip324::io::Protocol<TcpStream, TcpStream>,
-}
-
-impl TakerBip324Wrapper {
-    pub fn new(stream: TcpStream, network: bitcoin::Network) -> Result<Self, ProtocolError> {
-        let reader = stream.try_clone()?;
-        let writer = stream;
-        let protocol = bip324::io::Protocol::new(
-            network.magic(),
-            bip324::Role::Initiator,
-            None,
-            None, // no garbage or decoys
-            reader,
-            writer,
-        )?;
-
-        Ok(Self { protocol })
-    }
-
-    /// Reads a response byte_array from a given stream.
-    /// Response can be any length-appended data, where the first byte is the length of the actual message.
-    pub(crate) fn read_message(&mut self) -> Result<Vec<u8>, NetError> {
-        let payload = self.protocol.read()?;
-        let contents = payload.contents();
-        match payload.packet_type() {
-            bip324::PacketType::Decoy => {
-                // TODO implement proper decoy handling
-                log::info!("Received decoy message");
-                Err(Bip324Error::UnexpectedDecoy.into())
-            }
-            bip324::PacketType::Genuine => Ok(contents.to_vec()),
-        }
-    }
-
-    /// Send a length-appended Protocol or RPC Message through a stream.
-    /// The first byte sent is the length of the actual message.
-    pub(crate) fn send_message(&mut self, message: &impl serde::Serialize) -> Result<(), NetError> {
-        let msg_bytes = serde_cbor::ser::to_vec(message)?;
-        let to_send = Payload::genuine(msg_bytes);
-
-        self.protocol.write(&to_send)?;
-
-        Ok(())
     }
 }
 
@@ -1449,45 +1401,37 @@ impl Taker {
         let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
 
         match msg {
-            MakerToTakerMessage::AckSwap(ack) => match ack {
-                AckSwap::Acknowledged(ack_details) => {
-                    let swap = self.swap_state_mut()?;
-                    swap.makers[maker_idx].tweakable_point = Some(ack_details.tweakable_point);
-                    swap.makers[maker_idx].protocol = negotiated_protocol;
-                    swap.makers[maker_idx].negotiated_timelock = timelock;
-                    log::info!("Maker {} accepted swap with tweakable point", maker_idx);
+            MakerToTakerMessage::AckSwap(ack_details) => {
+                let swap = self.swap_state_mut()?;
+                swap.makers[maker_idx].tweakable_point = Some(ack_details.tweakable_point);
+                swap.makers[maker_idx].protocol = negotiated_protocol;
+                swap.makers[maker_idx].negotiated_timelock = timelock;
+                log::info!("Maker {} accepted swap with tweakable point", maker_idx);
 
-                    #[cfg(feature = "integration-test")]
-                    if self.behavior == TakerBehavior::CloseAtAckResponse {
-                        log::warn!(
-                            "Test behavior: closing after receiving AckSwapDetails from maker {}",
-                            maker_idx
-                        );
-                        return Err(TakerError::General(
-                            "Test: closing at ack response".to_string(),
-                        ));
-                    }
-
-                    let maker_session_id = ack_details.session_id;
-                    let taker_session_id = stream.protocol.session_id();
-                    if &maker_session_id != taker_session_id {
-                        return Err(TakerError::Net(Bip324Error::SessionIdMismatch.into()));
-                    };
-                    let secp = bitcoin::secp256k1::Secp256k1::new();
-                    let sighash = bitcoin::secp256k1::Message::from_digest(maker_session_id);
-                    secp.verify_ecdsa(
-                        &sighash,
-                        &ack_details.session_id_sig,
-                        &ack_details.tweakable_point.inner,
-                    )
-                    .map_err(|e| TakerError::Net(Bip324Error::SessionIdSigInvalid(e).into()))?;
-                    Ok(())
+                #[cfg(feature = "integration-test")]
+                if self.behavior == TakerBehavior::CloseAtAckResponse {
+                    log::warn!(
+                        "Test behavior: closing after receiving AckSwapDetails from maker {}",
+                        maker_idx
+                    );
+                    return Err(TakerError::General(
+                        "Test: closing at ack response".to_string(),
+                    ));
                 }
-                AckSwap::Rejected => Err(TakerError::General(format!(
-                    "Maker {} rejected swap",
-                    maker_idx
-                ))),
-            },
+
+                if &ack_details.session_id != stream.protocol.session_id() {
+                    return Err(TakerError::Net(Bip324Error::SessionIdMismatch.into()));
+                };
+                let secp = bitcoin::secp256k1::Secp256k1::new();
+                let sighash = bitcoin::secp256k1::Message::from_digest(ack_details.session_id);
+                secp.verify_ecdsa(
+                    &sighash,
+                    &ack_details.session_id_sig,
+                    &ack_details.tweakable_point.inner,
+                )
+                .map_err(|e| TakerError::Net(Bip324Error::SessionIdSigInvalid(e).into()))?;
+                Ok(())
+            }
             _ => Err(TakerError::General(format!(
                 "Unexpected message from maker {}: expected AckSwap",
                 maker_idx
@@ -1791,7 +1735,7 @@ impl Taker {
     #[hotpath::measure]
     pub(crate) fn net_handshake(
         &self,
-        stream: &mut TakerBip324Wrapper,
+        stream: &mut Bip324Stream,
     ) -> Result<ProtocolVersion, TakerError> {
         // Send TakerHello
         stream.send_message(&TakerToMakerMessage::TakerHello(TakerHello))?;
@@ -1819,7 +1763,7 @@ impl Taker {
 
     /// Connect to a maker using either direct connection or Tor proxy.
     #[hotpath::measure]
-    pub(crate) fn net_connect(&self, address: &str) -> Result<TakerBip324Wrapper, TakerError> {
+    pub(crate) fn net_connect(&self, address: &str) -> Result<Bip324Stream, TakerError> {
         log::debug!("Connecting to maker at {}", address);
         let timeout = Duration::from_secs(CONNECT_TIMEOUT_SECS);
         let wallet = self.read_wallet()?;
@@ -1855,10 +1799,7 @@ impl Taker {
             .and_then(|_| socket.set_write_timeout(Some(timeout)))
             .map_err(|e| TakerError::General(format!("Failed to set socket timeout: {}", e)))?;
 
-        let encrypted_protocol =
-            TakerBip324Wrapper::new(socket, network).map_err(|e| TakerError::Net(e.into()))?;
-
-        Ok(encrypted_protocol)
+        Ok(Bip324Stream::new(socket, network, bip324::Role::Initiator)?)
     }
 
     /// Finalize the swap by exchanging private keys with all makers.

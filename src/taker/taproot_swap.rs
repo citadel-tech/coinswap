@@ -14,8 +14,7 @@ use crate::{
         contract2::{create_hashlock_script, create_timelock_script},
         taproot_messages::{SerializableScalar, TaprootContractData},
     },
-    taker::api::TakerBip324Wrapper,
-    utill::MIN_FEE_RATE,
+    utill::{Bip324Stream, MIN_FEE_RATE},
     wallet::{
         swapcoin::{IncomingSwapCoin, OutgoingSwapCoin, WatchOnlySwapCoin},
         Wallet,
@@ -633,7 +632,7 @@ impl Taker {
     /// caused a cold reconnect onto a dead session and surfaced as an
     /// `UnexpectedEof` ("failed to fill whole buffer") on the contract exchange.
     #[hotpath::measure]
-    fn funding_broadcast(&mut self) -> Result<TakerBip324Wrapper, TakerError> {
+    fn funding_broadcast(&mut self) -> Result<Bip324Stream, TakerError> {
         log::info!("Broadcasting contract transactions...");
 
         let wallet = self.write_wallet()?;
@@ -696,7 +695,7 @@ impl Taker {
     /// keepalives to maker 0 so its swap session stays alive across the wait.
     fn wait_for_funding_with_keepalive(
         &self,
-        stream: &mut TakerBip324Wrapper,
+        stream: &mut Bip324Stream,
         contract_txids: &[bitcoin::Txid],
         required_confirms: u32,
         swap_id: &str,
