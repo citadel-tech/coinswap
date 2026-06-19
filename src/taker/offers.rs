@@ -32,7 +32,7 @@ use crate::{
         },
         error::ProtocolError,
     },
-    taker::api::TakerBip324Wrapper,
+    utill::Bip324Stream,
     wallet::verify_fidelity_checks,
     watch_tower::{registry_storage::FileRegistry, rest_backend::BitcoinRest},
 };
@@ -1067,14 +1067,14 @@ impl MakerAddress {
         socket.set_read_timeout(Some(Duration::from_secs(FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC)))?;
         socket.set_write_timeout(Some(Duration::from_secs(FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC)))?;
 
-        let mut wrapper = TakerBip324Wrapper::new(socket, network)?;
+        let mut stream = Bip324Stream::new(socket, network, bip324::Role::Initiator)?;
 
         // Send TakerHello
         let taker_hello = RouterTakerToMakerMessage::TakerHello(RouterTakerHello);
-        wrapper.send_message(&taker_hello)?;
+        stream.send_message(&taker_hello)?;
 
         // Read MakerHello
-        let msg_bytes = wrapper.read_message()?;
+        let msg_bytes = stream.read_message()?;
         let msg: RouterMakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
 
         match msg {
@@ -1092,10 +1092,10 @@ impl MakerAddress {
 
         // Send GetOffer
         let get_offer = RouterTakerToMakerMessage::GetOffer(RouterGetOffer);
-        wrapper.send_message(&get_offer)?;
+        stream.send_message(&get_offer)?;
 
         // Read Offer
-        let offer_bytes = wrapper.read_message()?;
+        let offer_bytes = stream.read_message()?;
         let offer_msg: RouterMakerToTakerMessage = serde_cbor::from_slice(&offer_bytes)?;
 
         let router_offer = match offer_msg {

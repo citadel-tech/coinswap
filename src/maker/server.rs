@@ -12,63 +12,13 @@ use std::{
 };
 
 use crate::{
-    error::Bip324Error,
+    error::{Bip324Error, NetError},
     maker::rpc::server::MakerRpc,
     nostr_coinswap::broadcast_bond_on_nostr,
-    protocol::common_messages::{FidelityProof, MakerToTakerMessage, TakerToMakerMessage},
-    utill::HEART_BEAT_INTERVAL,
+    protocol::common_messages::{FidelityProof, TakerToMakerMessage},
+    utill::{Bip324Stream, HEART_BEAT_INTERVAL},
     wallet::RecoveryReport,
 };
-
-use bip324::io::Payload;
-
-struct MakerBip324Wrapper {
-    protocol: bip324::io::Protocol<TcpStream, TcpStream>,
-}
-
-impl MakerBip324Wrapper {
-    fn new(stream: TcpStream, maker: Arc<MakerServer>) -> Result<Self, MakerError> {
-        let reader = stream.try_clone()?;
-        let writer = stream;
-        let network_magic = maker.config.network.magic();
-        let protocol = bip324::io::Protocol::new(
-            network_magic,
-            bip324::Role::Responder,
-            None,
-            None,
-            reader,
-            writer,
-        )?;
-        Ok(Self { protocol })
-    }
-
-    #[hotpath::measure]
-    fn read_message(&mut self) -> Result<TakerToMakerMessage, MakerError> {
-        let payload = self.protocol.read()?;
-        let contents = payload.contents();
-        match payload.packet_type() {
-            bip324::PacketType::Decoy => {
-                // TODO implement proper decoy handling
-                log::info!("Received decoy message");
-                Err(Bip324Error::UnexpectedDecoy.into())
-            }
-            bip324::PacketType::Genuine => {
-                let message: TakerToMakerMessage = serde_cbor::from_slice(contents)
-                    .map_err(|_| MakerError::General("Failed to deserialize"))?;
-                Ok(message)
-            }
-        }
-    }
-
-    #[hotpath::measure]
-    fn send_message(&mut self, message: &MakerToTakerMessage) -> Result<(), MakerError> {
-        let buf = serde_cbor::to_vec(message)
-            .map_err(|_| MakerError::General("Failed to serialize message"))?;
-        let payload = Payload::genuine(buf);
-        self.protocol.write(&payload)?;
-        Ok(())
-    }
-}
 
 use super::{
     api::MakerServer,
@@ -362,8 +312,8 @@ fn handle_connection(maker: Arc<MakerServer>, stream: TcpStream) -> Result<(), M
         "[{}] Starting connection handler",
         maker.config.network_port
     );
-    let mut wrapper = MakerBip324Wrapper::new(stream, Arc::clone(&maker))?;
-    state.session_id = Some(*wrapper.protocol.session_id());
+    let mut encrypted_stream = Bip324Stream::new(stream, maker.network(), bip324::Role::Responder)?;
+    state.session_id = Some(*encrypted_stream.protocol.session_id());
     loop {
         // Check for shutdown
         if maker.is_shutdown() {
@@ -379,17 +329,15 @@ fn handle_connection(maker: Arc<MakerServer>, stream: TcpStream) -> Result<(), M
             break;
         }
 
-        let message = match wrapper.read_message() {
-            Ok(msg) => msg,
-            Err(e) => {
-                log::debug!(
-                    "[{}] Read error (may be normal disconnect): {:?}",
-                    maker.config.network_port,
-                    e
-                );
+        let msg_bytes = match encrypted_stream.read_message() {
+            Ok(b) => b,
+            Err(NetError::Bip324Error(Bip324Error::ConnectionClosed)) => {
+                log::info!("[{}] Client disconnected", maker.config.network_port);
                 break;
             }
+            Err(e) => return Err(e.into()),
         };
+        let message: TakerToMakerMessage = serde_cbor::from_slice(&msg_bytes)?;
 
         log::debug!(
             "[{}] Received message: {:?}",
@@ -413,7 +361,7 @@ fn handle_connection(maker: Arc<MakerServer>, stream: TcpStream) -> Result<(), M
                 response
             );
 
-            if let Err(e) = wrapper.send_message(&response) {
+            if let Err(e) = encrypted_stream.send_message(&response) {
                 log::error!(
                     "[{}] Failed to send response: {:?}",
                     maker.config.network_port,
