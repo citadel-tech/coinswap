@@ -99,24 +99,27 @@ pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
             // Regression coverage: `tests/integration/taproot_reboot_recovery.rs`.
             let mut groups = std::collections::HashMap::new();
             for incoming in inc {
+                let swap_id = incoming.swap_id.clone().ok_or(MakerError::General(
+                    "Persisted incoming swapcoin missing swap id",
+                ))?;
                 groups
-                    .entry(incoming.swap_id.clone())
+                    .entry(swap_id)
                     .or_insert_with(|| (Vec::new(), Vec::new()))
                     .0
                     .push(incoming);
             }
             for outgoing in out {
+                let swap_id = outgoing.swap_id.clone().ok_or(MakerError::General(
+                    "Persisted outgoing swapcoin missing swap id",
+                ))?;
                 groups
-                    .entry(outgoing.swap_id.clone())
+                    .entry(swap_id)
                     .or_insert_with(|| (Vec::new(), Vec::new()))
                     .1
                     .push(outgoing);
             }
 
             for (swap_id, (inc, out)) in groups {
-                let swap_id = swap_id.unwrap_or_else(|| {
-                    format!("reboot-recovery-{}", super::swap_tracker::now_secs())
-                });
                 let maker_clone = Arc::clone(&maker);
                 let handle = thread::Builder::new()
                     .name(format!("reboot-recovery-{}", maker.config.network_port))

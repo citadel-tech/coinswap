@@ -286,7 +286,7 @@ fn process_proof_of_funding<M: Maker>(
         );
     }
 
-    let (funding_txes, outgoing_swapcoins, _mining_fees) = maker.initialize_coinswap(
+    let (funding_txes, mut outgoing_swapcoins, _mining_fees) = maker.initialize_coinswap(
         outgoing_amount,
         &next_multisig_pubkeys,
         &next_hashlock_pubkeys,
@@ -295,6 +295,9 @@ fn process_proof_of_funding<M: Maker>(
         pof.contract_feerate,
         Some(excluded_utxos),
     )?;
+    for outgoing in &mut outgoing_swapcoins {
+        outgoing.swap_id = Some(pof.id.clone());
+    }
 
     // Store reserved outpoints from the funding transactions.
     state.reserve_utxo = funding_txes
