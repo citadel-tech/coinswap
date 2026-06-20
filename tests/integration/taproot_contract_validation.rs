@@ -4,7 +4,7 @@ use bitcoin::Amount;
 use coinswap::{
     maker::{start_server, MakerBehavior},
     protocol::common_messages::ProtocolVersion,
-    taker::{SwapParams, TakerBehavior},
+    taker::{error::TakerError, SwapParams, TakerBehavior},
     wallet::AddressType,
 };
 
