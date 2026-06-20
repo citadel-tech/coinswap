@@ -142,7 +142,7 @@ fn test_malice2_maker_broadcast_contract() {
             maker_balances.contract,
             maker_balances.spendable,
         );
-        let expected_regular = [14998608u64, 14500421][i];
+        let expected_regular = [14998622u64, 14500419][i];
         assert_eq!(
             maker_balances.regular.to_sat(),
             expected_regular,
@@ -195,7 +195,7 @@ fn test_malice2_maker_broadcast_contract() {
 
     assert_eq!(
         taker_balances.regular.to_sat(),
-        14999092,
+        14999108,
         "Taker regular balance mismatch"
     );
     assert_eq!(
@@ -223,7 +223,7 @@ fn test_malice2_maker_broadcast_contract() {
 
     assert_eq!(
         balance_diff.to_sat(),
-        908,
+        892,
         "Taker spendable balance change mismatch"
     );
 

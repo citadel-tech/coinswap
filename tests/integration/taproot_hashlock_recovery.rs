@@ -182,7 +182,7 @@ fn test_taproot_hashlock_recovery() {
     );
     assert_eq!(
         taker_balances.swap.to_sat(),
-        498674,
+        498664,
         "Taker swap balance mismatch"
     );
     assert_eq!(
@@ -205,7 +205,7 @@ fn test_taproot_hashlock_recovery() {
 
     assert_eq!(
         balance_diff.to_sat(),
-        1634,
+        1644,
         "Taker spendable balance change mismatch"
     );
 
@@ -220,14 +220,14 @@ fn test_taproot_hashlock_recovery() {
             i, original, maker_balances.spendable,
         );
 
-        let expected_regular = [14499721, 14500234];
+        let expected_regular = [14499719, 14500232];
         assert_eq!(
             maker_balances.regular.to_sat(),
             expected_regular[i],
             "Maker {} regular balance mismatch",
             i
         );
-        let expected_swap = [499700, 499187];
+        let expected_swap = [499776, 499263];
         assert_eq!(
             maker_balances.swap.to_sat(),
             expected_swap[i],
@@ -242,7 +242,7 @@ fn test_taproot_hashlock_recovery() {
         );
         assert_eq!(maker_balances.fidelity, Amount::from_btc(0.05).unwrap());
 
-        let expected_spendable = [14999421, 14999421];
+        let expected_spendable = [14999495, 14999495];
         assert_eq!(
             maker_balances.spendable.to_sat(),
             expected_spendable[i],

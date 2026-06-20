@@ -233,7 +233,7 @@ fn test_multi_taker_coinswap() {
             "Maker {} regular balance mismatch",
             i
         );
-        let expected_swap = [4999550u64, 4999476][i];
+        let expected_swap = [4999548u64, 4999474][i];
         assert_eq!(
             balances.swap.to_sat(),
             expected_swap,

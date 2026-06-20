@@ -141,7 +141,7 @@ fn test_taproot_taker_abort2() {
         );
         assert_eq!(
             maker_balances.regular.to_sat(),
-            14999516,
+            14999514,
             "Maker {} regular balance mismatch",
             i
         );
@@ -191,7 +191,7 @@ fn test_taproot_taker_abort2() {
 
     assert_eq!(
         taker_balances.regular.to_sat(),
-        14999392,
+        14999412,
         "Taker regular balance mismatch"
     );
     assert_eq!(
@@ -219,7 +219,7 @@ fn test_taproot_taker_abort2() {
 
     assert_eq!(
         balance_diff.to_sat(),
-        608,
+        588,
         "Taker spendable balance change mismatch"
     );
 

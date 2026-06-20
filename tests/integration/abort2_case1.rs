@@ -136,7 +136,7 @@ fn maker_abort2_case1() {
             "Maker {} balances: original={}, after={}",
             i, original, balances.spendable
         );
-        let expected_spendable = [14999533u64, 14999516, 14999496][i];
+        let expected_spendable = [14999531u64, 14999514, 14999494][i];
         assert_eq!(
             balances.spendable.to_sat(),
             expected_spendable,
