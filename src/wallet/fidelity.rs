@@ -175,6 +175,9 @@ pub(crate) fn verify_fidelity_checks(
     if tx_out.script_pubkey != derived_script_pubkey {
         return Err(WalletError::Fidelity(FidelityError::BondDoesNotExist));
     }
+    // QA: A maker could advertise a larger bond amount than the output actually
+    // locks, inflating its fidelity value and offer ranking. Bind the signed
+    // proof amount to the real chain output before accepting the bond.
     if tx_out.value != proof.bond.amount {
         return Err(WalletError::Fidelity(FidelityError::General(format!(
             "Bond amount mismatch: expected {}, actual {}",
