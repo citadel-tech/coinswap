@@ -2457,4 +2457,7 @@ pub enum TakerBehavior {
     CloseAtSendersContract,
     /// Close connection when receiving maker's contract data response (taproot taker abort).
     CloseAtSendersContractFromMaker,
+    /// Broadcast Taproot contract txs and send contract data without waiting for
+    /// confirmation (integration test: maker must reject mempool incoming contract).
+    SendMempoolTaprootContract,
 }

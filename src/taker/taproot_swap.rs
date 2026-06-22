@@ -637,12 +637,25 @@ impl Taker {
         let mut stream = self.net_connect(&maker0_address)?;
         self.net_handshake(&mut stream)?;
 
-        self.wait_for_funding_with_keepalive(
-            &mut stream,
-            &contract_txids,
-            required_confirms,
-            &swap_id,
-        )?;
+        #[cfg(feature = "integration-test")]
+        let skip_confirm =
+            self.behavior == super::api::TakerBehavior::SendMempoolTaprootContract;
+
+        #[cfg(not(feature = "integration-test"))]
+        let skip_confirm = false;
+
+        if skip_confirm {
+            log::warn!(
+                "SendMempoolTaprootContract: skipping Taproot contract confirmation wait (test only)"
+            );
+        } else {
+            self.wait_for_funding_with_keepalive(
+                &mut stream,
+                &contract_txids,
+                required_confirms,
+                &swap_id,
+            )?;
+        }
 
         log::info!("Contract transactions broadcast and confirmed");
         Ok(stream)

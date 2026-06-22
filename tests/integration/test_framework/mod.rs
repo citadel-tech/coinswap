@@ -524,6 +524,14 @@ impl TestFramework {
         (test_framework, takers, makers, generate_blocks_handle)
     }
 
+    /// Pause the background block generation thread.
+    ///
+    /// Used when a test must keep transactions unconfirmed (e.g. maker
+    /// confirmation-gate regression tests).
+    pub fn pause_block_generation(&self) {
+        self.shutdown.store(true, Relaxed);
+    }
+
     /// Stop bitcoind, nostr relay, and clean up all test data.
     pub fn stop(&self) {
         log::info!("🛑 Stopping Test Framework");

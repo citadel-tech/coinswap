@@ -258,7 +258,9 @@ pub trait Maker: Send + Sync {
     /// Get the current block height from the Bitcoin node.
     fn get_current_height(&self) -> Result<u32, MakerError>;
 
-    /// Verify that a contract transaction is on-chain or in the mempool.
+    /// Verify the incoming Taproot contract tx has at least `max(1, required_confirms)`
+    /// confirmations before the maker funds its outgoing side. Retries until confirmed,
+    /// shutdown, or attempt limit. Rejects funding against unconfirmed mempool txs.
     fn verify_contract_tx_on_chain(&self, txid: &bitcoin::Txid) -> Result<(), MakerError>;
 
     /// Verify and sign sender's contract transactions.

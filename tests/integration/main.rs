@@ -27,6 +27,7 @@ mod taproot_swap;
 mod taproot_taker_abort1;
 mod taproot_taker_abort2;
 mod taproot_taker_abort3;
+mod taproot_rbf_rejection;
 mod taproot_timelock_recovery;
 mod wallet_backup;
 

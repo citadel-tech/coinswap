@@ -932,39 +932,59 @@ impl MakerTrait for MakerServer {
 
     #[hotpath::measure]
     fn verify_contract_tx_on_chain(&self, txid: &bitcoin::Txid) -> Result<(), MakerError> {
-        // The taker broadcasts the contract tx before sending us the contract
-        // data, but there can be a brief delay before our bitcoind sees it in
-        // the mempool. Retry a few times before giving up.
+        use bitcoind::bitcoincore_rpc::RpcApi;
+
+        // SAFETY: required_confirms=0 would allow 0-conf maker funding; enforce at least 1.
+        let effective_confirms = self.config.required_confirms.max(1);
+
         const MAX_ATTEMPTS: u32 = 12;
         const RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
 
         for attempt in 0..MAX_ATTEMPTS {
-            let seen = {
+            if self.shutdown.load(std::sync::atomic::Ordering::Relaxed) {
+                return Err(MakerError::General("Maker shutting down"));
+            }
+
+            let confirms = {
                 let wallet = self
                     .wallet
                     .read()
                     .map_err(|_| MakerError::General("Failed to lock wallet"))?;
-                wallet.rpc.get_raw_transaction(txid, None).is_ok()
+                wallet
+                    .rpc
+                    .get_raw_transaction_info(txid, None)
+                    .ok()
+                    .and_then(|info| info.confirmations)
+                    .unwrap_or(0)
             };
 
-            if seen {
+            if confirms >= effective_confirms {
+                log::info!(
+                    "[{}] Contract tx {} confirmed ({} >= {} required)",
+                    self.config.network_port,
+                    txid,
+                    confirms,
+                    effective_confirms
+                );
                 return Ok(());
             }
 
             if attempt + 1 < MAX_ATTEMPTS {
                 log::info!(
-                    "Contract tx {} not yet visible (attempt {}/{}), retrying in {}s",
+                    "[{}] Contract tx {} has {} conf(s), need {} (attempt {}/{})",
+                    self.config.network_port,
                     txid,
+                    confirms,
+                    effective_confirms,
                     attempt + 1,
-                    MAX_ATTEMPTS,
-                    RETRY_INTERVAL.as_secs()
+                    MAX_ATTEMPTS
                 );
                 std::thread::sleep(RETRY_INTERVAL);
             }
         }
 
         Err(MakerError::General(
-            "Incoming contract tx not found on-chain",
+            "Incoming contract tx not confirmed to required depth",
         ))
     }
 
