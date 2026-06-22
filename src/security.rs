@@ -131,7 +131,8 @@ pub struct KeyMaterial {
     /// A 256-bit key derived from the user’s passphrase via PBKDF2.
     /// This key is used with AES-GCM for encryption/decryption.
     pub key: EncryptionKey,
-    /// Nonce used for AES-GCM encryption, generated when a new wallet is created.
+    /// Nonce loaded or generated with this material. Encryption always uses a
+    /// fresh nonce and stores it alongside the ciphertext.
     pub nonce: EncryptionNonce,
     /// Key derivation salt, randomly generated to ensure unique keys per password.
     pub pbkdf2_salt: PBKDF2Salt,
@@ -225,8 +226,9 @@ pub struct EncryptedData {
 ///
 ///
 /// The struct is first serialized into CBOR bytes, then encrypted using AES-GCM
-/// with the key and nonce provided in [`KeyMaterial`]. The resulting ciphertext
-/// is bundled with the nonce in an [`EncryptedData`] struct for storage.
+/// with the key provided in [`KeyMaterial`] and a freshly generated nonce. The
+/// resulting ciphertext is bundled with the nonce in an [`EncryptedData`] struct
+/// for storage.
 ///
 /// The resulting `EncryptedData` can be serialized and stored to disk. To decrypt it later,
 /// use [`decrypt_struct`].
@@ -237,8 +239,9 @@ pub fn encrypt_struct<T: Serialize>(
     // Serialize wallet data to bytes.
     let packed_store = serde_cbor::ser::to_vec(&plain_struct)?;
 
-    // Extract nonce and key for AES-GCM.
-    let material_nonce = enc_material.nonce;
+    // QA: AES-GCM nonce reuse across wallet saves or backup restoration leaks
+    // relationships between plaintexts encrypted under the same key.
+    let material_nonce = Aes256Gcm::generate_nonce(&mut OsRng).into();
     let pbkdf2_salt = enc_material.pbkdf2_salt;
     let nonce = aes_gcm::Nonce::from(material_nonce);
     let key = Key::<Aes256Gcm>::from(enc_material.key);
@@ -335,4 +338,47 @@ pub fn load_sensitive_struct<T: DeserializeOwned, F: SerdeFormat>(
     };
 
     (sensitive_struct, encryption_material)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn encryption_rotates_nonce_for_same_key_material() {
+        let material = KeyMaterial::new_from_password(Some("test password".to_string())).unwrap();
+        let first = encrypt_struct("wallet state", &material).unwrap();
+        let second = encrypt_struct("wallet state", &material).unwrap();
+
+        assert_ne!(first.nonce, second.nonce);
+        assert_eq!(
+            decrypt_struct::<String>(first, &material).unwrap(),
+            "wallet state"
+        );
+        assert_eq!(
+            decrypt_struct::<String>(second, &material).unwrap(),
+            "wallet state"
+        );
+    }
+
+    #[test]
+    fn decrypts_legacy_ciphertext_using_material_nonce() {
+        let material = KeyMaterial::new_from_password(Some("test password".to_string())).unwrap();
+        let cipher = Aes256Gcm::new(&Key::<Aes256Gcm>::from(material.key));
+        let encrypted = EncryptedData {
+            nonce: material.nonce,
+            encrypted_payload: cipher
+                .encrypt(
+                    &aes_gcm::Nonce::from(material.nonce),
+                    serde_cbor::to_vec(&"legacy wallet state").unwrap().as_ref(),
+                )
+                .unwrap(),
+            pbkdf2_salt: material.pbkdf2_salt,
+        };
+
+        assert_eq!(
+            decrypt_struct::<String>(encrypted, &material).unwrap(),
+            "legacy wallet state"
+        );
+    }
 }
