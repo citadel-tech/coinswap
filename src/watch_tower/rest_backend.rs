@@ -1,9 +1,15 @@
 //! Watchtower backend: querying bitcoind, scanning mempool, and running discovery via REST API's.
 
-use std::{fs, str::FromStr};
+use std::{
+    collections::HashMap,
+    fs,
+    str::FromStr,
+    sync::{Arc, Mutex, OnceLock},
+};
 
 use bitcoin::{consensus::deserialize, Block, BlockHash, Transaction, Txid};
 use bitcoind::bitcoincore_rpc::{json::GetBlockchainInfoResult, jsonrpc::base64, Auth};
+use electrum_client::Client as ElectrumClient;
 use serde::de::DeserializeOwned;
 
 use crate::{
@@ -124,6 +130,80 @@ impl BitcoinRest {
             process_transaction(&tx, registry, false);
         }
         Ok(())
+    }
+}
+
+/// Process-wide pool of long-lived [`ElectrumClient`] connections keyed by URL.
+///
+// Opening a fresh TCP/SSL connection per request burns sockets and can trip rate-limits on public Electrum servers, so the helpers below cache one
+// client per URL and reuse it. Dead entries are evicted on error so the next call reconnects.
+static ELECTRUM_POOL: OnceLock<Mutex<HashMap<String, Arc<ElectrumClient>>>> = OnceLock::new();
+
+fn electrum_pool() -> &'static Mutex<HashMap<String, Arc<ElectrumClient>>> {
+    ELECTRUM_POOL.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn electrum_client(url: &str) -> Result<Arc<ElectrumClient>, WatcherError> {
+    let mut g = electrum_pool()
+        .lock()
+        .map_err(|_| WatcherError::General("electrum pool poisoned".into()))?;
+    if let Some(c) = g.get(url) {
+        return Ok(c.clone());
+    }
+    let c = Arc::new(ElectrumClient::new(url).map_err(|e| WatcherError::General(format!("{e}")))?);
+    g.insert(url.to_string(), c.clone());
+    Ok(c)
+}
+
+/// Evict a (presumed dead) client so the next call reconnects.
+fn drop_electrum_client(url: &str) {
+    if let Ok(mut g) = electrum_pool().lock() {
+        g.remove(url);
+    }
+}
+
+/// Run `f` against the pooled Electrum client for `url`. On error, evict the client (so the next call reconnects).
+pub(crate) fn with_electrum_client<T, F>(url: &str, f: F) -> Result<T, WatcherError>
+where
+    F: FnOnce(&ElectrumClient) -> Result<T, electrum_client::Error>,
+{
+    let client = electrum_client(url)?;
+    f(&client).map_err(|e| {
+        drop_electrum_client(url);
+        WatcherError::General(format!("{e}"))
+    })
+}
+
+/// Match an Electrum server's `server_features().genesis_hash` against the known network genesis blocks.
+pub fn network_from_electrum_genesis(genesis: &[u8]) -> Option<bitcoin::Network> {
+    use bitcoin::hashes::Hash;
+    for net in [
+        bitcoin::Network::Bitcoin,
+        bitcoin::Network::Testnet,
+        bitcoin::Network::Signet,
+        bitcoin::Network::Regtest,
+    ] {
+        let mut local = bitcoin::constants::genesis_block(net)
+            .block_hash()
+            .to_raw_hash()
+            .to_byte_array();
+        // Electrum returns `genesis_hash` in display (big-endian) byte order, while `to_byte_array()` returns internal little-endian bytes, hence the reverse.
+        local.reverse();
+        if local == genesis {
+            return Some(net);
+        }
+    }
+    None
+}
+
+/// Bitcoin Core's chain-name string for a network ("main"/"test"/"signet"/"regtest").
+pub fn chain_name_for(net: bitcoin::Network) -> &'static str {
+    match net {
+        bitcoin::Network::Bitcoin => "main",
+        bitcoin::Network::Testnet => "test",
+        bitcoin::Network::Signet => "signet",
+        bitcoin::Network::Regtest => "regtest",
+        _ => "unknown",
     }
 }
 

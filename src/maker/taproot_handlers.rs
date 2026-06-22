@@ -224,6 +224,9 @@ fn process_taproot_contract<M: Maker>(
         txid: contract_txid,
         vout: output_pos,
     };
+    let contract_spk = contract_tx.output[output_pos as usize]
+        .script_pubkey
+        .clone();
 
     // Store reserved outpoints from the funding transaction.
     state.reserve_utxo = vec![contract_outpoint];
@@ -278,7 +281,7 @@ fn process_taproot_contract<M: Maker>(
                 data.id
             );
 
-            maker.register_watch_outpoint(contract_outpoint);
+            maker.register_watch_outpoint(contract_outpoint, contract_spk.clone());
         }
         Err(e) => {
             log::warn!(
@@ -291,7 +294,7 @@ fn process_taproot_contract<M: Maker>(
 
     state.funding_broadcast = true;
     state.phase = SwapPhase::AwaitingPrivateKeyHandover;
-    maker.register_watch_outpoint(contract_outpoint);
+    maker.register_watch_outpoint(contract_outpoint, contract_spk);
 
     // Save to wallet
     maker.save_incoming_swapcoin(&incoming_swapcoin)?;

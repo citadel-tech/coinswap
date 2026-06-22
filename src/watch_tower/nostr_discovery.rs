@@ -27,17 +27,18 @@ use crate::{
     nostr_coinswap::{coinswap_kind, connect_nostr_websocket, EXPIRATION_SECS},
     watch_tower::{
         registry_storage::FileRegistry,
-        rest_backend::BitcoinRest,
         utils::{parse_fidelity_event, process_fidelity, SeenTxids},
         watcher_error::WatcherError,
+        zmq_backend::ChainSource,
     },
 };
 
 // ## TODO: Instead of looping over relay's have a connection Pool.
 /// Runs the main discovery routine for maker's fidelity bonds by subscribing to network-specific Nostr events.
 #[hotpath::measure]
+#[allow(clippy::too_many_arguments)]
 pub fn run_discovery(
-    bitcoin_rpc: BitcoinRest,
+    chain: ChainSource,
     network: Network,
     registry: FileRegistry,
     shutdown: Arc<AtomicBool>,
@@ -55,13 +56,13 @@ pub fn run_discovery(
 
     let seen_txid = Arc::new(Mutex::new(SeenTxids::new()));
     let registry = Arc::new(registry);
-    let bitcoin_rpc = Arc::new(bitcoin_rpc);
+    let chain = Arc::new(chain);
 
     for relay in relays {
         let relay = relay.to_string();
         let shutdown = shutdown.clone();
         let registry = Arc::clone(&registry);
-        let bitcoin_rpc = Arc::clone(&bitcoin_rpc);
+        let chain = Arc::clone(&chain);
         let seen_txid = Arc::clone(&seen_txid);
         let initial_sync_complete = initial_sync_complete.clone();
         let nostr_tor_config = nostr_tor_config.clone();
@@ -74,7 +75,7 @@ pub fn run_discovery(
                     kind,
                     registry,
                     shutdown,
-                    bitcoin_rpc,
+                    chain,
                     &seen_txid,
                     &initial_sync_complete,
                     (nostr_tor_config.0, nostr_tor_config.1.as_str()),
@@ -94,7 +95,7 @@ fn run_nostr_session_for_relay(
     kind: Kind,
     registry: Arc<FileRegistry>,
     shutdown: Arc<AtomicBool>,
-    bitcoin_rpc: Arc<BitcoinRest>,
+    chain: Arc<ChainSource>,
     seen_txid: &Arc<Mutex<SeenTxids>>,
     initial_sync_complete: &Arc<AtomicBool>,
     nostr_tor_config: (u16, &str),
@@ -107,7 +108,7 @@ fn run_nostr_session_for_relay(
             kind,
             registry.clone(),
             shutdown.clone(),
-            bitcoin_rpc.clone(),
+            chain.clone(),
             seen_txid,
             initial_sync_complete,
             nostr_tor_config,
@@ -136,7 +137,7 @@ fn connect_and_run_once(
     kind: Kind,
     registry: Arc<FileRegistry>,
     shutdown: Arc<AtomicBool>,
-    bitcoin_rpc: Arc<BitcoinRest>,
+    chain: Arc<ChainSource>,
     seen_txid: &Arc<Mutex<SeenTxids>>,
     initial_sync_complete: &Arc<AtomicBool>,
     nostr_tor_config: (u16, &str),
@@ -174,7 +175,7 @@ fn connect_and_run_once(
         registry,
         socket,
         shutdown,
-        bitcoin_rpc,
+        chain,
         relay_url,
         kind,
         seen_txid,
@@ -189,7 +190,7 @@ fn read_event_loop(
     registry: Arc<FileRegistry>,
     mut socket: tungstenite::WebSocket<MaybeTlsStream<TcpStream>>,
     shutdown: Arc<AtomicBool>,
-    bitcoin_rpc: Arc<BitcoinRest>,
+    chain: Arc<ChainSource>,
     relay_url: &str,
     kind: Kind,
     seen_txid: &Arc<Mutex<SeenTxids>>,
@@ -235,7 +236,7 @@ fn read_event_loop(
         let is_eose = handle_relay_message(
             registry.clone(),
             relay_msg,
-            bitcoin_rpc.clone(),
+            chain.clone(),
             relay_url,
             kind,
             seen_txid,
@@ -255,7 +256,7 @@ fn read_event_loop(
 fn handle_relay_message(
     registry: Arc<FileRegistry>,
     msg: RelayMessage,
-    bitcoin_rpc: Arc<BitcoinRest>,
+    chain: Arc<ChainSource>,
     relay_url: &str,
     kind: Kind,
     seen_txid: &Arc<Mutex<SeenTxids>>,
@@ -312,14 +313,19 @@ fn handle_relay_message(
             );
 
             // Check the seen-cache before any RPC work to avoid wasted
-            // `get_raw_tx` calls on duplicate events.
-            if !seen_txid.lock()?.insert(txid) {
+            // `get_raw_tx` calls on duplicate events. The txid is not marked
+            // seen here, that happens only after a successful fetch +
+            // process_fidelity below, so a transient backend failure leaves
+            // the announcement retry-eligible on the next event for the same
+            // txid (otherwise the FIFO cache would suppress retries for
+            // hours).
+            if seen_txid.lock()?.contains(&txid) {
                 log::info!("Skipping already-seen txid {txid} via {relay_url}");
                 registry.save_nostr_cursor(relay_url, event.created_at.as_secs());
                 return Ok(false);
             }
 
-            let tx = match bitcoin_rpc.get_raw_tx(&txid) {
+            let tx = match chain.get_raw_tx(&txid) {
                 Ok(tx) => tx,
                 Err(e) => {
                     log::warn!("Failed to fetch raw tx {txid:?} via {relay_url}: {e}");
@@ -327,6 +333,8 @@ fn handle_relay_message(
                 }
             };
 
+            // Tx fetched successfully, now safe to mark as seen so further lookups for the same txid are skipped until eviction from the cache.
+            seen_txid.lock()?.insert(txid);
             log::info!("Added txid to Nostr discovery cache: {txid}");
             match process_fidelity(&tx) {
                 Some(fidelity) => {

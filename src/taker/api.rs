@@ -26,7 +26,7 @@ use bitcoin::{
     },
     Amount, OutPoint, PublicKey,
 };
-use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, RpcApi};
+use bitcoind::bitcoincore_rpc::json::ListUnspentResultEntry;
 use socks::Socks5Stream;
 
 use crate::{
@@ -41,15 +41,15 @@ use crate::{
     utill::{check_tor_status, generate_maker_keys, get_taker_dir, read_message, send_message},
     wallet::{
         swapcoin::{IncomingSwapCoin, OutgoingSwapCoin, WatchOnlySwapCoin},
-        MakerFeeInfo as ReportMakerFeeInfo, RPCConfig, RecoveryOutcome, SwapStatus, TakerReport,
-        Wallet,
+        BackendConfig, BitcoindBackend, BlockchainBackend, MakerFeeInfo as ReportMakerFeeInfo,
+        RPCConfig, RecoveryOutcome, SwapStatus, TakerReport, Wallet,
     },
     watch_tower::{
         registry_storage::FileRegistry,
         rest_backend::BitcoinRest,
         service::WatchService,
         watcher::{Role, Watcher},
-        zmq_backend::ZmqBackend,
+        zmq_backend::{ChainSource, ElectrumNotifier, NotificationBackend, ZmqBackend},
     },
 };
 
@@ -122,18 +122,16 @@ pub(crate) const FEE_VERIFICATION_MARGIN: f64 = 1.5;
 pub struct TakerInitConfig {
     /// Data directory path.
     pub data_dir: Option<PathBuf>,
-    /// Wallet file name.
-    pub wallet_file_name: Option<String>,
-    /// RPC configuration for Bitcoin Core.
-    pub rpc_config: Option<RPCConfig>,
+    /// Backend selection (Bitcoin Core RPC or Electrum). The wallet name lives
+    /// inside the chosen variant; the matching variant is picked at the type
+    /// level when calling `Taker::<B>::init`.
+    pub backend: BackendConfig,
     /// Tor control port (optional).
     pub control_port: Option<u16>,
     /// Tor authentication password (optional).
     pub tor_auth_password: Option<String>,
     /// SOCKS port for Tor.
     pub socks_port: u16,
-    /// ZMQ address for transaction monitoring.
-    pub zmq_addr: String,
     /// Wallet password (optional).
     pub password: Option<String>,
     /// Connection type (Tor or Clearnet).
@@ -146,12 +144,10 @@ impl Default for TakerInitConfig {
     fn default() -> Self {
         TakerInitConfig {
             data_dir: None,
-            wallet_file_name: None,
-            rpc_config: None,
+            backend: BackendConfig::Bitcoind(RPCConfig::default()),
             control_port: None,
             tor_auth_password: None,
             socks_port: 9050,
-            zmq_addr: "tcp://127.0.0.1:28332".to_string(),
             password: None,
             connection_type: ConnectionType::Tor,
             nostr_relays: NOSTR_RELAYS.iter().map(|s| s.to_string()).collect(),
@@ -166,21 +162,9 @@ impl TakerInitConfig {
         self
     }
 
-    /// Set the wallet file name.
-    pub fn with_wallet_name(mut self, name: String) -> Self {
-        self.wallet_file_name = Some(name);
-        self
-    }
-
-    /// Set the RPC configuration.
-    pub fn with_rpc_config(mut self, rpc_config: RPCConfig) -> Self {
-        self.rpc_config = Some(rpc_config);
-        self
-    }
-
-    /// Set the ZMQ address.
-    pub fn with_zmq_addr(mut self, addr: String) -> Self {
-        self.zmq_addr = addr;
+    /// Set the backend (RPC or Electrum). The wallet name lives inside.
+    pub fn with_backend(mut self, backend: BackendConfig) -> Self {
+        self.backend = backend;
         self
     }
 
@@ -364,7 +348,7 @@ impl MakerConnection {
     }
 }
 
-impl Taker {
+impl<B: BlockchainBackend> Taker<B> {
     /// Compute the minimum expected output amount for a specific maker hop.
     ///
     /// Accounts for cumulative fees from all previous hops so that each maker's
@@ -400,11 +384,17 @@ impl Taker {
 }
 
 /// Taker client.
-pub struct Taker {
+///
+/// Parameterised by the wallet's blockchain backend `B`; defaults to
+/// [`BitcoindBackend`] so existing call sites that name `Taker` keep
+/// their current behaviour. Construct a `Taker<ElectrumBackend>` when
+/// driving the wallet through an Electrum server (the swap pipeline
+/// itself is backend-agnostic via [`BlockchainBackend`]).
+pub struct Taker<B: BlockchainBackend = BitcoindBackend> {
     /// Configuration.
     pub(crate) config: TakerInitConfig,
     /// Wallet for managing funds.
-    pub(crate) wallet: Arc<RwLock<Wallet>>,
+    pub(crate) wallet: Arc<RwLock<Wallet<B>>>,
     /// Offer book for managing maker offers.
     pub(crate) offerbook: OfferBookHandle,
     /// Watch service for transaction monitoring.
@@ -424,7 +414,7 @@ pub struct Taker {
     pub behavior: TakerBehavior,
 }
 
-impl Drop for Taker {
+impl<B: BlockchainBackend> Drop for Taker<B> {
     fn drop(&mut self) {
         log::info!("Shutting down taker.");
         // Flush any pending swap state before shutdown
@@ -462,20 +452,20 @@ impl Drop for Taker {
     }
 }
 
-impl Role for Taker {
+impl<B: BlockchainBackend> Role for Taker<B> {
     const RUN_DISCOVERY: bool = true;
 }
 
-impl Taker {
+impl<B: BlockchainBackend> Taker<B> {
     /// Acquire a read lock on the wallet.
-    pub(crate) fn read_wallet(&self) -> Result<RwLockReadGuard<'_, Wallet>, TakerError> {
+    pub(crate) fn read_wallet(&self) -> Result<RwLockReadGuard<'_, Wallet<B>>, TakerError> {
         self.wallet
             .read()
             .map_err(|_| TakerError::General("Failed to lock wallet".to_string()))
     }
 
     /// Acquire a write lock on the wallet.
-    pub(crate) fn write_wallet(&self) -> Result<RwLockWriteGuard<'_, Wallet>, TakerError> {
+    pub(crate) fn write_wallet(&self) -> Result<RwLockWriteGuard<'_, Wallet<B>>, TakerError> {
         self.wallet
             .write()
             .map_err(|_| TakerError::General("Failed to lock wallet".to_string()))
@@ -496,20 +486,38 @@ impl Taker {
     }
 
     /// Initialize a new taker.
-    pub fn init(config: TakerInitConfig) -> Result<Self, TakerError> {
+    pub fn from_wallet(config: TakerInitConfig, wallet: Wallet<B>) -> Result<Self, TakerError> {
         let data_dir = config.data_dir.clone().unwrap_or_else(get_taker_dir);
         std::fs::create_dir_all(&data_dir)?;
 
-        let (wallet, rpc_config) = Self::init_wallet(&config, &data_dir)?;
-        let (watch_service, registry, initial_sync_complete) =
-            Self::init_watch_service(&config, &rpc_config, &data_dir)?;
+        let (rpc_config, electrum_url) = match &config.backend {
+            BackendConfig::Bitcoind(rpc) => (Some(rpc.clone()), None),
+            BackendConfig::Electrum(ecfg) => (None, Some(ecfg.url.clone())),
+        };
+        let chain = match (&rpc_config, &electrum_url) {
+            (Some(rpc), _) => ChainSource::Rest(BitcoinRest::new(rpc.clone())?),
+            (None, Some(url)) => ChainSource::Electrum(url.clone()),
+            (None, None) => {
+                return Err(TakerError::General(
+                    "Taker config has no chain source".into(),
+                ))
+            }
+        };
+
+        let (watch_service, registry, initial_sync_complete) = Self::init_watch_service(
+            &config,
+            rpc_config.as_ref(),
+            electrum_url.as_deref(),
+            chain.clone(),
+            &data_dir,
+        )?;
         Self::init_taker_config(&config, &data_dir)?;
         let offerbook = OfferBookHandle::load_or_create(&data_dir)?;
         let offer_sync_handle = Self::init_offer_sync(
             &offerbook,
             registry,
             config.socks_port,
-            rpc_config,
+            chain,
             initial_sync_complete,
         )?;
         let swap_tracker = Arc::new(Mutex::new(SwapTracker::load_or_create(&data_dir)?));
@@ -587,48 +595,33 @@ impl Taker {
         }
     }
 
-    /// Set up the wallet from config and return it with the resolved RPC config.
-    fn init_wallet(
-        config: &TakerInitConfig,
-        data_dir: &std::path::Path,
-    ) -> Result<(Wallet, RPCConfig), TakerError> {
-        let wallet_file_name = config
-            .wallet_file_name
-            .clone()
-            .unwrap_or_else(|| "taker-wallet".to_string());
-
-        let mut rpc_config = config
-            .rpc_config
-            .clone()
-            .ok_or_else(|| TakerError::General("RPC configuration is required".to_string()))?;
-        rpc_config.wallet_name = wallet_file_name.clone();
-
-        let wallet_path = data_dir.join("wallets").join(&wallet_file_name);
-        let wallet =
-            Wallet::load_or_init_wallet(&wallet_path, &rpc_config, config.password.clone())?;
-
-        Ok((wallet, rpc_config))
-    }
-
-    /// Initialize the ZMQ-backed watch service and spawn the watcher thread.
+    /// Initialize the watch service and spawn the watcher thread.
     /// Returns the watch service, a clone of the registry, and the initial-sync-complete flag.
     fn init_watch_service(
         config: &TakerInitConfig,
-        rpc_config: &RPCConfig,
+        rpc_config: Option<&RPCConfig>,
+        electrum_url: Option<&str>,
+        chain: ChainSource,
         data_dir: &std::path::Path,
     ) -> Result<(WatchService, FileRegistry, Arc<AtomicBool>), TakerError> {
-        let backend = ZmqBackend::new(&config.zmq_addr);
-        let rpc_backend = BitcoinRest::new(rpc_config.clone())?;
-        let blockchain_info = rpc_backend.get_blockchain_info()?;
-        let file_registry = data_dir
-            .join(".taker_watcher")
-            .join(blockchain_info.chain.to_string());
+        let backend = if let Some(url) = electrum_url {
+            NotificationBackend::Electrum(Box::new(
+                ElectrumNotifier::new(url)
+                    .map_err(|e| TakerError::General(format!("electrum notifier: {e:?}")))?,
+            ))
+        } else {
+            let rpc = rpc_config.ok_or_else(|| {
+                TakerError::General("RPC configuration required for ZMQ watch service".into())
+            })?;
+            NotificationBackend::Zmq(ZmqBackend::new(&rpc.zmq_addr))
+        };
+
+        let file_registry = data_dir.join(".taker_watcher").join(chain.chain_name()?);
         let registry = FileRegistry::load(file_registry);
         let registry_clone = registry.clone();
 
         let (tx_requests, rx_requests) = mpsc::channel();
         let (tx_events, rx_responses) = crossbeam_channel::unbounded();
-        let rpc_config_watcher = rpc_config.clone();
 
         let initial_sync_complete = Arc::new(AtomicBool::new(false));
         let initial_sync_clone = initial_sync_complete.clone();
@@ -644,10 +637,11 @@ impl Taker {
                 config.socks_port,
                 config.tor_auth_password.clone().unwrap_or_default(),
             )),
+            chain,
         );
         let _ = thread::Builder::new()
             .name("Watcher thread".to_string())
-            .spawn(move || watcher.run(rpc_config_watcher, initial_sync_clone));
+            .spawn(move || watcher.run(initial_sync_clone));
 
         Ok((
             WatchService::new(tx_requests, rx_responses),
@@ -687,22 +681,21 @@ impl Taker {
         offerbook: &OfferBookHandle,
         registry: FileRegistry,
         socks_port: u16,
-        rpc_config: RPCConfig,
+        chain: ChainSource,
         initial_sync_complete: Arc<AtomicBool>,
     ) -> Result<OfferSyncHandle, TakerError> {
-        let rest_backend = BitcoinRest::new(rpc_config)?;
         Ok(OfferSyncService::new(
             offerbook.clone(),
             registry,
             socks_port,
-            rest_backend,
+            chain,
             initial_sync_complete,
         )
         .start())
     }
 
     /// Get reference to the wallet.
-    pub fn get_wallet(&self) -> &Arc<RwLock<Wallet>> {
+    pub fn get_wallet(&self) -> &Arc<RwLock<Wallet<B>>> {
         &self.wallet
     }
 
@@ -2413,12 +2406,18 @@ impl Taker {
             .map_err(|e| TakerError::General(format!("Invalid maker address: {e}")))?;
         self.offerbook.remove(&parsed)
     }
+}
 
+impl<B: BlockchainBackend> Taker<B> {
     /// Restore a wallet from a backup file (static — no taker instance needed).
+    /// Backend is picked at the call site via turbofish
+    /// (`Taker::<BitcoindBackend>::restore_wallet` /
+    /// `Taker::<ElectrumBackend>::restore_wallet`); the matching variant is
+    /// taken from `backend`.
     pub fn restore_wallet(
         data_dir: Option<PathBuf>,
         wallet_file_name: Option<String>,
-        rpc_config: Option<RPCConfig>,
+        backend: BackendConfig,
         backup_file: &String,
     ) {
         let backup_file_path = PathBuf::from(backup_file);
@@ -2429,11 +2428,24 @@ impl Taker {
             .join("wallets")
             .join(restored_wallet_filename);
 
-        Wallet::restore_interactive(
-            &backup_file_path,
-            &rpc_config.unwrap_or_default(),
-            &restored_wallet_path,
-        );
+        Wallet::<B>::restore_interactive(&backup_file_path, &backend, &restored_wallet_path);
+    }
+}
+
+/// Initialize a new taker. The backend type is picked at the call site via
+/// turbofish (`Taker::<BitcoindBackend>::init` / `Taker::<ElectrumBackend>::init`);
+/// the matching variant is pulled from `config.backend`.
+impl<B: BlockchainBackend> Taker<B> {
+    /// Initialize a new taker. The matching backend variant is pulled from
+    /// `config.backend`; errors if it doesn't match the type-level `B`.
+    pub fn init(config: TakerInitConfig) -> Result<Self, TakerError> {
+        let data_dir = config.data_dir.clone().unwrap_or_else(get_taker_dir);
+        std::fs::create_dir_all(&data_dir)?;
+        let wallet_path = data_dir.join("wallets").join(config.backend.wallet_name());
+        let backend_cfg = B::from_backend_config(&config.backend)
+            .map_err(|e| TakerError::General(format!("{e:?}")))?;
+        let wallet = Wallet::<B>::load_or_init(&wallet_path, backend_cfg, config.password.clone())?;
+        Self::from_wallet(config, wallet)
     }
 }
 

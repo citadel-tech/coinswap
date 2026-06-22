@@ -9,7 +9,7 @@ use coinswap::{
     maker::{start_server, MakerBehavior, MakerError, MakerServer, MakerServerConfig},
     protocol::common_messages::ProtocolVersion,
     taker::{error::TakerError, SwapParams, TakerBehavior},
-    wallet::{AddressType, WalletError},
+    wallet::{AddressType, BitcoindBackend, WalletError},
 };
 
 use super::test_framework::*;
@@ -29,7 +29,7 @@ fn fidelity_limit_violation() {
 
     // Initialize test framework
     let (test_framework, mut takers, makers, block_generation_handle) =
-        TestFramework::init(makers_config_map, taker_behavior, maker_behaviors);
+        TestFramework::init::<BitcoindBackend>(makers_config_map, taker_behavior, maker_behaviors);
 
     let bitcoind = &test_framework.bitcoind;
     let taker = takers.get_mut(0).unwrap();
@@ -104,7 +104,8 @@ fn fidelity_limit_violation() {
 
     // Attempt restart with the corrupted config
     info!("Restarting maker with non-acceptable fidelity_timelock");
-    let restart_result = MakerServerConfig::new(Some(&config_path)).map(MakerServer::init);
+    let restart_result =
+        MakerServerConfig::new(Some(&config_path)).map(MakerServer::<BitcoindBackend>::init);
 
     match restart_result {
         Err(ref e) => {

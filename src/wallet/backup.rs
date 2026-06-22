@@ -1,13 +1,15 @@
-use std::{convert::TryFrom, env, ffi::OsStr, fs, io::Write, path::PathBuf};
+use std::{env, ffi::OsStr, fs, io::Write, path::PathBuf};
 
 use crate::{
     security::{encrypt_struct, load_sensitive_struct, KeyMaterial, SerdeJson},
     wallet::{Wallet, WalletError},
 };
 
-use super::{rpc::RPCConfig, storage::WalletStore};
+use super::{
+    rpc::{BackendConfig, BlockchainBackend},
+    storage::WalletStore,
+};
 use bitcoin::{bip32::Xpriv, Network};
-use bitcoind::bitcoincore_rpc::Client;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -28,8 +30,8 @@ pub struct WalletBackup {
     /// The file name associated with the wallet store.
     pub file_name: String, //Can be asked to user, or stored for convenience
 }
-impl From<&Wallet> for WalletBackup {
-    fn from(wallet: &Wallet) -> Self {
+impl<B: BlockchainBackend> From<&Wallet<B>> for WalletBackup {
+    fn from(wallet: &Wallet<B>) -> Self {
         WalletBackup {
             network: (wallet.store.network),
             master_key: (wallet.store.master_key),
@@ -38,17 +40,10 @@ impl From<&Wallet> for WalletBackup {
         }
     }
 }
-impl Wallet {
-    /// Creates a backup of the wallet and writes it to the given path.
-    ///
-    /// The backup is saved as a `.json` file. If encryption material is provided,
+impl<B: BlockchainBackend> Wallet<B> {
+    /// Creates a backup of the wallet and writes it to the given path. The
+    /// backup is saved as a `.json` file. If encryption material is provided,
     /// the backup content is encrypted before being written.
-    ///
-    /// # Behavior
-    ///
-    /// - If encryption is used, the backup content is encrypted and serialized.
-    /// - If not, a warning is printed, and the backup is stored unencrypted.
-    /// - The final backup file will have a `.json` extension.
     pub fn backup(
         &self,
         path: &Path,
@@ -77,39 +72,21 @@ impl Wallet {
         Ok(())
     }
 
-    /// Restores a `Wallet` from this backup to a specified path.
-    ///
-    /// Initializes a new wallet instance using the data from the backup and syncs
-    /// it with the blockchain using the provided RPC configuration.
-    ///
-    /// # Returns
-    ///
-    /// A fully initialized and synced `Wallet` instance.
-    ///
-    /// # Behavior
-    ///
-    /// If `wallet_path` does not contain a file name, `wallet_backup.file_name` will be used.
-    /// The method initializes the wallet store, connects to the blockchain node via RPC,
-    /// syncs wallet data, and saves the state to disk.
+    /// Restore a wallet from a [`WalletBackup`]. The caller must set the wallet
+    /// name in `config` to match `wallet_path.file_name()` before calling.
     pub fn restore(
         wallet_backup: &WalletBackup,
         wallet_path: &Path,
-        rpc_config: &RPCConfig,
+        config: &B::Config,
         restored_enc_material: Option<KeyMaterial>,
-    ) -> Result<Wallet, WalletError> {
+    ) -> Result<Self, WalletError> {
         let wallet_file_name = wallet_path
             .file_name()
-            .unwrap_or(OsStr::new(&wallet_backup.file_name)) // If no name filename for the restored one is provided use the previous one
+            .unwrap_or(OsStr::new(&wallet_backup.file_name))
             .to_str()
             .unwrap()
             .to_string();
-
-        let mut rpc_config_test = rpc_config.clone();
-        rpc_config_test.wallet_name = wallet_file_name.clone();
-
-        let rpc = Client::try_from(&rpc_config_test)?;
-
-        // Initialise wallet
+        let rpc = B::from_config(config)?;
         let store = WalletStore::init(
             wallet_file_name,
             wallet_path,
@@ -118,35 +95,22 @@ impl Wallet {
             wallet_backup.wallet_birthday,
             &restored_enc_material,
         )?;
-
-        let mut tmp_wallet = Wallet {
+        let mut tmp_wallet = Self {
             rpc,
             wallet_file_path: wallet_path.to_path_buf(),
             store,
             store_enc_material: restored_enc_material,
         };
         tmp_wallet.sync_and_save()?;
-
         Ok(tmp_wallet)
     }
 
-    /// Interactively restores a wallet from a backup file.
-    ///
-    /// This method loads a wallet backup from the given file path, prompts for decryption
-    /// if necessary, and then restores the wallet to a new location. During restoration,
-    /// the user is also prompted to provide a new encryption passphrase for the restored wallet.
-    ///
-    /// # Behavior
-    ///
-    /// - **Prompts for decryption passphrase** if the backup file is encrypted.
-    /// - Loads and decrypts the backup content.
-    /// - **Prompts for a new encryption passphrase** for the restored wallet.
-    /// - Initializes the wallet with the decrypted data and new encryption.
-    /// - Syncs the wallet with the blockchain.
-    /// - Saves the restored wallet to disk.
+    /// Interactive restore against the backend variant matching `B`. Prompts
+    /// for an optional decryption passphrase, derives the wallet name from
+    /// `restored_path`, and writes the restored wallet to disk.
     pub fn restore_interactive(
         backup_file_path: &PathBuf,
-        rpc_config: &RPCConfig,
+        backend: &BackendConfig,
         restored_path: &Path,
     ) {
         log::info!(
@@ -156,29 +120,32 @@ impl Wallet {
 
         let (backup, _) = load_sensitive_struct::<WalletBackup, SerdeJson>(backup_file_path, None);
         let restore_enc_material = KeyMaterial::new_interactive(Some(
-            "Enter restored walled encryption passphrase(empty for no encryption): ".to_string(),
+            "Enter restored wallet encryption passphrase (empty for no encryption): ".to_string(),
         ));
 
-        // Attempt to restore the wallet.
-        // Since this is an interactive, one-shot restore, the program will exit after this,
-        // so these messages are the last feedback the user will see.
-        if let Err(e) = Wallet::restore(&backup, restored_path, rpc_config, restore_enc_material) {
+        // Rebind the backend's wallet_name to the restored path's filename.
+        // `Wallet::restore` doesn't rebind on its own.
+        let mut backend = backend.clone();
+        if let Some(name) = restored_path.file_name().and_then(|n| n.to_str()) {
+            backend.set_wallet_name(name.to_string());
+        }
+        let cfg = match B::from_backend_config(&backend) {
+            Ok(c) => c.clone(),
+            Err(e) => {
+                log::error!("Wallet restore failed: backend mismatch: {e:?}");
+                return;
+            }
+        };
+
+        if let Err(e) = Wallet::<B>::restore(&backup, restored_path, &cfg, restore_enc_material) {
             log::error!("Wallet restore failed: {e:?}");
         } else {
             println!("Wallet restore succeeded!");
         }
     }
-    /// Interactively creates a wallet backup, optionally encrypted.
-    ///
-    /// This is a user-friendly version of the [`Wallet::backup`] method, which:
-    /// - Uses the current working directory as the backup location.
-    /// - Prompts the user to input encryption material (if `encrypt` is `true`).
-    ///
-    /// # Behavior
-    ///
-    /// - Prompts for encryption key if `encrypt == true`.
-    /// - Names the backup file as `{wallet_name}-backup.json`.
-    /// - Writes the backup to the current working directory.
+
+    /// Interactively creates a wallet backup in the current working directory,
+    /// optionally encrypted. File name is `{wallet_name}-backup.json`.
     pub fn backup_interactive(wallet: &Self, encrypt: bool) {
         log::info!("Initiating wallet backup!");
         let backup_name = format!("{}-backup", wallet.get_name());
@@ -198,9 +165,6 @@ impl Wallet {
         };
 
         let backup_path = working_directory.join(backup_name);
-        // Attempt to back up the wallet.
-        // Since this is a one-shot operation, the program will exit after this,
-        // so these messages are the last feedback the user will see.
         if let Err(e) = wallet.backup(&backup_path, backup_enc_material) {
             log::error!("Wallet backup failed: {e:?}");
         } else {

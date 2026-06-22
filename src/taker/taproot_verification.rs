@@ -11,9 +11,11 @@ use crate::protocol::{
     contract2::extract_hash_from_hashlock, taproot_messages::TaprootContractData,
 };
 
+use crate::wallet::BlockchainBackend;
+
 use super::{api::Taker, error::TakerError};
 
-impl Taker {
+impl<B: BlockchainBackend> Taker<B> {
     /// Verify a maker's Taproot contract data response.
     #[hotpath::measure]
     pub(crate) fn verify_maker_taproot_contract(

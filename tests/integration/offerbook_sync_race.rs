@@ -61,7 +61,7 @@ fn test_repeated_manual_sync_is_bounded() {
         .collect();
 
     let (test_framework, mut takers, makers, block_generation_handle) =
-        TestFramework::init(makers_config_map, taker_behavior, maker_behaviors);
+        TestFramework::init::<BitcoindBackend>(makers_config_map, taker_behavior, maker_behaviors);
 
     let bitcoind = &test_framework.bitcoind;
     let taker = &mut takers[0];
@@ -129,7 +129,7 @@ fn test_nostr_cursor_persisted_for_local_relay() {
     let taker_behavior = vec![TakerBehavior::Normal];
 
     let (test_framework, mut takers, makers, block_generation_handle) =
-        TestFramework::init(makers_config_map, taker_behavior, vec![]);
+        TestFramework::init::<BitcoindBackend>(makers_config_map, taker_behavior, vec![]);
 
     let relay_url = &test_framework.nostr_relay_url;
     let bitcoind = &test_framework.bitcoind;
@@ -197,7 +197,7 @@ fn test_nostr_cursor_is_monotonic_for_local_relay() {
     let taker_behavior = vec![TakerBehavior::Normal];
 
     let (test_framework, mut takers, makers, block_generation_handle) =
-        TestFramework::init(makers_config_map, taker_behavior, vec![]);
+        TestFramework::init::<BitcoindBackend>(makers_config_map, taker_behavior, vec![]);
 
     let relay_url = test_framework.nostr_relay_url.clone();
     let bitcoind = &test_framework.bitcoind;

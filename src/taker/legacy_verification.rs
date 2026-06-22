@@ -18,9 +18,11 @@ use crate::protocol::{
     legacy_messages::SenderContractTxInfo,
 };
 
+use crate::wallet::BlockchainBackend;
+
 use super::{api::Taker, error::TakerError};
 
-impl Taker {
+impl<B: BlockchainBackend> Taker<B> {
     /// Verify sender contract signatures received from the first maker.
     ///
     /// Each signature must be valid against the corresponding outgoing swapcoin's

@@ -13,7 +13,6 @@ use std::{
 };
 
 use bitcoin::{bip32::ChainCode, Amount, Network, OutPoint, PublicKey, Transaction};
-use bitcoind::bitcoincore_rpc::RpcApi;
 
 use crate::{
     nostr_coinswap::NOSTR_RELAYS,
@@ -21,8 +20,8 @@ use crate::{
     utill::{get_maker_dir, parse_field, parse_toml, MIN_FEE_RATE},
     wallet::{
         swapcoin::{IncomingSwapCoin, OutgoingSwapCoin},
-        AddressType, FidelityError, RPCConfig, Wallet, WalletError, MAX_FIDELITY_TIMELOCK,
-        MIN_FIDELITY_TIMELOCK,
+        AddressType, BackendConfig, BitcoindBackend, BlockchainBackend, FidelityError, RPCConfig,
+        Wallet, WalletError, MAX_FIDELITY_TIMELOCK, MIN_FIDELITY_TIMELOCK,
     },
     watch_tower::service::WatchService,
 };
@@ -89,7 +88,7 @@ impl Default for SwapState {
     }
 }
 
-/// Maker Server configuration for the trait-based approach.
+/// Maker Server configuration.
 #[derive(Debug, Clone)]
 pub struct MakerServerConfig {
     /// Data directory for the Maker.
@@ -110,18 +109,14 @@ pub struct MakerServerConfig {
     pub required_confirms: u32,
     /// Supported protocol versions.
     pub supported_protocols: Vec<ProtocolVersion>,
-    /// ZMQ address for transaction monitoring.
-    pub zmq_addr: String,
     /// Fidelity bond amount in satoshis.
     pub fidelity_amount: u64,
     /// Fidelity bond timelock in blocks.
     pub fidelity_timelock: u32,
     /// Bitcoin network.
     pub network: Network,
-    /// Wallet name.
-    pub wallet_name: String,
-    /// RPC configuration.
-    pub rpc_config: RPCConfig,
+    /// Selects between Bitcoin Core (`RPCConfig`) and Electrum (`ElectrumConfig`)
+    pub backend: BackendConfig,
     /// Control port for Tor interface.
     pub control_port: u16,
     /// Socks port for Tor proxy.
@@ -146,12 +141,10 @@ impl Default for MakerServerConfig {
             min_swap_amount: 10_000,
             required_confirms: 1,
             supported_protocols: vec![ProtocolVersion::Legacy, ProtocolVersion::Taproot],
-            zmq_addr: "tcp://127.0.0.1:28332".to_string(),
             fidelity_amount: 10_000,   // 0.05 BTC
             fidelity_timelock: 15_000, // ~6 months (MAX_FIDELITY_TIMELOCK)
             network: Network::Regtest,
-            wallet_name: "maker".to_string(),
-            rpc_config: RPCConfig::default(),
+            backend: BackendConfig::Bitcoind(RPCConfig::default()),
             control_port: 9051,
             socks_port: 9050,
             tor_auth_password: String::new(),
@@ -244,9 +237,7 @@ impl MakerServerConfig {
             // Runtime fields — not read from config file
             data_dir: default_config.data_dir,
             network: default_config.network,
-            wallet_name: default_config.wallet_name,
-            rpc_config: default_config.rpc_config,
-            zmq_addr: default_config.zmq_addr,
+            backend: default_config.backend,
             password: default_config.password,
             supported_protocols: default_config.supported_protocols,
             nostr_relays: default_config.nostr_relays,
@@ -355,14 +346,12 @@ impl ThreadPool {
     }
 }
 
-/// Maker server
-///
-/// This implements the `Maker` trait with actual swap logic.
-pub struct MakerServer {
+/// Maker server, parameterised by the wallet's blockchain backend `B`.
+pub struct MakerServer<B: BlockchainBackend = BitcoindBackend> {
     /// Configuration.
     pub config: MakerServerConfig,
     /// Wallet.
-    pub wallet: Arc<RwLock<Wallet>>,
+    pub wallet: Arc<RwLock<Wallet<B>>>,
     /// Shutdown flag.
     pub shutdown: AtomicBool,
     /// Is setup complete flag.
@@ -402,75 +391,7 @@ pub struct IdleSwapData {
     pub funding_broadcast: bool,
 }
 
-impl MakerServer {
-    /// Initialize a new maker server with full setup.
-    #[hotpath::measure]
-    pub fn init(mut config: MakerServerConfig) -> Result<Self, MakerError> {
-        let data_dir = config.data_dir.clone();
-        std::fs::create_dir_all(&data_dir).map_err(MakerError::IO)?;
-
-        let wallets_dir = data_dir.join("wallets");
-        let wallet_path = wallets_dir.join(&config.wallet_name);
-
-        // Initialize or load wallet
-        let mut rpc_config = config.rpc_config.clone();
-        rpc_config.wallet_name = config.wallet_name.clone();
-
-        let wallet =
-            Wallet::load_or_init_wallet(&wallet_path, &rpc_config, config.password.clone())?;
-
-        // Initial wallet sync
-        let mut wallet = wallet;
-        log::info!("Sync at:----MakerServer init----");
-        wallet.sync_and_save()?;
-        let wallet_network = wallet.store.network;
-        if config.network != wallet_network {
-            log::info!(
-                "Maker config network ({:?}) differs from wallet network ({:?}); using wallet network",
-                config.network,
-                wallet_network
-            );
-            config.network = wallet_network;
-        }
-
-        // Initialize watch service
-        let watch_service = crate::watch_tower::service::start_maker_watch_service(
-            &config.zmq_addr,
-            &rpc_config,
-            &data_dir,
-            config.network_port,
-        )
-        .map_err(MakerError::Watcher)?;
-
-        let swap_tracker = MakerSwapTracker::load_or_create(&data_dir)?;
-        let incomplete = swap_tracker.incomplete_swaps();
-        if !incomplete.is_empty() {
-            log::info!(
-                "[{}] Loaded {} incomplete swap records from previous run",
-                config.network_port,
-                incomplete.len()
-            );
-            swap_tracker.log_state();
-        }
-
-        let nostr_relays = config.nostr_relays.clone();
-        Ok(MakerServer {
-            config: config.clone(),
-            wallet: Arc::new(RwLock::new(wallet)),
-            shutdown: AtomicBool::new(false),
-            is_setup_complete: AtomicBool::new(false),
-            highest_fidelity_proof: RwLock::new(None),
-            ongoing_swaps: Mutex::new(HashMap::new()),
-            watch_service,
-            thread_pool: Arc::new(ThreadPool::new(config.network_port)),
-            data_dir,
-            swap_tracker: Mutex::new(swap_tracker),
-            nostr_relays,
-            #[cfg(feature = "integration-test")]
-            behavior: MakerBehavior::default(),
-        })
-    }
-
+impl<B: BlockchainBackend> MakerServer<B> {
     /// Check if shutdown has been requested.
     pub fn is_shutdown(&self) -> bool {
         self.shutdown.load(Ordering::Relaxed)
@@ -480,7 +401,6 @@ impl MakerServer {
     #[hotpath::measure]
     pub fn setup_fidelity_bond(&self, maker_address: &str) -> Result<FidelityProof, MakerError> {
         use bitcoin::absolute::LockTime;
-        use bitcoind::bitcoincore_rpc::RpcApi;
 
         let highest_index = self
             .wallet
@@ -771,9 +691,86 @@ impl MakerServer {
     pub fn has_ongoing_swaps(&self) -> bool {
         !self.ongoing_swaps.lock().unwrap().is_empty()
     }
+
+    /// Initialize a maker server. Backend `B` is picked at the call site via turbofish;
+    /// the matching variant is pulled from `config.backend`.
+    #[hotpath::measure]
+    pub fn init(mut config: MakerServerConfig) -> Result<Self, MakerError> {
+        std::fs::create_dir_all(&config.data_dir).map_err(MakerError::IO)?;
+        let wallet_path = config
+            .data_dir
+            .join("wallets")
+            .join(config.backend.wallet_name());
+        let backend_cfg = B::from_backend_config(&config.backend).map_err(MakerError::Wallet)?;
+        let mut wallet =
+            Wallet::<B>::load_or_init(&wallet_path, backend_cfg, config.password.clone())?;
+        let data_dir = config.data_dir.clone();
+        log::info!("Sync at:----MakerServer init----");
+        wallet.sync_and_save()?;
+        let wallet_network = wallet.store.network;
+        if config.network != wallet_network {
+            log::info!(
+                "Maker config network ({:?}) differs from wallet network ({:?}); using wallet network",
+                config.network,
+                wallet_network
+            );
+            config.network = wallet_network;
+        }
+
+        let (zmq_addr, electrum_url, chain) = match &config.backend {
+            BackendConfig::Bitcoind(rpc) => {
+                let rest = crate::watch_tower::rest_backend::BitcoinRest::new(rpc.clone())
+                    .map_err(MakerError::Watcher)?;
+                (
+                    rpc.zmq_addr.clone(),
+                    None::<String>,
+                    crate::watch_tower::zmq_backend::ChainSource::Rest(rest),
+                )
+            }
+            BackendConfig::Electrum(ecfg) => (
+                String::new(),
+                Some(ecfg.url.clone()),
+                crate::watch_tower::zmq_backend::ChainSource::Electrum(ecfg.url.clone()),
+            ),
+        };
+        let watch_service = crate::watch_tower::service::start_maker_watch_service(
+            &zmq_addr,
+            chain,
+            &data_dir,
+            config.network_port,
+            electrum_url.as_deref(),
+        )
+        .map_err(MakerError::Watcher)?;
+        let swap_tracker = MakerSwapTracker::load_or_create(&data_dir)?;
+        let incomplete = swap_tracker.incomplete_swaps();
+        if !incomplete.is_empty() {
+            log::info!(
+                "[{}] Loaded {} incomplete swap records from previous run",
+                config.network_port,
+                incomplete.len()
+            );
+            swap_tracker.log_state();
+        }
+        let nostr_relays = config.nostr_relays.clone();
+        Ok(MakerServer {
+            config: config.clone(),
+            wallet: Arc::new(RwLock::new(wallet)),
+            shutdown: AtomicBool::new(false),
+            is_setup_complete: AtomicBool::new(false),
+            highest_fidelity_proof: RwLock::new(None),
+            ongoing_swaps: Mutex::new(HashMap::new()),
+            watch_service,
+            thread_pool: Arc::new(ThreadPool::new(config.network_port)),
+            data_dir,
+            swap_tracker: Mutex::new(swap_tracker),
+            nostr_relays,
+            #[cfg(feature = "integration-test")]
+            behavior: MakerBehavior::default(),
+        })
+    }
 }
 
-impl MakerTrait for MakerServer {
+impl<B: BlockchainBackend> MakerTrait for MakerServer<B> {
     fn network_port(&self) -> u16 {
         self.config.network_port
     }
@@ -1005,13 +1002,14 @@ impl MakerTrait for MakerServer {
     }
 
     #[hotpath::measure]
-    fn register_watch_outpoint(&self, outpoint: OutPoint) {
-        self.watch_service.register_watch_request(outpoint);
+    fn register_watch_outpoint(&self, outpoint: OutPoint, script_pubkey: bitcoin::ScriptBuf) {
+        self.watch_service
+            .register_watch_request(outpoint, script_pubkey);
     }
 
     #[hotpath::measure]
-    fn unwatch_outpoint(&self, outpoint: OutPoint) {
-        self.watch_service.unwatch(outpoint);
+    fn unwatch_outpoint(&self, outpoint: OutPoint, script_pubkey: bitcoin::ScriptBuf) {
+        self.watch_service.unwatch(outpoint, script_pubkey);
     }
 
     #[hotpath::measure]
@@ -1160,7 +1158,7 @@ impl MakerTrait for MakerServer {
     }
 
     fn wallet_name(&self) -> &str {
-        &self.config.wallet_name
+        self.config.backend.wallet_name()
     }
 
     fn collect_excluded_utxos(&self, current_swap_id: &str) -> Vec<OutPoint> {
@@ -1250,7 +1248,6 @@ impl MakerTrait for MakerServer {
             utill::{redeemscript_to_scriptpubkey, REQUIRED_CONFIRMS},
         };
         use bitcoin::{hashes::Hash, OutPoint};
-        use bitcoind::bitcoincore_rpc::RpcApi;
 
         log::info!(
             "[{}] Verifying proof of funding for swap {}",
@@ -1308,8 +1305,11 @@ impl MakerTrait for MakerServer {
                 return Err(MakerError::General("Funding tx output doesn't exist"));
             }
 
-            // Verify the taker-provided SPV proof commits to this funding transaction.
-            wallet_read.verify_tx_out_proof(&funding_txid, &funding_info.funding_tx_merkleproof)?;
+            // The taker sends one when its backend can produce it (Bitcoind's `gettxoutproof`) and an empty string otherwise (Electrum).
+            if !funding_info.funding_tx_merkleproof.is_empty() {
+                wallet_read
+                    .verify_tx_out_proof(&funding_txid, &funding_info.funding_tx_merkleproof)?;
+            }
 
             check_reedemscript_is_multisig(&funding_info.multisig_redeemscript)?;
 
@@ -1515,8 +1515,9 @@ impl MakerTrait for MakerServer {
     }
 }
 
-impl MakerRpc for MakerServer {
-    fn wallet(&self) -> &RwLock<Wallet> {
+impl<B: BlockchainBackend> MakerRpc for MakerServer<B> {
+    type Backend = B;
+    fn wallet(&self) -> &RwLock<Wallet<B>> {
         &self.wallet
     }
 

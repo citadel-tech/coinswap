@@ -13,19 +13,18 @@ use std::{
     time::Duration,
 };
 
-use bitcoin::{consensus::deserialize, Block, Network, OutPoint, Transaction};
+use bitcoin::{
+    consensus::deserialize, hashes::Hash, Block, BlockHash, Network, OutPoint, ScriptBuf,
+    Transaction,
+};
 use crossbeam_channel::Sender as CbSender;
 
-use crate::{
-    wallet::RPCConfig,
-    watch_tower::{
-        nostr_discovery,
-        registry_storage::{Checkpoint, FileRegistry, WatchRequest},
-        rest_backend::BitcoinRest,
-        utils::{process_block, process_transaction},
-        watcher_error::WatcherError,
-        zmq_backend::{BackendEvent, ZmqBackend},
-    },
+use crate::watch_tower::{
+    nostr_discovery,
+    registry_storage::{Checkpoint, FileRegistry, WatchRequest},
+    utils::{process_block, process_transaction},
+    watcher_error::WatcherError,
+    zmq_backend::{BackendEvent, ChainSource, NotificationBackend},
 };
 
 /// Describes watcher behavior.
@@ -36,12 +35,13 @@ pub trait Role {
 
 /// Drives the watchtower event loop, coordinating backend events and client commands.
 pub struct Watcher<R: Role> {
-    backend: ZmqBackend,
+    backend: NotificationBackend,
     registry: FileRegistry,
     rx_requests: StdReceiver<WatcherCommand>,
     tx_events: CbSender<WatcherEvent>,
     nostr_relays: Vec<String>,
     nostr_tor_config: Option<(u16, String)>,
+    chain: ChainSource,
     _role: PhantomData<R>,
 }
 
@@ -59,13 +59,17 @@ pub enum WatcherEvent {
     NoOutpoint,
 }
 
-/// Commands accepted by the watcher from clients.
+/// Commands accepted by the watcher from clients. Register/Unwatch carry
+/// `script_pubkey` so the Electrum backend can arm/drop its per-script
+/// subscription without re-fetching the funding tx from the network.
 #[derive(Debug, Clone)]
 pub enum WatcherCommand {
     /// Store a new watch request.
     RegisterWatchRequest {
         /// Outpoint to begin tracking.
         outpoint: OutPoint,
+        /// `scriptPubKey` of the outpoint, used to arm the Electrum per-script subscription.
+        script_pubkey: ScriptBuf,
     },
     /// Query whether an outpoint has been spent.
     WatchRequest {
@@ -76,6 +80,8 @@ pub enum WatcherCommand {
     Unwatch {
         /// Outpoint to stop tracking.
         outpoint: OutPoint,
+        /// `scriptPubKey` of the outpoint, used to drop the Electrum subscription.
+        script_pubkey: ScriptBuf,
     },
     /// Terminate the watcher loop.
     Shutdown,
@@ -84,13 +90,15 @@ pub enum WatcherCommand {
 impl<R: Role> Watcher<R> {
     /// Creates a watcher with its backend, registry, and communication channels.
     #[hotpath::measure]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
-        backend: ZmqBackend,
+        backend: NotificationBackend,
         registry: FileRegistry,
         rx_requests: StdReceiver<WatcherCommand>,
         tx_events: CbSender<WatcherEvent>,
         nostr_relays: Vec<String>,
         nostr_tor_config: Option<(u16, String)>,
+        chain: ChainSource,
     ) -> Self {
         Self {
             backend,
@@ -99,25 +107,18 @@ impl<R: Role> Watcher<R> {
             tx_events,
             nostr_relays,
             nostr_tor_config,
+            chain,
             _role: PhantomData,
         }
     }
 
     /// Runs the watcher loop: handles ZMQ events and commands, optionally spawning discovery.
     #[hotpath::measure]
-    pub fn run(
-        &mut self,
-        rpc_config: RPCConfig,
-        initial_sync_complete: Arc<AtomicBool>,
-    ) -> Result<(), WatcherError> {
+    pub fn run(&mut self, initial_sync_complete: Arc<AtomicBool>) -> Result<(), WatcherError> {
         log::info!("Watcher initiated");
-        let rest_backend = BitcoinRest::new(rpc_config)?;
-        let network = match rest_backend
-            .get_blockchain_info()?
-            .chain
-            .to_string()
-            .as_str()
-        {
+
+        // Detect network from the chain name.
+        let network = match self.chain.chain_name()?.as_str() {
             "main" => Network::Bitcoin,
             "test" => Network::Testnet,
             "testnet4" => Network::Testnet4,
@@ -125,15 +126,42 @@ impl<R: Role> Watcher<R> {
             "regtest" => Network::Regtest,
             unknown => {
                 return Err(WatcherError::General(format!(
-                    "Unsupported Bitcoin network from node: {unknown}"
+                    "Unsupported Bitcoin network: {unknown}"
                 )))
             }
         };
-
-        if let Err(e) = rest_backend.process_mempool(&mut self.registry) {
-            log::warn!("Failed to process mempool on startup: {}", e);
+        match &self.chain {
+            ChainSource::Rest(rest) => {
+                if let Err(e) = rest.process_mempool(&mut self.registry) {
+                    log::warn!("Failed to process mempool on startup: {}", e);
+                }
+            }
+            ChainSource::Electrum(_) => {
+                log::debug!("Watcher: electrum mode, skipping mempool scan");
+                // Re-subscribe each persisted watch so a maker that crashed mid-swap regains spend-detection after restart.
+                let watches = self.registry.list_watches();
+                for watch in watches {
+                    if watch.spent_tx.is_some() {
+                        continue;
+                    }
+                    match self.script_pubkey_for_watch(&watch) {
+                        Ok(spk) => {
+                            if let Err(e) = self.backend.subscribe_script(&spk) {
+                                log::warn!(
+                                    "re-subscribe failed for persisted watch {}: {e:?}",
+                                    watch.outpoint
+                                );
+                            }
+                        }
+                        Err(e) => log::warn!(
+                            "could not resolve SPK for persisted watch {}: {e:?}",
+                            watch.outpoint
+                        ),
+                    }
+                }
+            }
         }
-
+        let chain = self.chain.clone();
         let discovery_shutdown = Arc::new(AtomicBool::new(false));
         let registry = self.registry.clone();
         let nostr_relays = self.nostr_relays.clone();
@@ -144,7 +172,7 @@ impl<R: Role> Watcher<R> {
                 if let Some(nostr_tor_config) = nostr_tor_config {
                     s.spawn(move || {
                         if let Err(e) = nostr_discovery::run_discovery(
-                            rest_backend,
+                            chain,
                             network,
                             registry,
                             discovery_shutdown.clone(),
@@ -183,14 +211,22 @@ impl<R: Role> Watcher<R> {
     #[hotpath::measure]
     fn handle_command(&mut self, cmd: WatcherCommand) -> bool {
         match cmd {
-            WatcherCommand::RegisterWatchRequest { outpoint } => {
+            WatcherCommand::RegisterWatchRequest {
+                outpoint,
+                script_pubkey,
+            } => {
                 log::info!("Intercepted register watch request: {outpoint}");
                 let req = WatchRequest {
                     outpoint,
+                    script_pubkey: Some(script_pubkey.clone()),
                     in_block: false,
                     spent_tx: None,
                 };
                 self.registry.upsert_watch(&req);
+                // A failed subscribe just degrades to "no spend notifications until next-block poll" — funds are still safe via timelock recovery.
+                if let Err(e) = self.backend.subscribe_script(&script_pubkey) {
+                    log::warn!("electrum script-subscribe failed for {outpoint}: {e}");
+                }
             }
             WatcherCommand::WatchRequest { outpoint } => {
                 log::info!("Intercepted watch request: {outpoint}");
@@ -209,13 +245,37 @@ impl<R: Role> Watcher<R> {
                     _ = self.tx_events.send(WatcherEvent::NoOutpoint);
                 }
             }
-            WatcherCommand::Unwatch { outpoint } => {
+            WatcherCommand::Unwatch {
+                outpoint,
+                script_pubkey,
+            } => {
                 log::info!("Intercepted unwatch request : {outpoint}");
                 self.registry.remove_watch(outpoint);
+                // Drop the Electrum subscription.
+                if let Err(e) = self.backend.unsubscribe_script(&script_pubkey) {
+                    log::warn!("electrum script-unsubscribe failed for {outpoint}: {e}");
+                }
             }
             WatcherCommand::Shutdown => return false,
         }
         true
+    }
+
+    fn script_pubkey_for_watch(&self, watch: &WatchRequest) -> Result<ScriptBuf, WatcherError> {
+        if let Some(spk) = watch.script_pubkey.as_ref() {
+            return Ok(spk.clone());
+        }
+        self.chain.get_raw_tx(&watch.outpoint.txid).and_then(|tx| {
+            tx.output
+                .get(watch.outpoint.vout as usize)
+                .map(|o| o.script_pubkey.clone())
+                .ok_or_else(|| {
+                    WatcherError::General(format!(
+                        "vout {} out of bounds for {}",
+                        watch.outpoint.vout, watch.outpoint.txid
+                    ))
+                })
+        })
     }
 
     /// Handles a backend event, updating registry state and checkpoints.
@@ -228,7 +288,15 @@ impl<R: Role> Watcher<R> {
                 }
             }
             BackendEvent::BlockConnected(b) => {
-                if let Ok(block) = deserialize::<Block>(&b.hash) {
+                // ZMQ ships full block bytes; Electrum ships just the 32-byte hash.
+                if b.hash.len() == 32 {
+                    let mut bytes = [0u8; 32];
+                    bytes.copy_from_slice(&b.hash);
+                    self.registry.save_checkpoint(Checkpoint {
+                        height: b.height,
+                        hash: BlockHash::from_byte_array(bytes),
+                    });
+                } else if let Ok(block) = deserialize::<Block>(&b.hash) {
                     if let Ok(height) = block.bip34_block_height() {
                         self.registry.save_checkpoint(Checkpoint {
                             height,

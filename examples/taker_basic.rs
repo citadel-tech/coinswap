@@ -31,7 +31,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     use coinswap::{
         protocol::common_messages::ProtocolVersion,
         taker::{SwapParams, Taker, TakerInitConfig},
-        wallet::{AddressType, RPCConfig},
+        wallet::{AddressType, BackendConfig, BitcoindBackend, RPCConfig},
     };
     println!("=== Coinswap Taker Basic Example ===");
     println!("NOTE: When prompted for encryption passphrase, press Enter for no encryption");
@@ -85,17 +85,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         url: bitcoind.rpc_url().split_at(7).1.to_string(), // Remove "http://" prefix
         auth: Auth::CookieFile(bitcoind.params.cookie_file.clone()),
         wallet_name: "taker-example".to_string(), // Use specific wallet name
+        zmq_addr: "tcp://127.0.0.1:3321".to_string(),
     };
 
     // Initialize Taker with builder-style config
     println!("About to initialize taker...");
 
-    let config = TakerInitConfig::default()
-        .with_wallet_name("taker-example".to_string())
-        .with_rpc_config(rpc_config)
-        .with_zmq_addr("tcp://127.0.0.1:3321".to_string());
+    let config = TakerInitConfig::default().with_backend(BackendConfig::Bitcoind(rpc_config));
 
-    let taker = Taker::init(config).unwrap();
+    let taker = Taker::<BitcoindBackend>::init(config).unwrap();
+
+    // Swap the two lines above for these to drive the same wallet through an electrs server instead of bitcoind RPC.
+    //     use coinswap::wallet::{ElectrumBackend, ElectrumConfig};
+    //     let electrum_config = ElectrumConfig {
+    //         url: "tcp://127.0.0.1:60401".to_string(),
+    //         wallet_name: "taker-example".to_string(),
+    //     };
+    //     let config = TakerInitConfig::default().with_backend(BackendConfig::Electrum(electrum_config));
+    //     let taker = Taker::<ElectrumBackend>::init(config).unwrap();
 
     println!("Taker initialized successfully!");
 

@@ -38,7 +38,7 @@ fn test_fidelity() {
     let taker_behavior = vec![TakerBehavior::Normal];
 
     let (test_framework, _takers, makers, block_generation_handle) =
-        TestFramework::init(makers_config_map, taker_behavior, vec![]);
+        TestFramework::init::<BitcoindBackend>(makers_config_map, taker_behavior, vec![]);
 
     log::info!("Running Test: Fidelity Bond Creation and Redemption ");
 
@@ -277,7 +277,7 @@ fn test_fidelity_spending() {
     let taker_behavior = vec![TakerBehavior::Normal];
 
     let (test_framework, _takers, makers, block_generation_handle) =
-        TestFramework::init(makers_config_map, taker_behavior, vec![]);
+        TestFramework::init::<BitcoindBackend>(makers_config_map, taker_behavior, vec![]);
 
     log::info!("Running Test: Assert Fidelity Spending Behavior ");
 
