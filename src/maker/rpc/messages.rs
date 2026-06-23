@@ -8,11 +8,22 @@ use std::path::PathBuf;
 
 use crate::wallet::Balances;
 
+/// Authenticated wrapper for RPC requests.
+///
+/// Every RPC call must include the daemon-owned cookie token read from the maker data directory.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct RpcAuthEnvelope {
+    /// Cookie token matching `rpc_cookie` in the maker data directory.
+    pub token: String,
+    /// The underlying RPC command.
+    pub msg: RpcMsgReq,
+}
+
 /// Enum representing RPC message requests.
 ///
 /// These messages are used for various operations in the Maker-rpc communication.
 /// Each variant corresponds to a specific action or query in the RPC protocol.
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum RpcMsgReq {
     /// Ping request to check connectivity.
     Ping,

@@ -24,7 +24,7 @@ pub mod server;
 pub mod swap_tracker;
 
 pub use error::MakerError;
-pub use rpc::{RpcMsgReq, RpcMsgResp};
+pub use rpc::{load_rpc_cookie, write_rpc_cookie, RpcAuthEnvelope, RpcMsgReq, RpcMsgResp};
 
 #[cfg(feature = "integration-test")]
 pub use api::MakerBehavior;

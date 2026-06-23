@@ -162,19 +162,22 @@ docker run -d \
 
 ### Maker CLI
 
-Control the maker daemon:
+Control the maker daemon. `maker-cli` reads `rpc_cookie` from the maker data directory for RPC authentication. When using Docker, the maker data volume must be mounted so the CLI can access the same cookie file as `makerd`:
 
 ```bash
-# Using the setup script
-./docker-setup maker-cli ping
-./docker-setup maker-cli wallet-balance
+# Using the setup script (mounts maker-data volume automatically)
+./docker-setup maker-cli send-ping
+./docker-setup maker-cli get-balances
 ./docker-setup maker-cli stop
 
-# Or manually
-docker run --rm --network coinswap-network coinswap:latest maker-cli ping
-docker run --rm --network coinswap-network coinswap:latest maker-cli wallet-balance
-docker run --rm --network coinswap-network coinswap:latest maker-cli stop
+# Or manually (mount the maker-data volume and pass -d)
+docker run --rm \
+  -v coinswap_maker-data:/home/coinswap/.coinswap \
+  --network coinswap-network \
+  coinswap:latest maker-cli -d /home/coinswap/.coinswap/maker send-ping
 ```
+
+> **Note:** This is a breaking wire-format change. Third-party RPC clients (such as [maker-dashboard](https://github.com/citadel-tech/maker-dashboard)) must send authenticated `RpcAuthEnvelope` messages and read `rpc_cookie` from the maker data directory.
 
 ### Taker
 

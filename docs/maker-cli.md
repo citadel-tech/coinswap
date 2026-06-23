@@ -13,6 +13,14 @@ In this guide, we'll walk you through how to use `maker-cli` to get the most out
 > 👉 **Before starting this tutorial**, ensure your `makerd` setup is complete.  
 > If you're unsure how to set it up, check out our [Makerd Setup Guide](./makerd.md) first, and then return to this tutorial.
 
+> ### **RPC Authentication**
+>
+> `maker-cli` reads the `rpc_cookie` file from the maker data directory automatically on each invocation and includes the token with every RPC request. By default this is `~/.coinswap/maker/rpc_cookie`.
+>
+> If you started `makerd` with a custom data directory (`makerd -d /path/to/data`), pass the same path to `maker-cli` with `-d /path/to/data`. Both `-p` (RPC port) and `-d` (data directory) must match the running `makerd` instance.
+>
+> After restarting `makerd`, run `maker-cli` again — it reads the fresh cookie each time.
+
 ---
 
 ## Getting Started with `maker-cli`
@@ -54,6 +62,12 @@ OPTIONS:
             Sets the rpc-port of Makerd
 
             [default: 127.0.0.1:6103]
+
+    -d, --data-directory <DATA_DIRECTORY>
+            Maker data directory (must match the running makerd instance).
+            Used to read rpc_cookie for RPC authentication.
+
+            [default: ~/.coinswap/maker]
 
     -V, --version
             Print version information

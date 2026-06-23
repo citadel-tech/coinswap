@@ -723,7 +723,21 @@ run_command() {
     local cmd="$1"
     shift
     setup_env
-    docker run --rm -it --network coinswap-network "${IMAGE_NAME}:latest" "$cmd" "$@"
+    local docker_args=(--rm -it --network coinswap-network)
+    if [ "$cmd" = "maker-cli" ]; then
+        docker_args+=(-v coinswap_maker-data:/home/coinswap/.coinswap)
+        local has_data_dir=false
+        for arg in "$@"; do
+            if [ "$arg" = "-d" ] || [ "$arg" = "--data-directory" ]; then
+                has_data_dir=true
+                break
+            fi
+        done
+        if [ "$has_data_dir" = false ]; then
+            set -- -d /home/coinswap/.coinswap/maker "$@"
+        fi
+    fi
+    docker run "${docker_args[@]}" "${IMAGE_NAME}:latest" "$cmd" "$@"
 }
 
 show_help() {

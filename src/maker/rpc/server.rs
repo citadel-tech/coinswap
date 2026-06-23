@@ -11,7 +11,8 @@ use std::{
 
 use bitcoin::Amount;
 
-use super::messages::RpcMsgReq;
+use super::cookie::{verify_rpc_auth, write_rpc_cookie};
+use super::messages::{RpcAuthEnvelope, RpcMsgReq};
 use crate::{
     maker::{api::MakerServerConfig, error::MakerError, rpc::messages::RpcMsgResp},
     utill::{
@@ -30,10 +31,29 @@ pub trait MakerRpc {
 }
 
 #[hotpath::measure]
-fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result<(), MakerError> {
+fn handle_request<M: MakerRpc>(
+    maker: &Arc<M>,
+    socket: &mut TcpStream,
+    expected_token: &str,
+) -> Result<(), MakerError> {
     let msg_bytes = read_message(socket)?;
-    let rpc_request: RpcMsgReq = serde_cbor::from_slice(&msg_bytes)?;
-    log::info!("RPC request received: {rpc_request:?}");
+    let envelope: RpcAuthEnvelope = serde_cbor::from_slice(&msg_bytes)?;
+
+    let rpc_request = match verify_rpc_auth(&envelope, expected_token) {
+        Ok(req) => req,
+        Err(MakerError::General("unauthorized")) => {
+            log::warn!("RPC auth failed from {:?}", socket.peer_addr());
+            if let Err(e) =
+                send_message(socket, &RpcMsgResp::ServerError("unauthorized".to_string()))
+            {
+                log::error!("Error sending unauthorized response {e:?}");
+            }
+            return Ok(());
+        }
+        Err(e) => return Err(e),
+    };
+
+    log::info!("Authenticated RPC request: {rpc_request:?}");
 
     let resp = match rpc_request {
         RpcMsgReq::Ping => RpcMsgResp::Pong,
@@ -161,6 +181,7 @@ fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result
 
 #[hotpath::measure]
 pub(crate) fn start_rpc_server<M: MakerRpc>(maker: Arc<M>) -> Result<(), MakerError> {
+    let expected_token = Arc::new(write_rpc_cookie(maker.data_dir())?);
     let rpc_port = maker.config().rpc_port;
     let listener = TcpListener::bind(("127.0.0.1", rpc_port))?;
     let rpc_socket = format!("127.0.0.1:{rpc_port}");
@@ -180,7 +201,7 @@ pub(crate) fn start_rpc_server<M: MakerRpc>(maker: Arc<M>) -> Result<(), MakerEr
                 stream.set_read_timeout(Some(Duration::from_secs(20)))?;
                 stream.set_write_timeout(Some(Duration::from_secs(20)))?;
                 // Do not cause hard error if a rpc request fails
-                if let Err(e) = handle_request(&maker, &mut stream) {
+                if let Err(e) = handle_request(&maker, &mut stream, &expected_token) {
                     log::error!("Error processing RPC Request: {e:?}");
                     // Send the error back to client.
                     if let Err(e) =
