@@ -693,6 +693,17 @@ impl Taker {
             }
             self.persist_progress()?;
 
+            #[cfg(debug_assertions)]
+            log::debug!(
+                "[LEGACY_HOP] SwapID: {} | MakerIndex: {} | FundingTxs: {} | ConfirmHeight: {} | ReceiverContracts: {} | SenderContracts: {} | WatchOnlyTotal: {}",
+                swap_id,
+                maker_idx,
+                maker_funding_txids.len(),
+                maker_confirm_height,
+                receivers_contract_txs.len(),
+                senders_contract_txs_info.len(),
+                self.swap_state()?.watchonly_swapcoins.len()
+            );
             log::info!("Maker {} processed successfully", maker_idx);
             maker_idx += 1;
         }

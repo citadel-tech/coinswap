@@ -97,6 +97,14 @@ fn process_taproot_contract<M: Maker>(
         state.timelock,
         maker.network_port(),
     )?;
+    #[cfg(debug_assertions)]
+    log::debug!(
+        "[CONTRACT_STATE] Role: Maker | Protocol: Taproot | SwapID: {} | ContractTxs: {} | Amounts: {} | Timelock: {} | Status: verified",
+        data.id,
+        data.contract_txs.len(),
+        data.amounts.len(),
+        state.timelock
+    );
 
     let incoming_contract_tx = data
         .contract_txs
@@ -249,6 +257,14 @@ fn process_taproot_contract<M: Maker>(
     // Store in connection state
     state.incoming_swapcoins.push(incoming_swapcoin.clone());
     state.outgoing_swapcoins.push(outgoing_swapcoin.clone());
+    #[cfg(debug_assertions)]
+    log::debug!(
+        "[CONTRACT_STATE] Role: Maker | Protocol: Taproot | SwapID: {} | IncomingAmount: {} | OutgoingAmount: {} | ReservedUtxos: {}",
+        data.id,
+        incoming_funding_amount.to_sat(),
+        contract_output_amount.to_sat(),
+        state.reserve_utxo.len()
+    );
 
     #[cfg(feature = "integration-test")]
     {
@@ -400,6 +416,13 @@ fn process_taproot_handover<M: Maker>(
     // Mark swap as completed — sweep happens in the server loop after the
     // response is delivered to the taker.
     state.phase = SwapPhase::Completed;
+    #[cfg(debug_assertions)]
+    log::debug!(
+        "[SWAP_STATE] SwapID: {} | Protocol: Taproot | Phase: Completed | Incoming: {} | Outgoing: {}",
+        handover.id,
+        state.incoming_swapcoins.len(),
+        state.outgoing_swapcoins.len()
+    );
 
     // Generate and save maker success report
     emit_maker_success_report(maker, state, &handover.id);

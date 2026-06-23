@@ -428,6 +428,20 @@ impl SwapTracker {
             SwapTrackerData::default()
         };
 
+        #[cfg(debug_assertions)]
+        log::debug!(
+            "[SWAP_TRACKER] Role: Taker | Action: load | Records: {} | Incomplete: {}",
+            data.swaps.len(),
+            data.swaps
+                .values()
+                .filter(|r| {
+                    r.phase != SwapPhase::Completed
+                        && !(r.phase == SwapPhase::Failed
+                            && r.recovery.phase >= RecoveryPhase::CleanedUp)
+                })
+                .count()
+        );
+
         Ok(Self { path, data })
     }
 
@@ -450,6 +464,23 @@ impl SwapTracker {
 
     /// Upsert a swap record and flush to disk.
     pub fn save_record(&mut self, record: &SwapRecord) -> Result<(), TakerError> {
+        #[cfg(debug_assertions)]
+        if self.data.swaps.get(&record.swap_id).is_none_or(|old| {
+            old.phase != record.phase
+                || old.recovery.phase != record.recovery.phase
+                || old.failed_at_phase != record.failed_at_phase
+        }) {
+            log::debug!(
+                "[SWAP_TRACKER] Role: Taker | SwapID: {} | Phase: {} | Recovery: {} | FailedAt: {:?} | Incoming: {} | Outgoing: {} | WatchOnly: {}",
+                record.swap_id,
+                record.phase,
+                record.recovery.phase,
+                record.failed_at_phase,
+                record.incoming_contract_txids.len(),
+                record.outgoing_contract_txids.len(),
+                record.watchonly_contract_txids.len()
+            );
+        }
         self.data
             .swaps
             .insert(record.swap_id.clone(), record.clone());

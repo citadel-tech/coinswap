@@ -866,6 +866,16 @@ impl Wallet {
             self.save_to_disk()?;
         }
 
+        if !outcome.is_empty() {
+            #[cfg(debug_assertions)]
+            log::debug!(
+                "[RECOVERY_STATE] Wallet: {} | Action: recover_timelocked | Resolved: {} | Discarded: {} | OutgoingRemaining: {}",
+                self.store.file_name,
+                outcome.resolved.len(),
+                outcome.discarded.len(),
+                self.store.outgoing_swapcoins.len()
+            );
+        }
         Ok(outcome)
     }
 
@@ -1600,9 +1610,8 @@ impl Wallet {
         }
 
         // Remove UTXOs that no longer exist in the received utxos list
-        for outpoint in to_remove {
-            self.store.utxo_cache.remove(&outpoint);
-            log::debug!("[UTXO Cache] Removed UTXO: {outpoint:?}");
+        for outpoint in &to_remove {
+            self.store.utxo_cache.remove(outpoint);
         }
 
         // Process and add only new UTXOs
@@ -1631,12 +1640,24 @@ impl Wallet {
 
             // If we found valid spend info, store it in the cache
             if let Some(info) = spend_info {
-                log::debug!("[UTXO Cache] Added UTXO: {outpoint:?} -> {info:?}");
                 new_entries.push((outpoint, (utxo, info)));
             }
         }
 
         // Insert only new entries into the cache
+        #[cfg(debug_assertions)]
+        if !new_entries.is_empty() || !to_remove.is_empty() {
+            log::debug!(
+                "[UTXO_STATE] Wallet: {} | Added: {} | Removed: {} | CachedUtxos: {} -> {} | IncomingSwapcoins: {} | OutgoingSwapcoins: {}",
+                self.store.file_name,
+                new_entries.len(),
+                to_remove.len(),
+                self.store.utxo_cache.len() + to_remove.len(),
+                self.store.utxo_cache.len() + new_entries.len(),
+                self.store.incoming_swapcoins.len(),
+                self.store.outgoing_swapcoins.len()
+            );
+        }
         for (outpoint, entry) in new_entries {
             self.store.utxo_cache.insert(outpoint, entry);
         }
@@ -2010,8 +2031,6 @@ impl Wallet {
         let can_use_regular = target_sats + estimated_fee <= regular_total;
         let can_use_swap = target_sats + estimated_fee <= swap_total;
 
-        log::debug!("Coinselection : Estimated_fee : {estimated_fee} and Target : {target_sats}");
-
         // Check manual UTXO selection constraints
         let (manual_regular_selected, manual_swap_selected) =
             if let Some(ref manual_outpoints) = manually_selected_outpoints {
@@ -2206,6 +2225,15 @@ impl Wallet {
                     result_total,
                     target_sats + estimated_fee
                 );
+                        #[cfg(debug_assertions)]
+                        log::debug!(
+                            "[COIN_SELECTION] Wallet: {} | Type: {} | Inputs: {} | Selected: {} | TargetWithFee: {} | Strategy: grouped",
+                            self.store.file_name,
+                            utxo_type,
+                            result_utxos.len(),
+                            result_total,
+                            target_sats + estimated_fee
+                        );
                         return Ok(result_utxos);
                     }
                 }
@@ -2272,6 +2300,18 @@ impl Wallet {
                     final_selection.extend(additional_utxos);
 
                     log::info!("Selected {} {utxo_type} UTXOs", final_selection.len());
+                    #[cfg(debug_assertions)]
+                    log::debug!(
+                        "[COIN_SELECTION] Wallet: {} | Type: {} | Inputs: {} | Selected: {} | TargetWithFee: {} | Strategy: coinselect",
+                        self.store.file_name,
+                        utxo_type,
+                        final_selection.len(),
+                        final_selection
+                            .iter()
+                            .map(|(utxo, _)| utxo.amount.to_sat())
+                            .sum::<u64>(),
+                        target_sats + estimated_fee
+                    );
                     return Ok(final_selection);
                 }
                 Err(e) => {
@@ -2650,6 +2690,16 @@ impl Wallet {
         }
 
         self.save_to_disk()?;
+        if !outcome.is_empty() {
+            #[cfg(debug_assertions)]
+            log::debug!(
+                "[RECOVERY_STATE] Wallet: {} | Action: sweep_incoming | Resolved: {} | Discarded: {} | IncomingRemaining: {}",
+                self.store.file_name,
+                outcome.resolved.len(),
+                outcome.discarded.len(),
+                self.store.incoming_swapcoins.len()
+            );
+        }
         Ok(outcome)
     }
 

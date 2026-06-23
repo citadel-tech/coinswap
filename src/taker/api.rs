@@ -1202,6 +1202,15 @@ impl Taker {
         let swap = self.swap_state_mut()?;
         swap.makers = selected_makers;
         swap.spare_makers = spares;
+        #[cfg(debug_assertions)]
+        log::debug!(
+            "[SWAP_ROUTE] SwapID: {} | Protocol: {:?} | SelectedMakers: {} | SpareMakers: {} | Amount: {}",
+            swap.id,
+            swap.params.protocol,
+            swap.makers.len(),
+            swap.spare_makers.len(),
+            swap.params.send_amount.to_sat()
+        );
         Ok(())
     }
 
@@ -1278,6 +1287,15 @@ impl Taker {
             }
         }
 
+        #[cfg(debug_assertions)]
+        log::debug!(
+            "[SWAP_ROUTE] SwapID: {} | NegotiatedMakers: {} | Protocol: {:?} | ReferenceHeight: {} | TxCount: {}",
+            swap_id,
+            maker_count,
+            protocol,
+            reference_height,
+            tx_count
+        );
         Ok(())
     }
 
@@ -1504,7 +1522,16 @@ impl Taker {
             tx_count,
             maker_count,
             reference_height,
-        )
+        )?;
+        #[cfg(debug_assertions)]
+        log::debug!(
+            "[SWAP_ROUTE] SwapID: {} | Action: substitute_maker | MakerIndex: {} | Address: {} | ReferenceHeight: {}",
+            swap_id,
+            target_idx,
+            self.swap_state()?.makers[target_idx].address,
+            reference_height
+        );
+        Ok(())
     }
 
     /// Re-initialize funding after substituting the first maker.
@@ -1520,6 +1547,12 @@ impl Taker {
         {
             let mut wallet = self.write_wallet()?;
             let old_keys = wallet.outgoing_keys_for_swap(&swap_id);
+            #[cfg(debug_assertions)]
+            log::debug!(
+                "[FUNDING_STATE] SwapID: {} | Action: reset_after_substitution | OutgoingSwapcoinsRemoved: {}",
+                swap_id,
+                old_keys.len()
+            );
             for key in &old_keys {
                 wallet.remove_outgoing_swapcoin(key);
             }
@@ -1633,6 +1666,19 @@ impl Taker {
         let num_swapcoins = swapcoins.len();
         swap.outgoing_swapcoins = swapcoins;
 
+        #[cfg(debug_assertions)]
+        log::debug!(
+            "[FUNDING_STATE] SwapID: {} | Protocol: {:?} | OutgoingSwapcoins: {} | SendAmount: {} | ManualUtxos: {}",
+            swap.id,
+            protocol,
+            num_swapcoins,
+            send_amount.to_sat(),
+            swap.params
+                .manually_selected_outpoints
+                .as_ref()
+                .map(Vec::len)
+                .unwrap_or_default()
+        );
         log::info!("Created {} outgoing swapcoins for funding", num_swapcoins);
         Ok(())
     }
@@ -1814,6 +1860,13 @@ impl Taker {
             self.swap_state_mut()?.makers[i]
                 .finalization
                 .privkey_forwarded = true;
+            #[cfg(debug_assertions)]
+            log::debug!(
+                "[FINALIZATION] SwapID: {} | MakerIndex: {} | MakersTotal: {} | PrivkeyReceived: true | PrivkeyForwarded: true",
+                swap_id,
+                i,
+                num_makers
+            );
 
             // For the last maker: validate and set their privkey on taker's incoming swapcoin.
             // Derive the public key from the received private key and verify it matches
@@ -1857,11 +1910,18 @@ impl Taker {
     #[hotpath::measure]
     fn finalize_persist_incoming(&mut self) -> Result<(), TakerError> {
         let mut wallet = self.write_wallet()?;
-        if let Some(incoming) = self.swap_state()?.incoming_swapcoins.last() {
+        let incoming = self.swap_state()?.incoming_swapcoins.last().cloned();
+        if let Some(incoming) = &incoming {
             wallet.add_incoming_swapcoin(incoming);
         }
 
         wallet.save_to_disk()?;
+        #[cfg(debug_assertions)]
+        log::debug!(
+            "[WALLET_STATE] Action: persist_final_incoming | Added: {} | IncomingStored: {}",
+            usize::from(incoming.is_some()),
+            wallet.get_incoming_swapcoins_count()
+        );
         Ok(())
     }
 
@@ -2308,6 +2368,11 @@ impl Taker {
                 record.phase = SwapPhase::Failed;
             })?;
 
+        #[cfg(debug_assertions)]
+        log::debug!(
+            "[SWAP_STATE] SwapID: {} | Action: clear_active_for_recovery",
+            swap_id
+        );
         self.ongoing_swap = None;
 
         log::info!("Spawning recovery loop for swap {}", swap_id);

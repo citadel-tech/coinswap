@@ -94,6 +94,21 @@ impl FileRegistry {
             data
         };
 
+        #[cfg(debug_assertions)]
+        if let Ok(registry) = data.lock() {
+            log::debug!(
+                "[WATCH_STATE] Action: load_registry | Watches: {} | SpentWatches: {} | FidelityRecords: {} | Checkpoint: {:?}",
+                registry.watches.len(),
+                registry
+                    .watches
+                    .values()
+                    .filter(|watch| watch.spent_tx.is_some())
+                    .count(),
+                registry.fidelity.len(),
+                registry.checkpoint.as_ref().map(|cp| cp.height)
+            );
+        }
+
         Self { path, data }
     }
 
@@ -131,13 +146,31 @@ impl FileRegistry {
 impl FileRegistry {
     /// Inserts a watch request and flushes the registry to disk.
     pub fn upsert_watch(&mut self, req: &WatchRequest) {
-        self.with_data(|data| data.watches.insert(req.outpoint, req.clone()));
+        self.with_data(
+            |data| match data.watches.insert(req.outpoint, req.clone()) {
+                #[cfg(debug_assertions)]
+                None => log::debug!(
+                    "[WATCH_STATE] Action: register | Outpoint: {} | ActiveWatches: {}",
+                    req.outpoint,
+                    data.watches.len()
+                ),
+                _ => {}
+            },
+        );
         self.flush();
     }
 
     /// Removes a watch request for the given outpoint and flushes the registry to disk.
     pub fn remove_watch(&mut self, outpoint: OutPoint) {
-        self.with_data(|data| data.watches.remove(&outpoint));
+        self.with_data(|data| match data.watches.remove(&outpoint) {
+            #[cfg(debug_assertions)]
+            Some(_) => log::debug!(
+                "[WATCH_STATE] Action: unregister | Outpoint: {} | ActiveWatches: {}",
+                outpoint,
+                data.watches.len()
+            ),
+            _ => {}
+        });
         self.flush();
     }
 
