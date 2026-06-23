@@ -139,7 +139,9 @@ fn main() -> Result<(), MakerError> {
 }
 
 fn send_rpc_req(mut stream: TcpStream, token: &str, req: RpcMsgReq) -> Result<(), MakerError> {
-    stream.set_write_timeout(Some(Duration::from_secs(20)))?;
+    let timeout = Duration::from_secs(20);
+    stream.set_write_timeout(Some(timeout))?;
+    stream.set_read_timeout(Some(timeout))?;
 
     let envelope = RpcAuthEnvelope {
         token: token.to_string(),

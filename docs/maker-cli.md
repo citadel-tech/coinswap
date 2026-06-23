@@ -66,8 +66,7 @@ OPTIONS:
     -d, --data-directory <DATA_DIRECTORY>
             Maker data directory (must match the running makerd instance).
             Used to read rpc_cookie for RPC authentication.
-
-            [default: ~/.coinswap/maker]
+            If omitted, defaults to ~/.coinswap/maker at runtime.
 
     -V, --version
             Print version information

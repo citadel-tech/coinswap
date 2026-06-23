@@ -61,7 +61,7 @@ The log file for `makerd`, where debug information is stored for troubleshooting
 
 ### 4. **rpc_cookie**
 
-When the RPC server starts (after fidelity bond setup completes), `makerd` writes a random authentication token to `rpc_cookie` in the maker data directory. The file is created with mode `0600` (owner read/write only) and is **regenerated each time the RPC server starts** (for example, when `makerd` restarts).
+When the RPC server starts (after fidelity bond setup completes), `makerd` writes a random authentication token to `rpc_cookie` in the maker data directory. On Unix, the file is created with mode `0600` (owner read/write only). It is **regenerated each time the RPC server starts** (for example, when `makerd` restarts).
 
 All RPC requests from `maker-cli` must include this token. Only processes running as the same user who can read `rpc_cookie` can authenticate to the maker RPC control plane (same threat model as Bitcoin Core's `.cookie` file).
 

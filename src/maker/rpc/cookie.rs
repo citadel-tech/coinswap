@@ -1,5 +1,6 @@
 use std::{
-    fs,
+    fs::{self, OpenOptions},
+    io::Write,
     path::{Path, PathBuf},
 };
 
@@ -23,6 +24,30 @@ fn cookie_tmp_path(data_dir: &Path) -> PathBuf {
     data_dir.join(RPC_COOKIE_TMP_FILENAME)
 }
 
+fn write_cookie_tmp(path: &Path, contents: &[u8]) -> Result<(), MakerError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)
+            .map_err(MakerError::IO)?;
+        file.write_all(contents).map_err(MakerError::IO)?;
+        file.sync_all().map_err(MakerError::IO)?;
+    }
+
+    #[cfg(not(unix))]
+    {
+        fs::write(path, contents).map_err(MakerError::IO)?;
+    }
+
+    Ok(())
+}
+
 /// Generates a fresh RPC cookie and writes it to the maker data directory.
 ///
 /// Called when the RPC server starts. Overwrites any existing file (Bitcoin Core `.cookie` pattern).
@@ -36,19 +61,15 @@ pub fn write_rpc_cookie(data_dir: &Path) -> Result<String, MakerError> {
     let tmp_path = cookie_tmp_path(data_dir);
     let final_path = cookie_path(data_dir);
 
-    // Atomic flush: write to tmp file, then rename over original.
-    fs::write(&tmp_path, token.as_bytes())?;
+    // Atomic flush: write to tmp file with restrictive mode, then rename over original.
+    let write_result = write_cookie_tmp(&tmp_path, token.as_bytes())
+        .and_then(|()| fs::rename(&tmp_path, &final_path).map_err(MakerError::IO));
 
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let perms = fs::Permissions::from_mode(0o600);
-        fs::set_permissions(&tmp_path, perms)?;
+    if write_result.is_err() {
+        let _ = fs::remove_file(&tmp_path);
     }
 
-    fs::rename(&tmp_path, &final_path)?;
-
-    Ok(token)
+    write_result.map(|()| token)
 }
 
 /// Loads the RPC cookie from the maker data directory (for RPC clients such as `maker-cli`).

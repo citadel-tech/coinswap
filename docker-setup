@@ -728,10 +728,12 @@ run_command() {
         docker_args+=(-v coinswap_maker-data:/home/coinswap/.coinswap)
         local has_data_dir=false
         for arg in "$@"; do
-            if [ "$arg" = "-d" ] || [ "$arg" = "--data-directory" ]; then
-                has_data_dir=true
-                break
-            fi
+            case "$arg" in
+                -d|--data-directory|-d=*|--data-directory=*)
+                    has_data_dir=true
+                    break
+                    ;;
+            esac
         done
         if [ "$has_data_dir" = false ]; then
             set -- -d /home/coinswap/.coinswap/maker "$@"
