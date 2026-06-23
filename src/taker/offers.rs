@@ -34,7 +34,9 @@ use crate::{
     },
     utill::{read_message, send_message},
     wallet::{verify_fidelity_checks, FidelityError},
-    watch_tower::{registry_storage::FileRegistry, rest_backend::BitcoinRest},
+    watch_tower::{
+        registry_storage::FileRegistry, rest_backend::BitcoinRest, watcher_error::WatcherError,
+    },
 };
 
 /// Maximum number of attempts to connect to a maker.
@@ -785,10 +787,11 @@ fn verify_fidelity_with_backend(
     let current_height = rest_backend.get_block_count()?;
     let conf_height = rest_backend
         .get_tx_confirmation_height(&txid)
-        .map_err(|_| {
-            TakerError::Wallet(crate::wallet::WalletError::Fidelity(
-                FidelityError::BondUncomfirmed,
-            ))
+        .map_err(|e| match e {
+            WatcherError::UnconfirmedTransaction(_) => TakerError::Wallet(
+                crate::wallet::WalletError::Fidelity(FidelityError::BondUncomfirmed),
+            ),
+            other => TakerError::Watcher(other),
         })?;
 
     verify_fidelity_checks(

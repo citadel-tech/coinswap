@@ -122,9 +122,7 @@ impl BitcoinRest {
         let tx_info: RestTxInfo = self.get_json(&format!("/rest/tx/{txid}.json"))?;
         let confirmations = tx_info.confirmations.unwrap_or(0);
         if confirmations < 1 {
-            return Err(WatcherError::General(format!(
-                "Transaction {txid} is unconfirmed"
-            )));
+            return Err(WatcherError::UnconfirmedTransaction(*txid));
         }
         let current_height = self.get_block_count()? as u32;
         Ok(current_height.saturating_sub(confirmations) + 1)

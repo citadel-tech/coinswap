@@ -2,6 +2,8 @@
 
 use std::sync::{MutexGuard, PoisonError};
 
+use bitcoin::Txid;
+
 /// Errors that can occur within the watchtower components.
 #[derive(Debug)]
 pub enum WatcherError {
@@ -42,6 +44,8 @@ pub enum WatcherError {
     MutexPoison,
     /// Represents a general error with a descriptive message.
     General(String),
+    /// Transaction exists but has no confirmations yet.
+    UnconfirmedTransaction(Txid),
 }
 
 impl From<std::io::Error> for WatcherError {
@@ -138,6 +142,7 @@ impl WatcherError {
             WatcherError::NostrParsingError(_) => "NostrParsingError",
             WatcherError::MutexPoison => "MutexPoison",
             WatcherError::General(_) => "General",
+            WatcherError::UnconfirmedTransaction(_) => "UnconfirmedTransaction",
         }
     }
 }

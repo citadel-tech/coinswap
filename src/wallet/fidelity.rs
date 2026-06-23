@@ -120,7 +120,12 @@ pub(crate) fn verify_fidelity_checks(
     }
 
     // Ensure fidelity bond timelock lies within allowed range
-    let bond_height = proof.bond.lock_time.to_consensus_u32() - conf_height;
+    let bond_height = proof
+        .bond
+        .lock_time
+        .to_consensus_u32()
+        .checked_sub(conf_height)
+        .ok_or(FidelityError::InvalidBondLocktime)?;
     if !(MIN_FIDELITY_TIMELOCK..=MAX_FIDELITY_TIMELOCK).contains(&bond_height) {
         log::warn!(
             "Invalid fidelity bond timelock: {} blocks. Accepted range is [{}-{}] blocks.",
