@@ -783,12 +783,14 @@ fn verify_fidelity_with_backend(
     let txid = proof.bond.outpoint.txid;
     let transaction = rest_backend.get_raw_tx(&txid)?;
     let current_height = rest_backend.get_block_count()?;
+    let confirmation_height = rest_backend.get_utxo_confirmation_height(&proof.bond.outpoint())?;
 
     verify_fidelity_checks(
         proof,
         onion_addr,
         transaction,
         current_height,
+        confirmation_height,
         tweakable_point,
         tweak_chain_code,
     )

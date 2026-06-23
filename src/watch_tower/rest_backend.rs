@@ -2,7 +2,7 @@
 
 use std::{fs, str::FromStr};
 
-use bitcoin::{consensus::deserialize, Block, BlockHash, Transaction, Txid};
+use bitcoin::{consensus::deserialize, Block, BlockHash, OutPoint, Transaction, Txid};
 use bitcoind::bitcoincore_rpc::{json::GetBlockchainInfoResult, jsonrpc::base64, Auth};
 use serde::de::DeserializeOwned;
 
@@ -85,6 +85,29 @@ impl BitcoinRest {
     pub fn get_raw_tx(&self, txid: &Txid) -> Result<Transaction, WatcherError> {
         let bytes = self.get_bytes(&format!("/rest/tx/{txid}.bin"))?;
         Ok(deserialize::<Transaction>(&bytes)?)
+    }
+
+    /// Returns the block height at which an unspent output was confirmed.
+    pub fn get_utxo_confirmation_height(&self, outpoint: &OutPoint) -> Result<u32, WatcherError> {
+        #[derive(serde::Deserialize)]
+        struct GetUtxosResponse {
+            utxos: Vec<RestUtxo>,
+        }
+
+        #[derive(serde::Deserialize)]
+        struct RestUtxo {
+            height: u32,
+        }
+
+        let response: GetUtxosResponse = self.get_json(&format!(
+            "/rest/getutxos/{}-{}.json",
+            outpoint.txid, outpoint.vout
+        ))?;
+        response
+            .utxos
+            .first()
+            .map(|utxo| utxo.height)
+            .ok_or_else(|| WatcherError::General(format!("Fidelity UTXO {outpoint} not found")))
     }
 
     /// Returns chain metadata.
