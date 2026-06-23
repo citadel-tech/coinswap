@@ -12,11 +12,7 @@ use coinswap::{
 use super::test_framework::*;
 
 use log::{info, warn};
-use std::{
-    sync::atomic::Ordering::Relaxed,
-    thread,
-    time::Duration,
-};
+use std::{sync::atomic::Ordering::Relaxed, thread, time::Duration};
 
 #[test]
 fn test_maker_rejects_mempool_taproot_contract() {
@@ -92,7 +88,13 @@ fn test_maker_rejects_mempool_taproot_contract() {
 
     for (i, (maker, original)) in makers.iter().zip(maker_spendable_balance).enumerate() {
         maker.wallet.write().unwrap().sync_and_save().unwrap();
-        let spendable = maker.wallet.read().unwrap().get_balances().unwrap().spendable;
+        let spendable = maker
+            .wallet
+            .read()
+            .unwrap()
+            .get_balances()
+            .unwrap()
+            .spendable;
         assert_eq!(
             spendable, original,
             "Maker {} spendable balance changed — outgoing side may have been funded",

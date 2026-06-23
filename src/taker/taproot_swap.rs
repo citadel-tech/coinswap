@@ -638,8 +638,7 @@ impl Taker {
         self.net_handshake(&mut stream)?;
 
         #[cfg(feature = "integration-test")]
-        let skip_confirm =
-            self.behavior == super::api::TakerBehavior::SendMempoolTaprootContract;
+        let skip_confirm = self.behavior == super::api::TakerBehavior::SendMempoolTaprootContract;
 
         #[cfg(not(feature = "integration-test"))]
         let skip_confirm = false;
