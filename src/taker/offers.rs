@@ -33,7 +33,7 @@ use crate::{
         error::ProtocolError,
     },
     utill::{read_message, send_message},
-    wallet::verify_fidelity_checks,
+    wallet::{verify_fidelity_checks, FidelityError},
     watch_tower::{registry_storage::FileRegistry, rest_backend::BitcoinRest},
 };
 
@@ -783,12 +783,20 @@ fn verify_fidelity_with_backend(
     let txid = proof.bond.outpoint.txid;
     let transaction = rest_backend.get_raw_tx(&txid)?;
     let current_height = rest_backend.get_block_count()?;
+    let conf_height = rest_backend
+        .get_tx_confirmation_height(&txid)
+        .map_err(|_| {
+            TakerError::Wallet(crate::wallet::WalletError::Fidelity(
+                FidelityError::BondUncomfirmed,
+            ))
+        })?;
 
     verify_fidelity_checks(
         proof,
         onion_addr,
         transaction,
         current_height,
+        conf_height,
         tweakable_point,
         tweak_chain_code,
     )

@@ -4,7 +4,7 @@ use std::{fs, str::FromStr};
 
 use bitcoin::{consensus::deserialize, Block, BlockHash, Transaction, Txid};
 use bitcoind::bitcoincore_rpc::{json::GetBlockchainInfoResult, jsonrpc::base64, Auth};
-use serde::de::DeserializeOwned;
+use serde::{de::DeserializeOwned, Deserialize};
 
 use crate::{
     wallet::RPCConfig,
@@ -14,6 +14,11 @@ use crate::{
 };
 
 const DEFAULT_HTTP_TIMEOUT_SECS: u64 = 30;
+
+#[derive(Deserialize)]
+struct RestTxInfo {
+    confirmations: Option<u32>,
+}
 
 /// Lightweight wrapper around bitcoind REST endpoints used by the watchtower (no longer uses JSON-RPC).
 #[derive(Clone)]
@@ -107,6 +112,22 @@ impl BitcoinRest {
     /// Returns the current chain height.
     pub fn get_block_count(&self) -> Result<u64, WatcherError> {
         Ok(self.get_blockchain_info()?.blocks)
+    }
+
+    /// Returns the block height at which `txid` was confirmed.
+    ///
+    /// Uses `/rest/tx/<txid>.json` for confirmation count and the same height
+    /// formula as [`crate::wallet::Wallet::wait_for_tx_confirmation`].
+    pub fn get_tx_confirmation_height(&self, txid: &Txid) -> Result<u32, WatcherError> {
+        let tx_info: RestTxInfo = self.get_json(&format!("/rest/tx/{txid}.json"))?;
+        let confirmations = tx_info.confirmations.unwrap_or(0);
+        if confirmations < 1 {
+            return Err(WatcherError::General(format!(
+                "Transaction {txid} is unconfirmed"
+            )));
+        }
+        let current_height = self.get_block_count()? as u32;
+        Ok(current_height.saturating_sub(confirmations) + 1)
     }
 
     /// Fetches a block by hash.

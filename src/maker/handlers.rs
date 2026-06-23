@@ -49,6 +49,8 @@ pub enum MakerBehavior {
     CloseAfterSweep,
     /// Use an invalid fidelity bond timelock (fidelity timelock violation test).
     InvalidFidelityTimelock,
+    /// Create a short-timelock bond but lie about conf_height (conf_height verification test).
+    LieFidelityConfHeight,
 }
 
 /// Minimum time required to react to contract broadcasts (in blocks).

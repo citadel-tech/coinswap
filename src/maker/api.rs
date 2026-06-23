@@ -552,7 +552,10 @@ impl MakerServer {
             #[cfg(feature = "integration-test")]
             let locktime = {
                 use super::handlers::MakerBehavior;
-                let offset = if self.behavior == MakerBehavior::InvalidFidelityTimelock {
+                let offset = if matches!(
+                    self.behavior,
+                    MakerBehavior::InvalidFidelityTimelock | MakerBehavior::LieFidelityConfHeight
+                ) {
                     log::warn!("Test behavior: using invalid (too short) fidelity timelock");
                     10
                 } else {
@@ -792,10 +795,22 @@ impl MakerTrait for MakerServer {
         let proof = self
             .highest_fidelity_proof
             .read()
-            .map_err(|_| MakerError::General("Failed to lock fidelity proof"))?;
-        proof
+            .map_err(|_| MakerError::General("Failed to lock fidelity proof"))?
             .clone()
-            .ok_or(MakerError::General("No fidelity proof available"))
+            .ok_or(MakerError::General("No fidelity proof available"))?;
+
+        #[cfg(feature = "integration-test")]
+        let proof = {
+            let mut proof = proof;
+            if self.behavior == super::handlers::MakerBehavior::LieFidelityConfHeight {
+                log::warn!("Test behavior: lying about fidelity bond conf_height");
+                let lock_time = proof.bond.lock_time.to_consensus_u32();
+                proof.bond.conf_height = Some(lock_time.saturating_sub(MIN_FIDELITY_TIMELOCK));
+            }
+            proof
+        };
+
+        Ok(proof)
     }
 
     fn get_config(&self) -> MakerConfig {

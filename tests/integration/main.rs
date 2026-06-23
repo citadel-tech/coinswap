@@ -11,6 +11,7 @@ mod abort3_case1;
 mod abort3_case2;
 mod abort3_case3;
 mod fidelity;
+mod fidelity_conf_height_lie;
 mod fidelity_renewal;
 mod malice1;
 mod malice2;

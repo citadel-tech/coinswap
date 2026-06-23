@@ -107,15 +107,20 @@ pub(crate) fn verify_fidelity_checks(
     addr: &str,
     tx: Transaction,
     current_height: u64,
+    conf_height: u32,
     tweakable_point: &PublicKey,
     tweak_chain_code: &bitcoin::bip32::ChainCode,
 ) -> Result<(), WalletError> {
+    if let Some(reported) = proof.bond.conf_height {
+        if reported != conf_height {
+            log::warn!(
+                "Maker-reported conf_height {reported} differs from chain conf_height {conf_height}"
+            );
+        }
+    }
+
     // Ensure fidelity bond timelock lies within allowed range
-    let bond_height = proof.bond.lock_time.to_consensus_u32()
-        - proof
-            .bond
-            .conf_height
-            .ok_or(WalletError::Fidelity(FidelityError::BondDoesNotExist))?;
+    let bond_height = proof.bond.lock_time.to_consensus_u32() - conf_height;
     if !(MIN_FIDELITY_TIMELOCK..=MAX_FIDELITY_TIMELOCK).contains(&bond_height) {
         log::warn!(
             "Invalid fidelity bond timelock: {} blocks. Accepted range is [{}-{}] blocks.",
