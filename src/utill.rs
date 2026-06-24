@@ -40,7 +40,7 @@ use std::{
 static LOGGER: OnceLock<()> = OnceLock::new();
 
 use crate::{
-    error::{Bip324Error, NetError},
+    error::NetError,
     protocol::{contract::derive_maker_pubkey_and_nonce, error::ProtocolError},
     wallet::{UTXOSpendInfo, WalletError},
 };
@@ -1010,15 +1010,17 @@ impl Bip324Stream {
     /// Reads a response byte_array from a given stream.
     /// Response can be any length-appended data, where the first byte is the length of the actual message.
     pub(crate) fn read_message(&mut self) -> Result<Vec<u8>, NetError> {
-        let payload = self.protocol.read()?;
-        let contents = payload.contents();
-        match payload.packet_type() {
-            bip324::PacketType::Decoy => {
-                // TODO implement proper decoy handling
-                log::info!("Received decoy message");
-                Err(Bip324Error::UnexpectedDecoy.into())
+        loop {
+            let payload = self.protocol.read()?;
+            match payload.packet_type() {
+                // currently we never send decoys but we are handling it
+                bip324::PacketType::Decoy => {
+                    log::debug!("Skipped decoy packet");
+                }
+                bip324::PacketType::Genuine => {
+                    return Ok(payload.contents().to_vec());
+                }
             }
-            bip324::PacketType::Genuine => Ok(contents.to_vec()),
         }
     }
 

@@ -34,8 +34,6 @@ pub enum NetError {
 /// Represents errors specific to the BIP324 protocol.
 #[derive(Debug)]
 pub enum Bip324Error {
-    /// Error indicating that an unexpected decoy was encountered during the BIP324 protocol execution.
-    UnexpectedDecoy,
     /// Error indicating that the protocol was aborted by the peer.
     ProtocolError(bip324::io::ProtocolError),
     /// Error due to mismatch in session IDs indicates MitM attack
