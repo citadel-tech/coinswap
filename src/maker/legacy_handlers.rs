@@ -332,9 +332,38 @@ fn process_proof_of_funding<M: Maker>(
                 osc.contract_redeemscript.clone().unwrap_or_default()
             };
 
+        let funding_tx = funding_txes[i].clone();
+        #[cfg(not(feature = "integration-test"))]
+        let contract_tx = osc.contract_tx.clone();
+        #[cfg(feature = "integration-test")]
+        let mut contract_tx = osc.contract_tx.clone();
+
+        #[cfg(feature = "integration-test")]
+        if maker.behavior() == super::handlers::MakerBehavior::MalformedLegacyFundingOutput {
+            let multisig_spk =
+                redeemscript_to_scriptpubkey(&multisig_redeemscript).map_err(|e| {
+                    MakerError::General(format!("Failed to convert redeemscript: {:?}", e).leak())
+                })?;
+            if let Some((bad_vout, _)) = funding_tx
+                .output
+                .iter()
+                .enumerate()
+                .find(|(_, output)| output.script_pubkey != multisig_spk)
+            {
+                contract_tx.input[0].previous_output = bitcoin::OutPoint {
+                    txid: funding_tx.compute_txid(),
+                    vout: bad_vout as u32,
+                };
+                log::warn!(
+                    "[{}] Test behavior: legacy sender contract spends non-multisig funding output",
+                    maker.network_port()
+                );
+            }
+        }
+
         senders_contract_txs_info.push(crate::protocol::legacy_messages::SenderContractTxInfo {
-            funding_tx: funding_txes[i].clone(),
-            contract_tx: osc.contract_tx.clone(),
+            funding_tx,
+            contract_tx,
             timelock_pubkey,
             multisig_redeemscript,
             contract_redeemscript: osc.contract_redeemscript.clone().unwrap_or_default(),
