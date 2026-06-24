@@ -344,13 +344,12 @@ fn process_proof_of_funding<M: Maker>(
         .zip(pof.confirmed_funding_txes.iter())
         .enumerate()
     {
-        let outgoing_outpoint = state
-            .outgoing_swapcoins
-            .get(i)
-            .map(|coin| bitcoin::OutPoint {
-                txid: coin.contract_tx.compute_txid(),
-                vout: coin.get_contract_output_vout(),
-            });
+        let outgoing_outpoint = state.outgoing_swapcoins.get(i).and_then(|coin| {
+            coin.contract_tx
+                .input
+                .first()
+                .map(|input| input.previous_output)
+        });
         match DeniabilityProof::from_legacy_incoming_swapcoin(
             incoming,
             SwapRole::Maker,

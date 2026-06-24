@@ -553,6 +553,7 @@ pub struct SwapReportFile {
     /// Recovery reports emitted after hashlock or timelock recovery.
     pub recovery: Vec<RecoveryReport>,
     /// Deniability proofs generated for swaps in this wallet.
+    #[serde(default)]
     pub deniability_proofs: Vec<serde_json::Value>,
 }
 
@@ -575,12 +576,13 @@ pub(crate) fn save_deniability_proofs_for_wallet(
     write_to_path(&file_path, |f| {
         for value in values {
             let proof_id = value.get("proof_id").and_then(|id| id.as_str());
-            let exists = proof_id.is_some_and(|id| {
-                f.deniability_proofs
-                    .iter()
-                    .any(|existing| existing.get("proof_id").and_then(|v| v.as_str()) == Some(id))
-            });
-            if !exists {
+            if let Some(existing) = proof_id.and_then(|id| {
+                f.deniability_proofs.iter().position(|existing| {
+                    existing.get("proof_id").and_then(|v| v.as_str()) == Some(id)
+                })
+            }) {
+                f.deniability_proofs[existing] = value;
+            } else {
                 f.deniability_proofs.push(value);
             }
         }

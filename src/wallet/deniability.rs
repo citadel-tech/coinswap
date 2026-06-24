@@ -9,6 +9,7 @@ use bitcoin::{
     consensus::encode::serialize,
     ecdsa,
     hashes::{sha256, Hash},
+    opcodes::all::{OP_CHECKSIG, OP_CLTV, OP_DROP, OP_EQUALVERIFY, OP_SHA256},
     secp256k1::{self, ecdsa::Signature as SecpEcdsaSignature, Keypair, Secp256k1, SecretKey},
     OutPoint, PublicKey, ScriptBuf, Transaction, TxOut, XOnlyPublicKey,
 };
@@ -253,8 +254,11 @@ impl DeniabilityProof {
             sig_multi: ecdsa_sign(&my_privkey, &msg),
             sig_hashlock: ecdsa_sign(&hashlock_privkey, &msg),
         };
+        let swap_id = swapcoin.swap_id.clone().ok_or_else(|| {
+            WalletError::General("Missing swap_id for deniability proof".to_string())
+        })?;
         Ok(Self::new(
-            swapcoin.swap_id.clone().unwrap_or_default(),
+            swap_id,
             role,
             ProofDirection::Incoming,
             ProtocolVersion::Legacy,
@@ -311,8 +315,11 @@ impl DeniabilityProof {
             sig_musig: schnorr_sign(&my_privkey, &msg),
             sig_hashlock: schnorr_sign(&hashlock_privkey, &msg),
         };
+        let swap_id = swapcoin.swap_id.clone().ok_or_else(|| {
+            WalletError::General("Missing swap_id for deniability proof".to_string())
+        })?;
         Ok(Self::new(
-            swapcoin.swap_id.clone().unwrap_or_default(),
+            swap_id,
             role,
             ProofDirection::Incoming,
             ProtocolVersion::Taproot,
@@ -350,6 +357,31 @@ pub fn verify_proof(
     proof: &DeniabilityProof,
     chain_output: Option<&TxOut>,
 ) -> Result<(), DeniabilityProofError> {
+    let (expected_protocol, outpoint) = match &proof.proof {
+        DeniabilityProofData::Taproot(data) => (ProtocolVersion::Taproot, data.contract_outpoint),
+        DeniabilityProofData::Legacy(data) => (ProtocolVersion::Legacy, data.funding_outpoint),
+    };
+    if proof.protocol != expected_protocol {
+        return Err(DeniabilityProofError::InvalidProof(
+            "wrapper protocol does not match proof payload",
+        ));
+    }
+    if proof.direction != ProofDirection::Incoming {
+        return Err(DeniabilityProofError::InvalidProof(
+            "wrapper direction does not match proof payload",
+        ));
+    }
+    if proof.swap_id.is_empty() {
+        return Err(DeniabilityProofError::InvalidProof(
+            "wrapper swap_id is missing",
+        ));
+    }
+    if proof.proof_id != proof_id(proof.protocol, outpoint, proof.direction) {
+        return Err(DeniabilityProofError::InvalidProof(
+            "wrapper proof_id does not match proof payload",
+        ));
+    }
+
     match &proof.proof {
         DeniabilityProofData::Taproot(data) => verify_taproot_proof(data, chain_output),
         DeniabilityProofData::Legacy(data) => verify_legacy_proof(data, chain_output),
@@ -409,13 +441,14 @@ fn verify_taproot_proof(
         ));
     }
 
-    // The hashlock leaf must contain this wallet's hashlock key.
-    let script_hashlock_key = taproot_hashlock_pubkey_for_verify(&proof.hashlock_script)?;
+    // The Taproot leaves must match the exact contract templates.
+    let script_hashlock_key = parse_taproot_hashlock_script(&proof.hashlock_script)?;
     if script_hashlock_key != proof.pub_mine_hashlock {
         return Err(DeniabilityProofError::InvalidProof(
             "hashlock script does not contain claimant key",
         ));
     }
+    parse_taproot_timelock_script(&proof.timelock_script)?;
 
     let msg = proof_message(
         ProtocolVersion::Taproot,
@@ -431,19 +464,74 @@ fn verify_taproot_proof(
     Ok(())
 }
 
-/// Extracts the claimant hashlock key from the Taproot hashlock leaf script.
-fn taproot_hashlock_pubkey_for_verify(
+/// Extracts the claimant key from an exact Taproot hashlock leaf template.
+fn parse_taproot_hashlock_script(
     script: &ScriptBuf,
 ) -> Result<XOnlyPublicKey, DeniabilityProofError> {
     let instructions: Vec<_> = script.instructions().collect();
-    match instructions.get(3) {
-        Some(Ok(bitcoin::script::Instruction::PushBytes(bytes))) => {
-            XOnlyPublicKey::from_slice(bytes.as_bytes()).map_err(|e| {
+    if instructions.len() != 5 {
+        return Err(DeniabilityProofError::InvalidProof(
+            "Taproot hashlock script has unexpected length",
+        ));
+    }
+    if !matches!(
+        instructions[0],
+        Ok(bitcoin::script::Instruction::Op(OP_SHA256))
+    ) || !matches!(
+        instructions[2],
+        Ok(bitcoin::script::Instruction::Op(OP_EQUALVERIFY))
+    ) || !matches!(
+        instructions[4],
+        Ok(bitcoin::script::Instruction::Op(OP_CHECKSIG))
+    ) {
+        return Err(DeniabilityProofError::InvalidProof(
+            "Taproot hashlock script has unexpected opcodes",
+        ));
+    }
+    match (&instructions[1], &instructions[3]) {
+        (
+            Ok(bitcoin::script::Instruction::PushBytes(hash_bytes)),
+            Ok(bitcoin::script::Instruction::PushBytes(pubkey_bytes)),
+        ) if hash_bytes.len() == 32 && pubkey_bytes.len() == 32 => {
+            XOnlyPublicKey::from_slice(pubkey_bytes.as_bytes()).map_err(|e| {
                 DeniabilityProofError::General(format!("invalid hashlock pubkey: {e:?}"))
             })
         }
         _ => Err(DeniabilityProofError::InvalidProof(
-            "Taproot hashlock script missing pubkey",
+            "Taproot hashlock script has unexpected pushes",
+        )),
+    }
+}
+
+/// Validates the exact Taproot timelock leaf template.
+fn parse_taproot_timelock_script(script: &ScriptBuf) -> Result<(), DeniabilityProofError> {
+    let instructions: Vec<_> = script.instructions().collect();
+    if instructions.len() != 5 {
+        return Err(DeniabilityProofError::InvalidProof(
+            "Taproot timelock script has unexpected length",
+        ));
+    }
+    if !matches!(
+        instructions[1],
+        Ok(bitcoin::script::Instruction::Op(OP_CLTV))
+    ) || !matches!(
+        instructions[2],
+        Ok(bitcoin::script::Instruction::Op(OP_DROP))
+    ) || !matches!(
+        instructions[4],
+        Ok(bitcoin::script::Instruction::Op(OP_CHECKSIG))
+    ) {
+        return Err(DeniabilityProofError::InvalidProof(
+            "Taproot timelock script has unexpected opcodes",
+        ));
+    }
+    match (&instructions[0], &instructions[3]) {
+        (
+            Ok(bitcoin::script::Instruction::PushBytes(locktime_bytes)),
+            Ok(bitcoin::script::Instruction::PushBytes(pubkey_bytes)),
+        ) if !locktime_bytes.is_empty() && pubkey_bytes.len() == 32 => Ok(()),
+        _ => Err(DeniabilityProofError::InvalidProof(
+            "Taproot timelock script has unexpected pushes",
         )),
     }
 }
@@ -535,6 +623,13 @@ fn verify_legacy_proof(
         proof.funding_outpoint,
         &proof.contract_tx,
     );
+    if proof.sig_multi.sighash_type != bitcoin::sighash::EcdsaSighashType::All
+        || proof.sig_hashlock.sighash_type != bitcoin::sighash::EcdsaSighashType::All
+    {
+        return Err(DeniabilityProofError::InvalidProof(
+            "legacy proof signatures must use SIGHASH_ALL",
+        ));
+    }
     let secp = Secp256k1::new();
     let multi_sig =
         SecpEcdsaSignature::from_compact(&proof.sig_multi.signature.serialize_compact())

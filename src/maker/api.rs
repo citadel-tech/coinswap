@@ -989,12 +989,9 @@ impl MakerTrait for MakerServer {
             .map_err(|_| MakerError::General("Failed to lock wallet"))?;
         wallet.add_incoming_swapcoin(swapcoin);
         if swapcoin.protocol == ProtocolVersion::Taproot {
-            if let Err(e) = wallet.add_incoming_deniability_proof(swapcoin, SwapRole::Maker, None) {
-                log::warn!(
-                    "Failed to create incoming deniability proof for maker swapcoin: {:?}",
-                    e
-                );
-            }
+            wallet
+                .add_incoming_deniability_proof(swapcoin, SwapRole::Maker, None)
+                .map_err(MakerError::Wallet)?;
         }
         wallet.save_to_disk().map_err(MakerError::Wallet)
     }

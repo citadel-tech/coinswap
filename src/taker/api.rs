@@ -1868,16 +1868,9 @@ impl Taker {
                         vout: coin.get_contract_output_vout(),
                     });
             if incoming.protocol == ProtocolVersion::Taproot {
-                if let Err(e) = wallet.add_incoming_deniability_proof(
-                    incoming,
-                    SwapRole::Taker,
-                    outgoing_outpoint,
-                ) {
-                    log::warn!(
-                        "Failed to create incoming deniability proof for taker swapcoin: {:?}",
-                        e
-                    );
-                }
+                wallet
+                    .add_incoming_deniability_proof(incoming, SwapRole::Taker, outgoing_outpoint)
+                    .map_err(TakerError::Wallet)?;
             }
         }
 

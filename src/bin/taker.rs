@@ -349,7 +349,18 @@ fn fetch_chain_output(
     };
     let client = Client::new(&rpc_url, auth)
         .map_err(|e| TakerError::General(format!("Failed to create Bitcoin RPC client: {e}")))?;
-    // Fetch the transaction so this still works if the output is already spent.
+    // Fetch verbose transaction info so mempool-only transactions are not
+    // treated as chain-verified.
+    let tx_info = client
+        .get_raw_transaction_info(&outpoint.txid, None)
+        .map_err(|e| TakerError::General(format!("Failed to fetch tx {}: {e}", outpoint.txid)))?;
+    let confirmations = tx_info.confirmations.unwrap_or(0);
+    if confirmations == 0 {
+        return Err(TakerError::General(format!(
+            "Transaction {} is not confirmed on-chain",
+            outpoint.txid
+        )));
+    }
     let tx = client
         .get_raw_transaction(&outpoint.txid, None)
         .map_err(|e| TakerError::General(format!("Failed to fetch tx {}: {e}", outpoint.txid)))?;

@@ -8,7 +8,7 @@ use coinswap::{
     maker::{start_server, MakerBehavior},
     protocol::common_messages::ProtocolVersion,
     taker::{SwapParams, TakerBehavior},
-    wallet::AddressType,
+    wallet::{verify_proof, AddressType, DeniabilityProof},
 };
 
 use super::test_framework::*;
@@ -269,13 +269,18 @@ fn assert_report_has_deniability_proofs(report_path: &std::path::Path, label: &s
         "{label} report should contain deniability proofs at {}",
         report_path.display()
     );
-    assert!(
-        proofs
-            .iter()
-            .all(|proof| proof.get("outgoing_swapcoin").is_some_and(|v| !v.is_null())),
-        "{label} report proofs should link to outgoing swapcoins at {}",
-        report_path.display()
-    );
+    for (i, proof_value) in proofs.iter().enumerate() {
+        let proof: DeniabilityProof = serde_json::from_value(proof_value.clone())
+            .unwrap_or_else(|e| panic!("{} report proof {} should deserialize: {}", label, i, e));
+        assert!(
+            proof.outgoing_swapcoin.is_some(),
+            "{label} report proof {i} should link to an outgoing swapcoin at {}",
+            report_path.display()
+        );
+        verify_proof(&proof, None).unwrap_or_else(|e| {
+            panic!("{} report proof {} should verify: {}", label, i, e);
+        });
+    }
     info!(
         "{} report contains {} deniability proof(s): {}",
         label,

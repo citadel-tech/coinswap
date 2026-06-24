@@ -712,12 +712,16 @@ impl Taker {
             })?;
 
             let secp = Secp256k1::new();
-            for (info, (multisig_privkey, hashlock_privkey)) in last_senders_info.iter().zip(
-                multisig_privkeys
-                    .iter()
-                    .cycle()
-                    .zip(hashlock_privkeys.iter().cycle()),
-            ) {
+            for (i, (info, (multisig_privkey, hashlock_privkey))) in last_senders_info
+                .iter()
+                .zip(
+                    multisig_privkeys
+                        .iter()
+                        .cycle()
+                        .zip(hashlock_privkeys.iter().cycle()),
+                )
+                .enumerate()
+            {
                 // Extract the maker's pubkey from the multisig redeemscript
                 let (pubkey1, pubkey2) =
                     crate::protocol::contract::read_pubkeys_from_multisig_redeemscript(
@@ -746,10 +750,12 @@ impl Taker {
                 let outgoing_outpoint =
                     self.swap_state()?
                         .outgoing_swapcoins
-                        .first()
-                        .map(|coin| bitcoin::OutPoint {
-                            txid: coin.contract_tx.compute_txid(),
-                            vout: coin.get_contract_output_vout(),
+                        .get(i)
+                        .and_then(|coin| {
+                            coin.contract_tx
+                                .input
+                                .first()
+                                .map(|input| input.previous_output)
                         });
                 match DeniabilityProof::from_legacy_incoming_swapcoin(
                     &incoming,
