@@ -25,14 +25,19 @@ fn cookie_tmp_path(data_dir: &Path) -> PathBuf {
 }
 
 fn write_cookie_tmp(path: &Path, contents: &[u8]) -> Result<(), MakerError> {
+    if let Err(e) = fs::remove_file(path) {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            return Err(MakerError::IO(e));
+        }
+    }
+
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
 
         let mut file = OpenOptions::new()
             .write(true)
-            .create(true)
-            .truncate(true)
+            .create_new(true)
             .mode(0o600)
             .open(path)
             .map_err(MakerError::IO)?;
