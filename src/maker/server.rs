@@ -42,7 +42,6 @@ const FIDELITY_BOND_UPDATE_INTERVAL: Duration = Duration::from_secs(30);
 const FIDELITY_BOND_UPDATE_INTERVAL: Duration = Duration::from_secs(600);
 
 /// Start the maker server.
-#[hotpath::measure]
 pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
     log::info!("[{}] Starting maker server", maker.config.network_port);
 
@@ -217,7 +216,6 @@ pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
 }
 
 /// Spawn a background thread for nostr bond announcements.
-#[hotpath::measure]
 fn spawn_nostr_broadcast_thread(
     maker: &Arc<MakerServer>,
     fidelity: FidelityProof,
@@ -419,7 +417,6 @@ fn handle_connection(maker: Arc<MakerServer>, stream: TcpStream) -> Result<(), M
 }
 
 /// Background thread that checks for idle swap states and spawns recovery.
-#[hotpath::measure]
 fn check_for_idle_states(maker: Arc<MakerServer>) -> Result<(), MakerError> {
     use super::swap_tracker::{now_secs, MakerRecoveryState, MakerSwapPhase, MakerSwapRecord};
 
@@ -481,7 +478,6 @@ fn check_for_idle_states(maker: Arc<MakerServer>) -> Result<(), MakerError> {
 }
 
 /// Periodically check for expired fidelity bonds and renew them.
-#[hotpath::measure]
 fn fidelity_renewal_loop(maker: Arc<MakerServer>, maker_address: &str) -> Result<(), MakerError> {
     use crate::wallet::AddressType;
 
@@ -958,7 +954,6 @@ fn recover_from_swap(
 }
 
 /// Read a message from a stream.
-#[hotpath::measure]
 fn read_message(stream: &TcpStream) -> Result<TakerToMakerMessage, MakerError> {
     let mut len_buf = [0u8; 4];
     use std::io::Read;
@@ -984,7 +979,6 @@ fn read_message(stream: &TcpStream) -> Result<TakerToMakerMessage, MakerError> {
 }
 
 /// Send a message to a stream.
-#[hotpath::measure]
 fn send_message(stream: &TcpStream, message: &MakerToTakerMessage) -> Result<(), MakerError> {
     let buf = serde_cbor::to_vec(message)
         .map_err(|_| MakerError::General("Failed to serialize message"))?;
@@ -1004,7 +998,6 @@ fn send_message(stream: &TcpStream, message: &MakerToTakerMessage) -> Result<(),
 }
 
 /// Retry with different ports if not availabe
-#[hotpath::measure]
 pub fn bind_port_retry(port: u16) -> Result<(TcpListener, u16), MakerError> {
     let mut current_port = port + 2;
     const MAX_PORT: u16 = 62000;

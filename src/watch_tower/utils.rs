@@ -79,7 +79,6 @@ fn is_valid_address(s: &str) -> bool {
     matches!(port.parse::<u16>(), Ok(p) if p > 0)
 }
 
-#[hotpath::measure]
 fn parse_fidelity_op_return(data: &[u8]) -> Option<FidelityAnnouncement> {
     let decoded = std::str::from_utf8(data).ok()?;
     let (endpoint, locktime_str) = decoded.split_once('#')?;
@@ -106,7 +105,6 @@ fn parse_fidelity_op_return(data: &[u8]) -> Option<FidelityAnnouncement> {
 }
 
 /// Process a transaction for fidelity OP_RETURN announcement.
-#[hotpath::measure]
 pub fn process_fidelity(tx: &Transaction) -> Option<FidelityAnnouncement> {
     // Fidelity txs must be timelocked
     if tx.lock_time == LockTime::Blocks(Height::ZERO) {
@@ -130,7 +128,6 @@ pub fn process_fidelity(tx: &Transaction) -> Option<FidelityAnnouncement> {
 }
 
 /// Processes each transaction in a block, updating watch entries and recording fidelity data.
-#[hotpath::measure]
 pub fn process_block<R: Role>(block: Block, registry: &mut FileRegistry) {
     for tx in block.txdata.iter() {
         process_transaction(tx, registry, true);
@@ -147,7 +144,6 @@ pub fn process_block<R: Role>(block: Block, registry: &mut FileRegistry) {
 }
 
 /// Updates the registry for a transaction by clearing spent fidelities and marking watched spends.
-#[hotpath::measure]
 pub fn process_transaction(tx: &Transaction, registry: &mut FileRegistry, in_block: bool) {
     let watch_requests = registry.list_watches();
     for input in &tx.input {
@@ -163,7 +159,6 @@ pub fn process_transaction(tx: &Transaction, registry: &mut FileRegistry, in_blo
     }
 }
 
-#[hotpath::measure]
 pub(crate) fn parse_fidelity_event(event: &nostr::Event) -> Option<(Txid, u32)> {
     let content = event.content.trim();
     let (txid, vout) = content.split_once(':')?;
