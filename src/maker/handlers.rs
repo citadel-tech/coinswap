@@ -2,6 +2,7 @@
 
 use std::{sync::Arc, time::Instant};
 
+use bip324::SessionId;
 use bitcoin::{bip32::ChainCode, Amount, PublicKey, Transaction};
 
 use super::error::MakerError;
@@ -64,7 +65,7 @@ pub struct ConnectionState {
     /// Protocol version being used for this connection.
     pub protocol: ProtocolVersion,
     /// Unique identifier for the connection, None indicates no connection yet
-    pub session_id: Option<[u8; 32]>,
+    pub session_id: Option<SessionId>,
     /// Current phase of the swap.
     pub phase: SwapPhase,
     /// Unique swap identifier.
@@ -496,7 +497,7 @@ fn handle_swap_details<M: Maker>(
         .ok_or(MakerError::General("Connection did not start"))?;
     let secp = bitcoin::secp256k1::Secp256k1::new();
     let session_id_sig = secp.sign_ecdsa_low_r(
-        &bitcoin::secp256k1::Message::from_digest(session_id),
+        &bitcoin::secp256k1::Message::from_digest(session_id.to_bytes()),
         &tweakable_privkey,
     );
 
@@ -517,7 +518,7 @@ fn handle_swap_details<M: Maker>(
 
     Ok(Some(MakerToTakerMessage::AckSwap(AckSwapDetails::accept(
         tweakable_point,
-        session_id,
+        session_id.to_bytes(),
         session_id_sig,
     ))))
 }

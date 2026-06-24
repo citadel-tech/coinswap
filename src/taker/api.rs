@@ -1414,7 +1414,7 @@ impl Taker {
                     ));
                 }
 
-                if &ack_details.session_id != stream.protocol.session_id() {
+                if &ack_details.session_id != stream.protocol.session_id().as_bytes() {
                     return Err(TakerError::Net(Bip324Error::SessionIdMismatch.into()));
                 };
                 let secp = bitcoin::secp256k1::Secp256k1::new();
