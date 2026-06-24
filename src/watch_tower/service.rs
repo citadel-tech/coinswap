@@ -77,7 +77,6 @@ impl WatchService {
 }
 
 /// Starts the Maker Watch Service
-#[hotpath::measure]
 pub fn start_maker_watch_service(
     zmq_addr: &str,
     rpc_config: &RPCConfig,

@@ -34,24 +34,59 @@ jobs:
           cargo install hotpath --version 0.15.0 --features utils --bin hotpath-utils --locked
 
       - name: Generate filtered PR comment
+        env:
+          HOTPATH_COMMENT_MIN_CHANGE_PERCENT: "5"
         run: |
           set -euo pipefail
           export GITHUB_BASE_REF="$(cat /tmp/metrics/base_ref.txt)"
           export GITHUB_HEAD_REF="$(cat /tmp/metrics/head_ref.txt)"
 
-          hotpath-utils profile-pr \
-            --head-metrics /tmp/metrics/head_maker.json \
-            --base-metrics /tmp/metrics/base_maker.json \
-            --benchmark-id "maker" \
-            --dry-run > /tmp/metrics/maker_comment.md
-          perl -i -pe 's/\([+-]0(?:\.0+)?%\)/" " x length($&)/eg' /tmp/metrics/maker_comment.md
+          for benchmark in maker taker; do
+            comment="/tmp/metrics/${benchmark}_comment.md"
+            hotpath-utils profile-pr \
+              --head-metrics "/tmp/metrics/head_${benchmark}.json" \
+              --base-metrics "/tmp/metrics/base_${benchmark}.json" \
+              --benchmark-id "$benchmark" \
+              --dry-run > "$comment"
+            perl -i -pe 's/\([+-]0(?:\.0+)?%\)/" " x length($&)/eg' "$comment"
+            perl -i -ne '
+              BEGIN { $threshold = $ENV{HOTPATH_COMMENT_MIN_CHANGE_PERCENT} // 5; }
 
-          hotpath-utils profile-pr \
-            --head-metrics /tmp/metrics/head_taker.json \
-            --base-metrics /tmp/metrics/base_taker.json \
-            --benchmark-id "taker" \
-            --dry-run > /tmp/metrics/taker_comment.md
-          perl -i -pe 's/\([+-]0(?:\.0+)?%\)/" " x length($&)/eg' /tmp/metrics/taker_comment.md
+              if ($drop_separator && /^\+-[-+]+\+\s*$/) {
+                  $drop_separator = 0;
+                  next;
+              }
+              $drop_separator = 0;
+
+              if (/^\|\s+(Function|Thread)\s+\|/) {
+                  $section = lc $1;
+                  print;
+                  next;
+              }
+
+              if (/^\|\s/ && !/^\|\s*(?:Function|Thread)\s+\|/) {
+                  my ($row) = /^\|(.*)\|\s*$/;
+                  my @columns = split /\|/, $row;
+                  s/^\s+|\s+$//g for @columns;
+
+                  # Function rows ignore "% Total"; it shifts when total run time changes.
+                  my @changes = $section eq "function" ? @columns[1..4] : @columns[1..$#columns];
+                  my $max = 0;
+                  for (@changes) {
+                      while (/\(([+-](?:\d+(?:\.\d+)?|\.\d+)%)\)/g) {
+                          (my $change = $1) =~ s/%$//;
+                          $max = abs($change) if abs($change) > $max;
+                      }
+                  }
+                  if ($max < $threshold) {
+                      $drop_separator = 1;
+                      next;
+                  }
+              }
+
+              print;
+            ' "$comment"
+          done
 
           {
             echo "<!-- hotpath-profile -->"

@@ -112,7 +112,6 @@ pub struct AckSwapDetails {
 
 impl AckSwapDetails {
     /// Create an acceptance response.
-    #[hotpath::measure]
     pub fn accept(tweakable_point: PublicKey) -> Self {
         AckSwapDetails {
             tweakable_point: Some(tweakable_point),

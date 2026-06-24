@@ -31,7 +31,6 @@ macro_rules! btc_msg_to_secp {
 }
 
 /// Aggregates the public keys
-#[hotpath::measure]
 pub fn get_aggregated_pubkey_compat(
     pubkey1: btc_secp::PublicKey,
     pubkey2: btc_secp::PublicKey,
@@ -45,7 +44,6 @@ pub fn get_aggregated_pubkey_compat(
 }
 
 /// Generates a new nonce pair
-#[hotpath::measure]
 pub fn generate_new_nonce_pair_compat(
     nonce_pubkey: btc_secp::PublicKey,
 ) -> Result<(secp::musig::SecretNonce, secp::musig::PublicNonce), ProtocolError> {
@@ -54,7 +52,6 @@ pub fn generate_new_nonce_pair_compat(
 }
 
 /// Get aggregated nonce
-#[hotpath::measure]
 pub fn get_aggregated_nonce_compat(
     nonces: &[&secp::musig::PublicNonce],
 ) -> secp::musig::AggregatedNonce {
@@ -62,7 +59,6 @@ pub fn get_aggregated_nonce_compat(
 }
 
 /// Generates a partial signature
-#[hotpath::measure]
 pub fn generate_partial_signature_compat(
     message: btc_secp::Message,
     agg_nonce: &secp::musig::AggregatedNonce,
@@ -84,7 +80,6 @@ pub fn generate_partial_signature_compat(
 }
 
 /// Aggregates the partial signatures
-#[hotpath::measure]
 pub fn aggregate_partial_signatures_compat(
     message: btc_secp::Message,
     agg_nonce: secp::musig::AggregatedNonce,

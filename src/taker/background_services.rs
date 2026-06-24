@@ -47,7 +47,6 @@ impl RecoveryLoop {
     ///
     /// The `swap_tracker` is used to update per-contract resolution outcomes
     /// as contracts are resolved in the background.
-    #[hotpath::measure]
     pub(crate) fn start(
         wallet: Arc<RwLock<Wallet>>,
         swap_tracker: Arc<Mutex<SwapTracker>>,
@@ -237,7 +236,6 @@ impl RecoveryLoop {
     }
 
     /// Match resolved contract txids against tracker records and update outcomes.
-    #[hotpath::measure]
     fn update_tracker_outcomes(
         tracker: &mut SwapTracker,
         incoming: Option<&crate::wallet::RecoveryOutcome>,
@@ -390,7 +388,6 @@ pub(crate) struct BreachDetector {
 
 impl BreachDetector {
     /// Spawn a background thread that polls the WatchService for sentinel spends.
-    #[hotpath::measure]
     pub(crate) fn start(watch_service: WatchService) -> Self {
         let breached = Arc::new(AtomicBool::new(false));
         let sentinels: Arc<Mutex<Vec<(OutPoint, Txid)>>> = Arc::new(Mutex::new(Vec::new()));
@@ -455,7 +452,6 @@ impl BreachDetector {
     /// Each sentinel is a `(funding_outpoint, expected_contract_txid)` pair.
     /// Only a spend matching the contract txid is considered adversarial;
     /// cooperative spends (after finalization) produce a different txid and are ignored.
-    #[hotpath::measure]
     pub(crate) fn add_sentinels(
         &self,
         watch_service: &WatchService,
