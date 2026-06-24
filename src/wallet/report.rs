@@ -9,7 +9,7 @@
 //! - `taker`   – one entry per taker swap (success or failed)
 //! - `maker`   – one array per maker node, keyed by node name
 //! - `recovery`– one entry per recovery event (hashlock or timelock)
-//! - `deniability_proofs` – reserved for future use
+//! - `deniability_proofs` – proofs saved for completed swaps
 
 use serde::{Deserialize, Serialize};
 use std::{
@@ -18,6 +18,8 @@ use std::{
     path::{Path, PathBuf},
     time::Instant,
 };
+
+use super::deniability::DeniabilityProof;
 
 // ---------------------------------------------------------------------------
 // Timestamp helper
@@ -542,11 +544,47 @@ impl RecoveryReport {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+/// Top-level JSON structure stored in per-wallet swap report files.
 pub struct SwapReportFile {
+    /// Taker-perspective swap reports.
     pub taker: Vec<TakerReport>,
+    /// Maker-perspective swap reports keyed by maker node name.
     pub maker: HashMap<String, Vec<MakerReport>>,
+    /// Recovery reports emitted after hashlock or timelock recovery.
     pub recovery: Vec<RecoveryReport>,
+    /// Deniability proofs generated for swaps in this wallet.
     pub deniability_proofs: Vec<serde_json::Value>,
+}
+
+/// Append deniability proofs to the wallet report file.
+pub(crate) fn save_deniability_proofs_for_wallet(
+    data_dir: &Path,
+    role: SwapRole,
+    wallet_file_name: Option<&str>,
+    proofs: &[DeniabilityProof],
+) -> std::io::Result<()> {
+    if proofs.is_empty() {
+        return Ok(());
+    }
+    let values = proofs
+        .iter()
+        .map(serde_json::to_value)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(std::io::Error::other)?;
+    let file_path = report_file_path_for_wallet(data_dir, role, wallet_file_name);
+    write_to_path(&file_path, |f| {
+        for value in values {
+            let proof_id = value.get("proof_id").and_then(|id| id.as_str());
+            let exists = proof_id.is_some_and(|id| {
+                f.deniability_proofs
+                    .iter()
+                    .any(|existing| existing.get("proof_id").and_then(|v| v.as_str()) == Some(id))
+            });
+            if !exists {
+                f.deniability_proofs.push(value);
+            }
+        }
+    })
 }
 
 // ---------------------------------------------------------------------------

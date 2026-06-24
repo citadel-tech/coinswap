@@ -21,8 +21,8 @@ use crate::{
     utill::{get_maker_dir, parse_field, parse_toml, MIN_FEE_RATE},
     wallet::{
         swapcoin::{IncomingSwapCoin, OutgoingSwapCoin},
-        AddressType, FidelityError, RPCConfig, Wallet, WalletError, MAX_FIDELITY_TIMELOCK,
-        MIN_FIDELITY_TIMELOCK,
+        AddressType, FidelityError, RPCConfig, SwapRole, Wallet, WalletError,
+        MAX_FIDELITY_TIMELOCK, MIN_FIDELITY_TIMELOCK,
     },
     watch_tower::service::WatchService,
 };
@@ -988,6 +988,14 @@ impl MakerTrait for MakerServer {
             .write()
             .map_err(|_| MakerError::General("Failed to lock wallet"))?;
         wallet.add_incoming_swapcoin(swapcoin);
+        if swapcoin.protocol == ProtocolVersion::Taproot {
+            if let Err(e) = wallet.add_incoming_deniability_proof(swapcoin, SwapRole::Maker, None) {
+                log::warn!(
+                    "Failed to create incoming deniability proof for maker swapcoin: {:?}",
+                    e
+                );
+            }
+        }
         wallet.save_to_disk().map_err(MakerError::Wallet)
     }
 
@@ -1002,6 +1010,31 @@ impl MakerTrait for MakerServer {
             .map_err(|_| MakerError::General("Failed to lock wallet"))?;
         wallet.add_outgoing_swapcoin(swapcoin);
         wallet.save_to_disk().map_err(MakerError::Wallet)
+    }
+
+    #[hotpath::measure]
+    fn save_deniability_proof(
+        &self,
+        proof: crate::wallet::DeniabilityProof,
+    ) -> Result<(), MakerError> {
+        let mut wallet = self
+            .wallet
+            .write()
+            .map_err(|_| MakerError::General("Failed to lock wallet"))?;
+        wallet.add_deniability_proof(proof);
+        wallet.save_to_disk().map_err(MakerError::Wallet)
+    }
+
+    #[hotpath::measure]
+    fn list_deniability_proofs(
+        &self,
+        swap_id: Option<&str>,
+    ) -> Result<Vec<crate::wallet::DeniabilityProof>, MakerError> {
+        let wallet = self
+            .wallet
+            .read()
+            .map_err(|_| MakerError::General("Failed to lock wallet"))?;
+        Ok(wallet.list_deniability_proofs(swap_id))
     }
 
     #[hotpath::measure]

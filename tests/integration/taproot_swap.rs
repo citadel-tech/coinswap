@@ -14,7 +14,7 @@ use coinswap::{
 use super::test_framework::*;
 
 use log::{info, warn};
-use std::{sync::atomic::Ordering::Relaxed, thread};
+use std::{fs, sync::atomic::Ordering::Relaxed, thread};
 
 /// Test taproot coinswap
 #[test]
@@ -196,6 +196,94 @@ fn test_taproot_coinswap() {
 
     info!("All taproot swap tests completed successfully!");
 
+    let taker_proofs = taker
+        .get_wallet()
+        .read()
+        .unwrap()
+        .list_deniability_proofs(Some(&summary.swap_id));
+    assert!(
+        !taker_proofs.is_empty(),
+        "Taker should have generated a Taproot deniability proof for swap {}",
+        summary.swap_id
+    );
+
+    let temp_dir = makers[0]
+        .data_dir
+        .parent()
+        .expect("maker data dir should live under test temp dir");
+    let taker_report_path = temp_dir
+        .join("taker1")
+        .join("wallets")
+        .join("taker1_swap_report.json");
+    assert_report_has_deniability_proofs(&taker_report_path, "taproot taker");
+
+    for (i, maker) in makers.iter().enumerate() {
+        let maker_proofs = maker
+            .wallet
+            .read()
+            .unwrap()
+            .list_deniability_proofs(Some(&summary.swap_id));
+        assert!(
+            !maker_proofs.is_empty(),
+            "Maker {} should have generated a Taproot deniability proof for swap {}",
+            i,
+            summary.swap_id
+        );
+
+        let maker_report_path = maker
+            .data_dir
+            .join("wallets")
+            .join(format!("{}_swap_report.json", maker.config.wallet_name));
+        assert_report_has_deniability_proofs(&maker_report_path, &format!("taproot maker {i}"));
+    }
+
     test_framework.stop();
     block_generation_handle.join().unwrap();
+}
+
+fn assert_report_has_deniability_proofs(report_path: &std::path::Path, label: &str) {
+    let report = fs::read_to_string(report_path).unwrap_or_else(|e| {
+        panic!(
+            "Failed to read {label} report {}: {e}",
+            report_path.display()
+        )
+    });
+    let json: serde_json::Value = serde_json::from_str(&report).unwrap_or_else(|e| {
+        panic!(
+            "Failed to parse {label} report {}: {e}",
+            report_path.display()
+        )
+    });
+    let proofs = json
+        .get("deniability_proofs")
+        .and_then(|v| v.as_array())
+        .unwrap_or_else(|| {
+            panic!(
+                "{label} report is missing deniability_proofs at {}",
+                report_path.display()
+            )
+        });
+    let proof_count = proofs.len();
+    assert!(
+        proof_count > 0,
+        "{label} report should contain deniability proofs at {}",
+        report_path.display()
+    );
+    assert!(
+        proofs
+            .iter()
+            .all(|proof| proof.get("outgoing_swapcoin").is_some_and(|v| !v.is_null())),
+        "{label} report proofs should link to outgoing swapcoins at {}",
+        report_path.display()
+    );
+    info!(
+        "{} report contains {} deniability proof(s): {}",
+        label,
+        proof_count,
+        report_path.display()
+    );
+    println!(
+        "\n{label} deniability proofs:\n{}\n",
+        serde_json::to_string_pretty(proofs).expect("proofs should serialize")
+    );
 }

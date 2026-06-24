@@ -41,8 +41,8 @@ use crate::{
     utill::{check_tor_status, generate_maker_keys, get_taker_dir, read_message, send_message},
     wallet::{
         swapcoin::{IncomingSwapCoin, OutgoingSwapCoin, WatchOnlySwapCoin},
-        MakerFeeInfo as ReportMakerFeeInfo, RPCConfig, RecoveryOutcome, SwapStatus, TakerReport,
-        Wallet,
+        MakerFeeInfo as ReportMakerFeeInfo, RPCConfig, RecoveryOutcome, SwapRole, SwapStatus,
+        TakerReport, Wallet,
     },
     watch_tower::{
         registry_storage::FileRegistry,
@@ -1859,6 +1859,26 @@ impl Taker {
         let mut wallet = self.write_wallet()?;
         if let Some(incoming) = self.swap_state()?.incoming_swapcoins.last() {
             wallet.add_incoming_swapcoin(incoming);
+            let outgoing_outpoint =
+                self.swap_state()?
+                    .outgoing_swapcoins
+                    .first()
+                    .map(|coin| bitcoin::OutPoint {
+                        txid: coin.contract_tx.compute_txid(),
+                        vout: coin.get_contract_output_vout(),
+                    });
+            if incoming.protocol == ProtocolVersion::Taproot {
+                if let Err(e) = wallet.add_incoming_deniability_proof(
+                    incoming,
+                    SwapRole::Taker,
+                    outgoing_outpoint,
+                ) {
+                    log::warn!(
+                        "Failed to create incoming deniability proof for taker swapcoin: {:?}",
+                        e
+                    );
+                }
+            }
         }
 
         wallet.save_to_disk()?;
@@ -2245,6 +2265,23 @@ impl Taker {
         let data_dir = self.config.data_dir.clone().unwrap_or_else(get_taker_dir);
         if let Err(e) = report.save_for_wallet(&data_dir, Some(&wallet_file_name)) {
             log::warn!("Failed to save taker swap report: {:?}", e);
+        }
+        match self.read_wallet() {
+            Ok(wallet) => {
+                let proofs = wallet.list_deniability_proofs(Some(&swap.id));
+                if let Err(e) = crate::wallet::save_deniability_proofs_for_wallet(
+                    &data_dir,
+                    SwapRole::Taker,
+                    Some(&wallet_file_name),
+                    &proofs,
+                ) {
+                    log::warn!("Failed to save taker deniability proofs to report: {:?}", e);
+                }
+            }
+            Err(e) => log::warn!(
+                "Failed to read wallet for deniability proof report: {:?}",
+                e
+            ),
         }
 
         Ok(report)

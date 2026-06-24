@@ -19,8 +19,9 @@ use crate::{
         taproot_messages::{SerializableScalar, TaprootContractData, TaprootTakerMessage},
     },
     wallet::{
+        save_deniability_proofs_for_wallet,
         swapcoin::{IncomingSwapCoin, OutgoingSwapCoin},
-        MakerReport,
+        DeniabilityProof, MakerReport, SwapRole,
     },
 };
 
@@ -264,6 +265,7 @@ fn process_taproot_contract<M: Maker>(
             state.phase = SwapPhase::AwaitingPrivateKeyHandover;
             maker.save_incoming_swapcoin(&incoming_swapcoin)?;
             maker.save_outgoing_swapcoin(&outgoing_swapcoin)?;
+            save_linked_taproot_deniability_proof(maker, &incoming_swapcoin, &outgoing_swapcoin);
             maker.store_connection_state(&data.id, state)?;
             return Err(MakerError::General("Test: skipped funding broadcast"));
         }
@@ -296,6 +298,9 @@ fn process_taproot_contract<M: Maker>(
     // Save to wallet
     maker.save_incoming_swapcoin(&incoming_swapcoin)?;
     maker.save_outgoing_swapcoin(&outgoing_swapcoin)?;
+
+    // Save a proof linking the maker's incoming and outgoing contracts.
+    save_linked_taproot_deniability_proof(maker, &incoming_swapcoin, &outgoing_swapcoin);
 
     maker.store_connection_state(&data.id, state)?;
 
@@ -397,6 +402,9 @@ fn process_taproot_handover<M: Maker>(
         maker.save_incoming_swapcoin(incoming)?;
     }
 
+    // Refresh the proof before writing the final report.
+    save_linked_taproot_deniability_proofs(maker, state);
+
     // Mark swap as completed — sweep happens in the server loop after the
     // response is delivered to the taker.
     state.phase = SwapPhase::Completed;
@@ -433,6 +441,50 @@ fn process_taproot_handover<M: Maker>(
     Ok(Some(MakerToTakerMessage::TaprootPrivateKeyHandover(
         response,
     )))
+}
+
+/// Save Taproot maker proofs for every incoming/outgoing pair.
+fn save_linked_taproot_deniability_proofs<M: Maker>(maker: &Arc<M>, state: &ConnectionState) {
+    for (incoming, outgoing) in state
+        .incoming_swapcoins
+        .iter()
+        .zip(state.outgoing_swapcoins.iter())
+    {
+        save_linked_taproot_deniability_proof(maker, incoming, outgoing);
+    }
+}
+
+/// Build and store one linked Taproot maker proof.
+fn save_linked_taproot_deniability_proof<M: Maker>(
+    maker: &Arc<M>,
+    incoming: &IncomingSwapCoin,
+    outgoing: &OutgoingSwapCoin,
+) {
+    // Store the outgoing contract outpoint beside the incoming proof.
+    let outgoing_outpoint = OutPoint {
+        txid: outgoing.contract_tx.compute_txid(),
+        vout: outgoing.get_contract_output_vout(),
+    };
+    match DeniabilityProof::from_incoming_swapcoin(
+        incoming,
+        SwapRole::Maker,
+        Some(outgoing_outpoint),
+    ) {
+        Ok(proof) => {
+            if let Err(e) = maker.save_deniability_proof(proof) {
+                log::warn!(
+                    "[{}] Failed to save linked Taproot deniability proof: {:?}",
+                    maker.network_port(),
+                    e
+                );
+            }
+        }
+        Err(e) => log::warn!(
+            "[{}] Failed to build linked Taproot deniability proof: {:?}",
+            maker.network_port(),
+            e
+        ),
+    }
 }
 
 /// Emit a maker success report after private key handover.
@@ -478,5 +530,22 @@ fn emit_maker_success_report<M: Maker>(maker: &Arc<M>, state: &ConnectionState, 
     report.print();
     if let Err(e) = report.save_for_wallet(maker.data_dir(), Some(maker.wallet_name())) {
         log::warn!("Failed to save maker success report: {:?}", e);
+    }
+    // Copy saved proofs into the final report.
+    match maker.list_deniability_proofs(Some(swap_id)) {
+        Ok(proofs) => {
+            if let Err(e) = save_deniability_proofs_for_wallet(
+                maker.data_dir(),
+                SwapRole::Maker,
+                Some(maker.wallet_name()),
+                &proofs,
+            ) {
+                log::warn!("Failed to save maker deniability proofs to report: {:?}", e);
+            }
+        }
+        Err(e) => log::warn!(
+            "Failed to read maker deniability proofs for report: {:?}",
+            e
+        ),
     }
 }

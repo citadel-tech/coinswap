@@ -26,7 +26,7 @@ use crate::{
     utill::{generate_keypair, generate_maker_keys, read_message, send_message, MIN_FEE_RATE},
     wallet::{
         swapcoin::{IncomingSwapCoin, OutgoingSwapCoin, WatchOnlySwapCoin},
-        Wallet, WalletError,
+        DeniabilityProof, SwapRole, Wallet, WalletError,
     },
 };
 
@@ -741,7 +741,32 @@ impl Taker {
                     *hashlock_privkey,
                     info.funding_amount,
                 );
+                incoming.swap_id = Some(swap_id.clone());
                 incoming.set_preimage(self.swap_state()?.preimage);
+                let outgoing_outpoint =
+                    self.swap_state()?
+                        .outgoing_swapcoins
+                        .first()
+                        .map(|coin| bitcoin::OutPoint {
+                            txid: coin.contract_tx.compute_txid(),
+                            vout: coin.get_contract_output_vout(),
+                        });
+                match DeniabilityProof::from_legacy_incoming_swapcoin(
+                    &incoming,
+                    SwapRole::Taker,
+                    info.funding_tx.clone(),
+                    info.multisig_redeemscript.clone(),
+                    outgoing_outpoint,
+                ) {
+                    Ok(proof) => {
+                        let mut wallet = self.write_wallet()?;
+                        wallet.add_deniability_proof(proof);
+                        wallet.save_to_disk()?;
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to build taker legacy deniability proof: {:?}", e);
+                    }
+                }
                 self.swap_state_mut()?.incoming_swapcoins.push(incoming);
             }
 

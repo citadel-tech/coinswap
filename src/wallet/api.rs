@@ -40,7 +40,9 @@ use rust_coinselect::{
 };
 
 use super::{
+    deniability::DeniabilityProof,
     error::WalletError,
+    report::SwapRole,
     rpc::RPCConfig,
     storage::{AddressType, WalletStore},
 };
@@ -431,6 +433,39 @@ impl Wallet {
             key,
             self.store.outgoing_swapcoins.len()
         );
+    }
+
+    /// Adds a deniability proof to the wallet.
+    pub(crate) fn add_deniability_proof(&mut self, proof: DeniabilityProof) {
+        let key = proof.proof_id.clone();
+        self.store.deniability_proofs.insert(key.clone(), proof);
+        log::info!(
+            "Added deniability proof to wallet store: {} (total: {})",
+            key,
+            self.store.deniability_proofs.len()
+        );
+    }
+
+    /// Builds and adds an incoming swapcoin deniability proof when supported.
+    pub(crate) fn add_incoming_deniability_proof(
+        &mut self,
+        coin: &super::swapcoin::IncomingSwapCoin,
+        role: SwapRole,
+        outgoing_swapcoin: Option<OutPoint>,
+    ) -> Result<(), WalletError> {
+        let proof = DeniabilityProof::from_incoming_swapcoin(coin, role, outgoing_swapcoin)?;
+        self.add_deniability_proof(proof);
+        Ok(())
+    }
+
+    /// Returns all deniability proofs, optionally filtered by swap id.
+    pub fn list_deniability_proofs(&self, swap_id: Option<&str>) -> Vec<DeniabilityProof> {
+        self.store
+            .deniability_proofs
+            .values()
+            .filter(|proof| swap_id.map(|id| proof.swap_id == id).unwrap_or(true))
+            .cloned()
+            .collect()
     }
 
     /// Finds a incoming swap coin by swap_id.

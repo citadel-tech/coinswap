@@ -221,6 +221,18 @@ pub trait Maker: Send + Sync {
     /// Save outgoing swapcoin to wallet.
     fn save_outgoing_swapcoin(&self, swapcoin: &OutgoingSwapCoin) -> Result<(), MakerError>;
 
+    /// Save a deniability proof to wallet.
+    fn save_deniability_proof(
+        &self,
+        proof: crate::wallet::DeniabilityProof,
+    ) -> Result<(), MakerError>;
+
+    /// List deniability proofs from wallet.
+    fn list_deniability_proofs(
+        &self,
+        swap_id: Option<&str>,
+    ) -> Result<Vec<crate::wallet::DeniabilityProof>, MakerError>;
+
     /// Register outpoint for watching.
     fn register_watch_outpoint(&self, outpoint: bitcoin::OutPoint);
 
