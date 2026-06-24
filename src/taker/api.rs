@@ -1397,12 +1397,6 @@ impl Taker {
 
         match msg {
             MakerToTakerMessage::AckSwap(ack_details) => {
-                let swap = self.swap_state_mut()?;
-                swap.makers[maker_idx].tweakable_point = Some(ack_details.tweakable_point);
-                swap.makers[maker_idx].protocol = negotiated_protocol;
-                swap.makers[maker_idx].negotiated_timelock = timelock;
-                log::info!("Maker {} accepted swap with tweakable point", maker_idx);
-
                 #[cfg(feature = "integration-test")]
                 if self.behavior == TakerBehavior::CloseAtAckResponse {
                     log::warn!(
@@ -1412,6 +1406,19 @@ impl Taker {
                     return Err(TakerError::General(
                         "Test: closing at ack response".to_string(),
                     ));
+                }
+
+                let swap = self.swap_state()?;
+                let offer = swap.makers[maker_idx].offer.as_ref().ok_or_else(|| {
+                    TakerError::General(
+                        "No cached offer for tweakable point binding check".to_string(),
+                    )
+                })?;
+                if ack_details.tweakable_point != offer.tweakable_point {
+                    return Err(TakerError::General(format!(
+                        "AckSwap tweakable point mismatch: expected {}, got {}",
+                        offer.tweakable_point, ack_details.tweakable_point,
+                    )));
                 }
 
                 if &ack_details.session_id != stream.protocol.session_id().as_bytes() {
@@ -1425,6 +1432,12 @@ impl Taker {
                     &ack_details.tweakable_point.inner,
                 )
                 .map_err(|e| TakerError::Net(Bip324Error::SessionIdSigInvalid(e).into()))?;
+
+                let swap = self.swap_state_mut()?;
+                swap.makers[maker_idx].tweakable_point = Some(ack_details.tweakable_point);
+                swap.makers[maker_idx].protocol = negotiated_protocol;
+                swap.makers[maker_idx].negotiated_timelock = timelock;
+                log::info!("Maker {} accepted swap with tweakable point", maker_idx);
                 Ok(())
             }
             _ => Err(TakerError::General(format!(
