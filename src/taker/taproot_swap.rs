@@ -227,6 +227,14 @@ impl Taker {
                 Self::exchange_build_from_response(&received_contracts[i - 1])
             };
 
+            #[cfg(feature = "integration-test")]
+            let amounts =
+                if self.behavior == super::api::TakerBehavior::InvalidTaprootContractAmount {
+                    vec![Amount::from_sat(50_000); amounts.len()]
+                } else {
+                    amounts
+                };
+
             let secp = Secp256k1::new();
             let my_privkey = SecretKey::new(&mut OsRng);
             let my_pubkey = PublicKey {

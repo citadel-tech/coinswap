@@ -41,4 +41,5 @@ mod liquidity_test;
 mod offerbook_sync_race;
 mod taker_cli;
 mod taproot_concurrent_takers;
+mod taproot_contract_validation;
 mod utxo_behavior;

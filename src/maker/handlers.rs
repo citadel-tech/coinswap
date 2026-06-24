@@ -260,7 +260,7 @@ pub trait Maker: Send + Sync {
     /// Get the current block height from the Bitcoin node.
     fn get_current_height(&self) -> Result<u32, MakerError>;
 
-    /// Verify that a contract transaction is on-chain or in the mempool.
+    /// Verify that a contract transaction has the required on-chain confirmations.
     fn verify_contract_tx_on_chain(&self, txid: &bitcoin::Txid) -> Result<(), MakerError>;
 
     /// Verify and sign sender's contract transactions.
