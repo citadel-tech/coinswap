@@ -1779,8 +1779,7 @@ impl Taker {
     pub(crate) fn net_connect(&self, address: &str) -> Result<Bip324Stream, TakerError> {
         log::debug!("Connecting to maker at {}", address);
         let timeout = Duration::from_secs(CONNECT_TIMEOUT_SECS);
-        let wallet = self.read_wallet()?;
-        let network = wallet.store.network;
+        let network = self.read_wallet()?.store.network;
 
         #[cfg(feature = "integration-test")]
         let socket = TcpStream::connect(address)
