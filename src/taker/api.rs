@@ -1776,8 +1776,7 @@ impl Taker {
 
         log::debug!("Connecting to maker at {}", address);
         let timeout = Duration::from_secs(CONNECT_TIMEOUT_SECS);
-        let wallet = self.read_wallet()?;
-        let network = wallet.store.network;
+        let network = self.read_wallet()?.store.network;
 
         let connection_type = if cfg!(feature = "integration-test") {
             ConnectionType::Clearnet

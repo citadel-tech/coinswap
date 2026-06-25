@@ -994,8 +994,7 @@ impl Bip324Stream {
         Ok(Self { protocol })
     }
 
-    /// Reads a response byte_array from a given stream.
-    /// Response can be any length-appended data, where the first byte is the length of the actual message.
+    /// Reads the next genuine application message from the BIP324 stream.
     pub(crate) fn read_message(&mut self) -> Result<Vec<u8>, NetError> {
         loop {
             let payload = self.protocol.read()?;
@@ -1011,8 +1010,7 @@ impl Bip324Stream {
         }
     }
 
-    /// Send a length-appended Protocol or RPC Message through a stream.
-    /// The first byte sent is the length of the actual message.
+    /// CBOR-serializes the message and sends it as a genuine BIP324 payload.
     pub(crate) fn send_message(&mut self, message: &impl serde::Serialize) -> Result<(), NetError> {
         let msg_bytes = serde_cbor::ser::to_vec(message)?;
         let to_send = Payload::genuine(msg_bytes);
