@@ -2698,7 +2698,6 @@ impl Wallet {
             let mut all_confirmed = true;
             let mut max_confirm_height: u32 = 0;
 
-            let current_height = self.rpc.get_block_count()? as u32;
             for txid in txids {
                 match self.rpc.get_raw_transaction_info(txid, None) {
                     Ok(tx_info) => {
@@ -2712,7 +2711,15 @@ impl Wallet {
                             );
                             all_confirmed = false;
                         } else {
-                            let confirm_height = current_height.saturating_sub(confirms) + 1;
+                            // QA: Derive the mined height from the block itself;
+                            // tip-height arithmetic can race with a newly mined block.
+                            let block_hash = tx_info.blockhash.ok_or_else(|| {
+                                WalletError::General(format!(
+                                    "Confirmed transaction {txid} has no block hash"
+                                ))
+                            })?;
+                            let confirm_height =
+                                self.rpc.get_block_header_info(&block_hash)?.height as u32;
                             max_confirm_height = max_confirm_height.max(confirm_height);
                         }
                     }

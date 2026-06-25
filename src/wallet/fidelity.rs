@@ -57,6 +57,7 @@ pub enum FidelityError {
     BondAlreadyRedeemed,
     BondLocktimeExpired,
     InvalidCertHash,
+    InvalidConfirmationHeight { claimed: Option<u32>, actual: u32 },
     General(String),
     InvalidBondLocktime,
     BondUncomfirmed,
@@ -72,6 +73,12 @@ impl std::fmt::Display for FidelityError {
             }
             FidelityError::BondLocktimeExpired => write!(f, "Fidelity bond locktime has expired"),
             FidelityError::InvalidCertHash => write!(f, "Invalid fidelity certificate hash"),
+            FidelityError::InvalidConfirmationHeight { claimed, actual } => {
+                write!(
+                    f,
+                    "Fidelity bond confirmation height {claimed:?} does not match chain height {actual}"
+                )
+            }
             FidelityError::InvalidBondLocktime => {
                 write!(f, "Fidelity bond locktime is outside the acceptable range")
             }
@@ -106,15 +113,27 @@ pub(crate) fn verify_fidelity_checks(
     addr: &str,
     tx: Transaction,
     current_height: u64,
+    confirmation_height: u32,
     tweakable_point: &PublicKey,
     tweak_chain_code: &bitcoin::bip32::ChainCode,
 ) -> Result<(), WalletError> {
+    // QA: conf_height is maker-supplied and affects the accepted lock period,
+    // so bind it to the bond output's actual confirmation height.
+    if proof.bond.conf_height != Some(confirmation_height) {
+        return Err(FidelityError::InvalidConfirmationHeight {
+            claimed: proof.bond.conf_height,
+            actual: confirmation_height,
+        }
+        .into());
+    }
+
     // Ensure fidelity bond timelock lies within allowed range
-    let bond_height = proof.bond.lock_time.to_consensus_u32()
-        - proof
-            .bond
-            .conf_height
-            .ok_or(WalletError::Fidelity(FidelityError::BondDoesNotExist))?;
+    let bond_height = proof
+        .bond
+        .lock_time
+        .to_consensus_u32()
+        .checked_sub(confirmation_height)
+        .ok_or(FidelityError::InvalidBondLocktime)?;
     if !(MIN_FIDELITY_TIMELOCK..=MAX_FIDELITY_TIMELOCK).contains(&bond_height) {
         log::warn!(
             "Invalid fidelity bond timelock: {} blocks. Accepted range is [{}-{}] blocks.",
