@@ -213,30 +213,6 @@ fn process_proof_of_funding<M: Maker>(
         );
         incoming_swapcoin.swap_id = Some(pof.id.clone());
 
-        // Legacy proofs need this funding tx, so save the proof while we have it.
-        match DeniabilityProof::from_legacy_incoming_swapcoin(
-            &incoming_swapcoin,
-            SwapRole::Maker,
-            funding_info.funding_tx.clone(),
-            funding_info.multisig_redeemscript.clone(),
-            None,
-        ) {
-            Ok(proof) => {
-                if let Err(e) = maker.save_deniability_proof(proof) {
-                    log::warn!(
-                        "[{}] Failed to save legacy incoming deniability proof: {:?}",
-                        maker.network_port(),
-                        e
-                    );
-                }
-            }
-            Err(e) => log::warn!(
-                "[{}] Failed to build legacy incoming deniability proof: {:?}",
-                maker.network_port(),
-                e
-            ),
-        }
-
         incoming_swapcoins.push(incoming_swapcoin);
         incoming_amount += funding_output.value;
     }
@@ -337,7 +313,8 @@ fn process_proof_of_funding<M: Maker>(
     state.outgoing_swapcoins = outgoing_swapcoins.clone();
     state.pending_funding_txes = funding_txes.clone();
 
-    // Add the maker's outgoing side once it exists.
+    // Build legacy proofs while FundingTxInfo is still in scope and the
+    // maker's outgoing side is known.
     for (i, (incoming, funding_info)) in state
         .incoming_swapcoins
         .iter()

@@ -16,7 +16,7 @@ pub(crate) mod swapcoin;
 
 pub use api::{Balances, RecoveryOutcome, UTXOSpendInfo, Wallet};
 pub use backup::WalletBackup;
-pub use deniability::{verify_proof, DeniabilityProof, DeniabilityProofData, ProofDirection};
+pub use deniability::{verify_proof, DeniabilityProof, DeniabilityProofData};
 pub use error::WalletError;
 pub use fidelity::FidelityBond;
 pub(crate) use fidelity::{

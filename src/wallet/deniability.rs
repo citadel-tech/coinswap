@@ -27,17 +27,6 @@ use crate::{
 
 use super::{report::SwapRole, swapcoin::IncomingSwapCoin, WalletError};
 
-/// Direction of the swapcoin this proof describes from this wallet's perspective.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-pub enum ProofDirection {
-    /// Contract paid to this wallet.
-    Incoming,
-    /// Contract paid away from this wallet.
-    Outgoing,
-    /// Contract is an intermediate hop observed by this wallet.
-    WatchOnly,
-}
-
 /// Top-level deniability proof persisted by the wallet.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DeniabilityProof {
@@ -47,8 +36,6 @@ pub struct DeniabilityProof {
     pub swap_id: String,
     /// Participant role.
     pub role: SwapRole,
-    /// Swapcoin direction.
-    pub direction: ProofDirection,
     /// Protocol version.
     pub protocol: ProtocolVersion,
     /// Matching outgoing contract/funding outpoint when known.
@@ -155,9 +142,9 @@ fn now_unix_secs() -> u64 {
         .as_secs()
 }
 
-/// Builds a stable proof identifier from the protocol, proven outpoint, and direction.
-fn proof_id(protocol: ProtocolVersion, outpoint: OutPoint, direction: ProofDirection) -> String {
-    format!("{protocol:?}:{outpoint}:{direction:?}")
+/// Builds a stable proof identifier from the protocol and proven incoming outpoint.
+fn proof_id(protocol: ProtocolVersion, outpoint: OutPoint) -> String {
+    format!("{protocol:?}:{outpoint}:Incoming")
 }
 
 /// Builds the message signed by this wallet to prove control of this swap contract.
@@ -260,7 +247,6 @@ impl DeniabilityProof {
         Ok(Self::new(
             swap_id,
             role,
-            ProofDirection::Incoming,
             ProtocolVersion::Legacy,
             outgoing_swapcoin,
             DeniabilityProofData::Legacy(data),
@@ -276,7 +262,7 @@ impl DeniabilityProof {
     ) -> Result<Self, WalletError> {
         if swapcoin.protocol != ProtocolVersion::Taproot {
             return Err(WalletError::General(
-                "Legacy incoming deniability proof requires funding tx context".to_string(),
+                "Expected Taproot incoming swapcoin".to_string(),
             ));
         }
 
@@ -321,7 +307,6 @@ impl DeniabilityProof {
         Ok(Self::new(
             swap_id,
             role,
-            ProofDirection::Incoming,
             ProtocolVersion::Taproot,
             outgoing_swapcoin,
             DeniabilityProofData::Taproot(data),
@@ -333,17 +318,15 @@ impl DeniabilityProof {
     fn new(
         swap_id: String,
         role: SwapRole,
-        direction: ProofDirection,
         protocol: ProtocolVersion,
         outgoing_swapcoin: Option<OutPoint>,
         proof: DeniabilityProofData,
         key_outpoint: OutPoint,
     ) -> Self {
         Self {
-            proof_id: proof_id(protocol, key_outpoint, direction),
+            proof_id: proof_id(protocol, key_outpoint),
             swap_id,
             role,
-            direction,
             protocol,
             outgoing_swapcoin,
             proof,
@@ -352,10 +335,10 @@ impl DeniabilityProof {
     }
 }
 
-/// Verify a proof. Pass `chain_output` to also check the real chain output.
+/// Verify a proof against the real chain output.
 pub fn verify_proof(
     proof: &DeniabilityProof,
-    chain_output: Option<&TxOut>,
+    chain_output: &TxOut,
 ) -> Result<(), DeniabilityProofError> {
     let (expected_protocol, outpoint) = match &proof.proof {
         DeniabilityProofData::Taproot(data) => (ProtocolVersion::Taproot, data.contract_outpoint),
@@ -366,17 +349,12 @@ pub fn verify_proof(
             "wrapper protocol does not match proof payload",
         ));
     }
-    if proof.direction != ProofDirection::Incoming {
-        return Err(DeniabilityProofError::InvalidProof(
-            "wrapper direction does not match proof payload",
-        ));
-    }
     if proof.swap_id.is_empty() {
         return Err(DeniabilityProofError::InvalidProof(
             "wrapper swap_id is missing",
         ));
     }
-    if proof.proof_id != proof_id(proof.protocol, outpoint, proof.direction) {
+    if proof.proof_id != proof_id(proof.protocol, outpoint) {
         return Err(DeniabilityProofError::InvalidProof(
             "wrapper proof_id does not match proof payload",
         ));
@@ -391,7 +369,7 @@ pub fn verify_proof(
 /// Verifies a Taproot proof.
 fn verify_taproot_proof(
     proof: &TaprootDeniabilityProof,
-    chain_output: Option<&TxOut>,
+    chain_output: &TxOut,
 ) -> Result<(), DeniabilityProofError> {
     let contract_output = proof
         .contract_tx
@@ -420,14 +398,10 @@ fn verify_taproot_proof(
             "contract tx output does not match Taproot scripts",
         ));
     }
-    if let Some(chain_output) = chain_output {
-        if chain_output.script_pubkey != script_pubkey
-            || chain_output.value != contract_output.value
-        {
-            return Err(DeniabilityProofError::ChainMismatch(
-                "chain output does not match proof output",
-            ));
-        }
+    if chain_output.script_pubkey != script_pubkey || chain_output.value != contract_output.value {
+        return Err(DeniabilityProofError::ChainMismatch(
+            "chain output does not match proof output",
+        ));
     }
 
     // The internal key must be the aggregate of the two MuSig keys.
@@ -539,7 +513,7 @@ fn parse_taproot_timelock_script(script: &ScriptBuf) -> Result<(), DeniabilityPr
 /// Verifies a Legacy proof.
 fn verify_legacy_proof(
     proof: &LegacyDeniabilityProof,
-    chain_output: Option<&TxOut>,
+    chain_output: &TxOut,
 ) -> Result<(), DeniabilityProofError> {
     let input = proof
         .contract_tx
@@ -573,13 +547,10 @@ fn verify_legacy_proof(
             "funding output does not pay to multisig redeemscript",
         ));
     }
-    if let Some(chain_output) = chain_output {
-        if chain_output.script_pubkey != multisig_spk || chain_output.value != funding_output.value
-        {
-            return Err(DeniabilityProofError::ChainMismatch(
-                "chain output does not match proof funding output",
-            ));
-        }
+    if chain_output.script_pubkey != multisig_spk || chain_output.value != funding_output.value {
+        return Err(DeniabilityProofError::ChainMismatch(
+            "chain output does not match proof funding output",
+        ));
     }
     // Check that the contract transaction pays to the HTLC redeemscript.
     let contract_output =

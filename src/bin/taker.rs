@@ -187,14 +187,11 @@ enum Commands {
         #[clap(long, short = 'f')]
         backup_file: String,
     },
-    /// Verify deniability proof JSON from a proof, proof array, or swap report file.
+    /// Verify deniability proofs from a swap report file.
     VerifyDeniabilityProof {
-        /// Path to proof JSON or a swap report containing `deniability_proofs`.
+        /// Path to a swap report containing `deniability_proofs`.
         #[clap(long, short = 'f')]
         file: PathBuf,
-        /// Fetch the proven outpoint from Bitcoin Core and verify the on-chain output too.
-        #[clap(long)]
-        check_chain: bool,
     },
 }
 
@@ -298,30 +295,13 @@ fn display_offer(wallet: &Wallet, candidate: &MakerOfferCandidate) -> Result<Str
 /// Read deniability proofs from a swap report.
 fn read_deniability_proofs(path: &PathBuf) -> Result<Vec<DeniabilityProof>, TakerError> {
     let content = std::fs::read_to_string(path)?;
-    let value: serde_json::Value = serde_json::from_str(&content)?;
-
-    // First try the normal swap report format.
-    if let Ok(report) = serde_json::from_value::<SwapReportFile>(value.clone()) {
-        return report
-            .deniability_proofs
-            .into_iter()
-            .map(serde_json::from_value)
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(TakerError::from);
-    }
-
-    if let Ok(proof) = serde_json::from_value::<DeniabilityProof>(value.clone()) {
-        return Ok(vec![proof]);
-    }
-
-    if let Ok(proofs) = serde_json::from_value::<Vec<DeniabilityProof>>(value.clone()) {
-        return Ok(proofs);
-    }
-
-    Err(TakerError::General(format!(
-        "No deniability proof found in {}",
-        path.display()
-    )))
+    let report: SwapReportFile = serde_json::from_str(&content)?;
+    report
+        .deniability_proofs
+        .into_iter()
+        .map(serde_json::from_value)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(TakerError::from)
 }
 
 /// Return the on-chain outpoint whose script/value should match the proof.
@@ -378,7 +358,6 @@ fn fetch_chain_output(
 /// Verify every deniability proof found in a file.
 fn verify_deniability_proof_file(
     path: &PathBuf,
-    check_chain: bool,
     rpc_url: &str,
     auth: Auth,
 ) -> Result<(), TakerError> {
@@ -391,28 +370,18 @@ fn verify_deniability_proof_file(
     }
 
     for (i, proof) in proofs.iter().enumerate() {
-        let chain_output = if check_chain {
-            Some(fetch_chain_output(
-                rpc_url,
-                auth.clone(),
-                proven_outpoint(proof),
-            )?)
-        } else {
-            None
-        };
-        verify_proof(proof, chain_output.as_ref()).map_err(|e| {
+        let chain_output = fetch_chain_output(rpc_url, auth.clone(), proven_outpoint(proof))?;
+        verify_proof(proof, &chain_output).map_err(|e| {
             TakerError::General(format!(
                 "Deniability proof {i} ({}) failed verification: {e}",
                 proof.proof_id
             ))
         })?;
         println!(
-            "proof {i}: ok | chain={} | id={} | swap_id={} | role={:?} | direction={:?} | protocol={:?} | outgoing_swapcoin={}",
-            if check_chain { "checked" } else { "not checked" },
+            "proof {i}: ok | chain=checked | id={} | swap_id={} | role={:?} | protocol={:?} | outgoing_swapcoin={}",
             proof.proof_id,
             proof.swap_id,
             proof.role,
-            proof.direction,
             proof.protocol,
             proof
                 .outgoing_swapcoin
@@ -440,9 +409,9 @@ fn main() -> Result<(), TakerError> {
     );
 
     // This command only needs a report/proof file, so it runs before wallet init.
-    if let Commands::VerifyDeniabilityProof { file, check_chain } = &args.command {
+    if let Commands::VerifyDeniabilityProof { file } = &args.command {
         let auth = Auth::UserPass(args.auth.0.clone(), args.auth.1.clone());
-        verify_deniability_proof_file(file, *check_chain, &args.rpc, auth)?;
+        verify_deniability_proof_file(file, &args.rpc, auth)?;
         return Ok(());
     }
 

@@ -402,7 +402,7 @@ fn process_taproot_handover<M: Maker>(
         maker.save_incoming_swapcoin(incoming)?;
     }
 
-    // Refresh the proof before writing the final report.
+    // Refresh proofs before writing the final report.
     save_linked_taproot_deniability_proofs(maker, state);
 
     // Mark swap as completed — sweep happens in the server loop after the
@@ -443,7 +443,7 @@ fn process_taproot_handover<M: Maker>(
     )))
 }
 
-/// Save Taproot maker proofs for every incoming/outgoing pair.
+/// Build and store linked Taproot maker proofs for all current pairs.
 fn save_linked_taproot_deniability_proofs<M: Maker>(maker: &Arc<M>, state: &ConnectionState) {
     for (incoming, outgoing) in state
         .incoming_swapcoins
