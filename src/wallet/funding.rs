@@ -287,6 +287,26 @@ impl Wallet {
 
         self.rpc.unlock_unspent_all()?;
 
+        #[cfg(debug_assertions)]
+        if let Ok(funding) = &result {
+            log::debug!(
+                "[FUNDING_STATE] Source: wallet::funding::create_funding_txes_random_amounts | Wallet: {} | Amount: {} | Destinations: {} | FundingTxs: {} | MinerFee: {} | ManualUtxos: {} | ExcludedUtxos: {}",
+                self.get_name(),
+                coinswap_amount.to_sat(),
+                destinations.len(),
+                funding.funding_txes.len(),
+                funding.total_miner_fee,
+                manually_selected_outpoints
+                    .as_ref()
+                    .map(Vec::len)
+                    .unwrap_or_default(),
+                excluded_outpoints
+                    .as_ref()
+                    .map(Vec::len)
+                    .unwrap_or_default()
+            );
+        }
+
         result
     }
 }

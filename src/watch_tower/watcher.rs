@@ -131,6 +131,14 @@ impl<R: Role> Watcher<R> {
         if let Err(e) = rest_backend.process_mempool(&mut self.registry) {
             log::warn!("Failed to process mempool on startup: {}", e);
         }
+        #[cfg(debug_assertions)]
+        log::debug!(
+            "[WATCH_STATE] Source: watch_tower::watcher::run | Action: watcher_ready | Network: {} | ActiveWatches: {} | Checkpoint: {:?} | Discovery: {}",
+            network,
+            self.registry.list_watches().len(),
+            self.registry.load_checkpoint().map(|cp| cp.height),
+            R::RUN_DISCOVERY
+        );
 
         let discovery_shutdown = Arc::new(AtomicBool::new(false));
         let registry = self.registry.clone();

@@ -175,6 +175,21 @@ impl MakerSwapTracker {
             MakerSwapTrackerData::default()
         };
 
+        #[cfg(debug_assertions)]
+        log::debug!(
+            "[SWAP_TRACKER] Source: maker::swap_tracker::load_or_create | Role: Maker | Action: load | Records: {} | Incomplete: {}",
+            data.swaps.len(),
+            data.swaps
+                .values()
+                .filter(|r| {
+                    !matches!(
+                        r.phase,
+                        MakerSwapPhase::Recovered | MakerSwapPhase::Completed
+                    ) || r.recovery.phase < MakerRecoveryPhase::CleanedUp
+                })
+                .count()
+        );
+
         Ok(Self { path, data })
     }
 
@@ -201,6 +216,22 @@ impl MakerSwapTracker {
 
     /// Upsert a swap record and flush to disk.
     pub fn save_record(&mut self, record: &MakerSwapRecord) -> Result<(), MakerError> {
+        #[cfg(debug_assertions)]
+        if self.data.swaps.get(&record.swap_id).is_none_or(|old| {
+            old.phase != record.phase
+                || old.recovery.phase != record.recovery.phase
+                || old.funding_broadcast != record.funding_broadcast
+        }) {
+            log::debug!(
+                "[SWAP_TRACKER] Source: maker::swap_tracker::save_record | Role: Maker | SwapID: {} | Phase: {} | Recovery: {} | FundingBroadcast: {} | Incoming: {} | Outgoing: {}",
+                record.swap_id,
+                record.phase,
+                record.recovery.phase,
+                record.funding_broadcast,
+                record.incoming_count,
+                record.outgoing_count
+            );
+        }
         self.data
             .swaps
             .insert(record.swap_id.clone(), record.clone());

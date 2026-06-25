@@ -151,6 +151,14 @@ fn process_proof_of_funding<M: Maker>(
     );
 
     let hashvalue = maker.verify_proof_of_funding(&pof)?;
+    #[cfg(debug_assertions)]
+    log::debug!(
+        "[CONTRACT_STATE] Role: Maker | Protocol: Legacy | SwapID: {} | ProofFundingTxs: {} | NextHopKeys: {} | RefundLocktime: {} | Status: verified",
+        pof.id,
+        pof.confirmed_funding_txes.len(),
+        pof.next_coinswap_info.len(),
+        pof.refund_locktime
+    );
 
     log::info!(
         "[{}] Verified proof of funding, hashvalue: {:?}",
@@ -442,6 +450,13 @@ fn process_resp_contract_sigs_for_recvr_and_sender<M: Maker>(
         &state.outgoing_swapcoins,
         maker.network_port(),
     )?;
+    #[cfg(debug_assertions)]
+    log::debug!(
+        "[CONTRACT_STATE] Role: Maker | Protocol: Legacy | SwapID: {} | ReceiverSigs: {} | SenderSigs: {} | Status: verified",
+        resp.id,
+        resp.receivers_sigs.len(),
+        resp.senders_sigs.len()
+    );
 
     for (sig, incoming) in resp
         .receivers_sigs
@@ -449,10 +464,6 @@ fn process_resp_contract_sigs_for_recvr_and_sender<M: Maker>(
         .zip(state.incoming_swapcoins.iter_mut())
     {
         incoming.others_contract_sig = Some(*sig);
-        log::debug!(
-            "[{}] Stored receiver signature in incoming swapcoin",
-            maker.network_port()
-        );
     }
 
     for (sig, outgoing) in resp
@@ -461,10 +472,6 @@ fn process_resp_contract_sigs_for_recvr_and_sender<M: Maker>(
         .zip(state.outgoing_swapcoins.iter_mut())
     {
         outgoing.others_contract_sig = Some(*sig);
-        log::debug!(
-            "[{}] Stored sender signature in outgoing swapcoin",
-            maker.network_port()
-        );
     }
 
     #[cfg(feature = "integration-test")]
@@ -731,6 +738,13 @@ fn process_legacy_handover<M: Maker>(
     // Mark swap as completed — sweep happens in the server loop after the
     // response is delivered to the taker.
     state.phase = SwapPhase::Completed;
+    #[cfg(debug_assertions)]
+    log::debug!(
+        "[SWAP_STATE] Source: maker::legacy_handlers::process_legacy_handover | SwapID: {} | Protocol: Legacy | Phase: Completed | Incoming: {} | Outgoing: {}",
+        handover.id,
+        state.incoming_swapcoins.len(),
+        state.outgoing_swapcoins.len()
+    );
 
     // Generate and save maker success report
     emit_maker_success_report(maker, state, &handover.id);

@@ -1110,6 +1110,23 @@ impl MakerTrait for MakerServer {
         }
 
         let swap_state = swaps.entry(swap_id.to_string()).or_default();
+        #[cfg(debug_assertions)]
+        if swap_state.phase != state.phase
+            || swap_state.funding_broadcast != state.funding_broadcast
+            || swap_state.incoming_swapcoins.len() != state.incoming_swapcoins.len()
+            || swap_state.outgoing_swapcoins.len() != state.outgoing_swapcoins.len()
+            || swap_state.reserve_utxo.len() != state.reserve_utxo.len()
+        {
+            log::debug!(
+                "[SWAP_STATE] Source: maker::api::store_connection_state | Role: Maker | SwapID: {} | Phase: {:?} | FundingBroadcast: {} | Incoming: {} | Outgoing: {} | ReservedUtxos: {}",
+                swap_id,
+                state.phase,
+                state.funding_broadcast,
+                state.incoming_swapcoins.len(),
+                state.outgoing_swapcoins.len(),
+                state.reserve_utxo.len()
+            );
+        }
         swap_state.swap_amount = state.swap_amount;
         swap_state.timelock = state.timelock;
         swap_state.protocol = state.protocol;

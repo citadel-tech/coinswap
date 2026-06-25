@@ -154,6 +154,13 @@ pub fn process_transaction(tx: &Transaction, registry: &mut FileRegistry, in_blo
                 watch_request.spent_tx = Some(tx.clone());
                 watch_request.in_block = in_block;
                 registry.upsert_watch(&watch_request);
+                #[cfg(debug_assertions)]
+                log::debug!(
+                    "[WATCH_STATE] Source: watch_tower::utils::process_transaction | Action: watched_outpoint_spent | Outpoint: {} | SpendingTxid: {} | Confirmed: {}",
+                    outpoint,
+                    tx.compute_txid(),
+                    in_block
+                );
             }
         }
     }

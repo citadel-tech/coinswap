@@ -119,6 +119,14 @@ pub struct MakerOfferCandidate {
 
 impl MakerOfferCandidate {
     fn mark_success(&mut self, offer: Offer, protocol: MakerProtocol, now_ts: u64) {
+        #[cfg(debug_assertions)]
+        if self.state != MakerState::Good {
+            log::debug!(
+                "[MAKER_STATE] Source: taker::offers::MakerOfferCandidate::mark_success | Address: {} | State: {:?} -> Good",
+                self.address,
+                self.state
+            );
+        }
         self.fidelity_outpoint = Some(offer.fidelity.bond.outpoint());
         self.offer = Some(offer);
         self.protocol = Some(protocol);
@@ -132,14 +140,25 @@ impl MakerOfferCandidate {
         let base = self.next_offer_check_ts.unwrap_or(now_ts).max(now_ts);
         self.next_offer_check_ts = Some(base.saturating_add(step_secs));
 
-        self.state = match self.state {
+        let previous_state = self.state.clone();
+        self.state = match &previous_state {
             MakerState::Good => MakerState::Unresponsive { retries: 1 },
-            MakerState::Unresponsive { retries } if retries < 10 => MakerState::Unresponsive {
-                retries: retries + 1,
+            MakerState::Unresponsive { retries } if *retries < 10 => MakerState::Unresponsive {
+                retries: *retries + 1,
             },
             MakerState::Unresponsive { .. } => MakerState::Bad,
             MakerState::Bad => MakerState::Bad,
         };
+        #[cfg(debug_assertions)]
+        if previous_state != self.state {
+            log::debug!(
+                "[MAKER_STATE] Source: taker::offers::MakerOfferCandidate::mark_failure | Address: {} | State: {:?} -> {:?} | NextCheck: {:?}",
+                self.address,
+                previous_state,
+                self.state,
+                self.next_offer_check_ts
+            );
+        }
     }
 
     fn as_offer_and_address(&self) -> Option<OfferAndAddress> {
@@ -859,6 +878,14 @@ impl OfferBook {
 
     fn mark_bad(&mut self, address: &MakerAddress) {
         if let Some(m) = self.makers.iter_mut().find(|m| &m.address == address) {
+            #[cfg(debug_assertions)]
+            if m.state != MakerState::Bad {
+                log::debug!(
+                    "[MAKER_STATE] Source: taker::offers::OfferBook::mark_bad | Address: {} | State: {:?} -> Bad",
+                    m.address,
+                    m.state
+                );
+            }
             m.state = MakerState::Bad;
         }
     }

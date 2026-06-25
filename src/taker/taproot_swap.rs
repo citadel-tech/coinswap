@@ -465,6 +465,16 @@ impl Taker {
                         .taproot_exchange_mut()?
                         .maker_funding_confirmed = true;
                     self.persist_progress()?;
+                    #[cfg(debug_assertions)]
+                    log::debug!(
+                        "[TAPROOT_HOP] Source: taker::taproot_swap::exchange_taproot | SwapID: {} | MakerIndex: {} | ContractTxs: {} | RequiredConfirms: {} | IncomingTotal: {} | WatchOnlyTotal: {}",
+                        self.swap_state()?.id,
+                        i,
+                        maker_funding_txids.len(),
+                        required_confirms,
+                        self.swap_state()?.incoming_swapcoins.len(),
+                        self.swap_state()?.watchonly_swapcoins.len()
+                    );
                 }
                 _ => {
                     return Err(TakerError::General(format!(
@@ -653,6 +663,13 @@ impl Taker {
             &swap_id,
         )?;
 
+        #[cfg(debug_assertions)]
+        log::debug!(
+           "[FUNDING_STATE] Source: taker::taproot_swap::funding_broadcast | SwapID: {} | Protocol: Taproot | ContractTxs: {} | RequiredConfirms: {} | Status: confirmed",
+            swap_id,
+            contract_txids.len(),
+            required_confirms
+        );
         log::info!("Contract transactions broadcast and confirmed");
         Ok(stream)
     }
