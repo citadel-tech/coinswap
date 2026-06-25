@@ -97,7 +97,7 @@ impl FileRegistry {
         #[cfg(debug_assertions)]
         if let Ok(registry) = data.lock() {
             log::debug!(
-                "[WATCH_STATE] Action: load_registry | Watches: {} | SpentWatches: {} | FidelityRecords: {} | Checkpoint: {:?}",
+                "[WATCH_STATE] Source: watch_tower::registry_storage::load | Action: load_registry | Watches: {} | SpentWatches: {} | FidelityRecords: {} | Checkpoint: {:?}",
                 registry.watches.len(),
                 registry
                     .watches
@@ -150,7 +150,7 @@ impl FileRegistry {
             |data| match data.watches.insert(req.outpoint, req.clone()) {
                 #[cfg(debug_assertions)]
                 None => log::debug!(
-                    "[WATCH_STATE] Action: register | Outpoint: {} | ActiveWatches: {}",
+                    "[WATCH_STATE] Source: watch_tower::registry_storage::upsert_watch | Action: register | Outpoint: {} | ActiveWatches: {}",
                     req.outpoint,
                     data.watches.len()
                 ),
@@ -165,7 +165,7 @@ impl FileRegistry {
         self.with_data(|data| match data.watches.remove(&outpoint) {
             #[cfg(debug_assertions)]
             Some(_) => log::debug!(
-                "[WATCH_STATE] Action: unregister | Outpoint: {} | ActiveWatches: {}",
+                "[WATCH_STATE] Source: watch_tower::registry_storage::remove_watch | Action: unregister | Outpoint: {} | ActiveWatches: {}",
                 outpoint,
                 data.watches.len()
             ),

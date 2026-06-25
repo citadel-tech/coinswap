@@ -695,7 +695,7 @@ impl Taker {
 
             #[cfg(debug_assertions)]
             log::debug!(
-                "[LEGACY_HOP] SwapID: {} | MakerIndex: {} | FundingTxs: {} | ConfirmHeight: {} | ReceiverContracts: {} | SenderContracts: {} | WatchOnlyTotal: {}",
+                "[LEGACY_HOP] Source: taker::legacy_swap::exchange_legacy | SwapID: {} | MakerIndex: {} | FundingTxs: {} | ConfirmHeight: {} | ReceiverContracts: {} | SenderContracts: {} | WatchOnlyTotal: {}",
                 swap_id,
                 maker_idx,
                 maker_funding_txids.len(),

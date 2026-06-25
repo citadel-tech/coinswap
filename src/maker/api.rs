@@ -1115,7 +1115,7 @@ impl MakerTrait for MakerServer {
             || swap_state.reserve_utxo.len() != state.reserve_utxo.len()
         {
             log::debug!(
-                "[SWAP_STATE] Role: Maker | SwapID: {} | Phase: {:?} | FundingBroadcast: {} | Incoming: {} | Outgoing: {} | ReservedUtxos: {}",
+                "[SWAP_STATE] Source: maker::api::store_connection_state | Role: Maker | SwapID: {} | Phase: {:?} | FundingBroadcast: {} | Incoming: {} | Outgoing: {} | ReservedUtxos: {}",
                 swap_id,
                 state.phase,
                 state.funding_broadcast,

@@ -430,7 +430,7 @@ impl SwapTracker {
 
         #[cfg(debug_assertions)]
         log::debug!(
-            "[SWAP_TRACKER] Role: Taker | Action: load | Records: {} | Incomplete: {}",
+            "[SWAP_TRACKER] Source: taker::swap_tracker::load_or_create | Role: Taker | Action: load | Records: {} | Incomplete: {}",
             data.swaps.len(),
             data.swaps
                 .values()
@@ -471,7 +471,7 @@ impl SwapTracker {
                 || old.failed_at_phase != record.failed_at_phase
         }) {
             log::debug!(
-                "[SWAP_TRACKER] Role: Taker | SwapID: {} | Phase: {} | Recovery: {} | FailedAt: {:?} | Incoming: {} | Outgoing: {} | WatchOnly: {}",
+                "[SWAP_TRACKER] Source: taker::swap_tracker::save_record | Role: Taker | SwapID: {} | Phase: {} | Recovery: {} | FailedAt: {:?} | Incoming: {} | Outgoing: {} | WatchOnly: {}",
                 record.swap_id,
                 record.phase,
                 record.recovery.phase,

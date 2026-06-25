@@ -1648,7 +1648,7 @@ impl Wallet {
         #[cfg(debug_assertions)]
         if !new_entries.is_empty() || !to_remove.is_empty() {
             log::debug!(
-                "[UTXO_STATE] Wallet: {} | Added: {} | Removed: {} | CachedUtxos: {} -> {} | IncomingSwapcoins: {} | OutgoingSwapcoins: {}",
+                "[UTXO_STATE] Source: wallet::api::update_utxo_cache | Wallet: {} | Added: {} | Removed: {} | CachedUtxos: {} -> {} | IncomingSwapcoins: {} | OutgoingSwapcoins: {}",
                 self.store.file_name,
                 new_entries.len(),
                 to_remove.len(),
@@ -2227,7 +2227,7 @@ impl Wallet {
                 );
                         #[cfg(debug_assertions)]
                         log::debug!(
-                            "[COIN_SELECTION] Wallet: {} | Type: {} | Inputs: {} | Selected: {} | TargetWithFee: {} | Strategy: grouped",
+                            "[COIN_SELECTION] Source: wallet::api::coin_select | Wallet: {} | Type: {} | Inputs: {} | Selected: {} | TargetWithFee: {} | Strategy: grouped",
                             self.store.file_name,
                             utxo_type,
                             result_utxos.len(),
@@ -2302,7 +2302,7 @@ impl Wallet {
                     log::info!("Selected {} {utxo_type} UTXOs", final_selection.len());
                     #[cfg(debug_assertions)]
                     log::debug!(
-                        "[COIN_SELECTION] Wallet: {} | Type: {} | Inputs: {} | Selected: {} | TargetWithFee: {} | Strategy: coinselect",
+                        "[COIN_SELECTION] Source: wallet::api::coin_select | Wallet: {} | Type: {} | Inputs: {} | Selected: {} | TargetWithFee: {} | Strategy: coinselect",
                         self.store.file_name,
                         utxo_type,
                         final_selection.len(),

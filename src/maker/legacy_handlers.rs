@@ -708,7 +708,7 @@ fn process_legacy_handover<M: Maker>(
     state.phase = SwapPhase::Completed;
     #[cfg(debug_assertions)]
     log::debug!(
-        "[SWAP_STATE] SwapID: {} | Protocol: Legacy | Phase: Completed | Incoming: {} | Outgoing: {}",
+        "[SWAP_STATE] Source: maker::legacy_handlers::process_legacy_handover | SwapID: {} | Protocol: Legacy | Phase: Completed | Incoming: {} | Outgoing: {}",
         handover.id,
         state.incoming_swapcoins.len(),
         state.outgoing_swapcoins.len()

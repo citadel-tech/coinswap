@@ -122,7 +122,7 @@ impl MakerOfferCandidate {
         #[cfg(debug_assertions)]
         if self.state != MakerState::Good {
             log::debug!(
-                "[MAKER_STATE] Address: {} | State: {:?} -> Good",
+                "[MAKER_STATE] Source: taker::offers::MakerOfferCandidate::mark_success | Address: {} | State: {:?} -> Good",
                 self.address,
                 self.state
             );
@@ -152,7 +152,7 @@ impl MakerOfferCandidate {
         #[cfg(debug_assertions)]
         if previous_state != self.state {
             log::debug!(
-                "[MAKER_STATE] Address: {} | State: {:?} -> {:?} | NextCheck: {:?}",
+                "[MAKER_STATE] Source: taker::offers::MakerOfferCandidate::mark_failure | Address: {} | State: {:?} -> {:?} | NextCheck: {:?}",
                 self.address,
                 previous_state,
                 self.state,
@@ -879,7 +879,7 @@ impl OfferBook {
             #[cfg(debug_assertions)]
             if m.state != MakerState::Bad {
                 log::debug!(
-                    "[MAKER_STATE] Address: {} | State: {:?} -> Bad",
+                    "[MAKER_STATE] Source: taker::offers::OfferBook::mark_bad | Address: {} | State: {:?} -> Bad",
                     m.address,
                     m.state
                 );

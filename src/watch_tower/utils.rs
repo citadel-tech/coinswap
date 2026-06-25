@@ -160,7 +160,7 @@ pub fn process_transaction(tx: &Transaction, registry: &mut FileRegistry, in_blo
                 registry.upsert_watch(&watch_request);
                 #[cfg(debug_assertions)]
                 log::debug!(
-                    "[WATCH_STATE] Action: watched_outpoint_spent | Outpoint: {} | SpendingTxid: {} | Confirmed: {}",
+                    "[WATCH_STATE] Source: watch_tower::utils::process_transaction | Action: watched_outpoint_spent | Outpoint: {} | SpendingTxid: {} | Confirmed: {}",
                     outpoint,
                     tx.compute_txid(),
                     in_block

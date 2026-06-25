@@ -459,7 +459,7 @@ impl Taker {
                     self.persist_progress()?;
                     #[cfg(debug_assertions)]
                     log::debug!(
-                        "[TAPROOT_HOP] SwapID: {} | MakerIndex: {} | ContractTxs: {} | RequiredConfirms: {} | IncomingTotal: {} | WatchOnlyTotal: {}",
+                        "[TAPROOT_HOP] Source: taker::taproot_swap::exchange_taproot | SwapID: {} | MakerIndex: {} | ContractTxs: {} | RequiredConfirms: {} | IncomingTotal: {} | WatchOnlyTotal: {}",
                         self.swap_state()?.id,
                         i,
                         maker_funding_txids.len(),
@@ -656,7 +656,7 @@ impl Taker {
 
         #[cfg(debug_assertions)]
         log::debug!(
-            "[FUNDING_STATE] SwapID: {} | Protocol: Taproot | ContractTxs: {} | RequiredConfirms: {} | Status: confirmed",
+           "[FUNDING_STATE] Source: taker::taproot_swap::funding_broadcast | SwapID: {} | Protocol: Taproot | ContractTxs: {} | RequiredConfirms: {} | Status: confirmed",
             swap_id,
             contract_txids.len(),
             required_confirms

@@ -418,7 +418,7 @@ fn process_taproot_handover<M: Maker>(
     state.phase = SwapPhase::Completed;
     #[cfg(debug_assertions)]
     log::debug!(
-        "[SWAP_STATE] SwapID: {} | Protocol: Taproot | Phase: Completed | Incoming: {} | Outgoing: {}",
+        "[SWAP_STATE] Source: maker::taproot_handlers::process_taproot_handover | SwapID: {} | Protocol: Taproot | Phase: Completed | Incoming: {} | Outgoing: {}",
         handover.id,
         state.incoming_swapcoins.len(),
         state.outgoing_swapcoins.len()

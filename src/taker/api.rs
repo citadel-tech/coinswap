@@ -1204,7 +1204,7 @@ impl Taker {
         swap.spare_makers = spares;
         #[cfg(debug_assertions)]
         log::debug!(
-            "[SWAP_ROUTE] SwapID: {} | Protocol: {:?} | SelectedMakers: {} | SpareMakers: {} | Amount: {}",
+            "[SWAP_ROUTE] Source: taker::api::discover_makers | SwapID: {} | Protocol: {:?} | SelectedMakers: {} | SpareMakers: {} | Amount: {}",
             swap.id,
             swap.params.protocol,
             swap.makers.len(),
@@ -1289,7 +1289,7 @@ impl Taker {
 
         #[cfg(debug_assertions)]
         log::debug!(
-            "[SWAP_ROUTE] SwapID: {} | NegotiatedMakers: {} | Protocol: {:?} | ReferenceHeight: {} | TxCount: {}",
+            "[SWAP_ROUTE] Source: taker::api::negotiate_swap_details | SwapID: {} | NegotiatedMakers: {} | Protocol: {:?} | ReferenceHeight: {} | TxCount: {}",
             swap_id,
             maker_count,
             protocol,
@@ -1525,7 +1525,7 @@ impl Taker {
         )?;
         #[cfg(debug_assertions)]
         log::debug!(
-            "[SWAP_ROUTE] SwapID: {} | Action: substitute_maker | MakerIndex: {} | Address: {} | ReferenceHeight: {}",
+            "[SWAP_ROUTE] Source: taker::api::substitute_and_negotiate_spare | SwapID: {} | Action: substitute_maker | MakerIndex: {} | Address: {} | ReferenceHeight: {}",
             swap_id,
             target_idx,
             self.swap_state()?.makers[target_idx].address,
@@ -1549,7 +1549,7 @@ impl Taker {
             let old_keys = wallet.outgoing_keys_for_swap(&swap_id);
             #[cfg(debug_assertions)]
             log::debug!(
-                "[FUNDING_STATE] SwapID: {} | Action: reset_after_substitution | OutgoingSwapcoinsRemoved: {}",
+                "[FUNDING_STATE] Source: taker::api::funding_reinitialize | SwapID: {} | Action: reset_after_substitution | OutgoingSwapcoinsRemoved: {}",
                 swap_id,
                 old_keys.len()
             );
@@ -1668,7 +1668,7 @@ impl Taker {
 
         #[cfg(debug_assertions)]
         log::debug!(
-            "[FUNDING_STATE] SwapID: {} | Protocol: {:?} | OutgoingSwapcoins: {} | SendAmount: {} | ManualUtxos: {}",
+            "[FUNDING_STATE] Source: taker::api::funding_initialize | SwapID: {} | Protocol: {:?} | OutgoingSwapcoins: {} | SendAmount: {} | ManualUtxos: {}",
             swap.id,
             protocol,
             num_swapcoins,
@@ -2370,7 +2370,7 @@ impl Taker {
 
         #[cfg(debug_assertions)]
         log::debug!(
-            "[SWAP_STATE] SwapID: {} | Action: clear_active_for_recovery",
+            "[SWAP_STATE] Source: taker::api::recover_active_swap | SwapID: {} | Action: clear_active_for_recovery",
             swap_id
         );
         self.ongoing_swap = None;

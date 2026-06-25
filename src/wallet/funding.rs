@@ -290,7 +290,7 @@ impl Wallet {
         #[cfg(debug_assertions)]
         if let Ok(funding) = &result {
             log::debug!(
-                "[FUNDING_STATE] Wallet: {} | Amount: {} | Destinations: {} | FundingTxs: {} | MinerFee: {} | ManualUtxos: {} | ExcludedUtxos: {}",
+                "[FUNDING_STATE] Source: wallet::funding::create_funding_txes_random_amounts | Wallet: {} | Amount: {} | Destinations: {} | FundingTxs: {} | MinerFee: {} | ManualUtxos: {} | ExcludedUtxos: {}",
                 self.get_name(),
                 coinswap_amount.to_sat(),
                 destinations.len(),

@@ -135,7 +135,7 @@ impl<R: Role> Watcher<R> {
         }
         #[cfg(debug_assertions)]
         log::debug!(
-            "[WATCH_STATE] Action: watcher_ready | Network: {} | ActiveWatches: {} | Checkpoint: {:?} | Discovery: {}",
+            "[WATCH_STATE] Source: watch_tower::watcher::run | Action: watcher_ready | Network: {} | ActiveWatches: {} | Checkpoint: {:?} | Discovery: {}",
             network,
             self.registry.list_watches().len(),
             self.registry.load_checkpoint().map(|cp| cp.height),

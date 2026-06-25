@@ -468,7 +468,7 @@ impl BreachDetector {
             guard.extend_from_slice(sentinels);
             #[cfg(debug_assertions)]
             log::debug!(
-                "[WATCH_STATE] Action: register_breach_sentinels | Added: {} | Total: {}",
+                "[WATCH_STATE] Source: taker::background_services::add_sentinels | Action: register_breach_sentinels | Added: {} | Total: {}",
                 sentinels.len(),
                 guard.len()
             );

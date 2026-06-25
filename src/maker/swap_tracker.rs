@@ -177,7 +177,7 @@ impl MakerSwapTracker {
 
         #[cfg(debug_assertions)]
         log::debug!(
-            "[SWAP_TRACKER] Role: Maker | Action: load | Records: {} | Incomplete: {}",
+            "[SWAP_TRACKER] Source: maker::swap_tracker::load_or_create | Role: Maker | Action: load | Records: {} | Incomplete: {}",
             data.swaps.len(),
             data.swaps
                 .values()
@@ -224,7 +224,7 @@ impl MakerSwapTracker {
                 || old.funding_broadcast != record.funding_broadcast
         }) {
             log::debug!(
-                "[SWAP_TRACKER] Role: Maker | SwapID: {} | Phase: {} | Recovery: {} | FundingBroadcast: {} | Incoming: {} | Outgoing: {}",
+                "[SWAP_TRACKER] Source: maker::swap_tracker::save_record | Role: Maker | SwapID: {} | Phase: {} | Recovery: {} | FundingBroadcast: {} | Incoming: {} | Outgoing: {}",
                 record.swap_id,
                 record.phase,
                 record.recovery.phase,
