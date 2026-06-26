@@ -106,10 +106,10 @@ fn parse_fidelity_op_return(data: &[u8]) -> Option<FidelityAnnouncement> {
 
 /// Process a transaction for fidelity OP_RETURN announcement.
 pub fn process_fidelity(tx: &Transaction) -> Option<FidelityAnnouncement> {
-    // Fidelity txs must be timelocked
-    if tx.lock_time == LockTime::Blocks(Height::ZERO) {
-        return None;
-    }
+    let locktime_height = match tx.lock_time {
+        LockTime::Blocks(height) if height != Height::ZERO => height.to_consensus_u32(),
+        _ => return None,
+    };
 
     // Expect bond + OP_RETURN (+ change)
     if !(2..=5).contains(&tx.output.len()) {
@@ -119,6 +119,11 @@ pub fn process_fidelity(tx: &Transaction) -> Option<FidelityAnnouncement> {
     for txout in &tx.output {
         if let Some(data) = extract_op_return_data(txout.script_pubkey.as_bytes()) {
             if let Some(ann) = parse_fidelity_op_return(data) {
+                // QA: The registry must only retain maker addresses whose advertised
+                // expiry is actually enforced by the fidelity transaction locktime.
+                if ann.expires_at_height != locktime_height {
+                    return None;
+                }
                 return Some(ann);
             }
         }
