@@ -39,7 +39,10 @@ use crate::{
         },
         contract::calculate_pubkey_from_nonce,
     },
-    utill::{check_tor_status, estimate_funding_tx_fee_sats, generate_maker_keys, get_taker_dir, Bip324Stream},
+    utill::{
+        check_tor_status, estimate_funding_tx_fee_sats, generate_maker_keys, get_taker_dir,
+        Bip324Stream,
+    },
     wallet::{
         swapcoin::{IncomingSwapCoin, OutgoingSwapCoin, WatchOnlySwapCoin},
         MakerFeeInfo as ReportMakerFeeInfo, RPCConfig, RecoveryOutcome, SwapStatus, TakerReport,
@@ -1360,6 +1363,19 @@ impl Taker {
                     offer.amount_relative_fee_pct,
                     offer.time_relative_fee_pct
                 );
+                if let Some(expected_tweakable_point) = self.swap_state()?.makers[maker_idx]
+                    .offer
+                    .as_ref()
+                    .map(|offer| offer.tweakable_point)
+                {
+                    if offer.tweakable_point != expected_tweakable_point {
+                        return Err(TakerError::General(format!(
+                            "Maker {} changed offer tweakable point: expected {}, got {}",
+                            maker_idx, expected_tweakable_point, offer.tweakable_point,
+                        )));
+                    }
+                }
+
                 Self::validate_offer(&offer, maker_idx, send_amount)?;
                 self.swap_state_mut()?.makers[maker_idx].offer = Some(*offer);
             }
