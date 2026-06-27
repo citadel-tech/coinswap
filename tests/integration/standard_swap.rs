@@ -164,7 +164,7 @@ fn test_standard_coinswap() {
             balances.spendable,
         );
 
-        let expected_regular = [14499833u64, 14500421][i];
+        let expected_regular = [14499831u64, 14500419][i];
         let expected_swap = [499700u64, 499075][i];
         assert_eq!(
             balances.regular.to_sat(),

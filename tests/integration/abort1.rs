@@ -218,7 +218,7 @@ fn taker_abort1() {
             maker_balances.spendable,
         );
 
-        let expected_regular = [14499833u64, 14500421][i];
+        let expected_regular = [14499831u64, 14500419][i];
         let expected_swap = [499400u64, 498775][i];
         assert_eq!(
             maker_balances.regular.to_sat(),
@@ -240,7 +240,7 @@ fn taker_abort1() {
         );
         assert_eq!(maker_balances.fidelity, Amount::from_btc(0.05).unwrap());
 
-        let expected_spendable = [14999233u64, 14999196][i];
+        let expected_spendable = [14999231u64, 14999194][i];
         assert_eq!(
             maker_balances.spendable.to_sat(),
             expected_spendable,

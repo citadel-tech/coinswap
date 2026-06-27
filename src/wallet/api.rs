@@ -53,6 +53,16 @@ use super::{
 const HARDENDED_DERIVATION_P2WPKH: &str = "m/84'/1'/0'";
 /// BIP-86 derivation path for P2TR (Taproot key-path)
 const HARDENDED_DERIVATION_P2TR: &str = "m/86'/1'/0'";
+/// P2WSH ECDSA: 2 sigs/sig+preimage + full redeemscript (~149)
+const LEGACY_CONTRACT_SPEND_VSIZE: u64 = 150;
+/// key-path: one 64B Schnorr sig, no script (~111)
+const TAPROOT_KEYPATH_VSIZE: u64 = 112;
+/// script-path: sig+preimage+script+control_block (~154)
+const TAPROOT_SCRIPTPATH_VSIZE: u64 = 155;
+/// ≈141 + 1 (growing block-height)
+const LEGACY_TIMELOCK_VSIZE: u64 = 142;
+/// ≈138 + 2 (growing block-height)
+const TAPROOT_TIMELOCK_VSIZE: u64 = 140;
 
 /// Represents a Bitcoin wallet with associated functionality and data.
 #[derive(Debug)]
@@ -187,12 +197,9 @@ impl UTXOSpendInfo {
     /// Estimates Witness Size for different types of UTXOs in the context of Coinswap
     pub fn estimate_witness_size(&self) -> usize {
         const P2WPKH_WITNESS_SIZE: usize = 107; // 1 + 72 (sig) + 33 (pubkey) + 1 (count)
-        const P2TR_WITNESS_SIZE: usize = 65; // 1 + 64 (Schnorr sig)
+        const P2TR_WITNESS_SIZE: usize = 66; // 1 (witness items) + 1 (Signature length) + 64 (Schnorr sig)
         const P2WSH_MULTISIG_2OF2_WITNESS_SIZE: usize = 218; //1 + 1 + 72 + 72 + 72
-        const FIDELITY_BOND_WITNESS_SIZE: usize = 115;
-        const TIME_LOCK_CONTRACT_TX_WITNESS_SIZE: usize = 179;
-        const HASH_LOCK_CONTRACT_TX_WITNESS_SIZE: usize = 211;
-
+        const FIDELITY_BOND_WITNESS_SIZE: usize = 115; // 1 (count) + 1 (sig len) + 71 (sig) + 1 (script len) + 40 (script) = ~114
         match self {
             Self::SeedCoin { address_type, .. } | Self::SweptCoin { address_type, .. } => {
                 match address_type {
@@ -203,10 +210,37 @@ impl UTXOSpendInfo {
             Self::IncomingSwapCoin { .. } | Self::OutgoingSwapCoin { .. } => {
                 P2WSH_MULTISIG_2OF2_WITNESS_SIZE
             }
-            Self::TimelockContract { .. } => TIME_LOCK_CONTRACT_TX_WITNESS_SIZE,
-            Self::HashlockContract { .. } => HASH_LOCK_CONTRACT_TX_WITNESS_SIZE,
+            Self::TimelockContract { .. } => 179,
+            Self::HashlockContract { .. } => 211,
             Self::FidelityBondCoin { .. } => FIDELITY_BOND_WITNESS_SIZE,
         }
+    }
+}
+
+/// Spend path of a swap transaction, for protocol-aware vsize estimation.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum SpendKind {
+    /// Incoming swapcoin spend; `cooperative` = key-path/2-of-2 vs hashlock path.
+    ContractSpend { cooperative: bool },
+    /// Timelock recovery of an outgoing swapcoin.
+    Timelock,
+}
+
+/// Returns the estimated vsize (virtual bytes) for cooperative keypath, preimage (hashlock),
+/// and timelock recovery spend transactions only.
+pub(crate) fn contract_and_timelock_vsize(
+    protocol: crate::protocol::ProtocolVersion,
+    kind: SpendKind,
+) -> u64 {
+    use crate::protocol::ProtocolVersion::{Legacy, Taproot};
+    use SpendKind::{ContractSpend, Timelock};
+
+    match (protocol, kind) {
+        (Legacy, ContractSpend { .. }) => LEGACY_CONTRACT_SPEND_VSIZE,
+        (Taproot, ContractSpend { cooperative: true }) => TAPROOT_KEYPATH_VSIZE,
+        (Taproot, ContractSpend { cooperative: false }) => TAPROOT_SCRIPTPATH_VSIZE,
+        (Legacy, Timelock) => LEGACY_TIMELOCK_VSIZE,
+        (Taproot, Timelock) => TAPROOT_TIMELOCK_VSIZE,
     }
 }
 
@@ -900,7 +934,9 @@ impl Wallet {
             .get(contract_vout as usize)
             .ok_or_else(|| WalletError::General("No output in contract tx".to_string()))?;
 
-        let fee = Amount::from_sat((150.0 * fee_rate) as u64);
+        let vsize = contract_and_timelock_vsize(swapcoin.protocol, SpendKind::Timelock);
+
+        let fee = Amount::from_sat((vsize as f64 * fee_rate) as u64);
         let output_amount = contract_output.value.checked_sub(fee).ok_or_else(|| {
             WalletError::General("Insufficient funds for recovery fee".to_string())
         })?;

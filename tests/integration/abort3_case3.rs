@@ -215,7 +215,7 @@ fn maker_abort3_case3() {
     for (i, maker) in makers.iter().enumerate() {
         maker.wallet.write().unwrap().sync_and_save().unwrap();
         let maker_balances = maker.wallet.read().unwrap().get_balances().unwrap();
-        let expected_regular = [14499833u64, 14500421][i];
+        let expected_regular = [14499831u64, 14500419][i];
         let expected_swap = [499700u64, 498775][i];
         assert_eq!(
             maker_balances.regular.to_sat(),
@@ -237,7 +237,7 @@ fn maker_abort3_case3() {
         );
         assert_eq!(maker_balances.fidelity, Amount::from_btc(0.05).unwrap());
 
-        let expected_spendable = [14999533u64, 14999196][i];
+        let expected_spendable = [14999531u64, 14999194][i];
         assert_eq!(
             maker_balances.spendable.to_sat(),
             expected_spendable,

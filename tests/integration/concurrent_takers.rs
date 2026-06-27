@@ -255,7 +255,7 @@ fn test_concurrent_takers_legacy() {
         }
     }
 
-    let expected_maker_spendable = [Amount::from_sat(999533), Amount::from_sat(999496)];
+    let expected_maker_spendable = [Amount::from_sat(999531), Amount::from_sat(999494)];
 
     // Verify maker balances
     for (i, (maker, original_spendable)) in makers.iter().zip(maker_spendable_balance).enumerate() {

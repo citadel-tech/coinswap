@@ -19,7 +19,7 @@ use crate::protocol::{
     },
 };
 
-use super::WalletError;
+use super::{contract_and_timelock_vsize, SpendKind, WalletError};
 
 mod option_scalar_serde {
     use super::*;
@@ -385,8 +385,14 @@ impl IncomingSwapCoin {
             witness: Witness::default(),
         };
 
-        let estimated_vsize = 150u64;
-        let fee = Amount::from_sat((feerate * estimated_vsize as f64) as u64);
+        let vsize = contract_and_timelock_vsize(
+            self.protocol,
+            SpendKind::ContractSpend {
+                cooperative: self.other_privkey.is_some(),
+            },
+        );
+
+        let fee = Amount::from_sat((feerate * vsize as f64) as u64);
         let output_value = input_value
             .checked_sub(fee)
             .ok_or_else(|| WalletError::General("Fee exceeds input value".to_string()))?;
@@ -1169,7 +1175,6 @@ impl OutgoingSwapCoin {
 
             tx.input[0].witness = witness;
         }
-
         Ok(tx)
     }
 }
