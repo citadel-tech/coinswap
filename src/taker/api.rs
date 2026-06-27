@@ -1859,19 +1859,6 @@ impl Taker {
         let mut wallet = self.write_wallet()?;
         if let Some(incoming) = self.swap_state()?.incoming_swapcoins.last() {
             wallet.add_incoming_swapcoin(incoming);
-            let outgoing_outpoint =
-                self.swap_state()?
-                    .outgoing_swapcoins
-                    .first()
-                    .map(|coin| bitcoin::OutPoint {
-                        txid: coin.contract_tx.compute_txid(),
-                        vout: coin.get_contract_output_vout(),
-                    });
-            if incoming.protocol == ProtocolVersion::Taproot {
-                wallet
-                    .add_incoming_deniability_proof(incoming, SwapRole::Taker, outgoing_outpoint)
-                    .map_err(TakerError::Wallet)?;
-            }
         }
 
         wallet.save_to_disk()?;
@@ -2228,7 +2215,7 @@ impl Taker {
             .unwrap_or_default()
             .as_secs();
         let report = TakerReport {
-            status,
+            status: status.clone(),
             swap_id: swap.id.clone(),
             swap_duration_seconds: swap_duration.as_secs_f64(),
             outgoing_amount: swap.params.send_amount.to_sat(),
@@ -2254,27 +2241,27 @@ impl Taker {
             start_timestamp: swap_end_ts.saturating_sub(swap_duration.as_secs()),
         };
 
+        let proof = if status == SwapStatus::Success {
+            swap.incoming_swapcoins.last().and_then(|incoming| {
+                let outgoing_outpoint = swap.outgoing_swapcoins.last().map(|sc| OutPoint {
+                    txid: sc.contract_tx.compute_txid(),
+                    vout: sc.get_contract_output_vout(),
+                });
+                crate::wallet::DeniabilityProof::from_incoming_swapcoin(
+                    incoming,
+                    SwapRole::Taker,
+                    outgoing_outpoint,
+                )
+                .ok()
+            })
+        } else {
+            None
+        };
+
         report.print();
         let data_dir = self.config.data_dir.clone().unwrap_or_else(get_taker_dir);
-        if let Err(e) = report.save_for_wallet(&data_dir, Some(&wallet_file_name)) {
+        if let Err(e) = report.save_for_wallet(&data_dir, Some(&wallet_file_name), proof) {
             log::warn!("Failed to save taker swap report: {:?}", e);
-        }
-        match self.read_wallet() {
-            Ok(wallet) => {
-                let proofs = wallet.list_deniability_proofs(Some(&swap.id));
-                if let Err(e) = crate::wallet::save_deniability_proofs_for_wallet(
-                    &data_dir,
-                    SwapRole::Taker,
-                    Some(&wallet_file_name),
-                    &proofs,
-                ) {
-                    log::warn!("Failed to save taker deniability proofs to report: {:?}", e);
-                }
-            }
-            Err(e) => log::warn!(
-                "Failed to read wallet for deniability proof report: {:?}",
-                e
-            ),
         }
 
         Ok(report)
@@ -2404,6 +2391,18 @@ impl Taker {
             })?;
 
         Ok(())
+    }
+
+    /// Verify all deniability proofs in a swap report file against confirmed chain data.
+    pub fn verify_deniability(
+        &self,
+        report_path: &std::path::Path,
+    ) -> Result<Vec<crate::wallet::deniability::ProofVerifyResult>, std::io::Error> {
+        let wallet = self
+            .wallet
+            .read()
+            .map_err(|e| std::io::Error::other(format!("wallet lock poisoned: {e}")))?;
+        crate::wallet::deniability::verify_deniability(report_path, &wallet.rpc)
     }
 
     // ── CLI helper methods ──────────────────────────────────────────────

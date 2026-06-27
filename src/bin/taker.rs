@@ -1,5 +1,5 @@
 use bitcoin::Amount;
-use bitcoind::bitcoincore_rpc::{Auth, Client, RpcApi};
+use bitcoind::bitcoincore_rpc::Auth;
 use clap::Parser;
 use coinswap::{
     protocol::ProtocolVersion,
@@ -8,10 +8,7 @@ use coinswap::{
         TakerInitConfig,
     },
     utill::{parse_proxy_auth, setup_taker_logger, UTXO},
-    wallet::{
-        verify_proof, AddressType, DeniabilityProof, DeniabilityProofData, RPCConfig,
-        SwapReportFile, Wallet,
-    },
+    wallet::{AddressType, RPCConfig, Wallet},
 };
 use log::LevelFilter;
 use serde_json::{json, to_string_pretty};
@@ -187,12 +184,6 @@ enum Commands {
         #[clap(long, short = 'f')]
         backup_file: String,
     },
-    /// Verify deniability proofs from a swap report file.
-    VerifyDeniabilityProof {
-        /// Path to a swap report containing `deniability_proofs`.
-        #[clap(long, short = 'f')]
-        file: PathBuf,
-    },
 }
 
 fn parse_protocol(s: &str) -> Result<ProtocolVersion, TakerError> {
@@ -292,107 +283,6 @@ fn display_offer(wallet: &Wallet, candidate: &MakerOfferCandidate) -> Result<Str
     ))
 }
 
-/// Read deniability proofs from a swap report.
-fn read_deniability_proofs(path: &PathBuf) -> Result<Vec<DeniabilityProof>, TakerError> {
-    let content = std::fs::read_to_string(path)?;
-    let report: SwapReportFile = serde_json::from_str(&content)?;
-    report
-        .deniability_proofs
-        .into_iter()
-        .map(serde_json::from_value)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(TakerError::from)
-}
-
-/// Return the on-chain outpoint whose script/value should match the proof.
-///
-/// Taproot checks the contract output. Legacy checks the funding output that
-/// the contract transaction spends.
-fn proven_outpoint(proof: &DeniabilityProof) -> bitcoin::OutPoint {
-    match &proof.proof {
-        DeniabilityProofData::Taproot(data) => data.contract_outpoint,
-        DeniabilityProofData::Legacy(data) => data.funding_outpoint,
-    }
-}
-
-/// Fetch the proven output from Bitcoin Core.
-fn fetch_chain_output(
-    rpc_url: &str,
-    auth: Auth,
-    outpoint: bitcoin::OutPoint,
-) -> Result<bitcoin::TxOut, TakerError> {
-    // Accept both `host:port` and full RPC URLs.
-    let rpc_url = if rpc_url.starts_with("http://") || rpc_url.starts_with("https://") {
-        rpc_url.to_string()
-    } else {
-        format!("http://{rpc_url}")
-    };
-    let client = Client::new(&rpc_url, auth)
-        .map_err(|e| TakerError::General(format!("Failed to create Bitcoin RPC client: {e}")))?;
-    // Fetch verbose transaction info so mempool-only transactions are not
-    // treated as chain-verified.
-    let tx_info = client
-        .get_raw_transaction_info(&outpoint.txid, None)
-        .map_err(|e| TakerError::General(format!("Failed to fetch tx {}: {e}", outpoint.txid)))?;
-    let confirmations = tx_info.confirmations.unwrap_or(0);
-    if confirmations == 0 {
-        return Err(TakerError::General(format!(
-            "Transaction {} is not confirmed on-chain",
-            outpoint.txid
-        )));
-    }
-    let tx = client
-        .get_raw_transaction(&outpoint.txid, None)
-        .map_err(|e| TakerError::General(format!("Failed to fetch tx {}: {e}", outpoint.txid)))?;
-    tx.output
-        .get(outpoint.vout as usize)
-        .cloned()
-        .ok_or_else(|| {
-            TakerError::General(format!(
-                "Outpoint vout {} is outside tx {} outputs",
-                outpoint.vout, outpoint.txid
-            ))
-        })
-}
-
-/// Verify every deniability proof found in a file.
-fn verify_deniability_proof_file(
-    path: &PathBuf,
-    rpc_url: &str,
-    auth: Auth,
-) -> Result<(), TakerError> {
-    let proofs = read_deniability_proofs(path)?;
-    if proofs.is_empty() {
-        return Err(TakerError::General(format!(
-            "No deniability proofs found in {}",
-            path.display()
-        )));
-    }
-
-    for (i, proof) in proofs.iter().enumerate() {
-        let chain_output = fetch_chain_output(rpc_url, auth.clone(), proven_outpoint(proof))?;
-        verify_proof(proof, &chain_output).map_err(|e| {
-            TakerError::General(format!(
-                "Deniability proof {i} ({}) failed verification: {e}",
-                proof.proof_id
-            ))
-        })?;
-        println!(
-            "proof {i}: ok | chain=checked | id={} | swap_id={} | role={:?} | protocol={:?} | outgoing_swapcoin={}",
-            proof.proof_id,
-            proof.swap_id,
-            proof.role,
-            proof.protocol,
-            proof
-                .outgoing_swapcoin
-                .map(|outpoint| outpoint.to_string())
-                .unwrap_or_else(|| "null".to_string())
-        );
-    }
-
-    Ok(())
-}
-
 fn main() -> Result<(), TakerError> {
     let args = Cli::parse();
     setup_taker_logger(
@@ -407,13 +297,6 @@ fn main() -> Result<(), TakerError> {
         ),
         args.data_directory.clone(), // default path handled inside the function.
     );
-
-    // This command only needs a report/proof file, so it runs before wallet init.
-    if let Commands::VerifyDeniabilityProof { file } = &args.command {
-        let auth = Auth::UserPass(args.auth.0.clone(), args.auth.1.clone());
-        verify_deniability_proof_file(file, &args.rpc, auth)?;
-        return Ok(());
-    }
 
     let rpc_config = RPCConfig {
         url: args.rpc,
@@ -695,10 +578,6 @@ fn main() -> Result<(), TakerError> {
             Wallet::backup_interactive(&wallet, *encrypt);
         }
         Commands::Restore { .. } => {
-            // Handled above before taker init
-            unreachable!()
-        }
-        Commands::VerifyDeniabilityProof { .. } => {
             // Handled above before taker init
             unreachable!()
         }

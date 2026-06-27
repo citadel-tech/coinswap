@@ -5,11 +5,11 @@
 //! participated in the swap:
 //! `{data_dir}/wallets/{wallet_name}_swap_report.json`.
 //!
-//! The file has three sections:
+//! The file has four sections:
 //! - `taker`   – one entry per taker swap (success or failed)
 //! - `maker`   – one array per maker node, keyed by node name
 //! - `recovery`– one entry per recovery event (hashlock or timelock)
-//! - `deniability_proofs` – proofs saved for completed swaps
+//! - `deniability_proofs` – one proof per completed swap
 
 use serde::{Deserialize, Serialize};
 use std::{
@@ -175,10 +175,16 @@ impl TakerReport {
         &self,
         data_dir: &Path,
         wallet_file_name: Option<&str>,
+        proof: Option<DeniabilityProof>,
     ) -> std::io::Result<()> {
         let report = self.clone();
         let file_path = report_file_path_for_wallet(data_dir, SwapRole::Taker, wallet_file_name);
-        write_to_path(&file_path, |f| f.taker.push(report))
+        write_to_path(&file_path, |f| {
+            f.taker.push(report);
+            if let Some(p) = proof {
+                f.deniability_proofs.push(p);
+            }
+        })
     }
 
     /// Print a human-readable summary to stdout.
@@ -368,6 +374,7 @@ impl MakerReport {
         &self,
         data_dir: &Path,
         wallet_file_name: Option<&str>,
+        proof: Option<DeniabilityProof>,
     ) -> std::io::Result<()> {
         let node_name = data_dir
             .file_name()
@@ -378,6 +385,9 @@ impl MakerReport {
         let file_path = report_file_path_for_wallet(data_dir, SwapRole::Maker, wallet_file_name);
         write_to_path(&file_path, |f| {
             f.maker.entry(node_name).or_default().push(report);
+            if let Some(p) = proof {
+                f.deniability_proofs.push(p);
+            }
         })
     }
 
@@ -553,40 +563,7 @@ pub struct SwapReportFile {
     /// Recovery reports emitted after hashlock or timelock recovery.
     pub recovery: Vec<RecoveryReport>,
     /// Deniability proofs generated for swaps in this wallet.
-    #[serde(default)]
-    pub deniability_proofs: Vec<serde_json::Value>,
-}
-
-/// Append deniability proofs to the wallet report file.
-pub(crate) fn save_deniability_proofs_for_wallet(
-    data_dir: &Path,
-    role: SwapRole,
-    wallet_file_name: Option<&str>,
-    proofs: &[DeniabilityProof],
-) -> std::io::Result<()> {
-    if proofs.is_empty() {
-        return Ok(());
-    }
-    let values = proofs
-        .iter()
-        .map(serde_json::to_value)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(std::io::Error::other)?;
-    let file_path = report_file_path_for_wallet(data_dir, role, wallet_file_name);
-    write_to_path(&file_path, |f| {
-        for value in values {
-            let proof_id = value.get("proof_id").and_then(|id| id.as_str());
-            if let Some(existing) = proof_id.and_then(|id| {
-                f.deniability_proofs.iter().position(|existing| {
-                    existing.get("proof_id").and_then(|v| v.as_str()) == Some(id)
-                })
-            }) {
-                f.deniability_proofs[existing] = value;
-            } else {
-                f.deniability_proofs.push(value);
-            }
-        }
-    })
+    pub deniability_proofs: Vec<DeniabilityProof>,
 }
 
 // ---------------------------------------------------------------------------
@@ -826,7 +803,7 @@ mod tests {
         let report = sample_taker_report();
 
         report
-            .save_for_wallet(&data_dir, Some("alice.wallet"))
+            .save_for_wallet(&data_dir, Some("alice.wallet"), None)
             .unwrap();
 
         let expected_path = data_dir.join("wallets").join("alice_swap_report.json");

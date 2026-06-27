@@ -26,7 +26,7 @@ use crate::{
     utill::{generate_keypair, generate_maker_keys, read_message, send_message, MIN_FEE_RATE},
     wallet::{
         swapcoin::{IncomingSwapCoin, OutgoingSwapCoin, WatchOnlySwapCoin},
-        DeniabilityProof, SwapRole, Wallet, WalletError,
+        Wallet, WalletError,
     },
 };
 
@@ -712,16 +712,12 @@ impl Taker {
             })?;
 
             let secp = Secp256k1::new();
-            for (i, (info, (multisig_privkey, hashlock_privkey))) in last_senders_info
-                .iter()
-                .zip(
-                    multisig_privkeys
-                        .iter()
-                        .cycle()
-                        .zip(hashlock_privkeys.iter().cycle()),
-                )
-                .enumerate()
-            {
+            for (info, (multisig_privkey, hashlock_privkey)) in last_senders_info.iter().zip(
+                multisig_privkeys
+                    .iter()
+                    .cycle()
+                    .zip(hashlock_privkeys.iter().cycle()),
+            ) {
                 // Extract the maker's pubkey from the multisig redeemscript
                 let (pubkey1, pubkey2) =
                     crate::protocol::contract::read_pubkeys_from_multisig_redeemscript(
@@ -747,32 +743,6 @@ impl Taker {
                 );
                 incoming.swap_id = Some(swap_id.clone());
                 incoming.set_preimage(self.swap_state()?.preimage);
-                let outgoing_outpoint =
-                    self.swap_state()?
-                        .outgoing_swapcoins
-                        .get(i)
-                        .and_then(|coin| {
-                            coin.contract_tx
-                                .input
-                                .first()
-                                .map(|input| input.previous_output)
-                        });
-                match DeniabilityProof::from_legacy_incoming_swapcoin(
-                    &incoming,
-                    SwapRole::Taker,
-                    info.funding_tx.clone(),
-                    info.multisig_redeemscript.clone(),
-                    outgoing_outpoint,
-                ) {
-                    Ok(proof) => {
-                        let mut wallet = self.write_wallet()?;
-                        wallet.add_deniability_proof(proof);
-                        wallet.save_to_disk()?;
-                    }
-                    Err(e) => {
-                        log::warn!("Failed to build taker legacy deniability proof: {:?}", e);
-                    }
-                }
                 self.swap_state_mut()?.incoming_swapcoins.push(incoming);
             }
 

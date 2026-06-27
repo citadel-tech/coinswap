@@ -18,10 +18,7 @@ use crate::{
         legacy_messages::{FundingTxInfo, LegacyTakerMessage},
     },
     utill::redeemscript_to_scriptpubkey,
-    wallet::{
-        save_deniability_proofs_for_wallet, swapcoin::IncomingSwapCoin, DeniabilityProof,
-        MakerReport, SwapRole,
-    },
+    wallet::{swapcoin::IncomingSwapCoin, MakerReport},
 };
 
 /// Handle a Legacy protocol message.
@@ -312,44 +309,6 @@ fn process_proof_of_funding<M: Maker>(
 
     state.outgoing_swapcoins = outgoing_swapcoins.clone();
     state.pending_funding_txes = funding_txes.clone();
-
-    // Build legacy proofs while FundingTxInfo is still in scope and the
-    // maker's outgoing side is known.
-    for (i, (incoming, funding_info)) in state
-        .incoming_swapcoins
-        .iter()
-        .zip(pof.confirmed_funding_txes.iter())
-        .enumerate()
-    {
-        let outgoing_outpoint = state.outgoing_swapcoins.get(i).and_then(|coin| {
-            coin.contract_tx
-                .input
-                .first()
-                .map(|input| input.previous_output)
-        });
-        match DeniabilityProof::from_legacy_incoming_swapcoin(
-            incoming,
-            SwapRole::Maker,
-            funding_info.funding_tx.clone(),
-            funding_info.multisig_redeemscript.clone(),
-            outgoing_outpoint,
-        ) {
-            Ok(proof) => {
-                if let Err(e) = maker.save_deniability_proof(proof) {
-                    log::warn!(
-                        "[{}] Failed to save linked legacy deniability proof: {:?}",
-                        maker.network_port(),
-                        e
-                    );
-                }
-            }
-            Err(e) => log::warn!(
-                "[{}] Failed to build linked legacy deniability proof: {:?}",
-                maker.network_port(),
-                e
-            ),
-        }
-    }
 
     let receivers_contract_txs: Vec<bitcoin::Transaction> = state
         .incoming_swapcoins
@@ -817,25 +776,23 @@ fn emit_maker_success_report<M: Maker>(maker: &Arc<M>, state: &ConnectionState, 
         timelock,
         network,
     );
+    let proof = state.incoming_swapcoins.first().and_then(|incoming| {
+        let outgoing_outpoint = state
+            .outgoing_swapcoins
+            .first()
+            .map(|sc| bitcoin::OutPoint {
+                txid: sc.contract_tx.compute_txid(),
+                vout: sc.get_contract_output_vout(),
+            });
+        crate::wallet::DeniabilityProof::from_incoming_swapcoin(
+            incoming,
+            crate::wallet::SwapRole::Maker,
+            outgoing_outpoint,
+        )
+        .ok()
+    });
     report.print();
-    if let Err(e) = report.save_for_wallet(maker.data_dir(), Some(maker.wallet_name())) {
+    if let Err(e) = report.save_for_wallet(maker.data_dir(), Some(maker.wallet_name()), proof) {
         log::warn!("Failed to save maker success report: {:?}", e);
-    }
-    // Copy saved proofs into the final report.
-    match maker.list_deniability_proofs(Some(swap_id)) {
-        Ok(proofs) => {
-            if let Err(e) = save_deniability_proofs_for_wallet(
-                maker.data_dir(),
-                SwapRole::Maker,
-                Some(maker.wallet_name()),
-                &proofs,
-            ) {
-                log::warn!("Failed to save maker deniability proofs to report: {:?}", e);
-            }
-        }
-        Err(e) => log::warn!(
-            "Failed to read maker deniability proofs for report: {:?}",
-            e
-        ),
     }
 }

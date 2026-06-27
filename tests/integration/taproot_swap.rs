@@ -4,18 +4,18 @@
 //! the Taproot protocol with MuSig2 signatures.
 
 use bitcoin::Amount;
-use bitcoind::{bitcoincore_rpc::RpcApi, BitcoinD};
+use bitcoind::BitcoinD;
 use coinswap::{
     maker::{start_server, MakerBehavior},
     protocol::common_messages::ProtocolVersion,
     taker::{SwapParams, TakerBehavior},
-    wallet::{verify_proof, AddressType, DeniabilityProof, DeniabilityProofData},
+    wallet::{verify_deniability, AddressType},
 };
 
 use super::test_framework::*;
 
 use log::{info, warn};
-use std::{fs, sync::atomic::Ordering::Relaxed, thread};
+use std::{sync::atomic::Ordering::Relaxed, thread};
 
 /// Test taproot coinswap
 #[test]
@@ -197,18 +197,6 @@ fn test_taproot_coinswap() {
 
     info!("All taproot swap tests completed successfully!");
 
-    let taker_proofs = taker
-        .get_wallet()
-        .read()
-        .unwrap()
-        .list_deniability_proofs(Some(&summary.swap_id));
-    assert_eq!(
-        taker_proofs.len(),
-        1,
-        "Taker should have generated exactly one Taproot deniability proof for swap {}",
-        summary.swap_id,
-    );
-
     let temp_dir = makers[0]
         .data_dir
         .parent()
@@ -220,19 +208,6 @@ fn test_taproot_coinswap() {
     assert_report_has_deniability_proofs(&taker_report_path, "taproot taker", bitcoind, 1);
 
     for (i, maker) in makers.iter().enumerate() {
-        let maker_proofs = maker
-            .wallet
-            .read()
-            .unwrap()
-            .list_deniability_proofs(Some(&summary.swap_id));
-        assert_eq!(
-            maker_proofs.len(),
-            1,
-            "Maker {} should have generated exactly one Taproot deniability proof for swap {}",
-            i,
-            summary.swap_id
-        );
-
         let maker_report_path = maker
             .data_dir
             .join("wallets")
@@ -255,85 +230,31 @@ fn assert_report_has_deniability_proofs(
     bitcoind: &BitcoinD,
     expected_count: usize,
 ) {
-    let report = fs::read_to_string(report_path).unwrap_or_else(|e| {
-        panic!(
-            "Failed to read {label} report {}: {e}",
-            report_path.display()
-        )
-    });
-    let json: serde_json::Value = serde_json::from_str(&report).unwrap_or_else(|e| {
-        panic!(
-            "Failed to parse {label} report {}: {e}",
-            report_path.display()
-        )
-    });
-    let proofs = json
-        .get("deniability_proofs")
-        .and_then(|v| v.as_array())
-        .unwrap_or_else(|| {
-            panic!(
-                "{label} report is missing deniability_proofs at {}",
-                report_path.display()
-            )
-        });
-    let proof_count = proofs.len();
+    let results = verify_deniability(report_path, &bitcoind.client)
+        .unwrap_or_else(|e| panic!("Failed to verify {} deniability proofs: {}", label, e));
     assert_eq!(
-        proof_count,
+        results.len(),
         expected_count,
-        "{label} report should contain {expected_count} deniability proof(s) at {}",
+        "{} report should contain {} deniability proof(s) at {}",
+        label,
+        expected_count,
         report_path.display()
     );
-    for (i, proof_value) in proofs.iter().enumerate() {
-        let proof: DeniabilityProof = serde_json::from_value(proof_value.clone())
-            .unwrap_or_else(|e| panic!("{} report proof {} should deserialize: {}", label, i, e));
+    for (i, (proof, result)) in results.iter().enumerate() {
         assert!(
             proof.outgoing_swapcoin.is_some(),
-            "{label} report proof {i} should link to an outgoing swapcoin at {}",
-            report_path.display()
+            "{} proof {} should link to an outgoing swapcoin",
+            label,
+            i
         );
-        let chain_output = fetch_proven_chain_output(&proof, bitcoind);
-        verify_proof(&proof, &chain_output).unwrap_or_else(|e| {
-            panic!("{} report proof {} should verify: {}", label, i, e);
+        result.as_ref().unwrap_or_else(|e| {
+            panic!("{} proof {} should verify: {}", label, i, e);
         });
     }
     info!(
         "{} report contains {} deniability proof(s): {}",
         label,
-        proof_count,
+        results.len(),
         report_path.display()
     );
-}
-
-fn fetch_proven_chain_output(proof: &DeniabilityProof, bitcoind: &BitcoinD) -> bitcoin::TxOut {
-    let outpoint = match &proof.proof {
-        DeniabilityProofData::Taproot(data) => data.contract_outpoint,
-        DeniabilityProofData::Legacy(data) => data.funding_outpoint,
-    };
-    let tx_info = bitcoind
-        .client
-        .get_raw_transaction_info(&outpoint.txid, None)
-        .unwrap_or_else(|e| {
-            panic!(
-                "proof tx {} should be available on-chain: {}",
-                outpoint.txid, e
-            )
-        });
-    assert!(
-        tx_info.confirmations.unwrap_or(0) > 0,
-        "proof tx {} should be confirmed on-chain",
-        outpoint.txid
-    );
-    let tx = bitcoind
-        .client
-        .get_raw_transaction(&outpoint.txid, None)
-        .unwrap_or_else(|e| panic!("proof tx {} should be fetchable: {}", outpoint.txid, e));
-    tx.output
-        .get(outpoint.vout as usize)
-        .cloned()
-        .unwrap_or_else(|| {
-            panic!(
-                "proof vout {} should exist in tx {}",
-                outpoint.vout, outpoint.txid
-            )
-        })
 }

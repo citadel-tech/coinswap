@@ -18,10 +18,7 @@ use std::{
     path::Path,
 };
 
-use super::{
-    deniability::DeniabilityProof,
-    swapcoin::{IncomingSwapCoin, OutgoingSwapCoin, WatchOnlySwapCoin},
-};
+use super::swapcoin::{IncomingSwapCoin, OutgoingSwapCoin, WatchOnlySwapCoin};
 
 use bitcoind::bitcoincore_rpc::bitcoincore_rpc_json::ListUnspentResultEntry;
 
@@ -55,9 +52,6 @@ pub(crate) struct WalletStore {
     /// Map of swap_id to watch-only swapcoins.
     #[serde(default)]
     pub(super) watchonly_swapcoins: HashMap<String, Vec<WatchOnlySwapCoin>>,
-    /// Map of proof_id to deniability proof.
-    #[serde(default)]
-    pub(super) deniability_proofs: HashMap<String, DeniabilityProof>,
     /// Map of prevout to contract redeemscript.
     pub(super) prevout_to_contract_map: HashMap<OutPoint, ScriptBuf>,
     /// Set of swept incoming swap coin scriptpubkeys to prevent mixing with regular UTXOs
@@ -92,7 +86,6 @@ impl WalletStore {
             incoming_swapcoins: HashMap::new(),
             outgoing_swapcoins: HashMap::new(),
             watchonly_swapcoins: HashMap::new(),
-            deniability_proofs: HashMap::new(),
             prevout_to_contract_map: HashMap::new(),
             swept_incoming_swapcoins: HashSet::new(),
             fidelity_bond: Vec::new(),
