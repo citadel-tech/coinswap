@@ -772,16 +772,12 @@ impl MakerServer {
         !self.ongoing_swaps.lock().unwrap().is_empty()
     }
 
-    /// Verify deniability proofs found in a report file.
-    pub fn verify_deniability(
-        &self,
-        report_path: &std::path::Path,
-    ) -> Result<Vec<crate::wallet::deniability::ProofVerifyResult>, std::io::Error> {
-        let wallet = self
-            .wallet
+    /// Verify the deniability proof for a specific swap.
+    pub fn verify_deniability(&self, swap_id: &str) -> Result<bool, std::io::Error> {
+        self.wallet
             .read()
-            .map_err(|e| std::io::Error::other(format!("wallet lock poisoned: {e}")))?;
-        crate::wallet::deniability::verify_deniability(report_path, &wallet.rpc)
+            .map_err(|e| std::io::Error::other(format!("wallet lock poisoned: {e}")))?
+            .verify_deniability(swap_id)
     }
 }
 

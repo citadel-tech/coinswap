@@ -323,6 +323,21 @@ impl Wallet {
         &self.store.file_name
     }
 
+    /// Verify the deniability proof for a specific swap in this wallet's report file.
+    pub fn verify_deniability(&self, swap_id: &str) -> Result<bool, std::io::Error> {
+        let stem = self
+            .wallet_file_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .ok_or_else(|| std::io::Error::other("wallet path has no valid file stem"))?;
+        let report_path = self
+            .wallet_file_path
+            .parent()
+            .ok_or_else(|| std::io::Error::other("wallet path has no parent directory"))?
+            .join(format!("{stem}_swap_report.json"));
+        crate::wallet::deniability::verify_deniability(&report_path, &self.rpc, swap_id)
+    }
+
     /// Load wallet data from file and connect to a core RPC.
     /// The core rpc wallet name, and wallet_id field in the file should match.
     /// If encryption material is provided, decrypt the wallet store using it.

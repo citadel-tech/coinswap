@@ -4,12 +4,11 @@
 //! the Taproot protocol with MuSig2 signatures.
 
 use bitcoin::Amount;
-use bitcoind::BitcoinD;
 use coinswap::{
     maker::{start_server, MakerBehavior},
     protocol::common_messages::ProtocolVersion,
     taker::{SwapParams, TakerBehavior},
-    wallet::{verify_deniability, AddressType},
+    wallet::AddressType,
 };
 
 use super::test_framework::*;
@@ -222,39 +221,4 @@ fn test_taproot_coinswap() {
 
     test_framework.stop();
     block_generation_handle.join().unwrap();
-}
-
-fn assert_report_has_deniability_proofs(
-    report_path: &std::path::Path,
-    label: &str,
-    bitcoind: &BitcoinD,
-    expected_count: usize,
-) {
-    let results = verify_deniability(report_path, &bitcoind.client)
-        .unwrap_or_else(|e| panic!("Failed to verify {} deniability proofs: {}", label, e));
-    assert_eq!(
-        results.len(),
-        expected_count,
-        "{} report should contain {} deniability proof(s) at {}",
-        label,
-        expected_count,
-        report_path.display()
-    );
-    for (i, (proof, result)) in results.iter().enumerate() {
-        assert!(
-            proof.outgoing_swapcoin.is_some(),
-            "{} proof {} should link to an outgoing swapcoin",
-            label,
-            i
-        );
-        result.as_ref().unwrap_or_else(|e| {
-            panic!("{} proof {} should verify: {}", label, i, e);
-        });
-    }
-    info!(
-        "{} report contains {} deniability proof(s): {}",
-        label,
-        results.len(),
-        report_path.display()
-    );
 }

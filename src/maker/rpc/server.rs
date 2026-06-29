@@ -150,6 +150,12 @@ fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result
                 RpcMsgResp::Pong
             }
         }
+        RpcMsgReq::VerifyDeniability { swap_id } => {
+            match maker.wallet().read()?.verify_deniability(&swap_id) {
+                Ok(valid) => RpcMsgResp::VerifyDeniabilityResp(valid),
+                Err(e) => RpcMsgResp::ServerError(e.to_string()),
+            }
+        }
     };
 
     if let Err(e) = send_message(socket, &resp) {

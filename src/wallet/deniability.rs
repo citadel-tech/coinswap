@@ -12,7 +12,7 @@ use bitcoin::{
     hashes::{sha256, Hash},
     opcodes::all::{OP_CHECKSIG, OP_CLTV, OP_DROP, OP_EQUALVERIFY, OP_SHA256},
     secp256k1::{self, ecdsa::Signature as SecpEcdsaSignature, Keypair, Secp256k1, SecretKey},
-    OutPoint, PublicKey, ScriptBuf, TxOut, XOnlyPublicKey,
+    OutPoint, PublicKey, ScriptBuf, XOnlyPublicKey,
 };
 use serde::{Deserialize, Serialize};
 
@@ -23,10 +23,14 @@ use crate::{
         contract2::create_taproot_script,
         musig_interface::get_aggregated_pubkey_compat,
     },
-    utill::redeemscript_to_scriptpubkey,
+    utill::{now_unix_secs, redeemscript_to_scriptpubkey},
 };
 
-use super::{report::SwapRole, swapcoin::IncomingSwapCoin, WalletError};
+use super::{
+    report::SwapRole,
+    swapcoin::{IncomingSwapCoin, OutgoingSwapCoin},
+    WalletError,
+};
 
 /// Deniability proof stored in the swap report file.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -126,13 +130,6 @@ impl fmt::Display for DeniabilityProofError {
 }
 
 impl std::error::Error for DeniabilityProofError {}
-
-fn now_unix_secs() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-}
 
 /// SHA256 message signed to assert control of a swap contract outpoint.
 fn proof_message(protocol: ProtocolVersion, outpoint: OutPoint) -> secp256k1::Message {
@@ -265,10 +262,10 @@ impl DeniabilityProof {
     }
 }
 
-/// Validates a proof against the confirmed on-chain output at its proven outpoint.
+/// Validates a proof against the confirmed on-chain script pubkey at its proven outpoint.
 fn verify_proof(
     proof: &DeniabilityProof,
-    chain_output: &TxOut,
+    chain_spk: &bitcoin::ScriptBuf,
 ) -> Result<(), DeniabilityProofError> {
     let expected_protocol = match &proof.proof {
         DeniabilityProofData::Taproot(_) => ProtocolVersion::Taproot,
@@ -295,7 +292,7 @@ fn verify_proof(
                 data.internal_key,
             )
             .map_err(|e| DeniabilityProofError::General(format!("{e:?}")))?;
-            if chain_output.script_pubkey != script_pubkey {
+            if *chain_spk != script_pubkey {
                 return Err(DeniabilityProofError::ChainMismatch(
                     "chain output does not match Taproot scripts",
                 ));
@@ -328,7 +325,7 @@ fn verify_proof(
         DeniabilityProofData::Legacy(data) => {
             let multisig_spk = redeemscript_to_scriptpubkey(&data.multisig_redeemscript)
                 .map_err(|e| DeniabilityProofError::General(format!("{e:?}")))?;
-            if chain_output.script_pubkey != multisig_spk {
+            if *chain_spk != multisig_spk {
                 return Err(DeniabilityProofError::ChainMismatch(
                     "chain output does not match multisig redeemscript",
                 ));
@@ -446,43 +443,58 @@ fn parse_taproot_timelock_script(script: &ScriptBuf) -> Result<(), DeniabilityPr
     }
 }
 
-/// Reads a swap report file and verifies each proof against confirmed chain data.
+/// Builds a deniability proof from an incoming and optional outgoing swapcoin.
+pub(crate) fn proof_from_swapcoins(
+    incoming: Option<&IncomingSwapCoin>,
+    outgoing: Option<&OutgoingSwapCoin>,
+    role: SwapRole,
+) -> Option<DeniabilityProof> {
+    incoming.and_then(|inc| {
+        let outgoing_outpoint = outgoing.map(|sc| OutPoint {
+            txid: sc.contract_tx.compute_txid(),
+            vout: sc.get_contract_output_vout(),
+        });
+        DeniabilityProof::from_incoming_swapcoin(inc, role, outgoing_outpoint).ok()
+    })
+}
+
+/// Finds the proof for `swap_id` in the report file and verifies it against chain data.
 ///
-/// Returns one `(proof, result)` pair per proof. An outer `Err` means the file
-/// could not be read or parsed.
+/// Returns `Ok(true)` if the proof is valid, `Ok(false)` if it fails verification,
+/// or an outer `Err` if the file cannot be read, parsed, or the swap_id is not found.
 pub fn verify_deniability(
     report_path: &std::path::Path,
     rpc: &bitcoind::bitcoincore_rpc::Client,
-) -> Result<Vec<ProofVerifyResult>, std::io::Error> {
+    swap_id: &str,
+) -> Result<bool, std::io::Error> {
     let content = std::fs::read_to_string(report_path)?;
     let report: super::report::SwapReportFile =
         serde_json::from_str(&content).map_err(std::io::Error::other)?;
 
-    let results = report
+    let proof = report
         .deniability_proofs
         .into_iter()
-        .map(|proof| {
-            let result = (|| {
-                let outpoint = proof.proven_outpoint();
-                let tx_info = rpc
-                    .get_raw_transaction_info(&outpoint.txid, None)
-                    .map_err(|e| DeniabilityProofError::General(format!("RPC: {e}")))?;
-                if tx_info.confirmations.unwrap_or(0) == 0 {
-                    return Err(DeniabilityProofError::InvalidProof(
-                        "transaction has no confirmations",
-                    ));
-                }
-                let tx = rpc
-                    .get_raw_transaction(&outpoint.txid, None)
-                    .map_err(|e| DeniabilityProofError::General(format!("RPC: {e}")))?;
-                let chain_output = tx.output.get(outpoint.vout as usize).ok_or(
-                    DeniabilityProofError::InvalidProof("outpoint vout out of bounds"),
-                )?;
-                verify_proof(&proof, chain_output)
-            })();
-            (proof, result)
-        })
-        .collect();
+        .find(|p| p.swap_id == swap_id)
+        .ok_or_else(|| {
+            std::io::Error::other(format!("no deniability proof found for swap {swap_id}"))
+        })?;
 
-    Ok(results)
+    let outpoint = proof.proven_outpoint();
+    let tx_info = rpc
+        .get_raw_transaction_info(&outpoint.txid, None)
+        .map_err(|e| std::io::Error::other(format!("RPC: {e}")))?;
+    if tx_info.confirmations.unwrap_or(0) == 0 {
+        return Err(std::io::Error::other(
+            "transaction not yet confirmed; retry after more blocks",
+        ));
+    }
+    let chain_spk = tx_info
+        .vout
+        .get(outpoint.vout as usize)
+        .ok_or_else(|| std::io::Error::other("outpoint vout out of bounds"))?
+        .script_pub_key
+        .script()
+        .map_err(|e| std::io::Error::other(format!("RPC script decode: {e}")))?;
+
+    Ok(verify_proof(&proof, &chain_spk).is_ok())
 }

@@ -41,8 +41,8 @@ use crate::{
     utill::{check_tor_status, generate_maker_keys, get_taker_dir, read_message, send_message},
     wallet::{
         swapcoin::{IncomingSwapCoin, OutgoingSwapCoin, WatchOnlySwapCoin},
-        MakerFeeInfo as ReportMakerFeeInfo, RPCConfig, RecoveryOutcome, SwapRole, SwapStatus,
-        TakerReport, Wallet,
+        MakerFeeInfo as ReportMakerFeeInfo, RPCConfig, RecoveryOutcome, SwapStatus, TakerReport,
+        Wallet,
     },
     watch_tower::{
         registry_storage::FileRegistry,
@@ -2239,28 +2239,16 @@ impl Taker {
             outgoing_contract_txid,
             end_timestamp: swap_end_ts,
             start_timestamp: swap_end_ts.saturating_sub(swap_duration.as_secs()),
-        };
-
-        let proof = if status == SwapStatus::Success {
-            swap.incoming_swapcoins.last().and_then(|incoming| {
-                let outgoing_outpoint = swap.outgoing_swapcoins.last().map(|sc| OutPoint {
-                    txid: sc.contract_tx.compute_txid(),
-                    vout: sc.get_contract_output_vout(),
-                });
-                crate::wallet::DeniabilityProof::from_incoming_swapcoin(
-                    incoming,
-                    SwapRole::Taker,
-                    outgoing_outpoint,
-                )
-                .ok()
-            })
-        } else {
-            None
-        };
+            deniability_proof: None,
+        }
+        .with_proof(
+            swap.incoming_swapcoins.last(),
+            swap.outgoing_swapcoins.last(),
+        );
 
         report.print();
         let data_dir = self.config.data_dir.clone().unwrap_or_else(get_taker_dir);
-        if let Err(e) = report.save_for_wallet(&data_dir, Some(&wallet_file_name), proof) {
+        if let Err(e) = report.save_for_wallet(&data_dir, Some(&wallet_file_name)) {
             log::warn!("Failed to save taker swap report: {:?}", e);
         }
 
@@ -2393,16 +2381,12 @@ impl Taker {
         Ok(())
     }
 
-    /// Verify all deniability proofs in a swap report file against confirmed chain data.
-    pub fn verify_deniability(
-        &self,
-        report_path: &std::path::Path,
-    ) -> Result<Vec<crate::wallet::deniability::ProofVerifyResult>, std::io::Error> {
-        let wallet = self
-            .wallet
+    /// Verify the deniability proof for a specific swap.
+    pub fn verify_deniability(&self, swap_id: &str) -> Result<bool, std::io::Error> {
+        self.wallet
             .read()
-            .map_err(|e| std::io::Error::other(format!("wallet lock poisoned: {e}")))?;
-        crate::wallet::deniability::verify_deniability(report_path, &wallet.rpc)
+            .map_err(|e| std::io::Error::other(format!("wallet lock poisoned: {e}")))?
+            .verify_deniability(swap_id)
     }
 
     // ── CLI helper methods ──────────────────────────────────────────────

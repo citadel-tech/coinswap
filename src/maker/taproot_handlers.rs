@@ -474,24 +474,11 @@ fn emit_maker_success_report<M: Maker>(maker: &Arc<M>, state: &ConnectionState, 
         outgoing_txid,
         timelock,
         network,
+        state.incoming_swapcoins.first(),
+        state.outgoing_swapcoins.first(),
     );
-    let proof = state.incoming_swapcoins.first().and_then(|incoming| {
-        let outgoing_outpoint = state
-            .outgoing_swapcoins
-            .first()
-            .map(|sc| bitcoin::OutPoint {
-                txid: sc.contract_tx.compute_txid(),
-                vout: sc.get_contract_output_vout(),
-            });
-        crate::wallet::DeniabilityProof::from_incoming_swapcoin(
-            incoming,
-            crate::wallet::SwapRole::Maker,
-            outgoing_outpoint,
-        )
-        .ok()
-    });
     report.print();
-    if let Err(e) = report.save_for_wallet(maker.data_dir(), Some(maker.wallet_name()), proof) {
+    if let Err(e) = report.save_for_wallet(maker.data_dir(), Some(maker.wallet_name())) {
         log::warn!("Failed to save maker success report: {:?}", e);
     }
 }
