@@ -1979,6 +1979,7 @@ impl Wallet {
         // TODO : Have a combined policy for change to choose it's type depending on the wallet state.
         let change_output_weight = (Amount::SIZE as u64 + 1 + 34u64) * 4;
 
+        // 1. Drop locked and explicitly excluded UTXOs from consideration.
         let locked_utxos = self.list_lock_unspent()?;
         let excluded: std::collections::HashSet<OutPoint> =
             excluded_outpoints.unwrap_or_default().into_iter().collect();
@@ -1992,6 +1993,7 @@ impl Wallet {
                 .collect::<Vec<_>>()
         };
 
+        // 2. Segregate spendable UTXOs into two pools: regular and swap.
         let available_regular_utxos = filter_locked(self.list_descriptor_utxo_spend_info());
         let available_swap_utxos = filter_locked(self.list_swept_incoming_swap_utxos());
 
@@ -2015,6 +2017,7 @@ impl Wallet {
             INPUT_BASE_WEIGHT + spend_info.estimate_witness_size() as u64
         };
 
+        // 3. Validate manual selection: all outpoints must exist and stay within one pool.
         let manually_selected_outpoints =
             manually_selected_outpoints.filter(|outpoints| !outpoints.is_empty());
 
@@ -2078,7 +2081,7 @@ impl Wallet {
                     target_feerate_wu,
                 )
         };
-        // Manual selection pins the pool; otherwise try regular first, then swap.
+        // 4. Try each pool in order: manual pins one pool, else regular first then swap.
         let utxo_types_to_try = if manual_utxo_type == Some("regular") {
             vec![("regular", &available_regular_utxos)]
         } else if manual_utxo_type == Some("swap") {
@@ -2093,6 +2096,7 @@ impl Wallet {
         let mut insufficient_funds = None;
         let mut other_selection_error = None;
         for (utxo_type, unspents) in utxo_types_to_try {
+            // 5. Force-include manually selected UTXOs; the rest are free candidates.
             let (forced_utxos, candidate_utxos): (Vec<&_>, Vec<&_>) =
                 unspents.iter().partition(|(utxo, _)| {
                     let outpoint = OutPoint::new(utxo.txid, utxo.vout);
@@ -2101,6 +2105,7 @@ impl Wallet {
 
             let unspents = candidate_utxos.into_iter().cloned().collect::<Vec<_>>();
 
+            // 6. Group candidates by address so reused addresses are spent together.
             let mut address_groups: HashMap<String, Vec<(ListUnspentResultEntry, UTXOSpendInfo)>> =
                 HashMap::new();
             for (utxo, spend_info) in unspents {
@@ -2115,6 +2120,7 @@ impl Wallet {
                     .push((utxo.clone(), spend_info.clone()));
             }
 
+            // 6. Split reused addresses (>1 UTXO) from singletons, both sorted ascending by value.
             let (mut grouped_addresses, mut single_addresses): (Vec<_>, Vec<_>) = address_groups
                 .into_values()
                 .partition(|group| group.len() > 1);
@@ -2177,6 +2183,7 @@ impl Wallet {
                 (result_utxos, result_total, result_weight)
             };
 
+            // 7. Run rust-coinselect over the remaining single-address UTXOs.
             let single_output_groups = single_addresses
                 .iter()
                 .map(|single_address_utxos| {
@@ -2280,6 +2287,7 @@ impl Wallet {
                 }
             }
         }
+        // 8. All pools exhausted: report the pool that came closest to covering the target.
         if let Some((available, required)) = insufficient_funds {
             Err(WalletError::InsufficientFund {
                 available,
