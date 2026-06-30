@@ -6,7 +6,9 @@
 use crate::{
     security::{load_sensitive_struct, KeyMaterial, SerdeJson},
     utill::{get_taker_dir, parse_checked_address, MIN_FEE_RATE},
-    wallet::{AddressType, Destination, RPCConfig, Wallet, WalletBackup, WalletError},
+    wallet::{
+        infer_address_type, AddressType, Destination, RPCConfig, Wallet, WalletBackup, WalletError,
+    },
 };
 use bitcoin::{Amount, OutPoint, Txid};
 use bitcoind::bitcoincore_rpc::{json::ListTransactionResult, RpcApi};
@@ -151,6 +153,7 @@ impl Wallet {
         let coins_to_spend = self.coin_select(
             amount,
             fee_rate.unwrap_or(MIN_FEE_RATE),
+            infer_address_type(&addr.script_pubkey()),
             manually_selected_outpoints,
             None,
         )?;

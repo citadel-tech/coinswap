@@ -197,7 +197,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if balances.spendable >= select_amount {
             println!("\nCoin Selection Demo:");
             let selected_utxos = wallet
-                .coin_select(select_amount, MIN_FEE_RATE, None, None)
+                .coin_select(select_amount, MIN_FEE_RATE, AddressType::P2TR, None, None)
                 .unwrap();
 
             let total_selected: u64 = selected_utxos

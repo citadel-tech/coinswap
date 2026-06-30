@@ -1,4 +1,4 @@
-use super::Wallet;
+use super::{AddressType, Wallet};
 use crate::wallet::api::UTXOSpendInfo;
 use bip39::rand::{thread_rng, Rng};
 use bitcoin::Amount;
@@ -300,6 +300,7 @@ impl Wallet {
             let delta_inputs = match self.coin_select(
                 Amount::from_sat(delta_c),
                 fee_rate,
+                AddressType::P2TR,
                 None,
                 None,
             ) {
