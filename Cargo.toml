@@ -31,7 +31,7 @@ minreq = { version = "2.12.0", features = ["https"] }
 pbkdf2 = { version = "0.12", features = ["simple"] }
 aes-gcm = "0.10.3"
 sha2 = "0.10.9"
-rust-coinselect = { git = "https://github.com/NeoZ666/rust-coinselect" }
+rust-coinselect = "0.1.7"
 crossterm = "0.29.0"
 zmq = "0.10.0"
 tungstenite = { version = "0.28.0", features = ["rustls-tls-webpki-roots"]}
