@@ -13,7 +13,7 @@ mod split_utxos;
 mod storage;
 pub(crate) mod swapcoin;
 
-pub(crate) use api::{contract_and_timelock_vsize, SpendKind};
+pub(crate) use api::{contract_and_timelock_vsize, infer_address_type, SpendKind};
 pub use api::{Balances, RecoveryOutcome, UTXOSpendInfo, Wallet};
 pub use backup::WalletBackup;
 pub use error::WalletError;

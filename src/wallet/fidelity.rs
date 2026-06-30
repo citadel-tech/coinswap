@@ -1,7 +1,7 @@
 use crate::{
     protocol::common_messages::FidelityProof,
     utill::{redeemscript_to_scriptpubkey, MIN_FEE_RATE},
-    wallet::{AddressType, Wallet},
+    wallet::{infer_address_type, AddressType, Wallet},
 };
 use bitcoin::{
     absolute::LockTime,
@@ -483,7 +483,13 @@ impl Wallet {
     ) -> Result<(u32, Txid), WalletError> {
         let (index, fidelity_addr, fidelity_pubkey) = self.get_next_fidelity_address(locktime)?;
 
-        let coins = self.coin_select(amount, feerate, None, None)?;
+        let coins = self.coin_select(
+            amount,
+            feerate,
+            infer_address_type(&fidelity_addr.script_pubkey()),
+            None,
+            None,
+        )?;
         let outputs = vec![(fidelity_addr, amount)];
 
         let op_return_data = match maker_address {

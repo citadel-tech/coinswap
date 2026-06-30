@@ -14,7 +14,7 @@ use crate::{utill::calculate_fee_sats, wallet::Destination};
 
 use super::Wallet;
 
-use super::{error::WalletError, AddressType};
+use super::{api::infer_address_type, error::WalletError, AddressType};
 
 #[derive(Debug)]
 pub struct CreateFundingTxesResult {
@@ -151,6 +151,7 @@ impl Wallet {
             let selected_utxo = self.coin_select(
                 coinswap_amount,
                 fee_rate.to_sat() as f64,
+                infer_address_type(&destinations[0].script_pubkey()),
                 manually_selected_outpoints,
                 excluded_outpoints,
             )?;
@@ -236,6 +237,7 @@ impl Wallet {
                 let selected_utxo = self.coin_select(
                     remaining,
                     fee_rate,
+                    infer_address_type(&address.script_pubkey()),
                     manually_selected_outpoints.clone(),
                     excluded_outpoints.clone(),
                 )?;

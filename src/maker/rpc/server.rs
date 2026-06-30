@@ -17,7 +17,7 @@ use crate::{
     utill::{
         parse_checked_address, read_message, send_message, TorError, HEART_BEAT_INTERVAL, UTXO,
     },
-    wallet::{AddressType, Destination, Wallet},
+    wallet::{infer_address_type, AddressType, Destination, Wallet},
 };
 use std::{path::Path, sync::RwLock};
 
@@ -97,6 +97,7 @@ fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result
             let destination_address = parse_checked_address(&address, maker.config().network)
                 .map_err(MakerError::from)?;
 
+            let address_type = infer_address_type(&destination_address.script_pubkey());
             let outputs = vec![(destination_address, amount)];
             let destination = Destination::Multi {
                 outputs,
@@ -104,10 +105,11 @@ fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result
                 change_address_type: AddressType::P2TR,
             };
 
-            let coins_to_send = maker
-                .wallet()
-                .read()?
-                .coin_select(amount, feerate, None, None)?;
+            let coins_to_send =
+                maker
+                    .wallet()
+                    .read()?
+                    .coin_select(amount, feerate, address_type, None, None)?;
             let tx =
                 maker
                     .wallet()
