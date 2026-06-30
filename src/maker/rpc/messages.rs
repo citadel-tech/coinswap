@@ -47,6 +47,11 @@ pub enum RpcMsgReq {
     ListFidelity,
     /// Request to sync the internal wallet with blockchain.
     SyncWallet,
+    /// Request to verify the deniability proof for a specific swap.
+    VerifyDeniability {
+        /// The swap ID to verify.
+        swap_id: String,
+    },
 }
 
 /// Enum representing RPC message responses.
@@ -95,6 +100,8 @@ pub enum RpcMsgResp {
     ServerError(String),
     /// Response listing all current and past fidelity bonds.
     ListBonds(String),
+    /// Response to a verify-deniability request.
+    VerifyDeniabilityResp(bool),
 }
 
 impl Display for RpcMsgResp {
@@ -133,6 +140,13 @@ impl Display for RpcMsgResp {
             Self::FidelitySpend(txid) => write!(f, "{txid}"),
             Self::ServerError(e) => write!(f, "{e}"),
             Self::ListBonds(v) => write!(f, "{v}"),
+            Self::VerifyDeniabilityResp(valid) => {
+                if *valid {
+                    write!(f, "Proof valid: swap participated in a completed coinswap")
+                } else {
+                    write!(f, "Proof invalid or not found for this swap ID")
+                }
+            }
         }
     }
 }

@@ -68,6 +68,12 @@ enum Commands {
     ShowFidelity,
     /// Sync the Maker wallet with the current blockchain state.
     SyncWallet,
+    /// Verify the deniability proof for a specific swap.
+    VerifyDeniability {
+        /// The swap ID to verify.
+        #[arg(long, short = 's')]
+        swap_id: String,
+    },
 }
 
 fn main() -> Result<(), MakerError> {
@@ -125,6 +131,9 @@ fn main() -> Result<(), MakerError> {
         }
         Commands::SyncWallet => {
             send_rpc_req(stream, RpcMsgReq::SyncWallet)?;
+        }
+        Commands::VerifyDeniability { swap_id } => {
+            send_rpc_req(stream, RpcMsgReq::VerifyDeniability { swap_id })?;
         }
     }
 

@@ -2289,7 +2289,7 @@ impl Taker {
             .unwrap_or_default()
             .as_secs();
         let report = TakerReport {
-            status,
+            status: status.clone(),
             swap_id: swap.id.clone(),
             swap_duration_seconds: swap_duration.as_secs_f64(),
             outgoing_amount: swap.params.send_amount.to_sat(),
@@ -2313,7 +2313,12 @@ impl Taker {
             outgoing_contract_txid,
             end_timestamp: swap_end_ts,
             start_timestamp: swap_end_ts.saturating_sub(swap_duration.as_secs()),
-        };
+            deniability_proof: None,
+        }
+        .with_proof(
+            swap.incoming_swapcoins.last(),
+            swap.outgoing_swapcoins.last(),
+        );
 
         report.print();
         let data_dir = self.config.data_dir.clone().unwrap_or_else(get_taker_dir);
@@ -2453,6 +2458,14 @@ impl Taker {
             })?;
 
         Ok(())
+    }
+
+    /// Verify the deniability proof for a specific swap.
+    pub fn verify_deniability(&self, swap_id: &str) -> Result<bool, std::io::Error> {
+        self.wallet
+            .read()
+            .map_err(|e| std::io::Error::other(format!("wallet lock poisoned: {e}")))?
+            .verify_deniability(swap_id)
     }
 
     // ── CLI helper methods ──────────────────────────────────────────────

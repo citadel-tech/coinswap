@@ -5,11 +5,11 @@
 //! participated in the swap:
 //! `{data_dir}/wallets/{wallet_name}_swap_report.json`.
 //!
-//! The file has three sections:
+//! The file has four sections:
 //! - `taker`   – one entry per taker swap (success or failed)
 //! - `maker`   – one array per maker node, keyed by node name
 //! - `recovery`– one entry per recovery event (hashlock or timelock)
-//! - `deniability_proofs` – reserved for future use
+//! - `deniability_proofs` – one proof per completed swap
 
 use serde::{Deserialize, Serialize};
 use std::{
@@ -19,16 +19,12 @@ use std::{
     time::Instant,
 };
 
-// ---------------------------------------------------------------------------
-// Timestamp helper
-// ---------------------------------------------------------------------------
+use crate::utill::now_unix_secs;
 
-fn now_unix_secs() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-}
+use super::{
+    deniability::{proof_from_swapcoins, DeniabilityProof},
+    swapcoin::{IncomingSwapCoin, OutgoingSwapCoin},
+};
 
 // ---------------------------------------------------------------------------
 // Shared enums
@@ -165,9 +161,23 @@ pub struct TakerReport {
     pub output_change_utxos: Vec<(u64, String)>,
     /// Swap UTXOs with amounts and addresses.
     pub output_swap_utxos: Vec<(u64, String)>,
+    /// Deniability proof for this swap, if successfully generated.
+    pub deniability_proof: Option<DeniabilityProof>,
 }
 
 impl TakerReport {
+    /// Attach a deniability proof built from swapcoins. No-op if the swap did not succeed.
+    pub fn with_proof(
+        mut self,
+        incoming: Option<&IncomingSwapCoin>,
+        outgoing: Option<&OutgoingSwapCoin>,
+    ) -> Self {
+        if self.status == SwapStatus::Success {
+            self.deniability_proof = proof_from_swapcoins(incoming, outgoing, SwapRole::Taker);
+        }
+        self
+    }
+
     /// Save to the given wallet's report file, or the discovered/default taker wallet if none is given.
     pub fn save_for_wallet(
         &self,
@@ -176,7 +186,12 @@ impl TakerReport {
     ) -> std::io::Result<()> {
         let report = self.clone();
         let file_path = report_file_path_for_wallet(data_dir, SwapRole::Taker, wallet_file_name);
-        write_to_path(&file_path, |f| f.taker.push(report))
+        write_to_path(&file_path, |f| {
+            if let Some(p) = report.deniability_proof.clone() {
+                f.deniability_proofs.push(p);
+            }
+            f.taker.push(report);
+        })
     }
 
     /// Print a human-readable summary to stdout.
@@ -329,6 +344,8 @@ pub struct MakerReport {
     pub outgoing_contract_txid: String,
     /// Timelock value in blocks for the outgoing contract.
     pub timelock: u32,
+    /// Deniability proof for this swap, if successfully generated.
+    pub deniability_proof: Option<DeniabilityProof>,
 }
 
 impl MakerReport {
@@ -342,6 +359,8 @@ impl MakerReport {
         outgoing_contract_txid: String,
         timelock: u32,
         network: String,
+        incoming: Option<&IncomingSwapCoin>,
+        outgoing: Option<&OutgoingSwapCoin>,
     ) -> Self {
         let swap_duration_seconds = start_time.elapsed().as_secs_f64();
         let end = now_unix_secs();
@@ -358,6 +377,7 @@ impl MakerReport {
             incoming_contract_txid,
             outgoing_contract_txid,
             timelock,
+            deniability_proof: proof_from_swapcoins(incoming, outgoing, SwapRole::Maker),
         }
     }
 
@@ -375,6 +395,9 @@ impl MakerReport {
         let report = self.clone();
         let file_path = report_file_path_for_wallet(data_dir, SwapRole::Maker, wallet_file_name);
         write_to_path(&file_path, |f| {
+            if let Some(p) = report.deniability_proof.clone() {
+                f.deniability_proofs.push(p);
+            }
             f.maker.entry(node_name).or_default().push(report);
         })
     }
@@ -542,11 +565,16 @@ impl RecoveryReport {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+/// Top-level JSON structure stored in per-wallet swap report files.
 pub struct SwapReportFile {
+    /// Taker-perspective swap reports.
     pub taker: Vec<TakerReport>,
+    /// Maker-perspective swap reports keyed by maker node name.
     pub maker: HashMap<String, Vec<MakerReport>>,
+    /// Recovery reports emitted after hashlock or timelock recovery.
     pub recovery: Vec<RecoveryReport>,
-    pub deniability_proofs: Vec<serde_json::Value>,
+    /// Deniability proofs generated for swaps in this wallet.
+    pub deniability_proofs: Vec<DeniabilityProof>,
 }
 
 // ---------------------------------------------------------------------------
@@ -777,6 +805,7 @@ mod tests {
             output_swap_amounts: vec![],
             output_change_utxos: vec![],
             output_swap_utxos: vec![],
+            deniability_proof: None,
         }
     }
 

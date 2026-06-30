@@ -771,6 +771,14 @@ impl MakerServer {
     pub fn has_ongoing_swaps(&self) -> bool {
         !self.ongoing_swaps.lock().unwrap().is_empty()
     }
+
+    /// Verify the deniability proof for a specific swap.
+    pub fn verify_deniability(&self, swap_id: &str) -> Result<bool, std::io::Error> {
+        self.wallet
+            .read()
+            .map_err(|e| std::io::Error::other(format!("wallet lock poisoned: {e}")))?
+            .verify_deniability(swap_id)
+    }
 }
 
 impl MakerTrait for MakerServer {

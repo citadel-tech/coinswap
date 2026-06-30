@@ -196,6 +196,29 @@ fn test_taproot_coinswap() {
 
     info!("All taproot swap tests completed successfully!");
 
+    let temp_dir = makers[0]
+        .data_dir
+        .parent()
+        .expect("maker data dir should live under test temp dir");
+    let taker_report_path = temp_dir
+        .join("taker1")
+        .join("wallets")
+        .join("taker1_swap_report.json");
+    assert_report_has_deniability_proofs(&taker_report_path, "taproot taker", bitcoind, 1);
+
+    for (i, maker) in makers.iter().enumerate() {
+        let maker_report_path = maker
+            .data_dir
+            .join("wallets")
+            .join(format!("{}_swap_report.json", maker.config.wallet_name));
+        assert_report_has_deniability_proofs(
+            &maker_report_path,
+            &format!("taproot maker {i}"),
+            bitcoind,
+            1,
+        );
+    }
+
     test_framework.stop();
     block_generation_handle.join().unwrap();
 }

@@ -184,6 +184,12 @@ enum Commands {
         #[clap(long, short = 'f')]
         backup_file: String,
     },
+    /// Verify the deniability proof for a specific swap.
+    VerifyDeniability {
+        /// The swap ID to verify.
+        #[clap(long, short = 's')]
+        swap_id: String,
+    },
 }
 
 fn parse_protocol(s: &str) -> Result<ProtocolVersion, TakerError> {
@@ -581,6 +587,11 @@ fn main() -> Result<(), TakerError> {
             // Handled above before taker init
             unreachable!()
         }
+        Commands::VerifyDeniability { swap_id } => match taker.verify_deniability(swap_id) {
+            Ok(true) => println!("Proof valid: swap participated in a completed coinswap"),
+            Ok(false) => println!("Proof invalid or not found for this swap ID"),
+            Err(e) => println!("Error: {e}"),
+        },
     }
 
     Ok(())

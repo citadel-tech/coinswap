@@ -753,6 +753,7 @@ impl Taker {
                     *hashlock_privkey,
                     info.funding_amount,
                 );
+                incoming.swap_id = Some(swap_id.clone());
                 incoming.set_preimage(self.swap_state()?.preimage);
                 self.swap_state_mut()?.incoming_swapcoins.push(incoming);
             }

@@ -821,6 +821,8 @@ fn emit_maker_success_report<M: Maker>(maker: &Arc<M>, state: &ConnectionState, 
         outgoing_txid,
         timelock,
         network,
+        state.incoming_swapcoins.first(),
+        state.outgoing_swapcoins.first(),
     );
     report.print();
     if let Err(e) = report.save_for_wallet(maker.data_dir(), Some(maker.wallet_name())) {
