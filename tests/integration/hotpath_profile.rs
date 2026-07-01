@@ -1,5 +1,3 @@
-#![cfg(feature = "hotpath")]
-
 use crate::test_framework;
 
 use bitcoin::Amount;

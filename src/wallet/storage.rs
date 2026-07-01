@@ -43,6 +43,9 @@ pub(crate) struct WalletStore {
     pub(super) master_key: Xpriv,
     /// The external index for the wallet.
     pub(super) external_index: u32,
+    /// The internal index for the wallet.
+    #[serde(default)]
+    pub(super) internal_index: u32,
     /// The maximum size for an offer in the wallet.
     pub(crate) offer_maxsize: u64,
     /// Map of swap_id to incoming swapcoins.
@@ -82,6 +85,7 @@ impl WalletStore {
             network,
             master_key,
             external_index: 0,
+            internal_index: 0,
             offer_maxsize: 0,
             incoming_swapcoins: HashMap::new(),
             outgoing_swapcoins: HashMap::new(),

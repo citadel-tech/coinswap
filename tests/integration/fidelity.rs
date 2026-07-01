@@ -23,8 +23,8 @@ use coinswap::{
 
 use super::test_framework::*;
 
+use log::info;
 use std::{sync::atomic::Ordering::Relaxed, thread, time::Duration};
-
 #[test]
 fn test_fidelity_complete() {
     test_fidelity();
@@ -178,7 +178,13 @@ fn test_fidelity() {
         let wallet_read = maker.wallet.read().unwrap();
 
         let balances = wallet_read.get_balances().unwrap();
-
+        info!("Maker balances after creating fidelity bonds: Regular: {}, Swap: {}, Contract: {}, Spendable: {}, Fidelity: {}",
+            balances.regular,
+            balances.swap,
+            balances.contract,
+            balances.spendable,
+            balances.fidelity
+        );
         assert_eq!(balances.fidelity.to_sat(), 13000000);
         assert_eq!(balances.regular.to_sat(), 90999322);
     }

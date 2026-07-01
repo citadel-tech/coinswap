@@ -97,6 +97,7 @@ impl PartialEq for Wallet {
         self.store.network == other.store.network &&
         self.store.master_key == other.store.master_key &&
         self.store.external_index == other.store.external_index &&
+        self.store.internal_index == other.store.internal_index &&
         self.store.offer_maxsize == other.store.offer_maxsize &&
         //avoided incoming_swapcoins
         //avoided outgoing_swapcoins
@@ -706,7 +707,7 @@ impl Wallet {
         let mut discarded = Vec::new();
 
         for swap_id in to_recover {
-            if let Some(swapcoin) = self.store.outgoing_swapcoins.get(&swap_id) {
+            if let Some(swapcoin) = self.store.outgoing_swapcoins.get(&swap_id).cloned() {
                 // Ensure the contract tx is on-chain before attempting timelock spend.
                 let contract_txid = swapcoin.contract_tx.compute_txid();
                 let contract_vout = swapcoin.get_contract_output_vout();
@@ -881,7 +882,7 @@ impl Wallet {
                     }
                 }
 
-                match self.create_timelock_recovery_tx(swapcoin, fee_rate) {
+                match self.create_timelock_recovery_tx(&swapcoin, fee_rate) {
                     Ok(recovery_tx) => {
                         let txid = recovery_tx.compute_txid();
                         match self.send_tx(&recovery_tx) {
@@ -936,7 +937,7 @@ impl Wallet {
     /// Create a recovery transaction for a timelocked outgoing swapcoin.
     #[hotpath::measure]
     fn create_timelock_recovery_tx(
-        &self,
+        &mut self,
         swapcoin: &super::swapcoin::OutgoingSwapCoin,
         fee_rate: f64,
     ) -> Result<bitcoin::Transaction, WalletError> {
@@ -1583,21 +1584,23 @@ impl Wallet {
         Ok(receive_address.assume_checked())
     }
 
-    /// Gets the next internal addresses from the HD keychain.
+    /// Gets the next internal addresses from the HD keychain. Index saved to disk
     pub fn get_next_internal_addresses(
-        &self,
+        &mut self,
         count: u32,
         address_type: AddressType,
     ) -> Result<Vec<Address>, WalletError> {
-        let next_change_addr_index = self.find_hd_next_index(KeychainKind::Internal)?;
+        let start = self.store.internal_index;
         let descriptors = self.get_wallet_descriptors(address_type)?;
         let change_branch_descriptor = descriptors
             .get(&KeychainKind::Internal)
             .expect("Internal Keychain expected");
-        let addresses = self.rpc.derive_addresses(
-            change_branch_descriptor,
-            Some([next_change_addr_index, next_change_addr_index + count]),
-        )?;
+        let addresses = self
+            .rpc
+            .derive_addresses(change_branch_descriptor, Some([start, start + count - 1]))?;
+
+        self.store.internal_index += count;
+        self.save_to_disk()?;
 
         Ok(addresses
             .into_iter()
@@ -2441,7 +2444,9 @@ impl Wallet {
 
         self.sync_and_save()?;
 
-        for (swap_id, swapcoin) in completed_swapcoins {
+        let internal_addresses =
+            self.get_next_internal_addresses(completed_swapcoins.len() as u32, AddressType::P2TR)?;
+        for (i, (swap_id, swapcoin)) in completed_swapcoins.into_iter().enumerate() {
             let contract_txid = swapcoin.contract_tx.compute_txid();
             // Determine which UTXO to spend based on protocol and spending path.
             let (utxo_txid, utxo_vout, input_value) = match swapcoin.protocol {
@@ -2607,9 +2612,8 @@ impl Wallet {
                 }
             }
 
-            // Get next internal address for receiving the swept funds
-            let internal_address =
-                self.get_next_internal_addresses(1, AddressType::P2TR)?[0].clone();
+            // Receive the swept funds at this coin's pre-allocated distinct address.
+            let internal_address = internal_addresses[i].clone();
 
             log::info!(
                 "Sweeping incoming swap coin {} (utxo: {}:{}) to internal address {}",

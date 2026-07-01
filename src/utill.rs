@@ -101,6 +101,15 @@ pub fn calculate_fee_sats(vbytes: u64) -> u64 {
         .to_sat()
 }
 
+/// Estimated on-chain miner cost (sats) a maker bears per swap contract: a funding tx
+/// (overhead 11 + P2WPKH input 68 + P2WSPK change 31 + (P2TR/P2WSPK) payment output 43 = 153 vB)
+/// plus a sweep tx (overhead 11 + input 68 + self-payment output 43 = 122 vB).
+///
+/// Used both by the maker (for routed amount) and by taker's `min_expected_amount_for_hop`
+pub fn estimate_funding_tx_fee_sats() -> u64 {
+    calculate_fee_sats((11 + 68 + 31 + 43) + (11 + 68 + 43))
+}
+
 /// Sets up the logger for the taker component.
 ///
 /// This method initializes the logging configuration for the taker, directing logs to both

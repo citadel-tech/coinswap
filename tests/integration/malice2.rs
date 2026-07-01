@@ -98,7 +98,7 @@ fn test_malice2_maker_broadcast_contract() {
 
     // Swap params for coinswap (Legacy)
     let swap_params = SwapParams::new(ProtocolVersion::Legacy, Amount::from_sat(500000), 2)
-        .with_tx_count(3)
+        .with_tx_count(1)
         .with_required_confirms(1);
 
     generate_blocks(bitcoind, 1);
@@ -142,7 +142,7 @@ fn test_malice2_maker_broadcast_contract() {
             maker_balances.contract,
             maker_balances.spendable,
         );
-        let expected_regular = [14998622u64, 14500419][i];
+        let expected_regular = [14998622u64, 14501519][i];
         assert_eq!(
             maker_balances.regular.to_sat(),
             expected_regular,

@@ -738,6 +738,35 @@ fn recover_from_swap(
         outgoing_swapcoins.len()
     );
 
+    let all_swap_contracts_resolved = || -> Result<bool, MakerError> {
+        let wallet = maker
+            .wallet
+            .read()
+            .map_err(|_| MakerError::General("Failed to lock wallet"))?;
+
+        let contract_txids = outgoing_swapcoins
+            .iter()
+            .map(|s| (s.contract_tx.compute_txid(), s.get_contract_output_vout()))
+            .chain(
+                incoming_swapcoins
+                    .iter()
+                    .map(|s| (s.contract_tx.compute_txid(), s.get_contract_output_vout())),
+            );
+
+        for (txid, vout) in contract_txids {
+            if wallet
+                .rpc
+                .get_tx_out(&txid, vout, None)
+                .map_err(crate::wallet::WalletError::Rpc)?
+                .is_some()
+            {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    };
+    let mut timelock_recovery_txids = Vec::new();
+
     // Check if funding was ever broadcast. Only an explicit tracker record with
     // funding_broadcast=false is safe to discard; missing tracker state can
     // happen after a reboot and must not delete persisted recovery material.
@@ -942,37 +971,39 @@ fn recover_from_swap(
                 // Tracker: TimelockRecovered → Recovered + CleanedUp
                 let recovered_txids: Vec<_> =
                     recovered.resolved.iter().map(|(_, txid)| *txid).collect();
+                timelock_recovery_txids.extend(recovered_txids.iter().copied());
                 update_tracker(&maker, &swap_id, |r| {
-                    r.recovery.outgoing_recovered = recovered_txids;
+                    r.recovery.outgoing_recovered = timelock_recovery_txids.clone();
                     r.recovery.phase = MakerRecoveryPhase::TimelockRecovered;
                 });
-                update_tracker(&maker, &swap_id, |r| {
-                    r.phase = MakerSwapPhase::Recovered;
-                    r.recovery.phase = MakerRecoveryPhase::CleanedUp;
-                });
+                if all_swap_contracts_resolved()? {
+                    update_tracker(&maker, &swap_id, |r| {
+                        r.phase = MakerSwapPhase::Recovered;
+                        r.recovery.phase = MakerRecoveryPhase::CleanedUp;
+                    });
 
-                // Emit timelock recovery reports
-                let network = maker
-                    .wallet
-                    .read()
-                    .map(|w| w.store.network.to_string())
-                    .unwrap_or_default();
-                let recovery_txids: Vec<String> = recovered
-                    .resolved
-                    .iter()
-                    .map(|(_, spending_txid)| spending_txid.to_string())
-                    .collect();
-                RecoveryReport::emit_maker(
-                    &maker.data_dir,
-                    swap_id.clone(),
-                    network.clone(),
-                    "timelock".to_string(),
-                    recovery_txids,
-                );
+                    // Emit timelock recovery reports
+                    let network = maker
+                        .wallet
+                        .read()
+                        .map(|w| w.store.network.to_string())
+                        .unwrap_or_default();
+                    let recovery_txids: Vec<String> = timelock_recovery_txids
+                        .iter()
+                        .map(|spending_txid| spending_txid.to_string())
+                        .collect();
+                    RecoveryReport::emit_maker(
+                        &maker.data_dir,
+                        swap_id.clone(),
+                        network.clone(),
+                        "timelock".to_string(),
+                        recovery_txids,
+                    );
 
-                #[cfg(feature = "integration-test")]
-                maker.shutdown.store(true, Relaxed);
-                return Ok(());
+                    #[cfg(feature = "integration-test")]
+                    maker.shutdown.store(true, Relaxed);
+                    return Ok(());
+                }
             }
         }
 

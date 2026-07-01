@@ -130,6 +130,8 @@ enum Commands {
         /// Sets the swap amount in sats.
         #[clap(long, short = 'a', default_value = "20000")]
         amount: u64,
+        #[clap(long = "tx-count", default_value = "1")]
+        tx_count: u32,
         /// Protocol version to use: "legacy" or "taproot"
         #[clap(long, default_value = "legacy")]
         protocol: String,
@@ -473,6 +475,7 @@ fn main() -> Result<(), TakerError> {
         Commands::Coinswap {
             makers,
             amount,
+            tx_count,
             protocol,
             maker_addresses,
             auto_select,
@@ -501,6 +504,7 @@ fn main() -> Result<(), TakerError> {
 
             let mut swap_params =
                 SwapParams::new(protocol_version, Amount::from_sat(*amount), *makers);
+            swap_params.tx_count = *tx_count;
             swap_params.manually_selected_outpoints = manually_selected_outpoints;
             if !maker_addresses.is_empty() {
                 swap_params.preferred_makers = Some(maker_addresses.clone());

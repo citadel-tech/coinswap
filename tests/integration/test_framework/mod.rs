@@ -245,25 +245,22 @@ pub fn fund_taker(
 ) -> Amount {
     log::info!("💰 Funding Taker...");
 
+    let mut wallet = taker.get_wallet().write().unwrap();
+    let prev_balances = wallet.get_balances().unwrap();
+
     // Fund with UTXOs
     for _ in 0..utxo_count {
-        let addr = taker
-            .get_wallet()
-            .write()
-            .unwrap()
-            .get_next_external_address(address_type)
-            .unwrap();
+        let addr = wallet.get_next_external_address(address_type).unwrap();
         send_to_address(bitcoind, &addr, utxo_value);
     }
 
     generate_blocks(bitcoind, 1);
 
-    let mut wallet = taker.get_wallet().write().unwrap();
     wallet.sync_and_save().unwrap();
 
     // Verify balances
     let balances = wallet.get_balances().unwrap();
-    let expected_regular = utxo_value * utxo_count.into();
+    let expected_regular = (utxo_value * utxo_count.into()) + prev_balances.regular;
 
     assert_eq!(balances.regular, expected_regular);
 

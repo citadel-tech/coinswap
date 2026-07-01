@@ -107,118 +107,133 @@ impl Taker {
             )));
         }
 
-        // Verify timelock script has expected format (5 instructions):
-        // <locktime> OP_CLTV OP_DROP <pubkey> OP_CHECKSIG
-        let timelock_instruction_count = contract.timelock_script.instructions().count();
-        if timelock_instruction_count != 5 {
-            return Err(TakerError::General(format!(
-                "Maker {} Taproot timelock script has {} instructions, expected 5",
-                maker_idx, timelock_instruction_count
-            )));
-        }
-        let timelock_instructions = contract
-            .timelock_script
-            .instructions()
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| {
-                TakerError::General(format!(
-                    "Maker {} Taproot timelock script parse error: {:?}",
-                    maker_idx, e
-                ))
-            })?;
-        if !matches!(
-            timelock_instructions.as_slice(),
-            [
-                _,
-                Instruction::Op(OP_CLTV),
-                Instruction::Op(OP_DROP),
-                Instruction::PushBytes(pubkey),
-                Instruction::Op(OP_CHECKSIG),
-            ] if pubkey.len() == 32
-        ) {
-            return Err(TakerError::General(format!(
-                "Maker {} Taproot timelock script has invalid template",
-                maker_idx
-            )));
-        }
-
-        let maker_locktime_val: u64 = if let Some(first) =
-            contract.timelock_script.instructions().next()
+        // Per-contract vectors must all line up with contract_txs.
+        if contract.timelock_scripts.len() != contract.contract_txs.len()
+            || contract.internal_keys.len() != contract.contract_txs.len()
+            || contract.tap_tweaks.len() != contract.contract_txs.len()
         {
-            match first.map_err(|e| {
-                TakerError::General(format!(
-                    "Maker {} Taproot timelock script parse error: {:?}",
-                    maker_idx, e
-                ))
-            })? {
-                bitcoin::script::Instruction::PushBytes(locktime_bytes) => {
-                    let bytes = locktime_bytes.as_bytes();
-                    if bytes.is_empty() {
-                        return Err(TakerError::General(format!(
-                            "Maker {} Taproot timelock script has empty locktime",
-                            maker_idx
-                        )));
-                    }
-                    match bytes.len() {
-                        1 => bytes[0] as u64,
-                        2 => u16::from_le_bytes([bytes[0], bytes[1]]) as u64,
-                        3 => u32::from_le_bytes([bytes[0], bytes[1], bytes[2], 0]) as u64,
-                        4 => u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as u64,
-                        _ => {
-                            return Err(TakerError::General(format!(
-                                "Maker {} Taproot timelock has unexpected byte length {}",
-                                maker_idx,
-                                bytes.len()
-                            )));
-                        }
-                    }
-                }
-                bitcoin::script::Instruction::Op(opcode) => {
-                    if let bitcoin::opcodes::Class::PushNum(n) =
-                        opcode.classify(bitcoin::opcodes::ClassifyContext::Legacy)
-                    {
-                        if n <= 0 {
-                            return Err(TakerError::General(format!(
-                                "Maker {} Taproot timelock value is non-positive ({})",
-                                maker_idx, n
-                            )));
-                        }
-                        n as u64
-                    } else {
-                        return Err(TakerError::General(format!(
-                            "Maker {} Taproot timelock script doesn't start with a locktime",
-                            maker_idx
-                        )));
-                    }
-                }
-            }
-        } else {
             return Err(TakerError::General(format!(
-                "Maker {} Taproot timelock script is empty",
-                maker_idx
-            )));
-        };
-
-        if maker_locktime_val == 0 {
-            return Err(TakerError::General(format!(
-                "Maker {} Taproot timelock value is zero",
+                "Maker {} Taproot per-contract vectors have inconsistent lengths",
                 maker_idx
             )));
         }
 
-        // Verify the Maker used exactly the absolute locktime we sent in SwapDetails.
-        if maker_locktime_val != expected_locktime as u64 {
-            return Err(TakerError::General(format!(
-                "Maker {} Taproot timelock value {} does not match expected {}",
-                maker_idx, maker_locktime_val, expected_locktime
-            )));
-        }
-
-        // Reconstruct the expected Taproot output scriptpubkey from the verified
-        // scripts and the maker's claimed internal key, then check every contract
-        // tx output pays to that address.
         let secp = Secp256k1::verification_only();
-        let expected_spk = {
+
+        // Each contract has its own timelock script, internal key and tap tweak,
+        // so verify the timelock template, locktime value and P2TR output per contract.
+        for (i, tx) in contract.contract_txs.iter().enumerate() {
+            let timelock_script = &contract.timelock_scripts[i];
+
+            // Verify timelock script has expected format (5 instructions):
+            // <locktime> OP_CLTV OP_DROP <pubkey> OP_CHECKSIG
+            let timelock_instruction_count = timelock_script.instructions().count();
+            if timelock_instruction_count != 5 {
+                return Err(TakerError::General(format!(
+                    "Maker {} Taproot timelock script {} has {} instructions, expected 5",
+                    maker_idx, i, timelock_instruction_count
+                )));
+            }
+            let timelock_instructions = timelock_script
+                .instructions()
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| {
+                    TakerError::General(format!(
+                        "Maker {} Taproot timelock script {} parse error: {:?}",
+                        maker_idx, i, e
+                    ))
+                })?;
+            if !matches!(
+                timelock_instructions.as_slice(),
+                [
+                    _,
+                    Instruction::Op(OP_CLTV),
+                    Instruction::Op(OP_DROP),
+                    Instruction::PushBytes(pubkey),
+                    Instruction::Op(OP_CHECKSIG),
+                ] if pubkey.len() == 32
+            ) {
+                return Err(TakerError::General(format!(
+                    "Maker {} Taproot timelock script {} has invalid template",
+                    maker_idx, i
+                )));
+            }
+
+            let maker_locktime_val: u64 =
+                if let Some(first) = timelock_script.instructions().next() {
+                    match first.map_err(|e| {
+                        TakerError::General(format!(
+                            "Maker {} Taproot timelock script {} parse error: {:?}",
+                            maker_idx, i, e
+                        ))
+                    })? {
+                        bitcoin::script::Instruction::PushBytes(locktime_bytes) => {
+                            let bytes = locktime_bytes.as_bytes();
+                            if bytes.is_empty() {
+                                return Err(TakerError::General(format!(
+                                    "Maker {} Taproot timelock script {} has empty locktime",
+                                    maker_idx, i
+                                )));
+                            }
+                            match bytes.len() {
+                                1 => bytes[0] as u64,
+                                2 => u16::from_le_bytes([bytes[0], bytes[1]]) as u64,
+                                3 => u32::from_le_bytes([bytes[0], bytes[1], bytes[2], 0]) as u64,
+                                4 => u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+                                    as u64,
+                                _ => {
+                                    return Err(TakerError::General(format!(
+                                    "Maker {} Taproot timelock {} has unexpected byte length {}",
+                                    maker_idx, i,
+                                    bytes.len()
+                                )));
+                                }
+                            }
+                        }
+                        bitcoin::script::Instruction::Op(opcode) => {
+                            if let bitcoin::opcodes::Class::PushNum(n) =
+                                opcode.classify(bitcoin::opcodes::ClassifyContext::Legacy)
+                            {
+                                if n <= 0 {
+                                    return Err(TakerError::General(format!(
+                                        "Maker {} Taproot timelock {} value is non-positive ({})",
+                                        maker_idx, i, n
+                                    )));
+                                }
+                                n as u64
+                            } else {
+                                return Err(TakerError::General(format!(
+                                "Maker {} Taproot timelock script {} doesn't start with a locktime",
+                                maker_idx, i
+                            )));
+                            }
+                        }
+                    }
+                } else {
+                    return Err(TakerError::General(format!(
+                        "Maker {} Taproot timelock script {} is empty",
+                        maker_idx, i
+                    )));
+                };
+
+            if maker_locktime_val == 0 {
+                return Err(TakerError::General(format!(
+                    "Maker {} Taproot timelock {} value is zero",
+                    maker_idx, i
+                )));
+            }
+
+            // Verify the Maker used exactly the absolute locktime we sent in SwapDetails.
+            if maker_locktime_val != expected_locktime as u64 {
+                return Err(TakerError::General(format!(
+                    "Maker {} Taproot timelock {} value {} does not match expected {}",
+                    maker_idx, i, maker_locktime_val, expected_locktime
+                )));
+            }
+
+            // Reconstruct the expected Taproot output scriptpubkey from the verified
+            // scripts and the maker's claimed internal key, then check every contract
+            // tx output pays to that address.
             let builder = bitcoin::taproot::TaprootBuilder::new()
                 .add_leaf(1, contract.hashlock_script.clone())
                 .map_err(|e| {
@@ -227,7 +242,7 @@ impl Taker {
                         maker_idx, e
                     ))
                 })?
-                .add_leaf(1, contract.timelock_script.clone())
+                .add_leaf(1, timelock_script.clone())
                 .map_err(|e| {
                     TakerError::General(format!(
                         "Maker {} Taproot tree build failed (timelock leaf): {:?}",
@@ -235,7 +250,7 @@ impl Taker {
                     ))
                 })?;
             let tap_info = builder
-                .finalize(&secp, contract.internal_key)
+                .finalize(&secp, contract.internal_keys[i])
                 .map_err(|e| {
                     TakerError::General(format!(
                         "Maker {} Taproot tree finalization failed: {:?}",
@@ -245,22 +260,20 @@ impl Taker {
 
             // QA: The taker stores the maker-provided tweak for later spending,
             // so reject tweaks that do not match the verified script tree.
-            let claimed_tweak = contract.tap_tweak_scalar().map_err(|e| {
+            let claimed_tweak = contract.tap_tweak_scalar(i).map_err(|e| {
                 TakerError::General(format!(
-                    "Maker {} Taproot tweak is invalid: {:?}",
-                    maker_idx, e
+                    "Maker {} Taproot tweak {} is invalid: {:?}",
+                    maker_idx, i, e
                 ))
             })?;
             if claimed_tweak != tap_info.tap_tweak().to_scalar() {
                 return Err(TakerError::General(format!(
-                    "Maker {} Taproot tweak does not match internal key and script tree",
-                    maker_idx
+                    "Maker {} Taproot tweak {} does not match internal key and script tree",
+                    maker_idx, i
                 )));
             }
-            bitcoin::ScriptBuf::new_p2tr_tweaked(tap_info.output_key())
-        };
+            let expected_spk = bitcoin::ScriptBuf::new_p2tr_tweaked(tap_info.output_key());
 
-        for (i, tx) in contract.contract_txs.iter().enumerate() {
             if tx.input.is_empty() {
                 return Err(TakerError::General(format!(
                     "Maker {} Taproot contract tx {} has no inputs",

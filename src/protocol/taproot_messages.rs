@@ -48,13 +48,14 @@ pub struct TaprootContractData {
     /// Tweakable point for the next hop.
     pub next_hop_point: PublicKey,
     /// The aggregated internal key for the Taproot output.
-    pub internal_key: XOnlyPublicKey,
+    pub internal_keys: Vec<XOnlyPublicKey>,
     /// The tap tweak applied to the internal key.
-    pub tap_tweak: SerializableScalar,
+    pub tap_tweaks: Vec<SerializableScalar>,
     /// Hashlock script for preimage spending (script-path fallback).
+    /// Shared across all contracts of a hop.
     pub hashlock_script: ScriptBuf,
     /// Timelock script for timeout spending (script-path fallback).
-    pub timelock_script: ScriptBuf,
+    pub timelock_scripts: Vec<ScriptBuf>,
     /// Contract transactions (in Taproot, the funding tx IS the contract).
     pub contract_txs: Vec<Transaction>,
     /// Contract amounts.
@@ -78,10 +79,10 @@ impl TaprootContractData {
         id: String,
         pubkeys: Vec<PublicKey>,
         next_hop_point: PublicKey,
-        internal_key: XOnlyPublicKey,
-        tap_tweak: SerializableScalar,
+        internal_keys: Vec<XOnlyPublicKey>,
+        tap_tweaks: Vec<SerializableScalar>,
         hashlock_script: ScriptBuf,
-        timelock_script: ScriptBuf,
+        timelock_scripts: Vec<ScriptBuf>,
         contract_txs: Vec<Transaction>,
         amounts: Vec<Amount>,
         hashlock_nonce: Option<SecretKey>,
@@ -91,10 +92,10 @@ impl TaprootContractData {
             id,
             pubkeys,
             next_hop_point,
-            internal_key,
-            tap_tweak,
+            internal_keys,
+            tap_tweaks,
             hashlock_script,
-            timelock_script,
+            timelock_scripts,
             contract_txs,
             amounts,
             hashlock_nonce,
@@ -102,11 +103,12 @@ impl TaprootContractData {
         }
     }
 
-    /// Convenience method to get the tap tweak as a Scalar.
+    /// Convenience method to get the tap tweak for contract `i` as a Scalar.
     pub fn tap_tweak_scalar(
         &self,
+        i: usize,
     ) -> Result<bitcoin::secp256k1::Scalar, crate::protocol::error::ProtocolError> {
-        self.tap_tweak.clone().try_into()
+        self.tap_tweaks[i].clone().try_into()
     }
 }
 

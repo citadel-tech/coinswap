@@ -160,7 +160,7 @@ impl Wallet {
     /// Creates a [`Transaction`] spending given UTXOs to a [`Destination`] with fee calculated from `feerate`.
     #[hotpath::measure]
     pub fn spend_coins(
-        &self,
+        &mut self,
         coins: &[(ListUnspentResultEntry, UTXOSpendInfo)],
         destination: Destination,
         feerate: f64,

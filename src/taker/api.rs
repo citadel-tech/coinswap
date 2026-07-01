@@ -38,7 +38,10 @@ use crate::{
         },
         contract::calculate_pubkey_from_nonce,
     },
-    utill::{check_tor_status, generate_maker_keys, get_taker_dir, read_message, send_message},
+    utill::{
+        check_tor_status, estimate_funding_tx_fee_sats, generate_maker_keys, get_taker_dir,
+        read_message, send_message,
+    },
     wallet::{
         swapcoin::{IncomingSwapCoin, OutgoingSwapCoin, WatchOnlySwapCoin},
         MakerFeeInfo as ReportMakerFeeInfo, RPCConfig, RecoveryOutcome, SwapStatus, TakerReport,
@@ -382,6 +385,10 @@ impl Taker {
         let send_amount = swap.params.send_amount;
         let maker_count = swap.makers.len();
 
+        // TODO : Have the makers derive the fee & a smart messaging layer to send the estimated target to the taker sequentially.
+        let per_hop_mining_fee =
+            (estimate_funding_tx_fee_sats() * swap.params.tx_count as u64) as f64;
+
         // Iteratively compute the amount reaching each hop after deducting fees.
         let mut amount_sats = send_amount.to_sat() as f64;
         for i in 0..=maker_idx {
@@ -392,7 +399,7 @@ impl Taker {
                 + (amount_sats * offer.amount_relative_fee_pct) / 100.0
                 + (amount_sats * locktime as f64 * offer.time_relative_fee_pct) / 100.0;
             let fee_with_margin = fee * FEE_VERIFICATION_MARGIN;
-            amount_sats = (amount_sats - fee_with_margin).max(0.0);
+            amount_sats = (amount_sats - fee_with_margin - per_hop_mining_fee).max(0.0);
         }
 
         Some(Amount::from_sat(amount_sats as u64))
@@ -1606,11 +1613,19 @@ impl Taker {
         let preimage = swap.preimage;
         let send_amount = swap.params.send_amount;
         let swap_id = swap.id.clone();
+        let swap_tx_count = swap.params.tx_count as usize;
         let manually_selected_outpoints = swap.params.manually_selected_outpoints.clone();
         let reference_height = swap.reference_height;
 
         let (multisig_pubkeys, multisig_nonces, hashlock_pubkeys, hashlock_nonces) =
-            generate_maker_keys(&tweakable_point, 1)?;
+            generate_maker_keys(
+                &tweakable_point,
+                if protocol == ProtocolVersion::Legacy {
+                    swap.params.tx_count
+                } else {
+                    1
+                },
+            )?;
 
         // For Taproot, generate hashlock nonces for ALL hops (one per maker)
         // and derive the tweaked hashlock pubkey for the first hop.
@@ -1657,8 +1672,11 @@ impl Taker {
             )?,
             ProtocolVersion::Taproot => Self::funding_create_taproot(
                 &mut wallet,
-                &[tweakable_point],
-                &[taproot_hashlock_pubkey.expect("taproot hashlock pubkey must be set")],
+                &vec![tweakable_point; swap_tx_count],
+                &vec![
+                    taproot_hashlock_pubkey.expect("taproot hashlock pubkey must be set");
+                    swap_tx_count
+                ],
                 preimage,
                 refund_locktime_offset,
                 send_amount,
@@ -1831,12 +1849,15 @@ impl Taker {
         let protocol = swap.params.protocol;
         let swap_id = swap.id.clone();
 
-        // Start with the taker's own outgoing privkey (for Maker[0]'s incoming)
-        let mut current_privkey = swap
+        // Start with the taker's own outgoing privkeys (for Maker[0]'s incoming)
+        let mut current_privkeys: Vec<SecretKey> = swap
             .outgoing_swapcoins
-            .first()
-            .and_then(|sc| sc.my_privkey)
-            .ok_or_else(|| TakerError::General("No outgoing privkey".to_string()))?;
+            .iter()
+            .filter_map(|sc| sc.my_privkey)
+            .collect();
+        if current_privkeys.is_empty() {
+            return Err(TakerError::General("No outgoing privkey".to_string()));
+        }
 
         for i in 0..num_makers {
             let maker_address = self.swap_state()?.makers[i].address.to_string();
@@ -1846,19 +1867,23 @@ impl Taker {
 
             log::info!("Sending privkey to maker {} and awaiting response", i);
 
-            let msg = Self::msg_build_handover(protocol, swap_id.clone(), current_privkey);
+            let msg = Self::msg_build_handover(protocol, swap_id.clone(), &current_privkeys);
             send_message(&mut stream, &msg)?;
 
             let msg_bytes = read_message(&mut stream)?;
             let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
 
-            let received_privkey = match msg {
+            let received_privkeys: Vec<SecretKey> = match msg {
                 MakerToTakerMessage::LegacyPrivateKeyHandover(handover)
                 | MakerToTakerMessage::TaprootPrivateKeyHandover(handover) => {
                     log::info!("Received private key from maker {}", i);
-                    handover.privkeys.first().map(|p| p.key).ok_or_else(|| {
-                        TakerError::General(format!("Empty privkey response from maker {}", i))
-                    })?
+                    if handover.privkeys.is_empty() {
+                        return Err(TakerError::General(format!(
+                            "Empty privkey response from maker {}",
+                            i
+                        )));
+                    }
+                    handover.privkeys.iter().map(|p| p.key).collect()
                 }
                 _ => {
                     return Err(TakerError::General(format!(
@@ -1882,18 +1907,21 @@ impl Taker {
                 num_makers
             );
 
-            // For the last maker: validate and set their privkey on taker's incoming swapcoin.
+            // For the last maker: validate and set their privkey on taker's incoming swapcoins.
             // Derive the public key from the received private key and verify it matches
-            // the expected other_pubkey on the incoming swapcoin, preventing a malicious
+            // the expected other_pubkey on the incoming swapcoins, preventing a malicious
             // maker from sending a garbage key that would make funds unspendable.
             if i == num_makers - 1 {
-                if let Some(incoming) = self.swap_state_mut()?.incoming_swapcoins.last_mut() {
-                    let secp = bitcoin::secp256k1::Secp256k1::new();
+                let secp = bitcoin::secp256k1::Secp256k1::new();
+                let incoming = &mut self.swap_state_mut()?.incoming_swapcoins;
+                for (incoming, received_privkey) in
+                    incoming.iter_mut().zip(received_privkeys.iter())
+                {
                     let derived_pubkey = PublicKey {
                         compressed: true,
                         inner: bitcoin::secp256k1::PublicKey::from_secret_key(
                             &secp,
-                            &received_privkey,
+                            received_privkey,
                         ),
                     };
                     if let Some(expected_pubkey) = incoming.other_pubkey {
@@ -1905,15 +1933,15 @@ impl Taker {
                             )));
                         }
                     }
-                    incoming.set_other_privkey(received_privkey);
-                    log::info!(
-                        "Validated and set taker's incoming swapcoin other_privkey from last maker ({})",
-                        i
-                    );
+                    incoming.set_other_privkey(*received_privkey);
                 }
+                log::info!(
+                    "Validated and set taker's incoming swapcoin other_privkeys from last maker ({})",
+                    i
+                );
             }
 
-            current_privkey = received_privkey;
+            current_privkeys = received_privkeys;
         }
 
         Ok(())
@@ -1923,17 +1951,17 @@ impl Taker {
     /// Preimage is already stamped at swapcoin creation time.
     #[hotpath::measure]
     fn finalize_persist_incoming(&mut self) -> Result<(), TakerError> {
+        let incoming = self.swap_state()?.incoming_swapcoins.clone();
         let mut wallet = self.write_wallet()?;
-        let incoming = self.swap_state()?.incoming_swapcoins.last().cloned();
-        if let Some(incoming) = &incoming {
-            wallet.add_incoming_swapcoin(incoming);
+        for swapcoin in &incoming {
+            wallet.add_incoming_swapcoin(swapcoin);
         }
 
         wallet.save_to_disk()?;
         #[cfg(debug_assertions)]
         log::debug!(
             "[WALLET_STATE] Action: persist_final_incoming | Added: {} | IncomingStored: {}",
-            usize::from(incoming.is_some()),
+            incoming.len(),
             wallet.get_incoming_swapcoins_count()
         );
         Ok(())
@@ -1943,14 +1971,17 @@ impl Taker {
     fn msg_build_handover(
         protocol: ProtocolVersion,
         swap_id: String,
-        privkey: SecretKey,
+        privkeys: &[SecretKey],
     ) -> TakerToMakerMessage {
         let handover = PrivateKeyHandover {
             id: swap_id,
-            privkeys: vec![SwapPrivkey {
-                identifier: bitcoin::ScriptBuf::new(),
-                key: privkey,
-            }],
+            privkeys: privkeys
+                .iter()
+                .map(|key| SwapPrivkey {
+                    identifier: bitcoin::ScriptBuf::new(),
+                    key: *key,
+                })
+                .collect(),
         };
         match protocol {
             ProtocolVersion::Legacy => TakerToMakerMessage::LegacyPrivateKeyHandover(handover),
@@ -2361,7 +2392,7 @@ impl Taker {
             for outgoing in &swap.outgoing_swapcoins {
                 wallet.add_outgoing_swapcoin(outgoing);
             }
-            if let Some(incoming) = swap.incoming_swapcoins.last() {
+            for incoming in &swap.incoming_swapcoins {
                 wallet.add_incoming_swapcoin(incoming);
             }
             wallet.save_to_disk()?;

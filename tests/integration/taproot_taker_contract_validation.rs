@@ -77,7 +77,7 @@ fn test_taproot_rejects_underfunded_maker_contract() {
     // A 30k-sat swap keeps the maker's 10k-sat underfunded output valid enough
     // to broadcast while still making the amount mismatch obvious.
     let swap_params = SwapParams::new(ProtocolVersion::Taproot, Amount::from_sat(30_000), 1)
-        .with_tx_count(1)
+        .with_tx_count(3)
         .with_required_confirms(1);
     let summary = taker
         .prepare_coinswap(swap_params)

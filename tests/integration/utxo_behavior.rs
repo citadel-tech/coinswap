@@ -247,7 +247,7 @@ fn test_separated_utxo_coin_selection() {
     // Perform coinswap to create swap coins
     info!("Performing coinswap to create swap coins");
     let swap_params = SwapParams::new(ProtocolVersion::Legacy, Amount::from_sat(35000000), 2)
-        .with_tx_count(3)
+        .with_tx_count(1)
         .with_required_confirms(1);
 
     let summary = taker
@@ -484,7 +484,7 @@ fn test_manual_coinselection() {
     }
 
     let swap_params = SwapParams::new(ProtocolVersion::Legacy, Amount::from_btc(0.01).unwrap(), 2)
-        .with_tx_count(3)
+        .with_tx_count(1)
         .with_required_confirms(1)
         .with_utxos(manually_selected_utxos.clone());
 
