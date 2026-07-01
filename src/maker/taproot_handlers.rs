@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use bitcoin::{OutPoint, PublicKey};
+use bitcoin::{Amount, OutPoint, PublicKey};
 
 use super::{
     error::MakerError,
@@ -106,73 +106,76 @@ fn process_taproot_contract<M: Maker>(
         state.timelock
     );
 
-    let incoming_contract_tx = data
-        .contract_txs
-        .first()
-        .cloned()
-        .ok_or(MakerError::General("No contract transaction from taker"))?;
+    let n = data.contract_txs.len();
+    let mut incoming_swapcoins = Vec::with_capacity(n);
+    for j in 0..n {
+        let incoming_contract_tx = data.contract_txs[j].clone();
+        maker.verify_contract_tx_on_chain(&incoming_contract_tx.compute_txid())?;
 
-    // Verify the incoming contract tx is on-chain before proceeding.
-    let incoming_txid = incoming_contract_tx.compute_txid();
-    maker.verify_contract_tx_on_chain(&incoming_txid)?;
+        let incoming_funding_amount = data.amounts[j];
 
-    let incoming_funding_amount = data.amounts.first().cloned().unwrap_or(state.swap_amount);
+        let other_pubkey = data.pubkeys.get(j).cloned().unwrap_or(data.next_hop_point);
 
-    let other_pubkey = data.pubkeys.first().cloned().unwrap_or(data.next_hop_point);
+        let mut incoming_swapcoin = IncomingSwapCoin::new_taproot(
+            hashlock_privkey,
+            data.hashlock_script.clone(),
+            data.timelock_scripts[j].clone(),
+            incoming_contract_tx,
+            incoming_funding_amount,
+        );
+        incoming_swapcoin.swap_id = Some(data.id.clone());
 
-    let mut incoming_swapcoin = IncomingSwapCoin::new_taproot(
-        hashlock_privkey,
-        data.hashlock_script.clone(),
-        data.timelock_script.clone(),
-        incoming_contract_tx,
-        incoming_funding_amount,
-    );
-    incoming_swapcoin.swap_id = Some(data.id.clone());
+        incoming_swapcoin.my_privkey = Some(tweakable_privkey);
+        incoming_swapcoin.my_pubkey = Some(PublicKey {
+            compressed: true,
+            inner: bitcoin::secp256k1::PublicKey::from_secret_key(&secp, &tweakable_privkey),
+        });
+        incoming_swapcoin.other_pubkey = Some(other_pubkey);
+        incoming_swapcoin.internal_key = Some(data.internal_keys[j]);
+        incoming_swapcoin.tap_tweak = Some(data.tap_tweak_scalar(j)?);
+        incoming_swapcoins.push(incoming_swapcoin);
+    }
 
-    incoming_swapcoin.my_privkey = Some(tweakable_privkey);
-    incoming_swapcoin.my_pubkey = Some(PublicKey {
-        compressed: true,
-        inner: bitcoin::secp256k1::PublicKey::from_secret_key(&secp, &tweakable_privkey),
-    });
-    incoming_swapcoin.other_pubkey = Some(other_pubkey);
-    incoming_swapcoin.internal_key = Some(data.internal_key);
-    incoming_swapcoin.tap_tweak = Some(data.tap_tweak_scalar()?);
-
-    // Use the relative offset sent by the taker for deterministic fee calculation
-    let fee =
-        maker.calculate_swap_fee(incoming_funding_amount, state.refund_locktime_offset as u32);
-    let outgoing_amount = incoming_funding_amount
+    let total_incoming: Amount = data.amounts.iter().cloned().sum();
+    let fee = maker.calculate_swap_fee(total_incoming, state.refund_locktime_offset as u32);
+    let outgoing_total = total_incoming
         .checked_sub(fee)
         .ok_or(MakerError::General("Fee exceeds incoming amount"))?;
+    let total_sat = total_incoming.to_sat() as u128;
+    let mut outgoing_amounts = data
+        .amounts
+        .iter()
+        .map(|amt| {
+            let share = (fee.to_sat() as u128 * amt.to_sat() as u128 / total_sat) as u64;
+            Amount::from_sat(amt.to_sat() - share)
+        })
+        .collect::<Vec<Amount>>();
+    // Flooring leaves the outgoing sum a few sats above total fee; deduct that remainder from the largest output so the totals stay exact and deterministic.
+    let remainder =
+        outgoing_amounts.iter().map(|amt| amt.to_sat()).sum::<u64>() - outgoing_total.to_sat();
+    if remainder > 0 {
+        let max_idx = outgoing_amounts
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, amt)| amt.to_sat())
+            .map(|(idx, _)| idx)
+            .unwrap_or(0);
+        outgoing_amounts[max_idx] -= Amount::from_sat(remainder);
+    }
 
     log::info!(
-        "[{}] Fee calculation: incoming={}, fee={}, outgoing={}",
+        "[{}] Fee calculation: incoming_total={}, fee={}, outgoing_total={}",
         maker.network_port(),
-        incoming_funding_amount,
+        total_incoming,
         fee,
-        outgoing_amount
+        outgoing_total
     );
-
-    let outgoing_nonce =
-        bitcoin::secp256k1::SecretKey::new(&mut bitcoin::secp256k1::rand::thread_rng());
-    let outgoing_privkey = tweakable_privkey
-        .add_tweak(&outgoing_nonce.into())
-        .map_err(|_| MakerError::General("Outgoing key derivation failed"))?;
-
-    let outgoing_pubkey = PublicKey {
-        compressed: true,
-        inner: bitcoin::secp256k1::PublicKey::from_secret_key(&secp, &outgoing_privkey),
-    };
-
-    let timelock_privkey =
-        bitcoin::secp256k1::SecretKey::new(&mut bitcoin::secp256k1::rand::thread_rng());
-    let timelock_keypair = bitcoin::secp256k1::Keypair::from_secret_key(&secp, &timelock_privkey);
-    let timelock_xonly = bitcoin::secp256k1::XOnlyPublicKey::from_keypair(&timelock_keypair).0;
 
     let hash = extract_hash_from_hashlock(&data.hashlock_script)
         .map_err(|e| MakerError::General(format!("Invalid hashlock script: {:?}", e).leak()))?;
     // If next_hashlock_nonce is provided, tweak the next hop's pubkey.
     // Otherwise (last maker → taker), use the un-tweaked next_hop_point.
+    // The hashlock script (next hop's hashlock key) is shared across all contracts.
     let next_hop_hashlock_pubkey = if let Some(ref nonce) = data.next_hashlock_nonce {
         calculate_pubkey_from_nonce(&data.next_hop_point, nonce)
             .map_err(|e| MakerError::General(format!("Next hop key derivation: {:?}", e).leak()))?
@@ -181,102 +184,149 @@ fn process_taproot_contract<M: Maker>(
     };
     let next_hop_xonly = bitcoin::key::XOnlyPublicKey::from(next_hop_hashlock_pubkey.inner);
     let hashlock_script = create_hashlock_script(&hash, &next_hop_xonly);
-    let timelock_script = {
-        // For Taproot, state.timelock is already an absolute block height
-        // (computed by the taker from a single reference height).
-        let locktime = bitcoin::absolute::LockTime::from_height(state.timelock)
-            .map_err(|_| MakerError::General("Invalid locktime height"))?;
-        create_timelock_script(locktime, &timelock_xonly)
-    };
 
-    let builder = bitcoin::taproot::TaprootBuilder::new()
-        .add_leaf(1, hashlock_script.clone())
-        .map_err(|e| MakerError::General(format!("Failed to add hashlock leaf: {:?}", e).leak()))?
-        .add_leaf(1, timelock_script.clone())
-        .map_err(|e| MakerError::General(format!("Failed to add timelock leaf: {:?}", e).leak()))?;
+    // Build one outgoing contract (with its own keys/scripts/address) per contract.
+    let mut outgoing_swapcoins = Vec::with_capacity(n);
+    let mut response_pubkeys = Vec::with_capacity(n);
+    let mut response_internal_keys = Vec::with_capacity(n);
+    let mut response_tap_tweaks = Vec::with_capacity(n);
+    let mut response_timelock_scripts = Vec::with_capacity(n);
+    let mut response_contract_txs = Vec::with_capacity(n);
+    let mut response_amounts = Vec::with_capacity(n);
+    let mut reserved = Vec::with_capacity(n);
+    let mut spent_inputs: Vec<OutPoint> = Vec::new();
 
-    let mut ordered_pubkeys = [outgoing_pubkey, data.next_hop_point];
-    ordered_pubkeys.sort_by_key(|a| a.inner.serialize());
-    let internal_key = crate::protocol::musig_interface::get_aggregated_pubkey_compat(
-        ordered_pubkeys[0].inner,
-        ordered_pubkeys[1].inner,
-    )
-    .map_err(|e| {
-        MakerError::General(format!("Failed to create aggregated pubkey: {:?}", e).leak())
-    })?;
+    let base_excluded = maker.collect_excluded_utxos(&data.id);
 
-    let tap_info = builder
-        .finalize(&secp, internal_key)
-        .map_err(|e| MakerError::General(format!("Failed to finalize taproot: {:?}", e).leak()))?;
+    for &outgoing_amount in &outgoing_amounts {
+        let outgoing_nonce =
+            bitcoin::secp256k1::SecretKey::new(&mut bitcoin::secp256k1::rand::thread_rng());
+        let outgoing_privkey = tweakable_privkey
+            .add_tweak(&outgoing_nonce.into())
+            .map_err(|_| MakerError::General("Outgoing key derivation failed"))?;
+        let outgoing_pubkey = PublicKey {
+            compressed: true,
+            inner: bitcoin::secp256k1::PublicKey::from_secret_key(&secp, &outgoing_privkey),
+        };
 
-    let taproot_address = bitcoin::Address::p2tr_tweaked(tap_info.output_key(), maker.network());
+        let timelock_privkey =
+            bitcoin::secp256k1::SecretKey::new(&mut bitcoin::secp256k1::rand::thread_rng());
+        let timelock_keypair =
+            bitcoin::secp256k1::Keypair::from_secret_key(&secp, &timelock_privkey);
+        let timelock_xonly = bitcoin::secp256k1::XOnlyPublicKey::from_keypair(&timelock_keypair).0;
+        let timelock_script = {
+            // For Taproot, state.timelock is already an absolute block height.
+            let locktime = bitcoin::absolute::LockTime::from_height(state.timelock)
+                .map_err(|_| MakerError::General("Invalid locktime height"))?;
+            create_timelock_script(locktime, &timelock_xonly)
+        };
 
-    // Reserve UTXOs for this swap to prevent double-spending across concurrent swaps.
-    let excluded_utxos = maker.collect_excluded_utxos(&data.id);
-    if !excluded_utxos.is_empty() {
-        log::info!(
-            "[{}] Excluding {} UTXOs from other active swaps",
-            maker.network_port(),
-            excluded_utxos.len()
+        let builder = bitcoin::taproot::TaprootBuilder::new()
+            .add_leaf(1, hashlock_script.clone())
+            .map_err(|e| {
+                MakerError::General(format!("Failed to add hashlock leaf: {:?}", e).leak())
+            })?
+            .add_leaf(1, timelock_script.clone())
+            .map_err(|e| {
+                MakerError::General(format!("Failed to add timelock leaf: {:?}", e).leak())
+            })?;
+
+        let mut ordered_pubkeys = [outgoing_pubkey, data.next_hop_point];
+        ordered_pubkeys.sort_by_key(|a| a.inner.serialize());
+        let internal_key = crate::protocol::musig_interface::get_aggregated_pubkey_compat(
+            ordered_pubkeys[0].inner,
+            ordered_pubkeys[1].inner,
+        )
+        .map_err(|e| {
+            MakerError::General(format!("Failed to create aggregated pubkey: {:?}", e).leak())
+        })?;
+
+        let tap_info = builder.finalize(&secp, internal_key).map_err(|e| {
+            MakerError::General(format!("Failed to finalize taproot: {:?}", e).leak())
+        })?;
+        let taproot_address =
+            bitcoin::Address::p2tr_tweaked(tap_info.output_key(), maker.network());
+
+        // Exclude UTXOs from other swaps and the inputs already spent this hop.
+        let mut excluded_utxos = base_excluded.clone();
+        excluded_utxos.extend(spent_inputs.iter().cloned());
+
+        // QA: Integration-only malicious maker path for taker validation tests.
+        #[cfg(feature = "integration-test")]
+        let funding_amount = {
+            use super::handlers::MakerBehavior;
+            if maker.behavior() == MakerBehavior::UnderfundTaprootContract {
+                Amount::from_sat(10_000)
+            } else {
+                outgoing_amount
+            }
+        };
+        #[cfg(not(feature = "integration-test"))]
+        let funding_amount = outgoing_amount;
+
+        let (contract_tx, output_pos) = maker.create_funding_transaction(
+            funding_amount,
+            taproot_address.clone(),
+            Some(excluded_utxos),
+        )?;
+        spent_inputs.extend(contract_tx.input.iter().map(|i| i.previous_output));
+        let contract_outpoint = OutPoint {
+            txid: contract_tx.compute_txid(),
+            vout: output_pos,
+        };
+        reserved.push(contract_outpoint);
+        let contract_output_amount = contract_tx.output[output_pos as usize].value;
+
+        let mut outgoing_swapcoin = OutgoingSwapCoin::new_taproot(
+            timelock_privkey,
+            hashlock_script.clone(),
+            timelock_script.clone(),
+            contract_tx.clone(),
+            contract_output_amount,
         );
+        outgoing_swapcoin.swap_id = Some(data.id.clone());
+        outgoing_swapcoin.set_taproot_params(
+            outgoing_privkey,
+            outgoing_pubkey,
+            data.next_hop_point,
+            internal_key,
+            tap_info.tap_tweak().to_scalar(),
+        );
+
+        // QA: Keep this claim inconsistent with the funded output when the test
+        // behavior is active, proving the taker binds metadata to transaction value.
+        #[cfg(feature = "integration-test")]
+        let response_amount = {
+            use super::handlers::MakerBehavior;
+            if maker.behavior() == MakerBehavior::UnderfundTaprootContract {
+                outgoing_amount
+            } else {
+                contract_output_amount
+            }
+        };
+        #[cfg(not(feature = "integration-test"))]
+        let response_amount = contract_output_amount;
+
+        response_pubkeys.push(outgoing_pubkey);
+        response_internal_keys.push(internal_key);
+        response_tap_tweaks.push(SerializableScalar::from_bytes(
+            tap_info.tap_tweak().to_scalar().to_be_bytes().to_vec(),
+        ));
+        response_timelock_scripts.push(timelock_script);
+        response_contract_txs.push(contract_tx);
+        response_amounts.push(response_amount);
+        outgoing_swapcoins.push(outgoing_swapcoin);
     }
 
-    // QA: Integration-only malicious maker path for taker validation tests. It
-    // funds less than the amount it will later claim in TaprootContractData.
-    #[cfg(feature = "integration-test")]
-    let funding_amount = {
-        use super::handlers::MakerBehavior;
-        if maker.behavior() == MakerBehavior::UnderfundTaprootContract {
-            bitcoin::Amount::from_sat(10_000)
-        } else {
-            outgoing_amount
-        }
-    };
-    #[cfg(not(feature = "integration-test"))]
-    let funding_amount = outgoing_amount;
-
-    let (contract_tx, output_pos) = maker.create_funding_transaction(
-        funding_amount,
-        taproot_address.clone(),
-        Some(excluded_utxos),
-    )?;
-    let contract_txid = contract_tx.compute_txid();
-
-    let contract_outpoint = OutPoint {
-        txid: contract_txid,
-        vout: output_pos,
-    };
-
-    // Store reserved outpoints from the funding transaction.
-    state.reserve_utxo = vec![contract_outpoint];
-
-    let contract_output_amount = contract_tx.output[output_pos as usize].value;
-
-    let mut outgoing_swapcoin = OutgoingSwapCoin::new_taproot(
-        timelock_privkey,
-        hashlock_script.clone(),
-        timelock_script.clone(),
-        contract_tx.clone(),
-        contract_output_amount,
-    );
-    outgoing_swapcoin.swap_id = Some(data.id.clone());
-    outgoing_swapcoin.set_taproot_params(
-        outgoing_privkey,
-        outgoing_pubkey,
-        data.next_hop_point,
-        internal_key,
-        tap_info.tap_tweak().to_scalar(),
-    );
-
-    // Store in connection state
-    state.incoming_swapcoins.push(incoming_swapcoin.clone());
-    state.outgoing_swapcoins.push(outgoing_swapcoin.clone());
+    state.reserve_utxo = reserved.clone();
+    state.incoming_swapcoins = incoming_swapcoins.clone();
+    state.outgoing_swapcoins = outgoing_swapcoins.clone();
     #[cfg(debug_assertions)]
     log::debug!(
-        "[CONTRACT_STATE] Role: Maker | Protocol: Taproot | SwapID: {} | IncomingAmount: {} | OutgoingAmount: {} | ReservedUtxos: {}",
+        "[CONTRACT_STATE] Role: Maker | Protocol: Taproot | SwapID: {} | Contracts: {} | IncomingTotal: {} | ReservedUtxos: {}",
         data.id,
-        incoming_funding_amount.to_sat(),
-        contract_output_amount.to_sat(),
+        n,
+        total_incoming.to_sat(),
         state.reserve_utxo.len()
     );
 
@@ -288,44 +338,49 @@ fn process_taproot_contract<M: Maker>(
                 "[{}] Test behavior: skipping Taproot funding broadcast",
                 maker.network_port()
             );
-            // Swapcoins are already in state.
-            // Save them to wallet for recovery detection.
             state.funding_broadcast = true;
             state.phase = SwapPhase::AwaitingPrivateKeyHandover;
-            maker.save_incoming_swapcoin(&incoming_swapcoin)?;
-            maker.save_outgoing_swapcoin(&outgoing_swapcoin)?;
+            for incoming in &incoming_swapcoins {
+                maker.save_incoming_swapcoin(incoming)?;
+            }
+            for outgoing in &outgoing_swapcoins {
+                maker.save_outgoing_swapcoin(outgoing)?;
+            }
             maker.store_connection_state(&data.id, state)?;
             return Err(MakerError::General("Test: skipped funding broadcast"));
         }
     }
 
-    match maker.broadcast_transaction(&contract_tx) {
-        Ok(txid) => {
-            log::info!(
-                "[{}] Broadcast Taproot contract tx {} for swap {}",
-                maker.network_port(),
-                txid,
-                data.id
-            );
-
-            maker.register_watch_outpoint(contract_outpoint);
+    for (outgoing, contract_outpoint) in outgoing_swapcoins.iter().zip(reserved.iter()) {
+        match maker.broadcast_transaction(&outgoing.contract_tx) {
+            Ok(txid) => {
+                log::info!(
+                    "[{}] Broadcast Taproot contract tx {} for swap {}",
+                    maker.network_port(),
+                    txid,
+                    data.id
+                );
+            }
+            Err(e) => {
+                log::warn!(
+                    "[{}] Failed to broadcast Taproot contract tx (may already be broadcast): {:?}",
+                    maker.network_port(),
+                    e
+                );
+            }
         }
-        Err(e) => {
-            log::warn!(
-                "[{}] Failed to broadcast Taproot contract tx (may already be broadcast): {:?}",
-                maker.network_port(),
-                e
-            );
-        }
+        maker.register_watch_outpoint(*contract_outpoint);
     }
 
     state.funding_broadcast = true;
     state.phase = SwapPhase::AwaitingPrivateKeyHandover;
-    maker.register_watch_outpoint(contract_outpoint);
 
-    // Save to wallet
-    maker.save_incoming_swapcoin(&incoming_swapcoin)?;
-    maker.save_outgoing_swapcoin(&outgoing_swapcoin)?;
+    for incoming in &incoming_swapcoins {
+        maker.save_incoming_swapcoin(incoming)?;
+    }
+    for outgoing in &outgoing_swapcoins {
+        maker.save_outgoing_swapcoin(outgoing)?;
+    }
 
     maker.store_connection_state(&data.id, state)?;
 
@@ -337,43 +392,30 @@ fn process_taproot_contract<M: Maker>(
                 "[{}] Test behavior: broadcasting contract tx after taproot setup, then closing",
                 maker.network_port()
             );
-            let _ = maker.broadcast_transaction(&outgoing_swapcoin.contract_tx);
+            if let Some(outgoing) = outgoing_swapcoins.first() {
+                let _ = maker.broadcast_transaction(&outgoing.contract_tx);
+            }
             return Err(MakerError::General("Test: broadcast contract after setup"));
         }
     }
 
     log::info!(
-        "[{}] Created Taproot swapcoins for swap {}. Outgoing amount: {}",
+        "[{}] Created {} Taproot swapcoins for swap {}",
         maker.network_port(),
-        data.id,
-        outgoing_swapcoin.funding_amount
+        n,
+        data.id
     );
-
-    let tap_tweak_scalar = tap_info.tap_tweak().to_scalar();
-    // QA: Keep this claim inconsistent with the funded output when the test
-    // behavior is active, proving the taker binds metadata to transaction value.
-    #[cfg(feature = "integration-test")]
-    let response_amount = {
-        use super::handlers::MakerBehavior;
-        if maker.behavior() == MakerBehavior::UnderfundTaprootContract {
-            outgoing_amount
-        } else {
-            contract_output_amount
-        }
-    };
-    #[cfg(not(feature = "integration-test"))]
-    let response_amount = contract_output_amount;
 
     let response = TaprootContractData::new(
         data.id.clone(),
-        vec![outgoing_pubkey],
+        response_pubkeys,
         tweakable_pubkey,
-        internal_key,
-        SerializableScalar::from_bytes(tap_tweak_scalar.to_be_bytes().to_vec()),
+        response_internal_keys,
+        response_tap_tweaks,
         hashlock_script,
-        timelock_script,
-        vec![contract_tx],
-        vec![response_amount],
+        response_timelock_scripts,
+        response_contract_txs,
+        response_amounts,
         None, // hashlock_nonce: taker already knows
         None, // next_hashlock_nonce: taker manages all nonces
     );
@@ -421,14 +463,18 @@ fn process_taproot_handover<M: Maker>(
         maker.network_port(),
     )?;
 
-    let outgoing = state
-        .outgoing_swapcoins
-        .first()
-        .ok_or(MakerError::General("No outgoing swapcoin found"))?;
-
-    let privkey = outgoing
-        .my_privkey
-        .ok_or(MakerError::General("No private key in outgoing swapcoin"))?;
+    if state.outgoing_swapcoins.is_empty() {
+        return Err(MakerError::General("No outgoing swapcoin found"));
+    }
+    let mut privkeys = Vec::with_capacity(state.outgoing_swapcoins.len());
+    for outgoing in &state.outgoing_swapcoins {
+        privkeys.push(SwapPrivkey {
+            identifier: bitcoin::ScriptBuf::new(),
+            key: outgoing
+                .my_privkey
+                .ok_or(MakerError::General("No private key in outgoing swapcoin"))?,
+        });
+    }
 
     // Store received privkey on incoming swapcoins
     for (i, incoming) in state.incoming_swapcoins.iter_mut().enumerate() {
@@ -475,10 +521,7 @@ fn process_taproot_handover<M: Maker>(
 
     let response = PrivateKeyHandover {
         id: handover.id,
-        privkeys: vec![SwapPrivkey {
-            identifier: bitcoin::ScriptBuf::new(),
-            key: privkey,
-        }],
+        privkeys,
     };
 
     Ok(Some(MakerToTakerMessage::TaprootPrivateKeyHandover(

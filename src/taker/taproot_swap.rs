@@ -32,17 +32,17 @@ impl Taker {
         Vec<PublicKey>,
         Vec<ScriptBuf>,
         Vec<ScriptBuf>,
-        secp256k1::XOnlyPublicKey,
-        SerializableScalar,
+        Vec<secp256k1::XOnlyPublicKey>,
+        Vec<SerializableScalar>,
         Vec<bitcoin::Transaction>,
         Vec<Amount>,
     ) {
         (
             prev.pubkeys.clone(),
             vec![prev.hashlock_script.clone()],
-            vec![prev.timelock_script.clone()],
-            prev.internal_key,
-            prev.tap_tweak.clone(),
+            prev.timelock_scripts.clone(),
+            prev.internal_keys.clone(),
+            prev.tap_tweaks.clone(),
             prev.contract_txs.clone(),
             prev.amounts.clone(),
         )
@@ -78,6 +78,8 @@ impl Taker {
                 as u32,
         };
         let absolute_locktime = base_height + locktime as u32;
+        let mut contract_data = Vec::new();
+        let mut taproot_addresses = Vec::new();
 
         for (multisig_pubkey, hashlock_pubkey) in
             multisig_pubkeys.iter().zip(hashlock_pubkeys.iter())
@@ -129,43 +131,66 @@ impl Taker {
                 .finalize(&secp, internal_key)
                 .map_err(|e| TakerError::General(format!("Failed to finalize taproot: {:?}", e)))?;
 
-            // Create Taproot address
-            let taproot_address = bitcoin::Address::p2tr_tweaked(tap_info.output_key(), network);
+            taproot_addresses.push(bitcoin::Address::p2tr_tweaked(
+                tap_info.output_key(),
+                network,
+            ));
+            contract_data.push((
+                my_privkey,
+                my_pubkey,
+                *multisig_pubkey,
+                hashlock_script,
+                timelock_script,
+                internal_key,
+                tap_info.tap_tweak().to_scalar(),
+            ));
+        }
 
-            let funding_result = wallet.create_funding_txes(
-                send_amount,
-                std::slice::from_ref(&taproot_address),
-                MIN_FEE_RATE,
-                manually_selected_outpoints.clone(),
-                None,
-            )?;
+        let funding_result = wallet.create_funding_txes(
+            send_amount,
+            &taproot_addresses,
+            MIN_FEE_RATE,
+            manually_selected_outpoints,
+            None,
+        )?;
 
-            for (contract_tx, &output_pos) in funding_result
-                .funding_txes
-                .iter()
-                .zip(funding_result.payment_output_positions.iter())
-            {
-                let contract_amount = contract_tx.output[output_pos as usize].value;
+        for (
+            (contract_tx, &output_pos),
+            (
+                my_privkey,
+                my_pubkey,
+                multisig_pubkey,
+                hashlock_script,
+                timelock_script,
+                internal_key,
+                tap_tweak,
+            ),
+        ) in funding_result
+            .funding_txes
+            .iter()
+            .zip(funding_result.payment_output_positions.iter())
+            .zip(contract_data)
+        {
+            let contract_amount = contract_tx.output[output_pos as usize].value;
 
-                // Create outgoing swapcoin with Taproot data.
-                let mut outgoing = OutgoingSwapCoin::new_taproot(
-                    my_privkey,
-                    hashlock_script.clone(),
-                    timelock_script.clone(),
-                    contract_tx.clone(),
-                    contract_amount,
-                );
-                outgoing.swap_id = Some(swap_id.to_string());
-                outgoing.set_taproot_params(
-                    my_privkey,
-                    my_pubkey,
-                    *multisig_pubkey,
-                    internal_key,
-                    tap_info.tap_tweak().to_scalar(),
-                );
+            // Create outgoing swapcoin with Taproot data.
+            let mut outgoing = OutgoingSwapCoin::new_taproot(
+                my_privkey,
+                hashlock_script,
+                timelock_script,
+                contract_tx.clone(),
+                contract_amount,
+            );
+            outgoing.swap_id = Some(swap_id.to_string());
+            outgoing.set_taproot_params(
+                my_privkey,
+                my_pubkey,
+                multisig_pubkey,
+                internal_key,
+                tap_tweak,
+            );
 
-                swapcoins.push(outgoing);
-            }
+            swapcoins.push(outgoing);
         }
 
         Ok(swapcoins)
@@ -217,8 +242,8 @@ impl Taker {
                 pubkeys,
                 hashlock_scripts,
                 timelock_scripts,
-                internal_key,
-                tap_tweak,
+                internal_keys,
+                tap_tweaks,
                 contract_txs,
                 amounts,
             ) = if i == 0 {
@@ -261,10 +286,10 @@ impl Taker {
                 self.swap_state()?.id.clone(),
                 pubkeys,
                 next_hop_point,
-                internal_key,
-                tap_tweak,
+                internal_keys,
+                tap_tweaks,
                 hashlock_scripts.first().cloned().unwrap_or_default(),
-                timelock_scripts.first().cloned().unwrap_or_default(),
+                timelock_scripts,
                 contract_txs,
                 amounts,
                 hashlock_nonces.get(i).copied(),
@@ -383,40 +408,33 @@ impl Taker {
                         self.exchange_create_incoming(&maker_contract, my_privkey)?;
                     } else {
                         // Intermediate contracts (maker→maker) are watch-only for the taker.
-                        let sender_pubkey =
-                            maker_contract.pubkeys.first().cloned().unwrap_or(my_pubkey);
-                        let contract_tx =
-                            maker_contract
-                                .contract_txs
-                                .first()
+                        let mut watchonly = Vec::new();
+                        for (j, contract_tx) in maker_contract.contract_txs.iter().enumerate() {
+                            let sender_pubkey =
+                                maker_contract.pubkeys.get(j).cloned().unwrap_or(my_pubkey);
+                            let funding_amount = maker_contract
+                                .amounts
+                                .get(j)
                                 .cloned()
-                                .ok_or_else(|| {
-                                    TakerError::General(
-                                        "No contract tx in maker response".to_string(),
-                                    )
-                                })?;
-                        let funding_amount = maker_contract
-                            .amounts
-                            .first()
-                            .cloned()
-                            .unwrap_or(Amount::ZERO);
+                                .unwrap_or(Amount::ZERO);
 
-                        let watchonly = WatchOnlySwapCoin::new_taproot(
-                            sender_pubkey,
-                            maker_contract.next_hop_point,
-                            contract_tx,
-                            maker_contract.hashlock_script.clone(),
-                            maker_contract.timelock_script.clone(),
-                            funding_amount,
-                        );
+                            watchonly.push(WatchOnlySwapCoin::new_taproot(
+                                sender_pubkey,
+                                maker_contract.next_hop_point,
+                                contract_tx.clone(),
+                                maker_contract.hashlock_script.clone(),
+                                maker_contract.timelock_scripts[j].clone(),
+                                funding_amount,
+                            ));
+                        }
 
                         let swap_id = self.swap_state()?.id.clone();
                         {
                             let mut wallet = self.write_wallet()?;
-                            wallet.add_watchonly_swapcoins(&swap_id, vec![watchonly.clone()]);
+                            wallet.add_watchonly_swapcoins(&swap_id, watchonly.clone());
                             wallet.save_to_disk()?;
                         }
-                        self.swap_state_mut()?.watchonly_swapcoins.push(watchonly);
+                        self.swap_state_mut()?.watchonly_swapcoins.extend(watchonly);
                     }
 
                     // Wait for this maker's funding (contract) tx to be broadcast and
@@ -501,8 +519,8 @@ impl Taker {
             Vec<PublicKey>,
             Vec<ScriptBuf>,
             Vec<ScriptBuf>,
-            secp256k1::XOnlyPublicKey,
-            SerializableScalar,
+            Vec<secp256k1::XOnlyPublicKey>,
+            Vec<SerializableScalar>,
             Vec<bitcoin::Transaction>,
             Vec<Amount>,
         ),
@@ -511,6 +529,8 @@ impl Taker {
         let mut pubkeys = Vec::new();
         let mut hashlock_scripts = Vec::new();
         let mut timelock_scripts = Vec::new();
+        let mut internal_keys = Vec::new();
+        let mut tap_tweaks = Vec::new();
         let mut contract_txs = Vec::new();
         let mut amounts = Vec::new();
 
@@ -529,29 +549,26 @@ impl Taker {
 
             contract_txs.push(swapcoin.contract_tx.clone());
             amounts.push(swapcoin.funding_amount);
+
+            internal_keys.push(swapcoin.internal_key.ok_or_else(|| {
+                TakerError::General("Outgoing swapcoin missing internal_key".to_string())
+            })?);
+            let tweak_bytes = swapcoin
+                .tap_tweak
+                .map(|s| s.to_be_bytes())
+                .unwrap_or([0u8; 32]);
+            tap_tweaks.push(SerializableScalar::from_bytes(tweak_bytes.to_vec()));
         }
-
-        let first_swapcoin = self
-            .swap_state()?
-            .outgoing_swapcoins
-            .first()
-            .ok_or_else(|| TakerError::General("No outgoing swapcoins".to_string()))?;
-
-        let internal_key = first_swapcoin.internal_key.ok_or_else(|| {
-            TakerError::General("Outgoing swapcoin missing internal_key".to_string())
-        })?;
-        let tweak_bytes = first_swapcoin
-            .tap_tweak
-            .map(|s| s.to_be_bytes())
-            .unwrap_or([0u8; 32]);
-        let tap_tweak = SerializableScalar::from_bytes(tweak_bytes.to_vec());
+        if internal_keys.is_empty() {
+            return Err(TakerError::General("No outgoing swapcoins".to_string()));
+        }
 
         Ok((
             pubkeys,
             hashlock_scripts,
             timelock_scripts,
-            internal_key,
-            tap_tweak,
+            internal_keys,
+            tap_tweaks,
             contract_txs,
             amounts,
         ))
@@ -565,45 +582,45 @@ impl Taker {
         my_privkey: SecretKey,
     ) -> Result<(), TakerError> {
         let secp = Secp256k1::new();
+        let my_pubkey = PublicKey {
+            compressed: true,
+            inner: secp256k1::PublicKey::from_secret_key(&secp, &my_privkey),
+        };
+        let preimage = self.swap_state()?.preimage;
 
-        let contract_tx =
-            contract.contract_txs.first().cloned().ok_or_else(|| {
-                TakerError::General("No contract tx in contract data".to_string())
-            })?;
+        for (j, contract_tx) in contract.contract_txs.iter().enumerate() {
+            let amount = contract_tx
+                .output
+                .first()
+                .map(|output| output.value)
+                .ok_or_else(|| {
+                    TakerError::General("No output in Taproot contract tx".to_string())
+                })?;
 
-        let amount = contract_tx
-            .output
-            .first()
-            .map(|output| output.value)
-            .ok_or_else(|| TakerError::General("No output in Taproot contract tx".to_string()))?;
+            // The last maker's outgoing hashlock uses taker's my_pubkey (un-tweaked, no nonce),
+            // so my_privkey is the correct signing key for the hashlock script.
+            let mut swapcoin = IncomingSwapCoin::new_taproot(
+                my_privkey,
+                contract.hashlock_script.clone(),
+                contract.timelock_scripts[j].clone(),
+                contract_tx.clone(),
+                amount,
+            );
 
-        // The last maker's outgoing hashlock uses taker's my_pubkey (un-tweaked, no nonce),
-        // so my_privkey is the correct signing key for the hashlock script.
-        let mut swapcoin = IncomingSwapCoin::new_taproot(
-            my_privkey,
-            contract.hashlock_script.clone(),
-            contract.timelock_script.clone(),
-            contract_tx,
-            amount,
-        );
-
-        let other_pubkey =
-            contract.pubkeys.first().cloned().ok_or_else(|| {
+            let other_pubkey = contract.pubkeys.get(j).cloned().ok_or_else(|| {
                 TakerError::General("No pubkey in Taproot contract data".to_string())
             })?;
 
-        swapcoin.my_privkey = Some(my_privkey);
-        swapcoin.my_pubkey = Some(PublicKey {
-            compressed: true,
-            inner: secp256k1::PublicKey::from_secret_key(&secp, &my_privkey),
-        });
-        swapcoin.other_pubkey = Some(other_pubkey);
-        swapcoin.internal_key = Some(contract.internal_key);
-        swapcoin.tap_tweak = Some(contract.tap_tweak_scalar()?);
+            swapcoin.my_privkey = Some(my_privkey);
+            swapcoin.my_pubkey = Some(my_pubkey);
+            swapcoin.other_pubkey = Some(other_pubkey);
+            swapcoin.internal_key = Some(contract.internal_keys[j]);
+            swapcoin.tap_tweak = Some(contract.tap_tweak_scalar(j)?);
 
-        swapcoin.swap_id = Some(contract.id.clone());
-        swapcoin.set_preimage(self.swap_state()?.preimage);
-        self.swap_state_mut()?.incoming_swapcoins.push(swapcoin);
+            swapcoin.swap_id = Some(contract.id.clone());
+            swapcoin.set_preimage(preimage);
+            self.swap_state_mut()?.incoming_swapcoins.push(swapcoin);
+        }
         Ok(())
     }
 

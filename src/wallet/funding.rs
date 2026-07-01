@@ -232,13 +232,20 @@ impl Wallet {
 
         // Here, we are gonna use a closure to ensure proper cleanup on error (since we need a rollback)
         let result = (|| {
-            for (address, &output_value) in destinations.iter().zip(output_values.iter()) {
+            for (i, (address, &output_value)) in
+                destinations.iter().zip(output_values.iter()).enumerate()
+            {
                 let remaining = Amount::from_sat(output_value);
+                let manual_for_split = if i == 0 {
+                    manually_selected_outpoints.clone()
+                } else {
+                    None
+                };
                 let selected_utxo = self.coin_select(
                     remaining,
                     fee_rate,
                     infer_address_type(&address.script_pubkey()),
-                    manually_selected_outpoints.clone(),
+                    manual_for_split,
                     excluded_outpoints.clone(),
                 )?;
 

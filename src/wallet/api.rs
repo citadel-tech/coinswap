@@ -2441,7 +2441,9 @@ impl Wallet {
 
         self.sync_and_save()?;
 
-        for (swap_id, swapcoin) in completed_swapcoins {
+        let internal_addresses =
+            self.get_next_internal_addresses(completed_swapcoins.len() as u32, AddressType::P2TR)?;
+        for (i, (swap_id, swapcoin)) in completed_swapcoins.into_iter().enumerate() {
             let contract_txid = swapcoin.contract_tx.compute_txid();
             // Determine which UTXO to spend based on protocol and spending path.
             let (utxo_txid, utxo_vout, input_value) = match swapcoin.protocol {
@@ -2607,9 +2609,8 @@ impl Wallet {
                 }
             }
 
-            // Get next internal address for receiving the swept funds
-            let internal_address =
-                self.get_next_internal_addresses(1, AddressType::P2TR)?[0].clone();
+            // Receive the swept funds at this coin's pre-allocated distinct address.
+            let internal_address = internal_addresses[i].clone();
 
             log::info!(
                 "Sweeping incoming swap coin {} (utxo: {}:{}) to internal address {}",

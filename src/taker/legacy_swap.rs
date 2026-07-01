@@ -51,6 +51,8 @@ impl Taker {
     ) -> Result<Vec<OutgoingSwapCoin>, TakerError> {
         let secp = Secp256k1::new();
         let mut swapcoins = Vec::new();
+        let mut contract_data = Vec::new();
+        let mut coinswap_addresses = Vec::new();
 
         for (multisig_pubkey, hashlock_pubkey) in
             multisig_pubkeys.iter().zip(hashlock_pubkeys.iter())
@@ -73,46 +75,56 @@ impl Taker {
                 &locktime,
             );
 
-            let coinswap_address = bitcoin::Address::p2wsh(&multisig_redeemscript, network);
+            coinswap_addresses.push(bitcoin::Address::p2wsh(&multisig_redeemscript, network));
+            contract_data.push((
+                my_multisig_privkey,
+                *multisig_pubkey,
+                timelock_privkey,
+                contract_redeemscript,
+            ));
+        }
 
-            let funding_result = wallet.create_funding_txes(
-                send_amount,
-                &[coinswap_address],
-                MIN_FEE_RATE,
-                manually_selected_outpoints.clone(),
-                None,
+        let funding_result = wallet.create_funding_txes(
+            send_amount,
+            &coinswap_addresses,
+            MIN_FEE_RATE,
+            manually_selected_outpoints,
+            None,
+        )?;
+
+        for (
+            (funding_tx, &output_pos),
+            (my_multisig_privkey, multisig_pubkey, timelock_privkey, contract_redeemscript),
+        ) in funding_result
+            .funding_txes
+            .iter()
+            .zip(funding_result.payment_output_positions.iter())
+            .zip(contract_data)
+        {
+            let funding_outpoint = OutPoint {
+                txid: funding_tx.compute_txid(),
+                vout: output_pos,
+            };
+            let funding_amount = funding_tx.output[output_pos as usize].value;
+
+            let contract_tx = create_senders_contract_tx(
+                funding_outpoint,
+                funding_amount,
+                &contract_redeemscript,
             )?;
 
-            for (funding_tx, &output_pos) in funding_result
-                .funding_txes
-                .iter()
-                .zip(funding_result.payment_output_positions.iter())
-            {
-                let funding_outpoint = OutPoint {
-                    txid: funding_tx.compute_txid(),
-                    vout: output_pos,
-                };
-                let funding_amount = funding_tx.output[output_pos as usize].value;
+            let mut outgoing = OutgoingSwapCoin::new_legacy(
+                my_multisig_privkey,
+                multisig_pubkey,
+                contract_tx,
+                contract_redeemscript,
+                timelock_privkey,
+                funding_amount,
+            );
+            outgoing.swap_id = Some(swap_id.to_string());
+            outgoing.funding_tx = Some(funding_tx.clone());
 
-                let contract_tx = create_senders_contract_tx(
-                    funding_outpoint,
-                    funding_amount,
-                    &contract_redeemscript,
-                )?;
-
-                let mut outgoing = OutgoingSwapCoin::new_legacy(
-                    my_multisig_privkey,
-                    *multisig_pubkey,
-                    contract_tx,
-                    contract_redeemscript.clone(),
-                    timelock_privkey,
-                    funding_amount,
-                );
-                outgoing.swap_id = Some(swap_id.to_string());
-                outgoing.funding_tx = Some(funding_tx.clone());
-
-                swapcoins.push(outgoing);
-            }
+            swapcoins.push(outgoing);
         }
 
         Ok(swapcoins)
@@ -126,6 +138,7 @@ impl Taker {
         let swap = self.swap_state()?;
         let swap_id = swap.id.clone();
         let maker_count = swap.makers.len();
+        let tx_count = swap.params.tx_count;
 
         let mut prev_senders_info: Option<Vec<SenderContractTxInfo>> = None;
         // Taker's own keys for the last hop (set during last iteration)
@@ -358,20 +371,26 @@ impl Taker {
                 let tweakable_point = next_maker.tweakable_point.ok_or_else(|| {
                     TakerError::General(format!("Maker {} missing tweakable_point", maker_idx + 1))
                 })?;
-                generate_maker_keys(&tweakable_point, 1)?
+                generate_maker_keys(&tweakable_point, tx_count)?
             } else {
                 // Last hop: taker is the next peer, generate our own keys
-                let (multisig_pubkey, multisig_privkey) = generate_keypair();
-                let (hashlock_pubkey, hashlock_privkey) = generate_keypair();
-                let nonce = SecretKey::new(&mut OsRng);
-                taker_multisig_privkeys = Some(vec![multisig_privkey]);
-                taker_hashlock_privkeys = Some(vec![hashlock_privkey]);
-                (
-                    vec![multisig_pubkey],
-                    vec![nonce],
-                    vec![hashlock_pubkey],
-                    vec![nonce],
-                )
+                let mut multisig_pubkeys = Vec::new();
+                let mut multisig_privkeys = Vec::new();
+                let mut nonces = Vec::new();
+                let mut hashlock_pubkeys = Vec::new();
+                let mut hashlock_privkeys = Vec::new();
+                for _ in 0..tx_count {
+                    let (multisig_pubkey, multisig_privkey) = generate_keypair();
+                    let (hashlock_pubkey, hashlock_privkey) = generate_keypair();
+                    multisig_pubkeys.push(multisig_pubkey);
+                    multisig_privkeys.push(multisig_privkey);
+                    nonces.push(SecretKey::new(&mut OsRng));
+                    hashlock_pubkeys.push(hashlock_pubkey);
+                    hashlock_privkeys.push(hashlock_privkey);
+                }
+                taker_multisig_privkeys = Some(multisig_privkeys);
+                taker_hashlock_privkeys = Some(hashlock_privkeys);
+                (multisig_pubkeys, nonces.clone(), hashlock_pubkeys, nonces)
             };
 
             let (receivers_contract_txs, senders_contract_txs_info) = self
@@ -821,18 +840,12 @@ impl Taker {
         // setup_funding(). The maker needs them to derive the matching private
         // keys for signing.
         let swap_state = self.swap_state()?;
-        let multisig_nonce = swap_state
-            .multisig_nonces
-            .first()
-            .ok_or_else(|| TakerError::General("No multisig nonce in swap state".to_string()))?;
-        let hashlock_nonce = swap_state
-            .hashlock_nonces
-            .first()
-            .ok_or_else(|| TakerError::General("No hashlock nonce in swap state".to_string()))?;
 
         let txs_info: Vec<ContractTxInfoForSender> = outgoing_swapcoins
             .iter()
-            .map(|swapcoin| {
+            .zip(swap_state.multisig_nonces.iter())
+            .zip(swap_state.hashlock_nonces.iter())
+            .map(|((swapcoin, multisig_nonce), hashlock_nonce)| {
                 let timelock_pubkey = PublicKey {
                     compressed: true,
                     inner: secp256k1::PublicKey::from_secret_key(&secp, &swapcoin.timelock_privkey),
