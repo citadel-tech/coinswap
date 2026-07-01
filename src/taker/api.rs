@@ -38,7 +38,10 @@ use crate::{
         },
         contract::calculate_pubkey_from_nonce,
     },
-    utill::{check_tor_status, generate_maker_keys, get_taker_dir, read_message, send_message},
+    utill::{
+        check_tor_status, estimate_funding_tx_fee_sats, generate_maker_keys, get_taker_dir,
+        read_message, send_message,
+    },
     wallet::{
         swapcoin::{IncomingSwapCoin, OutgoingSwapCoin, WatchOnlySwapCoin},
         MakerFeeInfo as ReportMakerFeeInfo, RPCConfig, RecoveryOutcome, SwapStatus, TakerReport,
@@ -382,6 +385,10 @@ impl Taker {
         let send_amount = swap.params.send_amount;
         let maker_count = swap.makers.len();
 
+        // TODO : Have the makers derive the fee & a smart messaging layer to send the estimated target to the taker sequentially.
+        let per_hop_mining_fee =
+            (estimate_funding_tx_fee_sats() * swap.params.tx_count as u64) as f64;
+
         // Iteratively compute the amount reaching each hop after deducting fees.
         let mut amount_sats = send_amount.to_sat() as f64;
         for i in 0..=maker_idx {
@@ -392,7 +399,7 @@ impl Taker {
                 + (amount_sats * offer.amount_relative_fee_pct) / 100.0
                 + (amount_sats * locktime as f64 * offer.time_relative_fee_pct) / 100.0;
             let fee_with_margin = fee * FEE_VERIFICATION_MARGIN;
-            amount_sats = (amount_sats - fee_with_margin).max(0.0);
+            amount_sats = (amount_sats - fee_with_margin - per_hop_mining_fee).max(0.0);
         }
 
         Some(Amount::from_sat(amount_sats as u64))

@@ -142,13 +142,13 @@ fn test_malice2_maker_broadcast_contract() {
             maker_balances.contract,
             maker_balances.spendable,
         );
-        let expected_regular = [14998622u64, 14500419][i];
-        // assert_eq!(
-        // maker_balances.regular.to_sat(),
-        // expected_regular,
-        // "Maker {} regular balance mismatch",
-        // i
-        // );
+        let expected_regular = [14998622u64, 14501519][i];
+        assert_eq!(
+            maker_balances.regular.to_sat(),
+            expected_regular,
+            "Maker {} regular balance mismatch",
+            i
+        );
         assert_eq!(
             maker_balances.swap.to_sat(),
             0,
@@ -193,11 +193,11 @@ fn test_malice2_maker_broadcast_contract() {
         taker_balances.spendable,
     );
 
-    // assert_eq!(
-    // taker_balances.regular.to_sat(),
-    // 14999108,
-    // "Taker regular balance mismatch"
-    // );
+    assert_eq!(
+        taker_balances.regular.to_sat(),
+        14999108,
+        "Taker regular balance mismatch"
+    );
     assert_eq!(
         taker_balances.swap.to_sat(),
         0,
@@ -221,11 +221,11 @@ fn test_malice2_maker_broadcast_contract() {
         taker_balances.spendable,
     );
 
-    // assert_eq!(
-    // balance_diff.to_sat(),
-    // 892,
-    // "Taker spendable balance change mismatch"
-    // );
+    assert_eq!(
+        balance_diff.to_sat(),
+        892,
+        "Taker spendable balance change mismatch"
+    );
 
     taker.log_tracker_state();
     info!("Malice2 test completed successfully!");

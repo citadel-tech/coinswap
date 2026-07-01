@@ -177,16 +177,16 @@ fn maker_abort3_case3() {
         taker_balances.spendable,
     );
 
-    // assert_eq!(
-    // taker_balances.regular.to_sat(),
-    // 14499076,
-    // "Taker regular balance mismatch"
-    // );
-    // assert_eq!(
-    // taker_balances.swap.to_sat(),
-    // 496987,
-    // "Taker swap balance mismatch"
-    // );
+    assert_eq!(
+        taker_balances.regular.to_sat(),
+        14499076,
+        "Taker regular balance mismatch"
+    );
+    assert_eq!(
+        taker_balances.swap.to_sat(),
+        493687,
+        "Taker swap balance mismatch"
+    );
     assert_eq!(
         taker_balances.contract.to_sat(),
         0,
@@ -205,30 +205,30 @@ fn maker_abort3_case3() {
         taker_balances.spendable,
     );
 
-    // assert_eq!(
-    // balance_diff.to_sat(),
-    // 3937,
-    // "Taker spendable balance change mismatch"
-    // );
+    assert_eq!(
+        balance_diff.to_sat(),
+        7237,
+        "Taker spendable balance change mismatch"
+    );
 
     // Verify maker balances
     for (i, maker) in makers.iter().enumerate() {
         maker.wallet.write().unwrap().sync_and_save().unwrap();
         let maker_balances = maker.wallet.read().unwrap().get_balances().unwrap();
-        let expected_regular = [14499215u64, 14499803][i];
-        let expected_swap = [499100u64, 497575][i];
-        // assert_eq!(
-        // maker_balances.regular.to_sat(),
-        // expected_regular,
-        // "Maker {} regular balance mismatch",
-        // i
-        // );
-        // assert_eq!(
-        // maker_balances.swap.to_sat(),
-        // expected_swap,
-        // "Maker {} swap balance mismatch",
-        // i
-        // );
+        let expected_regular = [14500865u64, 14503103][i];
+        let expected_swap = [499100u64, 495925][i];
+        assert_eq!(
+            maker_balances.regular.to_sat(),
+            expected_regular,
+            "Maker {} regular balance mismatch",
+            i
+        );
+        assert_eq!(
+            maker_balances.swap.to_sat(),
+            expected_swap,
+            "Maker {} swap balance mismatch",
+            i
+        );
         assert_eq!(
             maker_balances.contract.to_sat(),
             0,
@@ -237,13 +237,13 @@ fn maker_abort3_case3() {
         );
         assert_eq!(maker_balances.fidelity, Amount::from_btc(0.05).unwrap());
 
-        let expected_spendable = [14998315u64, 14997378][i];
-        // assert_eq!(
-        // maker_balances.spendable.to_sat(),
-        // expected_spendable,
-        // "Maker {} spendable balance mismatch",
-        // i,
-        // );
+        let expected_spendable = [14999965u64, 14999028][i];
+        assert_eq!(
+            maker_balances.spendable.to_sat(),
+            expected_spendable,
+            "Maker {} spendable balance mismatch",
+            i,
+        );
     }
 
     taker.log_tracker_state();

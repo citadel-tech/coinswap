@@ -265,7 +265,7 @@ fn test_concurrent_takers_legacy() {
         }
     }
 
-    let expected_maker_spendable = [Amount::from_sat(1248431), Amount::from_sat(1248394)];
+    let expected_maker_spendable = [1250081, 1250044];
 
     // Verify maker balances
     for (i, (maker, original_spendable)) in makers.iter().zip(maker_spendable_balance).enumerate() {
@@ -287,11 +287,12 @@ fn test_concurrent_takers_legacy() {
         // With the lower fee schedule, the second maker's earned fee does not fully
         // offset its on-chain spend cost in this limited-liquidity scenario.
         if success_count > 0 {
-            // assert_eq!(
-            // balances.spendable, expected_maker_spendable[i],
-            // "Maker {}: Unexpected spendable balance",
-            // i
-            // );
+            assert_eq!(
+                balances.spendable.to_sat(),
+                expected_maker_spendable[i],
+                "Maker {}: Unexpected spendable balance",
+                i
+            );
         } else {
             assert_eq!(
                 balances.spendable, original_spendable,

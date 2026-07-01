@@ -133,12 +133,12 @@ fn test_malice1_taker_broadcast_contract() {
             maker_balances.spendable,
         );
         let expected_regular = [14996838u64, 14996838][i];
-        // assert_eq!(
-        // maker_balances.regular.to_sat(),
-        // expected_regular,
-        // "Maker {} regular balance mismatch",
-        // i
-        // );
+        assert_eq!(
+            maker_balances.regular.to_sat(),
+            expected_regular,
+            "Maker {} regular balance mismatch",
+            i
+        );
         assert_eq!(
             maker_balances.swap.to_sat(),
             0,

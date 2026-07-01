@@ -178,11 +178,11 @@ fn test_taproot_timelock_recovery() {
         taker_balances.spendable,
     );
 
-    // assert_eq!(
-    // taker_balances.regular.to_sat(),
-    // 14998236,
-    // "Taker regular balance mismatch"
-    // );
+    assert_eq!(
+        taker_balances.regular.to_sat(),
+        14998236,
+        "Taker regular balance mismatch"
+    );
     assert_eq!(
         taker_balances.swap.to_sat(),
         0,
@@ -206,11 +206,11 @@ fn test_taproot_timelock_recovery() {
         taker_balances.spendable,
     );
 
-    // assert_eq!(
-    // balance_diff.to_sat(),
-    // 1764,
-    // "Taker spendable balance change mismatch"
-    // );
+    assert_eq!(
+        balance_diff.to_sat(),
+        1764,
+        "Taker spendable balance change mismatch"
+    );
 
     // Verify maker balances
     for (i, maker) in makers.iter().enumerate() {
@@ -224,12 +224,12 @@ fn test_taproot_timelock_recovery() {
         );
 
         let expected_regular = [14997750, 14999514];
-        // assert_eq!(
-        // maker_balances.regular.to_sat(),
-        // expected_regular[i],
-        // "Maker {} regular balance mismatch",
-        // i
-        // );
+        assert_eq!(
+            maker_balances.regular.to_sat(),
+            expected_regular[i],
+            "Maker {} regular balance mismatch",
+            i
+        );
         assert_eq!(
             maker_balances.swap.to_sat(),
             0,

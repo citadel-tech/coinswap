@@ -18,6 +18,7 @@ use crate::{
         },
         taproot_messages::{SerializableScalar, TaprootContractData, TaprootTakerMessage},
     },
+    utill::estimate_funding_tx_fee_sats,
     wallet::{
         swapcoin::{IncomingSwapCoin, OutgoingSwapCoin},
         MakerReport,
@@ -136,8 +137,10 @@ fn process_taproot_contract<M: Maker>(
         incoming_swapcoins.push(incoming_swapcoin);
     }
 
-    let total_incoming: Amount = data.amounts.iter().cloned().sum();
-    let fee = maker.calculate_swap_fee(total_incoming, state.refund_locktime_offset as u32);
+    let total_incoming = data.amounts.iter().cloned().sum();
+    let swap_fee = maker.calculate_swap_fee(total_incoming, state.refund_locktime_offset as u32);
+    let mining_fee = Amount::from_sat(estimate_funding_tx_fee_sats() * n as u64);
+    let fee = swap_fee + mining_fee;
     let outgoing_total = total_incoming
         .checked_sub(fee)
         .ok_or(MakerError::General("Fee exceeds incoming amount"))?;
@@ -164,10 +167,11 @@ fn process_taproot_contract<M: Maker>(
     }
 
     log::info!(
-        "[{}] Fee calculation: incoming_total={}, fee={}, outgoing_total={}",
+        "[{}] Fee calculation: incoming_total={}, swap_fee={}, mining_fee={}, outgoing_total={}",
         maker.network_port(),
         total_incoming,
-        fee,
+        swap_fee,
+        mining_fee,
         outgoing_total
     );
 

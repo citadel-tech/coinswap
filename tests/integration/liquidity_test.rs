@@ -89,7 +89,7 @@ fn test_low_swap_liquidity() {
         .expect_err("Swap should have failed due to insufficient maker liquidity");
     info!("Coinswap failed as expected: {err:?}");
 
-    log::info!("Adding sufficient funds to maker to perform a swap and avoid low swap liquidity");
+    info!("Adding sufficient funds to maker to perform a swap and avoid low swap liquidity");
     fund_makers(
         &makers,
         bitcoind,

@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use bitcoin::{secp256k1::SecretKey, PublicKey, ScriptBuf};
+use bitcoin::{secp256k1::SecretKey, Amount, PublicKey, ScriptBuf};
 
 use super::{
     error::MakerError,
@@ -17,7 +17,7 @@ use crate::{
         },
         legacy_messages::{FundingTxInfo, LegacyTakerMessage},
     },
-    utill::redeemscript_to_scriptpubkey,
+    utill::{estimate_funding_tx_fee_sats, redeemscript_to_scriptpubkey},
     wallet::{swapcoin::IncomingSwapCoin, MakerReport},
 };
 
@@ -244,15 +244,19 @@ fn process_proof_of_funding<M: Maker>(
     );
 
     let swap_fee = maker.calculate_swap_fee(incoming_amount, pof.refund_locktime as u32);
+    let mining_fee =
+        Amount::from_sat(estimate_funding_tx_fee_sats() * pof.next_coinswap_info.len() as u64);
     let outgoing_amount = incoming_amount
         .checked_sub(swap_fee)
+        .and_then(|amt| amt.checked_sub(mining_fee))
         .ok_or(MakerError::General("Swap fee exceeds incoming amount"))?;
 
     log::info!(
-        "[{}] Incoming: {}, Fee: {}, Outgoing: {}",
+        "[{}] Incoming: {}, Fee: {}, MiningFee: {}, Outgoing: {}",
         maker.network_port(),
         incoming_amount,
         swap_fee,
+        mining_fee,
         outgoing_amount
     );
 
