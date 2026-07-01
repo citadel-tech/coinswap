@@ -1,6 +1,6 @@
 <div align="center">
 
-# Coinswap Live Demo
+# Coinswap All System Demo
 
 ### Prerequisites & Setup Guide
 
@@ -17,17 +17,17 @@ Get your system ready to participate in the **Coinswap Live Demo** — run a mak
 | 🗄️ **Maker Dashboard** | GUI to run and monitor your maker server | [`citadel-tech/maker-dashboard`](https://github.com/citadel-tech/maker-dashboard) |
 | 📱 **Taker App** | GUI client to fund a wallet and perform swaps | [`citadel-tech/taker-app`](https://github.com/citadel-tech/taker-app) |
 
-> 🐳 **Maker Dashboard — run with Docker.** No toolchain required; just install Docker and pull the image (see below).
+> 📥 **Download a pre-compiled binary (recommended for both apps).** Grab the binary for your OS from each app's **latest release** and run it — no toolchain required.
 >
-> 📥 **Taker App — download a pre-compiled binary.** Grab the binary for your OS from the **[latest release](https://github.com/stark-3k/taker-app/releases/tag/v0.2.2-test1)** and run it.
+> 🐳 **Maker Dashboard — Docker fallback.** If the binary doesn't work on your system, run the Maker Dashboard as a Docker container instead (see below).
 >
-> 🛠️ Prefer to **build from source**? That option is available for each app below (needs Rust, Node.js, and some more pre-requisites).
+> 🛠️ **Build from source (last resort).** If neither of the above works, build either app yourself (needs Rust, Node.js, and some more pre-requisites).
 
 ---
 
 ## ⚙️ System Prerequisites
 
-### 1. Bitcoin Core — *required for everyone*
+### 1. Bitcoin Core — *required for all systems*
 
 Download the latest Bitcoin Core from <https://bitcoin.org/en/download>.
 
@@ -36,10 +36,11 @@ Start `bitcoind` with the following `bitcoin.conf`:
 ```ini
 signet=1
 [signet]
+# Custom Signet dedicated for the Coinswap Network. 
+# This signet is maintained by Citadel FOSS Developers.
 signetchallenge=0014a3ec9c731da66d9725d54947aede5c830623f33d
 addnode=170.75.166.88:38333
 dnsseed=0
-signetblocktime=30
 
 # RPC configuration for Coinswap operations
 server=1
@@ -69,9 +70,11 @@ Start `bitcoind` in a dedicated terminal and let it sync.
 
 ---
 
-### 2. Docker — *required for the Maker Dashboard*
+### 2. Docker — *only for the Maker Dashboard Docker fallback*
 
-The Maker Dashboard runs as a Docker container. Install Docker Engine for your platform by following the official guide at <https://docs.docker.com/engine/install/>, then verify:
+> ⏭️ **Skip this if the Maker Dashboard binary works for you.** Docker is only needed to run the Maker Dashboard as a container when the pre-compiled binary doesn't work on your system.
+
+Install Docker Engine for your platform by following the official guide at <https://docs.docker.com/engine/install/>, then verify:
 
 ```bash
 docker --version
@@ -129,9 +132,17 @@ Both apps compile and bundle Tor from source via `libtor`, which needs a C toolc
 
 A GUI for running and monitoring your maker server.
 
-### 🐳 Run with Docker (Recommended)
+### 📥 Download Pre-compiled Binary (Recommended)
 
-Make sure [Docker is installed](#2-docker--required-for-the-maker-dashboard), then start the dashboard container:
+1. Visit the **[latest release](https://github.com/citadel-tech/maker-dashboard/releases/latest)**.
+2. Download the **Maker Dashboard** binary for your operating system.
+3. Run the binary and follow the on-screen steps, then open <http://localhost:3000> in your browser to access the dashboard.
+
+### 🐳 Run with Docker (Fallback)
+
+> Use this if the pre-compiled binary doesn't work on your system.
+
+Make sure [Docker is installed](#2-docker--only-for-the-maker-dashboard-docker-fallback), then start the dashboard container:
 
 - **Linux:**
 
@@ -159,9 +170,9 @@ Open your browser and navigate to <http://localhost:3000> to access the dashboar
 
 > 💡 The `--volume` mounts persist your dashboard config and wallet data on the host across container restarts. View logs with `docker logs -f maker-dashboard`, and stop the container with `docker stop maker-dashboard`.
 
-### 🛠️ Build from Source
+### 🛠️ Build from Source (Last Resort)
 
-> Requires the [build-from-source prerequisites](#3-build-from-source-prerequisites--only-if-you-self-compile) above (Rust, Node.js v18+, and the `libtor` native build tools).
+> Use this only if the options above don't work. Requires the [build-from-source prerequisites](#3-build-from-source-prerequisites--only-if-you-self-compile) above (Rust, Node.js v18+, and the `libtor` native build tools).
 
 ```bash
 git clone https://github.com/citadel-tech/maker-dashboard.git
@@ -170,7 +181,7 @@ make build
 make run
 ```
 
-`make build` compiles the Rust backend (`cargo build --release`) and the frontend (`cd frontend && npm install && npm run build`). See the project's [README](https://github.com/citadel-tech/maker-dashboard#readme) for advanced/per-component steps.
+`make build` compiles the Rust backend (`cargo build --release`) and the frontend (`cd frontend && npm install && npm run build`). Once running, open <http://localhost:3000> in your browser. See the project's [README](https://github.com/citadel-tech/maker-dashboard#readme) for advanced/per-component steps.
 
 ---
 
@@ -180,13 +191,13 @@ A GUI swap client to fund a wallet and perform Coinswaps.
 
 ### 📥 Download Pre-compiled Binary (Recommended)
 
-1. Visit the **[latest release](https://github.com/stark-3k/taker-app/releases/tag/v0.2.2-test1)**.
+1. Visit the **[latest release](https://github.com/citadel-tech/taker-app/releases/latest)**.
 2. Download the **Taker App** binary for your operating system.
 3. Run the binary and follow the on-screen onboarding steps.
 
-### 🛠️ Build from Source
+### 🛠️ Build from Source (Last Resort)
 
-> Requires the [build-from-source prerequisites](#3-build-from-source-prerequisites--only-if-you-self-compile) above (Rust, Node.js v18+, and the `libtor` native build tools).
+> Use this only if the options above don't work. Requires the [build-from-source prerequisites](#3-build-from-source-prerequisites--only-if-you-self-compile) above (Rust, Node.js v18+, and the `libtor` native build tools).
 
 ```bash
 git clone https://github.com/citadel-tech/taker-app.git
@@ -202,8 +213,8 @@ For a live development build, use `npm run dev` instead. See the project's [READ
 ## 🚀 Perform a Swap
 
 1. Launch the **Taker App** and complete onboarding.
-2. Fund your wallet using the signet **[Faucet](http://170.75.166.88:3000/)**.
-3. Wait for the funding transaction to confirm (track it on the **[Block Explorer](http://170.75.166.88:8080/)**).
+2. Fund your wallet using the signet **[Faucet](https://faucet.citadelfoss.xyz/)**.
+3. Wait for the funding transaction to confirm (track it on the **[Block Explorer](https://mempool.citadelfoss.xyz/)**).
 4. Pick an available maker from the marketplace and start your swap. 🎉
 
-> 🆘 Stuck during the demo? Flag it to the organizers — and use the block explorer to verify your transactions at any step.
+> 🆘 Something didn't work as expected? Please report an [Issue](https://github.com/citadel-tech/coinswap/issues) or ping the devs in the [community forum](https://matrix.to/#/#ciatdel-foss:matrix.org).
