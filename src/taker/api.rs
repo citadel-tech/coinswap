@@ -1354,8 +1354,7 @@ impl Taker {
         // Fetch the maker's offer before proposing swap details.
         // This gives us the fee schedule for amount verification later.
         stream.send_message(&TakerToMakerMessage::GetOffer(GetOffer))?;
-        let offer_bytes = stream.read_message()?;
-        let offer_msg: MakerToTakerMessage = serde_cbor::from_slice(&offer_bytes)?;
+        let offer_msg: MakerToTakerMessage = stream.read_message()?;
         match offer_msg {
             MakerToTakerMessage::Offer(offer) => {
                 log::info!(
@@ -1410,8 +1409,7 @@ impl Taker {
 
         stream.send_message(&TakerToMakerMessage::SwapDetails(swap_details))?;
 
-        let msg_bytes = stream.read_message()?;
-        let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
+        let msg: MakerToTakerMessage = stream.read_message()?;
 
         match msg {
             MakerToTakerMessage::AckSwap(ack_details) => {
@@ -1766,8 +1764,7 @@ impl Taker {
         // Send TakerHello
         stream.send_message(&TakerToMakerMessage::TakerHello(TakerHello))?;
 
-        let msg_bytes = stream.read_message()?;
-        let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
+        let msg: MakerToTakerMessage = stream.read_message()?;
 
         match msg {
             MakerToTakerMessage::MakerHello(maker_hello) => {
@@ -1912,8 +1909,7 @@ impl Taker {
             let msg = Self::msg_build_handover(protocol, swap_id.clone(), &current_privkeys);
             stream.send_message(&msg)?;
 
-            let msg_bytes = stream.read_message()?;
-            let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
+            let msg: MakerToTakerMessage = stream.read_message()?;
 
             let received_privkeys: Vec<SecretKey> = match msg {
                 MakerToTakerMessage::LegacyPrivateKeyHandover(handover)

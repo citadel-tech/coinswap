@@ -1008,7 +1008,7 @@ impl Bip324Stream {
     }
 
     /// Reads the next genuine application message from the BIP324 stream.
-    pub(crate) fn read_message(&mut self) -> Result<Vec<u8>, NetError> {
+    pub(crate) fn read_message<T: serde::de::DeserializeOwned>(&mut self) -> Result<T, NetError> {
         loop {
             let payload = self.protocol.read()?;
             match payload.packet_type() {
@@ -1017,7 +1017,7 @@ impl Bip324Stream {
                     log::debug!("Skipped decoy packet");
                 }
                 bip324::PacketType::Genuine => {
-                    return Ok(payload.contents().to_vec());
+                    return Ok(serde_cbor::from_slice(payload.contents())?);
                 }
             }
         }

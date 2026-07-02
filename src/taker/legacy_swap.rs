@@ -881,8 +881,7 @@ impl Taker {
 
         stream.send_message(&TakerToMakerMessage::ReqContractSigsForSender(req))?;
 
-        let msg_bytes = stream.read_message()?;
-        let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
+        let msg: MakerToTakerMessage = stream.read_message()?;
 
         match msg {
             MakerToTakerMessage::RespContractSigsForSender(resp) => {
@@ -988,8 +987,7 @@ impl Taker {
 
         stream.send_message(&TakerToMakerMessage::ProofOfFunding(pof))?;
 
-        let msg_bytes = stream.read_message()?;
-        let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
+        let msg: MakerToTakerMessage = stream.read_message()?;
 
         match msg {
             MakerToTakerMessage::ReqContractSigsAsRecvrAndSender(req) => {
@@ -1082,8 +1080,7 @@ impl Taker {
 
         stream.send_message(&TakerToMakerMessage::ReqContractSigsForSender(req))?;
 
-        let msg_bytes = stream.read_message()?;
-        let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
+        let msg: MakerToTakerMessage = stream.read_message()?;
 
         match msg {
             MakerToTakerMessage::RespContractSigsForSender(resp) => {
@@ -1126,8 +1123,7 @@ impl Taker {
 
         stream.send_message(&TakerToMakerMessage::ReqContractSigsForRecvr(req))?;
 
-        let msg_bytes = stream.read_message()?;
-        let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
+        let msg: MakerToTakerMessage = stream.read_message()?;
 
         match msg {
             MakerToTakerMessage::RespContractSigsForRecvr(resp) => {

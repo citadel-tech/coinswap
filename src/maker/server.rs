@@ -329,7 +329,7 @@ fn handle_connection(maker: Arc<MakerServer>, stream: TcpStream) -> Result<(), M
             break;
         }
 
-        let msg_bytes = match encrypted_stream.read_message() {
+        let message: TakerToMakerMessage = match encrypted_stream.read_message() {
             Ok(b) => b,
             Err(NetError::Bip324Error(Bip324Error::ConnectionClosed)) => {
                 log::info!("[{}] Client disconnected", maker.config.network_port);
@@ -337,7 +337,6 @@ fn handle_connection(maker: Arc<MakerServer>, stream: TcpStream) -> Result<(), M
             }
             Err(e) => return Err(e.into()),
         };
-        let message: TakerToMakerMessage = serde_cbor::from_slice(&msg_bytes)?;
 
         log::debug!(
             "[{}] Received message: {:?}",

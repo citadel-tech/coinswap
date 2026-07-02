@@ -318,8 +318,7 @@ impl Taker {
                 .taproot_exchange_mut()?
                 .contract_data_sent = true;
 
-            let msg_bytes = stream.read_message()?;
-            let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
+            let msg: MakerToTakerMessage = stream.read_message()?;
 
             match msg {
                 MakerToTakerMessage::TaprootContractData(maker_contract) => {

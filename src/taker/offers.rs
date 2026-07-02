@@ -1079,8 +1079,7 @@ impl MakerAddress {
         stream.send_message(&taker_hello)?;
 
         // Read MakerHello
-        let msg_bytes = stream.read_message()?;
-        let msg: RouterMakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
+        let msg: RouterMakerToTakerMessage = stream.read_message()?;
 
         match msg {
             RouterMakerToTakerMessage::MakerHello(_hello) => {
@@ -1100,8 +1099,7 @@ impl MakerAddress {
         stream.send_message(&get_offer)?;
 
         // Read Offer
-        let offer_bytes = stream.read_message()?;
-        let offer_msg: RouterMakerToTakerMessage = serde_cbor::from_slice(&offer_bytes)?;
+        let offer_msg: RouterMakerToTakerMessage = stream.read_message()?;
 
         let router_offer = match offer_msg {
             RouterMakerToTakerMessage::Offer(offer) => *offer,
