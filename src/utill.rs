@@ -42,6 +42,7 @@ use crate::{
     protocol::{contract::derive_maker_pubkey_and_nonce, error::ProtocolError},
     wallet::{UTXOSpendInfo, WalletError},
 };
+use bip324::io::Payload;
 
 const INPUT_CHARSET: &str =
     "0123456789()[],'/*abcdefgh@:$%{}IJKLMNOPQRSTUVWXYZ&+-.;<=>?!^_|~ijklmnopqrstuvwxyzABCDEFGH`#\"\\ ";
@@ -967,6 +968,57 @@ pub fn interactive_select(
     println!("Total selected amount: {} BTC", total_selected.to_btc());
 
     Ok(selected_utxo)
+}
+
+pub(crate) struct Bip324Stream {
+    pub protocol: bip324::io::Protocol<TcpStream, TcpStream>,
+}
+
+impl Bip324Stream {
+    pub fn new(
+        stream: TcpStream,
+        network: bitcoin::Network,
+        role: bip324::Role,
+    ) -> Result<Self, NetError> {
+        let reader = stream.try_clone()?;
+        let writer = stream;
+        let protocol = bip324::io::Protocol::new(
+            network.magic(),
+            role,
+            None,
+            None, // no garbage or decoys
+            reader,
+            writer,
+        )?;
+
+        Ok(Self { protocol })
+    }
+
+    /// Reads the next genuine application message from the BIP324 stream.
+    pub(crate) fn read_message(&mut self) -> Result<Vec<u8>, NetError> {
+        loop {
+            let payload = self.protocol.read()?;
+            match payload.packet_type() {
+                // currently we never send decoys but we are handling it
+                bip324::PacketType::Decoy => {
+                    log::debug!("Skipped decoy packet");
+                }
+                bip324::PacketType::Genuine => {
+                    return Ok(payload.contents().to_vec());
+                }
+            }
+        }
+    }
+
+    /// CBOR-serializes the message and sends it as a genuine BIP324 payload.
+    pub(crate) fn send_message(&mut self, message: &impl serde::Serialize) -> Result<(), NetError> {
+        let msg_bytes = serde_cbor::ser::to_vec(message)?;
+        let to_send = Payload::genuine(msg_bytes);
+
+        self.protocol.write(&to_send)?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]

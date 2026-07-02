@@ -14,7 +14,7 @@ use crate::{
         contract2::{create_hashlock_script, create_timelock_script},
         taproot_messages::{SerializableScalar, TaprootContractData},
     },
-    utill::{read_message, send_message, MIN_FEE_RATE},
+    utill::{Bip324Stream, MIN_FEE_RATE},
     wallet::{
         swapcoin::{IncomingSwapCoin, OutgoingSwapCoin, WatchOnlySwapCoin},
         Wallet,
@@ -311,15 +311,14 @@ impl Taker {
                 ));
             }
 
-            send_message(
-                &mut stream,
-                &TakerToMakerMessage::TaprootContractData(Box::new(contract_data)),
-            )?;
+            stream.send_message(&TakerToMakerMessage::TaprootContractData(Box::new(
+                contract_data,
+            )))?;
             self.swap_state_mut()?.makers[i]
                 .taproot_exchange_mut()?
                 .contract_data_sent = true;
 
-            let msg_bytes = read_message(&mut stream)?;
+            let msg_bytes = stream.read_message()?;
             let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
 
             match msg {
@@ -633,7 +632,7 @@ impl Taker {
     /// caused a cold reconnect onto a dead session and surfaced as an
     /// `UnexpectedEof` ("failed to fill whole buffer") on the contract exchange.
     #[hotpath::measure]
-    fn funding_broadcast(&mut self) -> Result<std::net::TcpStream, TakerError> {
+    fn funding_broadcast(&mut self) -> Result<Bip324Stream, TakerError> {
         log::info!("Broadcasting contract transactions...");
 
         let wallet = self.write_wallet()?;
@@ -696,7 +695,7 @@ impl Taker {
     /// keepalives to maker 0 so its swap session stays alive across the wait.
     fn wait_for_funding_with_keepalive(
         &self,
-        stream: &mut std::net::TcpStream,
+        stream: &mut Bip324Stream,
         contract_txids: &[bitcoin::Txid],
         required_confirms: u32,
         swap_id: &str,
@@ -737,10 +736,9 @@ impl Taker {
             }
 
             // Ping the maker so it doesn't treat the swap session as idle.
-            if let Err(e) = send_message(
-                stream,
-                &TakerToMakerMessage::WaitingFundingConfirmation(swap_id.to_string()),
-            ) {
+            if let Err(e) = stream.send_message(&TakerToMakerMessage::WaitingFundingConfirmation(
+                swap_id.to_string(),
+            )) {
                 // The maker dropped the connection — fail fast with a clear
                 // error instead of waiting out the full confirmation and then
                 // hitting EOF on the contract exchange.

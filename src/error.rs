@@ -26,6 +26,34 @@ pub enum NetError {
 
     /// Error indicating an invalid CLI application network.
     InvalidAppNetwork,
+
+    /// Error related to Bip324
+    Bip324Error(Bip324Error),
+}
+
+/// Represents errors specific to the BIP324 protocol.
+#[derive(Debug)]
+pub enum Bip324Error {
+    /// Error indicating that the protocol was aborted by the peer.
+    ProtocolError(bip324::io::ProtocolError),
+    /// Error due to mismatch in session IDs indicates MitM attack
+    SessionIdMismatch,
+    /// Error when session_id signature does not match
+    SessionIdSigInvalid(bitcoin::secp256k1::Error),
+    /// Client cleanly disconnected (EOF)
+    ConnectionClosed,
+}
+
+impl From<bip324::io::ProtocolError> for Bip324Error {
+    fn from(value: bip324::io::ProtocolError) -> Self {
+        match value {
+            bip324::io::ProtocolError::Io(
+                ref io_err,
+                bip324::io::ProtocolFailureSuggestion::RetryV1,
+            ) if io_err.kind() == std::io::ErrorKind::UnexpectedEof => Self::ConnectionClosed,
+            _ => Self::ProtocolError(value),
+        }
+    }
 }
 
 impl std::fmt::Display for NetError {
@@ -49,6 +77,18 @@ impl From<std::io::Error> for NetError {
 impl From<serde_cbor::Error> for NetError {
     fn from(value: serde_cbor::Error) -> Self {
         Self::Cbor(value)
+    }
+}
+
+impl From<bip324::io::ProtocolError> for NetError {
+    fn from(value: bip324::io::ProtocolError) -> Self {
+        Self::Bip324Error(value.into())
+    }
+}
+
+impl From<Bip324Error> for NetError {
+    fn from(value: Bip324Error) -> Self {
+        Self::Bip324Error(value)
     }
 }
 
