@@ -355,36 +355,29 @@ fn process_taproot_contract<M: Maker>(
         }
     }
 
-    for (outgoing, contract_outpoint) in outgoing_swapcoins.iter().zip(reserved.iter()) {
-        match maker.broadcast_transaction(&outgoing.contract_tx) {
-            Ok(txid) => {
-                log::info!(
-                    "[{}] Broadcast Taproot contract tx {} for swap {}",
-                    maker.network_port(),
-                    txid,
-                    data.id
-                );
-            }
-            Err(e) => {
-                log::warn!(
-                    "[{}] Failed to broadcast Taproot contract tx (may already be broadcast): {:?}",
-                    maker.network_port(),
-                    e
-                );
-            }
-        }
-        maker.register_watch_outpoint(*contract_outpoint);
-    }
-
-    state.funding_broadcast = true;
-    state.phase = SwapPhase::AwaitingPrivateKeyHandover;
-
+    // Persist swapcoins before broadcasting contract txs. A later broadcast
+    // failure can leave earlier Taproot contract txs on-chain, and the wallet
+    // needs these records for timelock recovery after a restart.
     for incoming in &incoming_swapcoins {
         maker.save_incoming_swapcoin(incoming)?;
     }
     for outgoing in &outgoing_swapcoins {
         maker.save_outgoing_swapcoin(outgoing)?;
     }
+
+    for (outgoing, contract_outpoint) in outgoing_swapcoins.iter().zip(reserved.iter()) {
+        let txid = maker.broadcast_transaction(&outgoing.contract_tx)?;
+        log::info!(
+            "[{}] Broadcast Taproot contract tx {} for swap {}",
+            maker.network_port(),
+            txid,
+            data.id
+        );
+        maker.register_watch_outpoint(*contract_outpoint);
+    }
+
+    state.funding_broadcast = true;
+    state.phase = SwapPhase::AwaitingPrivateKeyHandover;
 
     maker.store_connection_state(&data.id, state)?;
 
