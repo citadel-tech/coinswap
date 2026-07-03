@@ -104,7 +104,7 @@ pub struct SwapDetails {
 /// Acknowledgment of swap details from Maker.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AckSwapDetails {
-    /// contains the tweakable
+    /// The maker's tweakable public key for this swap.
     pub tweakable_point: PublicKey,
     /// Unique session ID for this connection (32 bytes).
     pub session_id: [u8; 32],

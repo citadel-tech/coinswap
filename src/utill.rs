@@ -984,7 +984,7 @@ pub fn interactive_select(
 }
 
 pub(crate) struct Bip324Stream {
-    pub protocol: bip324::io::Protocol<TcpStream, TcpStream>,
+    pub protocol: bip324::io::Protocol<std::io::BufReader<TcpStream>, TcpStream>,
 }
 
 impl Bip324Stream {
@@ -993,7 +993,7 @@ impl Bip324Stream {
         network: bitcoin::Network,
         role: bip324::Role,
     ) -> Result<Self, NetError> {
-        let reader = stream.try_clone()?;
+        let reader = std::io::BufReader::new(stream.try_clone()?);
         let writer = stream;
         let protocol = bip324::io::Protocol::new(
             network.magic(),
