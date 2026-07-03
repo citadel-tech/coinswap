@@ -81,6 +81,8 @@ pub struct ConnectionState {
     pub pending_funding_txes: Vec<Transaction>,
     /// Contract fee rate for multi-hop swap creation.
     pub contract_feerate: f64,
+    /// Maker service fee calculated from the accepted offer, excluding mining reimbursement.
+    pub service_fee_sats: u64,
     /// Whether the funding transaction was actually broadcast to the network.
     pub funding_broadcast: bool,
     /// Reserved UTXOs for this swap (prevents concurrent double-spending).
@@ -123,6 +125,7 @@ impl Default for ConnectionState {
             outgoing_swapcoins: Vec::new(),
             pending_funding_txes: Vec::new(),
             contract_feerate: 0.0,
+            service_fee_sats: 0,
             funding_broadcast: false,
             reserve_utxo: Vec::new(),
             last_activity: Instant::now(),
@@ -483,6 +486,8 @@ fn handle_swap_details<M: Maker>(
     state.refund_locktime_offset = details.refund_locktime_offset;
     state.protocol = details.protocol_version;
     state.swap_start_time = Instant::now();
+    let swap_fee = maker.calculate_swap_fee(details.amount, details.refund_locktime_offset as u32);
+    state.service_fee_sats = swap_fee.to_sat();
     state.phase = SwapPhase::AwaitingContractData;
 
     maker.store_connection_state(&details.id, state)?;
@@ -533,6 +538,7 @@ fn restore_state_if_needed<M: Maker>(maker: &Arc<M>, state: &mut ConnectionState
             state.pending_funding_txes = stored.pending_funding_txes;
             state.funding_broadcast = stored.funding_broadcast;
             state.contract_feerate = stored.contract_feerate;
+            state.service_fee_sats = stored.service_fee_sats;
             state.swap_start_time = stored.swap_start_time;
         }
     }

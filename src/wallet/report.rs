@@ -335,7 +335,7 @@ pub struct MakerReport {
     pub incoming_amount: u64,
     /// Amount sent in the outgoing contract (satoshis).
     pub outgoing_amount: u64,
-    /// Fee earned (incoming − outgoing, satoshis).
+    /// Maker service fee earned, excluding maker-side mining-fee reimbursement.
     pub fee_earned: u64,
 
     /// Transaction ID of the incoming contract.
@@ -355,6 +355,7 @@ impl MakerReport {
         start_time: Instant,
         incoming_amount: u64,
         outgoing_amount: u64,
+        fee_earned: u64,
         incoming_contract_txid: String,
         outgoing_contract_txid: String,
         timelock: u32,
@@ -373,7 +374,7 @@ impl MakerReport {
             end_timestamp: end,
             incoming_amount,
             outgoing_amount,
-            fee_earned: incoming_amount.saturating_sub(outgoing_amount),
+            fee_earned,
             incoming_contract_txid,
             outgoing_contract_txid,
             timelock,
