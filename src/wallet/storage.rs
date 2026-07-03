@@ -13,7 +13,7 @@ use bitcoin::{bip32::Xpriv, Network, OutPoint, ScriptBuf};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
-    fs::{self, File},
+    fs,
     io::BufWriter,
     path::Path,
 };
@@ -99,16 +99,13 @@ impl WalletStore {
         };
 
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;
-        // write: overwrites existing file.
-        // create: creates new file if doesn't exist.
-        File::create(path)?;
-
         store.write_to_disk(path, store_enc_material)?;
 
         Ok(store)
     }
 
-    /// Load existing file, updates it, writes it back (errors if path doesn't exist).
+    /// Atomic write: writes to a temp file, then renames over the original.
+    /// If the process crashes mid-write, the original file is never truncated.
     pub(crate) fn write_to_disk(
         &self,
         path: &Path,
@@ -118,27 +115,26 @@ impl WalletStore {
             std::fs::create_dir_all(parent)?;
         }
 
+        let tmp_path = path.with_extension("cbor.tmp");
+
         let wallet_file = fs::OpenOptions::new()
             .create(true)
             .write(true)
             .truncate(true)
-            .open(path)?;
+            .open(&tmp_path)?;
         let writer = BufWriter::new(wallet_file);
 
         match store_enc_material {
             Some(material) => {
-                // Encryption branch: encrypt the serialized wallet before writing.
-
                 let encrypted = encrypt_struct(self, material).unwrap();
-
-                // Write encrypted wallet data to disk.
                 serde_cbor::to_writer(writer, &encrypted)?;
             }
             None => {
-                // No encryption: serialize and write the wallet directly.
                 serde_cbor::to_writer(writer, &self)?;
             }
         }
+
+        fs::rename(&tmp_path, path)?;
         Ok(())
     }
 
@@ -188,5 +184,38 @@ mod tests {
 
         let (read_wallet, _nonce) = WalletStore::read_from_disk(&file_path, String::new()).unwrap();
         assert_eq!(original_wallet_store, read_wallet);
+    }
+
+    #[test]
+    fn test_atomic_write_never_leaves_empty_file() {
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("test_wallet.cbor");
+        let tmp_path = file_path.with_extension("cbor.tmp");
+
+        let master_key = {
+            let seed: [u8; 16] = thread_rng().gen();
+            Xpriv::new_master(Network::Bitcoin, &seed).unwrap()
+        };
+
+        let store = WalletStore::init(
+            "test_wallet".to_string(),
+            &file_path,
+            Network::Bitcoin,
+            master_key,
+            None,
+            &None,
+        )
+        .unwrap();
+
+        // File has valid data after init
+        let bytes = fs::read(&file_path).unwrap();
+        assert!(!bytes.is_empty(), "wallet file should not be empty after init");
+        assert!(!tmp_path.exists(), "tmp file should not exist after rename");
+
+        // Write again: tmp file is created then renamed over original
+        store.write_to_disk(&file_path, &None).unwrap();
+        let bytes = fs::read(&file_path).unwrap();
+        assert!(!bytes.is_empty(), "wallet file should not be empty after second write");
+        assert!(!tmp_path.exists(), "tmp file should not exist after rename");
     }
 }
