@@ -398,7 +398,8 @@ fn main() -> Result<(), TakerError> {
         } => {
             let amount = Amount::from_sat(*amount);
 
-            let manually_selected_outpoints = if cfg!(not(feature = "integration-test")) {
+            #[cfg(not(feature = "integration-test"))]
+            let manually_selected_outpoints = {
                 let wallet = taker.get_wallet().read().unwrap();
                 Some(
                     coinswap::utill::interactive_select(wallet.list_all_utxo_spend_info(), amount)?
@@ -406,9 +407,9 @@ fn main() -> Result<(), TakerError> {
                         .map(|(utxo, _)| bitcoin::OutPoint::new(utxo.txid, utxo.vout))
                         .collect::<Vec<_>>(),
                 )
-            } else {
-                None
             };
+            #[cfg(feature = "integration-test")]
+            let manually_selected_outpoints = None;
 
             let mut wallet = taker.get_wallet().write().unwrap();
             let txid = wallet.send_to_address(
@@ -485,22 +486,27 @@ fn main() -> Result<(), TakerError> {
         } => {
             let protocol_version = parse_protocol(protocol)?;
 
-            let manually_selected_outpoints =
-                if !auto_select && cfg!(not(feature = "integration-test")) {
-                    let target_amount = Amount::from_sat(*amount);
-                    let wallet = taker.get_wallet().read().unwrap();
-                    Some(
-                        coinswap::utill::interactive_select(
-                            wallet.list_all_utxo_spend_info(),
-                            target_amount,
-                        )?
-                        .iter()
-                        .map(|(utxo, _)| bitcoin::OutPoint::new(utxo.txid, utxo.vout))
-                        .collect::<Vec<_>>(),
-                    )
-                } else {
-                    None
-                };
+            #[cfg(not(feature = "integration-test"))]
+            let manually_selected_outpoints = if !auto_select {
+                let target_amount = Amount::from_sat(*amount);
+                let wallet = taker.get_wallet().read().unwrap();
+                Some(
+                    coinswap::utill::interactive_select(
+                        wallet.list_all_utxo_spend_info(),
+                        target_amount,
+                    )?
+                    .iter()
+                    .map(|(utxo, _)| bitcoin::OutPoint::new(utxo.txid, utxo.vout))
+                    .collect::<Vec<_>>(),
+                )
+            } else {
+                None
+            };
+            #[cfg(feature = "integration-test")]
+            let manually_selected_outpoints = {
+                let _ = auto_select;
+                None
+            };
 
             let mut swap_params =
                 SwapParams::new(protocol_version, Amount::from_sat(*amount), *makers);
@@ -535,7 +541,10 @@ fn main() -> Result<(), TakerError> {
             println!("==================================\n");
 
             // In integration tests, skip the confirmation prompt.
-            if !yes && cfg!(not(feature = "integration-test")) {
+            #[cfg(feature = "integration-test")]
+            let _ = yes;
+            #[cfg(not(feature = "integration-test"))]
+            if !yes {
                 print!("Proceed with this swap? [y/N] ");
                 use std::io::{self, Write};
                 io::stdout().flush().unwrap();

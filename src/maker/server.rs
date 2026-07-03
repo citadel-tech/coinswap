@@ -11,8 +11,9 @@ use std::{
     time::Duration,
 };
 
+#[cfg(not(feature = "integration-test"))]
+use crate::maker::rpc::server::MakerRpc;
 use crate::{
-    maker::rpc::server::MakerRpc,
     nostr_coinswap::broadcast_bond_on_nostr,
     protocol::common_messages::{FidelityProof, MakerToTakerMessage, TakerToMakerMessage},
     utill::HEART_BEAT_INTERVAL,
@@ -58,11 +59,10 @@ pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
     };
     listener.set_nonblocking(true).map_err(MakerError::IO)?;
 
-    let maker_address = if cfg!(feature = "integration-test") {
-        format!("127.0.0.1:{}", maker.config.network_port)
-    } else {
-        maker.get_tor_hostname()?
-    };
+    #[cfg(feature = "integration-test")]
+    let maker_address = format!("127.0.0.1:{}", maker.config.network_port);
+    #[cfg(not(feature = "integration-test"))]
+    let maker_address = maker.get_tor_hostname()?;
 
     log::info!(
         "[{}] Setting up fidelity bond...",

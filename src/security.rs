@@ -119,11 +119,10 @@ type EncryptionKey = [u8; 32];
 ///
 /// During testing or integration tests, the iteration count is reduced to 1
 /// for performance.
-const PBKDF2_ITERATIONS: u32 = if cfg!(feature = "integration-test") || cfg!(test) {
-    1
-} else {
-    600_000
-};
+#[cfg(any(feature = "integration-test", test))]
+const PBKDF2_ITERATIONS: u32 = 1;
+#[cfg(not(any(feature = "integration-test", test)))]
+const PBKDF2_ITERATIONS: u32 = 600_000;
 
 /// Holds derived cryptographic key material used for encrypting and decrypting wallet data.
 #[derive(Debug, Clone)]
