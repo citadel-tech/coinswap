@@ -62,6 +62,8 @@ struct SwapState {
     funding_broadcast: bool,
     /// Contract fee rate for multi-hop swap creation.
     contract_feerate: f64,
+    /// Maker service fee calculated from the accepted offer, excluding mining reimbursement.
+    service_fee_sats: u64,
     /// Reserved UTXOs for this swap (prevents concurrent double-spending).
     reserve_utxo: Vec<OutPoint>,
     /// Last activity timestamp.
@@ -82,6 +84,7 @@ impl Default for SwapState {
             pending_funding_txes: Vec::new(),
             funding_broadcast: false,
             contract_feerate: 0.0,
+            service_fee_sats: 0,
             reserve_utxo: Vec::new(),
             last_activity: Instant::now(),
             swap_start_time: Instant::now(),
@@ -1144,6 +1147,7 @@ impl MakerTrait for MakerServer {
         swap_state.pending_funding_txes = state.pending_funding_txes.clone();
         swap_state.funding_broadcast = state.funding_broadcast;
         swap_state.contract_feerate = state.contract_feerate;
+        swap_state.service_fee_sats = state.service_fee_sats;
         swap_state.reserve_utxo = state.reserve_utxo.clone();
         swap_state.last_activity = Instant::now();
         swap_state.swap_start_time = state.swap_start_time;
@@ -1173,6 +1177,7 @@ impl MakerTrait for MakerServer {
             state.pending_funding_txes = s.pending_funding_txes.clone();
             state.funding_broadcast = s.funding_broadcast;
             state.contract_feerate = s.contract_feerate;
+            state.service_fee_sats = s.service_fee_sats;
             state.reserve_utxo = s.reserve_utxo.clone();
             state.swap_start_time = s.swap_start_time;
             state
