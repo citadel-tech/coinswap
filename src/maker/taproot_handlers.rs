@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use bitcoin::{Amount, OutPoint, PublicKey};
+use bitcoind::bitcoincore_rpc::{jsonrpc::error::Error as JsonRpcError, Error as BitcoinRpcError};
 
 use super::{
     error::MakerError,
@@ -21,7 +22,7 @@ use crate::{
     utill::estimate_funding_tx_fee_sats,
     wallet::{
         swapcoin::{IncomingSwapCoin, OutgoingSwapCoin},
-        MakerReport,
+        MakerReport, WalletError,
     },
 };
 
@@ -366,13 +367,35 @@ fn process_taproot_contract<M: Maker>(
     }
 
     for (outgoing, contract_outpoint) in outgoing_swapcoins.iter().zip(reserved.iter()) {
-        let txid = maker.broadcast_transaction(&outgoing.contract_tx)?;
-        log::info!(
-            "[{}] Broadcast Taproot contract tx {} for swap {}",
-            maker.network_port(),
-            txid,
-            data.id
-        );
+        match maker.broadcast_transaction(&outgoing.contract_tx) {
+            Ok(txid) => {
+                log::info!(
+                    "[{}] Broadcast Taproot contract tx {} for swap {}",
+                    maker.network_port(),
+                    txid,
+                    data.id
+                );
+            }
+            Err(MakerError::Wallet(WalletError::Rpc(BitcoinRpcError::JsonRpc(
+                JsonRpcError::Rpc(rpc_error),
+            )))) if rpc_error.code == -27 || {
+                let message = rpc_error.message.to_ascii_lowercase();
+                message.contains("already in block chain")
+                    || message.contains("already in mempool")
+                    || message.contains("already in utxo set")
+                    || message.contains("txn-already-in-mempool")
+            } =>
+            {
+                let txid = outgoing.contract_tx.compute_txid();
+                log::info!(
+                    "[{}] Taproot contract tx {} for swap {} was already broadcast",
+                    maker.network_port(),
+                    txid,
+                    data.id
+                );
+            }
+            Err(e) => return Err(e),
+        }
         maker.register_watch_outpoint(*contract_outpoint);
     }
 
