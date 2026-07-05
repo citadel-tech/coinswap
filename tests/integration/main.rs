@@ -18,6 +18,7 @@ mod fidelity_timelock_violation;
 mod funding_dynamic_splits;
 #[cfg(feature = "hotpath")]
 mod hotpath_profile;
+mod legacy_malformed_contract;
 mod liquidity_test;
 mod malice1;
 mod malice2;
@@ -27,6 +28,7 @@ mod skip_funding_recovery;
 mod standard_swap;
 mod taker_cli;
 mod taproot_concurrent_takers;
+mod taproot_contract_validation;
 mod taproot_hashlock_recovery;
 mod taproot_maker_abort1;
 mod taproot_maker_abort2;
@@ -38,21 +40,7 @@ mod taproot_swap;
 mod taproot_taker_abort1;
 mod taproot_taker_abort2;
 mod taproot_taker_abort3;
-mod taproot_timelock_recovery;
-mod wallet_backup;
-
-mod concurrent_takers;
-mod electrum_swap;
-mod fidelity_timelock_violation;
-mod funding_dynamic_splits;
-#[cfg(feature = "hotpath")]
-mod hotpath_profile;
-mod legacy_malformed_contract;
-mod liquidity_test;
-mod offerbook_sync_race;
-mod taker_cli;
-mod taproot_concurrent_takers;
-mod taproot_contract_validation;
 mod taproot_taker_contract_validation;
+mod taproot_timelock_recovery;
 mod utxo_behavior;
 mod wallet_backup;

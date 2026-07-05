@@ -804,20 +804,11 @@ fn verify_fidelity_with_backend(
     tweak_chain_code: &bitcoin::bip32::ChainCode,
 ) -> Result<(), TakerError> {
     let txid = proof.bond.outpoint.txid;
-    let (transaction, current_height) = match (rest_backend, electrum_url) {
-        (Some(rest), _) => (rest.get_raw_tx(&txid)?, rest.get_block_count()?),
-        (None, Some(url)) => {
-            let tx = electrum_get_raw_tx(url, &txid).map_err(TakerError::Watcher)?;
-            let h = electrum_block_count(url).map_err(TakerError::Watcher)?;
-            (tx, h)
-        }
-        (None, None) => {
-            return Err(TakerError::General(
-                "verify_fidelity_with_backend: no chain source provided".into(),
-            ))
-        }
-    };
-    let confirmation_height = rest_backend.get_utxo_confirmation_height(&proof.bond.outpoint())?;
+    let transaction = chain.get_raw_tx(&txid).map_err(TakerError::Watcher)?;
+    let current_height = chain.block_count().map_err(TakerError::Watcher)?;
+    let confirmation_height = chain
+        .utxo_confirmation_height(&proof.bond.outpoint())
+        .map_err(TakerError::Watcher)?;
 
     verify_fidelity_checks(
         proof,

@@ -518,7 +518,10 @@ fn check_for_idle_states<B: BlockchainBackend>(
 }
 
 /// Periodically check for expired fidelity bonds and renew them.
-fn fidelity_renewal_loop(maker: Arc<MakerServer>, maker_address: &str) -> Result<(), MakerError> {
+fn fidelity_renewal_loop<B: BlockchainBackend>(
+    maker: Arc<MakerServer<B>>,
+    maker_address: &str,
+) -> Result<(), MakerError> {
     use crate::wallet::AddressType;
 
     let tick = Duration::from_secs(2);

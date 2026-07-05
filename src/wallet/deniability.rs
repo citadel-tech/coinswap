@@ -462,9 +462,9 @@ pub(crate) fn proof_from_swapcoins(
 ///
 /// Returns `Ok(true)` if the proof is valid, `Ok(false)` if it fails verification,
 /// or an outer `Err` if the file cannot be read, parsed, or the swap_id is not found.
-pub fn verify_deniability(
+pub fn verify_deniability<R: RpcApi>(
     report_path: &std::path::Path,
-    rpc: &bitcoind::bitcoincore_rpc::Client,
+    rpc: &R,
     swap_id: &str,
 ) -> Result<bool, std::io::Error> {
     let content = std::fs::read_to_string(report_path)?;

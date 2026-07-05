@@ -42,7 +42,7 @@ fn test_taproot_maker_reboot_recovery_preserves_funded_swapcoins() {
     ];
 
     let (test_framework, mut takers, makers, block_generation_handle) =
-        TestFramework::init(makers_config_map, taker_behavior, maker_behaviors);
+        TestFramework::init::<BitcoindBackend>(makers_config_map, taker_behavior, maker_behaviors);
 
     let bitcoind = &test_framework.bitcoind;
     let taker = takers.get_mut(0).unwrap();
@@ -124,7 +124,7 @@ fn test_taproot_maker_reboot_recovery_preserves_funded_swapcoins() {
     drop(victim);
     drop(makers);
 
-    let restarted = Arc::new(MakerServer::init(victim_config).unwrap());
+    let restarted = Arc::new(MakerServer::<BitcoindBackend>::init(victim_config).unwrap());
     let restarted_thread = {
         let maker_clone = restarted.clone();
         thread::spawn(move || {

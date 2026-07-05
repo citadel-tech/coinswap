@@ -35,7 +35,7 @@ use rust_coinselect::{
 
 use super::{
     error::WalletError,
-    rpc::{BitcoindBackend, BlockchainBackend, HdOrigin},
+    rpc::{BackendConfig, BitcoindBackend, BlockchainBackend, HdOrigin},
     storage::{AddressType, WalletStore},
 };
 
@@ -398,21 +398,24 @@ impl<B: BlockchainBackend> Wallet<B> {
         })
     }
 
-    /// Load existing wallet at `path`, otherwise initialize a new one. The
-    /// passphrase derives encryption material via [`KeyMaterial::new_from_password`]
-    /// on the create path.
-    pub fn load_or_init(
-        path: &Path,
-        config: &B::Config,
+    /// One-call startup for maker/taker: derive the wallet path under
+    /// `data_dir/wallets/<wallet_name>`, resolve the backend variant matching
+    /// `B` from `backend`, then load the existing wallet or initialize a new one.
+    /// Callers just hand over their `BackendConfig`; the wallet owns the rest.
+    pub fn load_or_init_from_backend(
+        data_dir: &Path,
+        backend: &BackendConfig,
         password: Option<String>,
     ) -> Result<Self, WalletError> {
+        let path = data_dir.join("wallets").join(backend.wallet_name());
+        let config = B::from_backend_config(backend)?;
         if path.exists() {
-            let wallet = Self::load(path, config, password)?;
+            let wallet = Self::load(&path, config, password)?;
             log::info!("Wallet file at {path:?} successfully loaded.");
             Ok(wallet)
         } else {
             let km = KeyMaterial::new_from_password(password);
-            let wallet = Self::init(path, config, km)?;
+            let wallet = Self::init(&path, config, km)?;
             log::info!("New Wallet created at: {path:?}");
             Ok(wallet)
         }

@@ -12,7 +12,7 @@ use crate::{utill::calculate_fee_sats, wallet::Destination};
 
 use super::Wallet;
 
-use super::{error::WalletError, api::infer_address_type, rpc::BlockchainBackend, AddressType};
+use super::{api::infer_address_type, error::WalletError, rpc::BlockchainBackend, AddressType};
 
 #[derive(Debug)]
 pub struct CreateFundingTxesResult {

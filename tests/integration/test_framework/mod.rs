@@ -42,8 +42,8 @@ use coinswap::{
     taker::{Taker, TakerBehavior, TakerInitConfig},
     utill::setup_logger,
     wallet::{
-        AddressType, BackendConfig, BitcoindBackend, BlockchainBackend, ElectrumBackend,
-        ElectrumConfig, RPCConfig, verify_deniability
+        verify_deniability, AddressType, BackendConfig, BlockchainBackend, ElectrumConfig,
+        RPCConfig,
     },
 };
 use electrsd::ElectrsD;
@@ -625,8 +625,7 @@ impl TestFramework {
             temp_dir: temp_dir.clone(),
             nostr_relay_url,
             shutdown: AtomicBool::new(false),
-            nostr_relay_shutdown,
-            nostr_relay_handle: Some(nostr_relay_handle),
+            nostr_relay: Mutex::new(Some(nostr_relay)),
         });
         log::info!("⛏️ Spawning block generation thread");
         let tf_clone = framework.clone();
@@ -643,7 +642,7 @@ impl TestFramework {
         });
         log::info!("✅ Test Framework initialization complete");
 
-        (test_framework, takers, makers, generate_blocks_handle)
+        (framework, takers, makers, generate_blocks_handle)
     }
 
     /// Terminate the per-test nostr relay child process, if still running.
@@ -652,137 +651,6 @@ impl TestFramework {
             let _ = child.kill();
             let _ = child.wait();
         }
-    /// Electrum-mode variant of [`TestFramework::init`].
-    ///
-    /// Spawns bitcoind (the source of funds + chain) and an electrs indexer attached to it.
-    /// Both the taker and the makers are constructed with `init_electrum(...)` so the
-    /// watch-tower and offer-sync code paths exercise the Electrum branch end-to-end and
-    /// don't touch Bitcoin Core RPC/REST/ZMQ at all.
-    #[allow(clippy::type_complexity)]
-    pub fn init_electrum(
-        makers_config_map: Vec<(u16, Option<u16>)>,
-        taker_behavior: Vec<TakerBehavior>,
-        maker_behaviors: Vec<MakerBehavior>,
-    ) -> (
-        Arc<Self>,
-        Vec<Taker<ElectrumBackend>>,
-        Vec<Arc<MakerServer<ElectrumBackend>>>,
-        JoinHandle<()>,
-    ) {
-        let unique_id = format!("coinswap-elec-{}", rand::random::<u64>());
-        let temp_dir = env::temp_dir().join(unique_id);
-        if temp_dir.exists() {
-            fs::remove_dir_all::<PathBuf>(temp_dir.clone()).unwrap();
-        }
-        setup_logger(log::LevelFilter::Info, Some(temp_dir.clone()));
-        log::info!("📁 temporary directory : {}", temp_dir.display());
-
-        // bitcoind is launched only as a regtest funding source. ZMQ is unused in electrum
-        // mode but the binary still parses the flag, so we hand it a unique placeholder.
-        let port_zmq = 28332 + rand::random::<u16>() % 1000;
-        let zmq_addr = format!("tcp://127.0.0.1:{port_zmq}");
-
-        let bitcoind = init_bitcoind(&temp_dir, zmq_addr);
-        let electrsd = init_electrsd(&bitcoind, &temp_dir);
-        // electrum-client expects a tcp:// or ssl:// scheme; ElectrsD reports `host:port` only.
-        let electrum_url = format!("tcp://{}", electrsd.electrum_url);
-
-        let nostr_port = 8000 + rand::random::<u16>() % 1000;
-        let nostr_relay_url = format!("ws://127.0.0.1:{nostr_port}");
-        let (nostr_relay_shutdown, nostr_relay_handle) = spawn_nostr_relay(&temp_dir, nostr_port);
-        wait_for_relay_healthy(nostr_port);
-
-        // Give electrs a moment to do its initial index of the 101 blocks bitcoind already mined.
-        thread::sleep(Duration::from_secs(2));
-        let _ = electrsd.trigger();
-        thread::sleep(Duration::from_secs(1));
-
-        let shutdown = AtomicBool::new(false);
-        let test_framework = Arc::new(Self {
-            bitcoind,
-            electrsd: Some(electrsd),
-            temp_dir: temp_dir.clone(),
-            nostr_relay_url: nostr_relay_url.clone(),
-            shutdown,
-            nostr_relay_shutdown,
-            nostr_relay_handle: Some(nostr_relay_handle),
-        });
-
-        let takers = taker_behavior
-            .into_iter()
-            .enumerate()
-            .map(|(i, behavior)| {
-                let taker_id = format!("taker{}", i + 1);
-                let config = TakerInitConfig::default()
-                    .with_data_dir(temp_dir.join(&taker_id))
-                    .with_backend(BackendConfig::Electrum(ElectrumConfig {
-                        url: electrum_url.clone(),
-                        wallet_name: taker_id,
-                    }))
-                    .with_nostr_relays(vec![nostr_relay_url.clone()]);
-                let mut taker = Taker::<ElectrumBackend>::init(config).unwrap();
-                taker.behavior = behavior;
-                taker
-            })
-            .collect::<Vec<_>>();
-
-        let mut base_rpc_port = 4500 + (rand::random::<u16>() % 5000);
-        let base_maker_port = 10000 + rand::random::<u16>() % 40000;
-
-        let makers = makers_config_map
-            .into_iter()
-            .enumerate()
-            .map(|(i, (_network_port, _socks_port))| {
-                base_rpc_port += 1;
-                let network_port = base_maker_port + i as u16;
-                let maker_id = format!("maker{}", network_port);
-                thread::sleep(Duration::from_secs(5));
-
-                let config = MakerServerConfig {
-                    data_dir: temp_dir.join(network_port.to_string()),
-                    network_port,
-                    rpc_port: base_rpc_port,
-                    base_fee: 1000,
-                    amount_relative_fee_pct: 0.025,
-                    time_relative_fee_pct: 0.001,
-                    min_swap_amount: 10_000,
-                    required_confirms: 1,
-                    supported_protocols: vec![ProtocolVersion::Legacy, ProtocolVersion::Taproot],
-                    fidelity_amount: 5_000_000,
-                    fidelity_timelock: 950,
-                    network: bitcoin::Network::Regtest,
-                    backend: BackendConfig::Electrum(ElectrumConfig {
-                        url: electrum_url.clone(),
-                        wallet_name: maker_id,
-                    }),
-                    nostr_relays: vec![nostr_relay_url.clone()],
-                    ..MakerServerConfig::default()
-                };
-
-                let mut server = MakerServer::<ElectrumBackend>::init(config).unwrap();
-                server.behavior = maker_behaviors.get(i).copied().unwrap_or_default();
-                Arc::new(server)
-            })
-            .collect::<Vec<_>>();
-
-        // Block generation thread — also triggers electrs to index new blocks promptly.
-        log::info!("⛏️ Spawning block generation thread (electrum mode)");
-        let tf_clone = test_framework.clone();
-        let generate_blocks_handle = thread::spawn(move || loop {
-            thread::sleep(Duration::from_secs(3));
-            if tf_clone.shutdown.load(Relaxed) {
-                log::info!("🔚 Ending block generation thread");
-                return;
-            }
-            generate_blocks(&tf_clone.bitcoind, 10);
-            if let Some(elec) = tf_clone.electrsd.as_ref() {
-                let _ = elec.trigger();
-            }
-        });
-
-        log::info!("✅ Test Framework (electrum) initialization complete");
-
-        (test_framework, takers, makers, generate_blocks_handle)
     }
 
     /// Stop bitcoind, nostr relay, and clean up all test data.

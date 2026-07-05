@@ -215,10 +215,10 @@ fn test_standard_coinswap() {
     assert_report_has_deniability_proofs(&taker_report_path, "taker", bitcoind, 1);
 
     for (i, maker) in makers.iter().enumerate() {
-        let maker_report_path = maker
-            .data_dir
-            .join("wallets")
-            .join(format!("{}_swap_report.json", maker.config.wallet_name));
+        let maker_report_path = maker.data_dir.join("wallets").join(format!(
+            "{}_swap_report.json",
+            maker.config.backend.wallet_name()
+        ));
         assert_report_has_deniability_proofs(
             &maker_report_path,
             &format!("maker {i}"),

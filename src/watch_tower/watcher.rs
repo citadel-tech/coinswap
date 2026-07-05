@@ -160,7 +160,7 @@ impl<R: Role> Watcher<R> {
         }
         let chain = self.chain.clone();
 
-         #[cfg(debug_assertions)]
+        #[cfg(debug_assertions)]
         log::debug!(
             "[WATCH_STATE] Source: watch_tower::watcher::run | Action: watcher_ready | Network: {} | ActiveWatches: {} | Checkpoint: {:?} | Discovery: {}",
             network,

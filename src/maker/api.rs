@@ -701,18 +701,18 @@ impl<B: BlockchainBackend> MakerServer<B> {
             .read()
             .map_err(|e| std::io::Error::other(format!("wallet lock poisoned: {e}")))?
             .verify_deniability(swap_id)
+    }
+
     /// Initialize a maker server. Backend `B` is picked at the call site via turbofish;
     /// the matching variant is pulled from `config.backend`.
     #[hotpath::measure]
     pub fn init(mut config: MakerServerConfig) -> Result<Self, MakerError> {
         std::fs::create_dir_all(&config.data_dir).map_err(MakerError::IO)?;
-        let wallet_path = config
-            .data_dir
-            .join("wallets")
-            .join(config.backend.wallet_name());
-        let backend_cfg = B::from_backend_config(&config.backend).map_err(MakerError::Wallet)?;
-        let mut wallet =
-            Wallet::<B>::load_or_init(&wallet_path, backend_cfg, config.password.clone())?;
+        let mut wallet = Wallet::<B>::load_or_init_from_backend(
+            &config.data_dir,
+            &config.backend,
+            config.password.clone(),
+        )?;
         let data_dir = config.data_dir.clone();
         log::info!("Sync at:----MakerServer init----");
         wallet.sync_and_save()?;

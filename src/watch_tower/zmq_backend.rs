@@ -8,7 +8,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use bitcoin::{consensus::encode::serialize, Script, ScriptBuf, Transaction, Txid};
+use bitcoin::{consensus::encode::serialize, OutPoint, Script, ScriptBuf, Transaction, Txid};
 use electrum_client::{Client as ElectrumClient, ElectrumApi};
 
 use super::{
@@ -59,6 +59,41 @@ impl ChainSource {
                             "unknown genesis hash from electrum: {genesis:?}"
                         ))
                     })
+            }
+        }
+    }
+
+    /// Block height at which `outpoint` was confirmed. Errors if the output is
+    /// unknown or still unconfirmed (mempool, height 0 on Electrum).
+    pub fn utxo_confirmation_height(&self, outpoint: &OutPoint) -> Result<u32, WatcherError> {
+        match self {
+            Self::Rest(r) => r.get_utxo_confirmation_height(outpoint),
+            Self::Electrum(url) => {
+                let spk = self
+                    .get_raw_tx(&outpoint.txid)?
+                    .output
+                    .get(outpoint.vout as usize)
+                    .map(|o| o.script_pubkey.clone())
+                    .ok_or_else(|| {
+                        WatcherError::General(format!(
+                            "vout {} out of range for {}",
+                            outpoint.vout, outpoint.txid
+                        ))
+                    })?;
+                let history = with_electrum_client(url, |c| c.script_get_history(&spk))?;
+                let height = history
+                    .iter()
+                    .find(|h| h.tx_hash == outpoint.txid)
+                    .map(|h| h.height)
+                    .ok_or_else(|| {
+                        WatcherError::General(format!("no history for fidelity utxo {outpoint}"))
+                    })?;
+                if height <= 0 {
+                    return Err(WatcherError::General(format!(
+                        "fidelity utxo {outpoint} unconfirmed"
+                    )));
+                }
+                Ok(height as u32)
             }
         }
     }

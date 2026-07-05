@@ -2564,10 +2564,11 @@ impl<B: BlockchainBackend> Taker<B> {
     pub fn init(config: TakerInitConfig) -> Result<Self, TakerError> {
         let data_dir = config.data_dir.clone().unwrap_or_else(get_taker_dir);
         std::fs::create_dir_all(&data_dir)?;
-        let wallet_path = data_dir.join("wallets").join(config.backend.wallet_name());
-        let backend_cfg = B::from_backend_config(&config.backend)
-            .map_err(|e| TakerError::General(format!("{e:?}")))?;
-        let wallet = Wallet::<B>::load_or_init(&wallet_path, backend_cfg, config.password.clone())?;
+        let wallet = Wallet::<B>::load_or_init_from_backend(
+            &data_dir,
+            &config.backend,
+            config.password.clone(),
+        )?;
         Self::from_wallet(config, wallet)
     }
 }
@@ -2594,5 +2595,4 @@ pub enum TakerBehavior {
     InvalidTaprootContractAmount,
     /// Close connection when receiving maker's contract data response (taproot taker abort).
     CloseAtSendersContractFromMaker,
-}
 }
