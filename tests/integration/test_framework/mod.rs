@@ -502,15 +502,20 @@ impl TestFramework {
 
         // Start the block generation thread
         log::info!("⛏️ Spawning block generation thread");
-        let tf_clone = test_framework.clone();
+        let tf_weak = Arc::downgrade(&test_framework);
         let generate_blocks_handle = thread::spawn(move || loop {
             thread::sleep(Duration::from_secs(3));
 
-            if tf_clone.shutdown.load(Relaxed) {
+            let Some(tf) = tf_weak.upgrade() else {
+                log::info!("🔚 Test framework dropped, ending block generation thread");
+                return;
+            };
+
+            if tf.shutdown.load(Relaxed) {
                 log::info!("🔚 Ending block generation thread");
                 return;
             }
-            generate_blocks(&tf_clone.bitcoind, 10);
+            generate_blocks(&tf.bitcoind, 10);
         });
 
         log::info!("✅ Test Framework initialization complete");
