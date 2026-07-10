@@ -17,6 +17,8 @@ use std::{
 
 use super::test_framework::*;
 
+const STAGED_MAKER_SETUP_TIMEOUT_SECS: u64 = 180;
+
 fn spawn_makers(makers: &[Arc<coinswap::maker::MakerServer>]) -> Vec<thread::JoinHandle<()>> {
     let maker_threads = makers
         .iter()
@@ -83,6 +85,11 @@ fn test_repeated_manual_sync_is_bounded() {
 
     for stage_size in stage_plan {
         let stage_end = spawned + stage_size;
+        log::info!(
+            "Starting maker stage: launching makers {}..{}",
+            spawned,
+            stage_end
+        );
         for maker in &makers[spawned..stage_end] {
             let maker_clone = Arc::clone(maker);
             maker_threads.push(thread::spawn(move || {
@@ -90,12 +97,7 @@ fn test_repeated_manual_sync_is_bounded() {
             }));
         }
 
-        while !makers[..stage_end]
-            .iter()
-            .all(|m| m.is_setup_complete.load(Relaxed))
-        {
-            thread::sleep(Duration::from_millis(300));
-        }
+        wait_for_makers_setup(&makers[..stage_end], STAGED_MAKER_SETUP_TIMEOUT_SECS);
 
         for _ in 0..syncs_per_stage {
             taker
