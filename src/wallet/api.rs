@@ -2789,6 +2789,9 @@ impl Wallet {
 
     /// Separates coins by sending them to a specific address with a large OP_RETURN.
     /// This is useful to split coins across chain forks (e.g., Core vs BIP-128).
+    /// By utilizing consensus divergence, this large OP_RETURN ensures the sweep
+    /// transaction is valid only on the Bitcoin Core chain and rejected on the fork.
+    /// This acts as a reliable, decentralized replay-protection mechanism for swaps.
     pub fn separate_chain_coins(
         &mut self,
         feerate: f64,
