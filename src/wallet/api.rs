@@ -2786,4 +2786,34 @@ impl Wallet {
             }
         }
     }
+
+    /// Separates coins by sending them to a specific address with a large OP_RETURN.
+    /// This is useful to split coins across chain forks (e.g., Core vs BIP-128).
+    pub fn separate_chain_coins(
+        &mut self,
+        feerate: f64,
+        destination_address: Option<Address>,
+        op_return_payload: &[u8],
+    ) -> Result<Txid, WalletError> {
+        let mut coins_to_spend = self.list_descriptor_utxo_spend_info();
+        coins_to_spend.extend(self.list_swept_incoming_swap_utxos());
+
+        if coins_to_spend.is_empty() {
+            return Err(WalletError::General("No spendable coins to separate".to_owned()));
+        }
+
+        let change_type = AddressType::P2WPKH;
+        let dest_addr = match destination_address {
+            Some(addr) => addr,
+            None => self.get_next_internal_addresses(1, change_type)?[0].clone(),
+        };
+
+        let destination = crate::wallet::spend::Destination::Sweep(dest_addr, Some(op_return_payload.into()));
+        
+        let tx = self.spend_coins(&coins_to_spend, destination, feerate)?;
+        let txid = self.send_tx(&tx)?;
+
+        log::info!("Separation transaction broadcasted. txid: {}", txid);
+        Ok(txid)
+    }
 }
