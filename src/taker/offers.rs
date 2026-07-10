@@ -21,6 +21,7 @@ use std::{
 
 use bitcoin::{OutPoint, Txid};
 use serde::{Deserialize, Serialize};
+#[cfg(not(feature = "integration-test"))]
 use socks::Socks5Stream;
 
 use crate::{
@@ -1030,14 +1031,18 @@ impl MakerAddress {
 
     /// Download a single offer from a maker.
     fn fetch_offer(&self, socks_port: u16) -> Result<(Offer, MakerProtocol), TakerError> {
-        use crate::protocol::common_messages::COINSWAP_PORT;
-
         log::debug!("Downloading offer from maker: {}", self);
 
-        let mut socket = if cfg!(feature = "integration-test") {
+        #[cfg(feature = "integration-test")]
+        let mut socket = {
+            let _ = socks_port;
             // Integration test: self.0 is "ip:port"
             TcpStream::connect(self.to_string())?
-        } else {
+        };
+        #[cfg(not(feature = "integration-test"))]
+        let mut socket = {
+            use crate::protocol::common_messages::COINSWAP_PORT;
+
             // Production: self.0 is a .onion hostname, append the well-known port
             let addr = format!("{}:{}", self.0, COINSWAP_PORT);
             Socks5Stream::connect(format!("127.0.0.1:{socks_port}").as_str(), addr.as_ref())?

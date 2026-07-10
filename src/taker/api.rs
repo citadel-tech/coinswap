@@ -27,6 +27,7 @@ use bitcoin::{
     Amount, OutPoint, PublicKey,
 };
 use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, RpcApi};
+#[cfg(not(feature = "integration-test"))]
 use socks::Socks5Stream;
 
 use crate::{
@@ -39,8 +40,8 @@ use crate::{
         contract::calculate_pubkey_from_nonce,
     },
     utill::{
-        check_tor_status, estimate_funding_tx_fee_sats, generate_maker_keys, get_taker_dir,
-        read_message, send_message,
+        estimate_funding_tx_fee_sats, generate_maker_keys, get_taker_dir, read_message,
+        send_message,
     },
     wallet::{
         swapcoin::{IncomingSwapCoin, OutgoingSwapCoin, WatchOnlySwapCoin},
@@ -65,6 +66,9 @@ use super::{
         OfferBookHandle, OfferSyncClient, OfferSyncHandle, OfferSyncService,
     },
 };
+
+#[cfg(not(feature = "integration-test"))]
+use crate::utill::check_tor_status;
 
 /// Connection type for the taker.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -678,7 +682,8 @@ impl Taker {
             taker_config.tor_auth_password = tor_auth_password.clone();
         }
 
-        if !cfg!(feature = "integration-test") && config.connection_type == ConnectionType::Tor {
+        #[cfg(not(feature = "integration-test"))]
+        if config.connection_type == ConnectionType::Tor {
             check_tor_status(
                 taker_config.control_port,
                 taker_config.tor_auth_password.as_str(),
@@ -1748,22 +1753,21 @@ impl Taker {
     /// Connect to a maker using either direct connection or Tor proxy.
     #[hotpath::measure]
     pub(crate) fn net_connect(&self, address: &str) -> Result<TcpStream, TakerError> {
-        use crate::protocol::common_messages::COINSWAP_PORT;
-
         log::debug!("Connecting to maker at {}", address);
         let timeout = Duration::from_secs(CONNECT_TIMEOUT_SECS);
 
-        let connection_type = if cfg!(feature = "integration-test") {
-            ConnectionType::Clearnet
-        } else {
-            self.config.connection_type
-        };
+        #[cfg(feature = "integration-test")]
+        let socket = TcpStream::connect(address)
+            .map_err(|e| TakerError::General(format!("Failed to connect to {}: {}", address, e)))?;
 
-        let socket = match connection_type {
+        #[cfg(not(feature = "integration-test"))]
+        let socket = match self.config.connection_type {
             ConnectionType::Clearnet => TcpStream::connect(address).map_err(|e| {
                 TakerError::General(format!("Failed to connect to {}: {}", address, e))
             })?,
             ConnectionType::Tor => {
+                use crate::protocol::common_messages::COINSWAP_PORT;
+
                 let socks_addr = format!("127.0.0.1:{}", self.config.socks_port);
                 let tor_target = format!("{}:{}", address, COINSWAP_PORT);
                 Socks5Stream::connect(socks_addr.as_str(), tor_target.as_str())

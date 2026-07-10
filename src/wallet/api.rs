@@ -12,9 +12,10 @@ use std::collections::{HashMap, HashSet};
 use crate::security::KeyMaterial;
 
 use bip39::Mnemonic;
+#[cfg(not(feature = "integration-test"))]
+use bitcoin::hashes::{sha512, Hash};
 use bitcoin::{
     bip32::{ChainCode, ChildNumber, DerivationPath, Xpriv, Xpub},
-    hashes::{sha512, Hash},
     key::TapTweak,
     secp256k1,
     secp256k1::{Keypair, Secp256k1, SecretKey},
@@ -1069,9 +1070,12 @@ impl Wallet {
 
     /// Dynamic address import count function. 10 for tests, 5000 for production.
     pub(crate) fn get_addrss_import_count(&self) -> u32 {
-        if cfg!(feature = "integration-test") {
+        #[cfg(feature = "integration-test")]
+        {
             10
-        } else {
+        }
+        #[cfg(not(feature = "integration-test"))]
+        {
             5000
         }
     }
@@ -1617,6 +1621,7 @@ impl Wallet {
 
     //expose a deterministically-derived 64-byte Ed25519-V3 Tor key
     // built from the wallet's master_key
+    #[cfg(not(feature = "integration-test"))]
     pub(crate) fn derive_tor_key(&self) -> [u8; 64] {
         // Hash the 32-byte secp256k1 private key bytes RFC 8032 per 5.1.5,
         // then clamp into a valid Ed25519 expanded key.

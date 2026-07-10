@@ -5,8 +5,9 @@
 //! fidelity bond information and other coordination signals required
 //! by the Coinswap protocol.
 
+#[cfg(not(feature = "integration-test"))]
+use std::io;
 use std::{
-    io,
     net::TcpStream,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -19,8 +20,11 @@ use nostr::{
     types::Timestamp,
     util::JsonUtil,
 };
+#[cfg(not(feature = "integration-test"))]
 use socks::Socks5Stream;
-use tungstenite::{http::Uri, stream::MaybeTlsStream, Message, WebSocket};
+#[cfg(not(feature = "integration-test"))]
+use tungstenite::http::Uri;
+use tungstenite::{stream::MaybeTlsStream, Message, WebSocket};
 
 use crate::{
     maker::{MakerError, MakerServerConfig},
@@ -52,44 +56,49 @@ pub(crate) fn connect_nostr_websocket(
     socks_port: u16,
     tor_auth_password: &str,
 ) -> Result<WebSocket<MaybeTlsStream<TcpStream>>, tungstenite::Error> {
-    if cfg!(feature = "integration-test") {
-        return tungstenite::connect(relay_url).map(|(ws, _)| ws);
+    #[cfg(feature = "integration-test")]
+    {
+        let _ = (socks_port, tor_auth_password);
+        tungstenite::connect(relay_url).map(|(ws, _)| ws)
     }
 
-    let invalid_relay = || io::Error::new(io::ErrorKind::InvalidInput, "invalid relay url");
-    let uri: Uri = relay_url.parse().map_err(|_| invalid_relay())?;
-    let scheme = uri.scheme_str().ok_or_else(invalid_relay)?;
-    if scheme != "ws" && scheme != "wss" {
-        return Err(invalid_relay().into());
-    }
-    let authority = uri.authority().ok_or_else(invalid_relay)?;
-    let host = authority.host();
-    let port = authority
-        .port_u16()
-        .unwrap_or(if scheme == "wss" { 443 } else { 80 });
+    #[cfg(not(feature = "integration-test"))]
+    {
+        let invalid_relay = || io::Error::new(io::ErrorKind::InvalidInput, "invalid relay url");
+        let uri: Uri = relay_url.parse().map_err(|_| invalid_relay())?;
+        let scheme = uri.scheme_str().ok_or_else(invalid_relay)?;
+        if scheme != "ws" && scheme != "wss" {
+            return Err(invalid_relay().into());
+        }
+        let authority = uri.authority().ok_or_else(invalid_relay)?;
+        let host = authority.host();
+        let port = authority
+            .port_u16()
+            .unwrap_or(if scheme == "wss" { 443 } else { 80 });
 
-    let socks_addr = format!("127.0.0.1:{socks_port}");
-    let target_addr = format!("{host}:{port}");
-    let tcp = if tor_auth_password.is_empty() {
-        Socks5Stream::connect(socks_addr.as_str(), target_addr.as_str())
-    } else {
-        Socks5Stream::connect_with_password(
-            socks_addr.as_str(),
-            target_addr.as_str(),
-            host,
-            tor_auth_password,
-        )
-    }
-    .map_err(|e| io::Error::other(e.to_string()))?
-    .into_inner();
+        let socks_addr = format!("127.0.0.1:{socks_port}");
+        let target_addr = format!("{host}:{port}");
+        let tcp = if tor_auth_password.is_empty() {
+            Socks5Stream::connect(socks_addr.as_str(), target_addr.as_str())
+        } else {
+            Socks5Stream::connect_with_password(
+                socks_addr.as_str(),
+                target_addr.as_str(),
+                host,
+                tor_auth_password,
+            )
+        }
+        .map_err(|e| io::Error::other(e.to_string()))?
+        .into_inner();
 
-    tcp.set_read_timeout(Some(Duration::from_secs(30)))?;
-    tcp.set_write_timeout(Some(Duration::from_secs(30)))?;
-    match tungstenite::client_tls_with_config(relay_url, tcp, None, None) {
-        Ok((ws, _)) => Ok(ws),
-        Err(tungstenite::HandshakeError::Failure(e)) => Err(e),
-        Err(tungstenite::HandshakeError::Interrupted(_)) => {
-            Err(io::Error::other("tls handshake interrupted").into())
+        tcp.set_read_timeout(Some(Duration::from_secs(30)))?;
+        tcp.set_write_timeout(Some(Duration::from_secs(30)))?;
+        match tungstenite::client_tls_with_config(relay_url, tcp, None, None) {
+            Ok((ws, _)) => Ok(ws),
+            Err(tungstenite::HandshakeError::Failure(e)) => Err(e),
+            Err(tungstenite::HandshakeError::Interrupted(_)) => {
+                Err(io::Error::other("tls handshake interrupted").into())
+            }
         }
     }
 }

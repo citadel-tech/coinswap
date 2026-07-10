@@ -1565,6 +1565,7 @@ impl MakerRpc for MakerServer {
         &self.shutdown
     }
 
+    #[cfg(not(feature = "integration-test"))]
     fn get_tor_hostname(&self) -> Result<String, crate::utill::TorError> {
         let tor_key_bytes = self
             .wallet
