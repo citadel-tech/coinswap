@@ -289,7 +289,9 @@ pub fn decrypt_struct<T: DeserializeOwned>(
 }
 /// Loads a sensitive struct from a file, supporting both encrypted and plaintext formats.
 ///
-/// This function tries to deserialize the file contents in two steps:
+/// When a non-empty password is supplied, this function requires the file to
+/// deserialize as [`EncryptedData`] and never attempts a plaintext fallback.
+/// Without a password, it tries to deserialize the file contents in two steps:
 ///
 /// 1. **Unencrypted:** Attempts to deserialize the file directly as `T`.
 /// 2. **Encrypted:** If that fails, attempts to deserialize as [`EncryptedData`],
@@ -306,6 +308,24 @@ pub fn load_sensitive_struct<T: DeserializeOwned, F: SerdeFormat>(
     password: Option<String>,
 ) -> (T, Option<KeyMaterial>) {
     let content = fs::read(file).unwrap_or_else(|_| panic!("Failed to read the file: {:?}", file));
+
+    if let Some(encryption_password) = password.as_ref().filter(|password| !password.is_empty()) {
+        let encrypted_struct = F::from_slice::<EncryptedData>(&content).unwrap_or_else(|err| {
+            panic!(
+                "Expected encrypted file {:?} because a password was supplied: {}",
+                file, err
+            )
+        });
+        let enc_material = KeyMaterial::existing(
+            encryption_password.clone(),
+            encrypted_struct.nonce,
+            encrypted_struct.pbkdf2_salt,
+        );
+        let decrypted = decrypt_struct::<T>(encrypted_struct, &enc_material)
+            .unwrap_or_else(|err| panic!("Failed to decrypt file {:?}: {:?}", file, err));
+
+        return (decrypted, Some(enc_material));
+    }
 
     let (sensitive_struct, encryption_material) = match F::from_slice::<T>(&content) {
         Ok(unencrypted_struct) => (unencrypted_struct, None),

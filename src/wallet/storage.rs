@@ -149,10 +149,10 @@ impl WalletStore {
         backup_file_path: &Path,
         password: String,
     ) -> Result<(Self, Option<KeyMaterial>), WalletError> {
-        let (wallet_store, store_enc_material) =
-            load_sensitive_struct::<Self, SerdeCbor>(backup_file_path, Some(password));
-
-        Ok((wallet_store, store_enc_material))
+        Ok(load_sensitive_struct::<Self, SerdeCbor>(
+            backup_file_path,
+            Some(password),
+        ))
     }
 }
 
@@ -188,5 +188,66 @@ mod tests {
 
         let (read_wallet, _nonce) = WalletStore::read_from_disk(&file_path, String::new()).unwrap();
         assert_eq!(original_wallet_store, read_wallet);
+    }
+
+    #[test]
+    fn rejects_plaintext_wallet_when_password_is_supplied() {
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("test_wallet.cbor");
+        let seed: [u8; 16] = thread_rng().gen();
+        let master_key = Xpriv::new_master(Network::Bitcoin, &seed).unwrap();
+
+        WalletStore::init(
+            "test_wallet".to_string(),
+            &file_path,
+            Network::Bitcoin,
+            master_key,
+            None,
+            &None,
+        )
+        .unwrap();
+
+        let load_result = std::panic::catch_unwind(|| {
+            WalletStore::read_from_disk(&file_path, "wallet password".to_string())
+        });
+        let panic_payload =
+            load_result.expect_err("a password must require an encrypted wallet file");
+        let panic_msg = if let Some(s) = panic_payload.downcast_ref::<String>() {
+            s.as_str()
+        } else if let Some(s) = panic_payload.downcast_ref::<&str>() {
+            *s
+        } else {
+            "<non-string panic payload>"
+        };
+        assert!(
+            panic_msg.contains("Expected encrypted file"),
+            "unexpected panic message: {}",
+            panic_msg
+        );
+    }
+
+    #[test]
+    fn reads_encrypted_wallet_when_password_is_supplied() {
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("test_wallet.cbor");
+        let seed: [u8; 16] = thread_rng().gen();
+        let master_key = Xpriv::new_master(Network::Bitcoin, &seed).unwrap();
+        let password = "wallet password".to_string();
+        let encryption_material = KeyMaterial::new_from_password(Some(password.clone()));
+
+        let original_wallet_store = WalletStore::init(
+            "test_wallet".to_string(),
+            &file_path,
+            Network::Bitcoin,
+            master_key,
+            None,
+            &encryption_material,
+        )
+        .unwrap();
+
+        let (read_wallet, read_encryption_material) =
+            WalletStore::read_from_disk(&file_path, password).unwrap();
+        assert_eq!(original_wallet_store, read_wallet);
+        assert!(read_encryption_material.is_some());
     }
 }

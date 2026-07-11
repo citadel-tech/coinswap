@@ -36,7 +36,8 @@ pub use super::report::{
 /// - `data_dir`: Target directory, defaults to `~/.coinswap/taker`
 /// - `wallet_file_name`: Restored wallet filename, defaults to name from backup if empty
 /// - `backup_file_path`: Path to the JSON file containing the wallet backup (encrypted or plain)
-/// - `password`: Required if backup is encrypted, ignored otherwise
+/// - `password`: Required if the backup is encrypted. Supplying a non-empty password
+///   also requires the backup file itself to be encrypted; plaintext is rejected.
 pub fn restore_wallet_gui_app(
     data_dir: Option<PathBuf>,
     wallet_file_name: Option<String>,
