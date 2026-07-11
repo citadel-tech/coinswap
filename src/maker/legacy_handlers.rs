@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use bitcoin::{secp256k1::SecretKey, Amount, PublicKey, ScriptBuf};
+use bitcoind::bitcoincore_rpc::{jsonrpc::error::Error as JsonRpcError, Error as BitcoinRpcError};
 
 use super::{
     error::MakerError,
@@ -18,7 +19,7 @@ use crate::{
         legacy_messages::{FundingTxInfo, LegacyTakerMessage},
     },
     utill::{estimate_funding_tx_fee_sats, redeemscript_to_scriptpubkey},
-    wallet::{swapcoin::IncomingSwapCoin, MakerReport},
+    wallet::{swapcoin::IncomingSwapCoin, MakerReport, WalletError},
 };
 
 /// Handle a Legacy protocol message.
@@ -516,8 +517,34 @@ fn process_resp_contract_sigs_for_recvr_and_sender<M: Maker>(
     );
 
     for funding_tx in &state.pending_funding_txes {
-        let txid = maker.broadcast_transaction(funding_tx)?;
-        log::info!("[{}] Broadcast funding tx: {}", maker.network_port(), txid);
+        match maker.broadcast_transaction(funding_tx) {
+            Ok(txid) => {
+                log::info!(
+                    "[{}] Broadcast Legacy funding tx: {}",
+                    maker.network_port(),
+                    txid
+                );
+            }
+            Err(MakerError::Wallet(WalletError::Rpc(BitcoinRpcError::JsonRpc(
+                JsonRpcError::Rpc(rpc_error),
+            )))) if rpc_error.code == -27 || {
+                let message = rpc_error.message.to_ascii_lowercase();
+                message.contains("already in block chain")
+                    || message.contains("already in mempool")
+                    || message.contains("already in utxo set")
+                    || message.contains("txn-already-in-mempool")
+            } =>
+            {
+                let txid = funding_tx.compute_txid();
+                log::info!(
+                    "[{}] Legacy funding tx {} for swap {} was already broadcast",
+                    maker.network_port(),
+                    txid,
+                    resp.id,
+                );
+            }
+            Err(e) => return Err(e),
+        }
     }
 
     state.pending_funding_txes.clear();
