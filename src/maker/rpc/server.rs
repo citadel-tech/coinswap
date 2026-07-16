@@ -1,5 +1,6 @@
 use std::{
-    io::ErrorKind,
+    fs::{self, OpenOptions},
+    io::{ErrorKind, Write},
     net::{TcpListener, TcpStream},
     sync::{
         atomic::{AtomicBool, Ordering::Relaxed},
@@ -9,9 +10,12 @@ use std::{
     time::Duration,
 };
 
-use bitcoin::Amount;
+use bitcoin::{
+    secp256k1::rand::{rngs::OsRng, RngCore},
+    Amount,
+};
 
-use super::messages::RpcMsgReq;
+use super::messages::{AuthenticatedRpcRequest, RpcMsgReq};
 #[cfg(not(feature = "integration-test"))]
 use crate::utill::TorError;
 use crate::{
@@ -20,6 +24,41 @@ use crate::{
     wallet::{infer_address_type, AddressType, Destination, Wallet},
 };
 use std::{path::Path, sync::RwLock};
+
+const RPC_COOKIE_FILE: &str = "rpc_cookie";
+
+fn write_rpc_cookie(data_dir: &Path) -> Result<String, MakerError> {
+    let mut bytes = [0_u8; 32];
+    OsRng.fill_bytes(&mut bytes);
+    let token: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+
+    let mut options = OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+
+    let mut file = options.open(data_dir.join(RPC_COOKIE_FILE))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(fs::Permissions::from_mode(0o600))?;
+    }
+    file.write_all(token.as_bytes())?;
+    file.sync_all()?;
+    Ok(token)
+}
+
+fn cookie_matches(provided: &str, expected: &str) -> bool {
+    provided.len() == expected.len()
+        && provided
+            .bytes()
+            .zip(expected.bytes())
+            .fold(0_u8, |diff, (a, b)| diff | (a ^ b))
+            == 0
+}
 
 pub trait MakerRpc {
     fn wallet(&self) -> &RwLock<Wallet>;
@@ -30,9 +69,24 @@ pub trait MakerRpc {
     fn get_tor_hostname(&self) -> Result<String, TorError>;
 }
 
-fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result<(), MakerError> {
+fn handle_request<M: MakerRpc>(
+    maker: &Arc<M>,
+    socket: &mut TcpStream,
+    rpc_cookie: &str,
+) -> Result<(), MakerError> {
     let msg_bytes = read_message(socket)?;
-    let rpc_request: RpcMsgReq = serde_cbor::from_slice(&msg_bytes)?;
+    let envelope = match serde_cbor::from_slice::<AuthenticatedRpcRequest>(&msg_bytes) {
+        Ok(envelope) if cookie_matches(&envelope.token, rpc_cookie) => envelope,
+        _ => {
+            log::warn!(
+                "Rejected unauthenticated RPC request from {}",
+                socket.peer_addr().unwrap()
+            );
+            send_message(socket, &RpcMsgResp::ServerError("unauthorized".to_string()))?;
+            return Ok(());
+        }
+    };
+    let rpc_request = envelope.request;
     log::info!("RPC request received: {rpc_request:?}");
 
     let resp = match rpc_request {
@@ -173,6 +227,7 @@ fn handle_request<M: MakerRpc>(maker: &Arc<M>, socket: &mut TcpStream) -> Result
 pub(crate) fn start_rpc_server<M: MakerRpc>(maker: Arc<M>) -> Result<(), MakerError> {
     let rpc_port = maker.config().rpc_port;
     let listener = TcpListener::bind(("127.0.0.1", rpc_port))?;
+    let rpc_cookie = write_rpc_cookie(maker.data_dir())?;
     let rpc_socket = format!("127.0.0.1:{rpc_port}");
     let listener = Arc::new(listener);
     log::info!(
@@ -190,7 +245,7 @@ pub(crate) fn start_rpc_server<M: MakerRpc>(maker: Arc<M>) -> Result<(), MakerEr
                 stream.set_read_timeout(Some(Duration::from_secs(20)))?;
                 stream.set_write_timeout(Some(Duration::from_secs(20)))?;
                 // Do not cause hard error if a rpc request fails
-                if let Err(e) = handle_request(&maker, &mut stream) {
+                if let Err(e) = handle_request(&maker, &mut stream, &rpc_cookie) {
                     log::error!("Error processing RPC Request: {e:?}");
                     // Send the error back to client.
                     if let Err(e) =
@@ -213,5 +268,38 @@ pub(crate) fn start_rpc_server<M: MakerRpc>(maker: Arc<M>) -> Result<(), MakerEr
         sleep(HEART_BEAT_INTERVAL);
     }
 
+    if let Err(e) = fs::remove_file(maker.data_dir().join(RPC_COOKIE_FILE)) {
+        if e.kind() != ErrorKind::NotFound {
+            log::warn!("Failed to remove RPC cookie during shutdown: {e}");
+        }
+    }
+
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rpc_cookie_is_random_and_authenticated() {
+        let dir = bitcoind::tempfile::tempdir().unwrap();
+
+        let first = write_rpc_cookie(dir.path()).unwrap();
+        let second = write_rpc_cookie(dir.path()).unwrap();
+        assert_eq!(second.len(), 64);
+        assert_ne!(first, second);
+        assert!(cookie_matches(&second, &second));
+        assert!(!cookie_matches(&first, &second));
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(dir.path().join(RPC_COOKIE_FILE))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+    }
 }

@@ -8,6 +8,15 @@ use std::path::PathBuf;
 
 use crate::wallet::Balances;
 
+/// An RPC request authenticated with the cookie owned by `makerd`.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct AuthenticatedRpcRequest {
+    /// Authentication token read from the maker data directory.
+    pub token: String,
+    /// Requested operation.
+    pub request: RpcMsgReq,
+}
+
 /// Enum representing RPC message requests.
 ///
 /// These messages are used for various operations in the Maker-rpc communication.

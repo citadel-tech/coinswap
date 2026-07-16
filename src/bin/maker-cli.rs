@@ -1,9 +1,9 @@
-use std::{net::TcpStream, time::Duration};
+use std::{fs, net::TcpStream, path::PathBuf, time::Duration};
 
 use clap::Parser;
 use coinswap::{
-    maker::{MakerError, RpcMsgReq, RpcMsgResp},
-    utill::{read_message, send_message, MIN_FEE_RATE},
+    maker::{AuthenticatedRpcRequest, MakerError, RpcMsgReq, RpcMsgResp},
+    utill::{get_maker_dir, read_message, send_message, MIN_FEE_RATE},
 };
 
 /// A simple command line app to operate the makerd server.
@@ -20,6 +20,9 @@ struct App {
     /// Sets the rpc-port of Makerd
     #[arg(long, short = 'p', default_value = "127.0.0.1:6103")]
     rpc_port: String,
+    /// Maker data directory used to read the RPC authentication cookie
+    #[arg(long, short = 'd')]
+    data_directory: Option<PathBuf>,
     /// The command to execute
     #[command(subcommand)]
     command: Commands,
@@ -78,30 +81,37 @@ enum Commands {
 
 fn main() -> Result<(), MakerError> {
     let cli = App::parse();
+    let rpc_cookie = fs::read_to_string(
+        cli.data_directory
+            .unwrap_or_else(get_maker_dir)
+            .join("rpc_cookie"),
+    )?
+    .trim()
+    .to_owned();
 
     let stream = TcpStream::connect(cli.rpc_port)?;
 
     match cli.command {
         Commands::SendPing => {
-            send_rpc_req(stream, RpcMsgReq::Ping)?;
+            send_rpc_req(stream, &rpc_cookie, RpcMsgReq::Ping)?;
         }
         Commands::ListUtxoContract => {
-            send_rpc_req(stream, RpcMsgReq::ContractUtxo)?;
+            send_rpc_req(stream, &rpc_cookie, RpcMsgReq::ContractUtxo)?;
         }
         Commands::ListUtxoFidelity => {
-            send_rpc_req(stream, RpcMsgReq::FidelityUtxo)?;
+            send_rpc_req(stream, &rpc_cookie, RpcMsgReq::FidelityUtxo)?;
         }
         Commands::GetBalances => {
-            send_rpc_req(stream, RpcMsgReq::Balances)?;
+            send_rpc_req(stream, &rpc_cookie, RpcMsgReq::Balances)?;
         }
         Commands::ListUtxo => {
-            send_rpc_req(stream, RpcMsgReq::Utxo)?;
+            send_rpc_req(stream, &rpc_cookie, RpcMsgReq::Utxo)?;
         }
         Commands::ListUtxoSwap => {
-            send_rpc_req(stream, RpcMsgReq::SwapUtxo)?;
+            send_rpc_req(stream, &rpc_cookie, RpcMsgReq::SwapUtxo)?;
         }
         Commands::GetNewAddress => {
-            send_rpc_req(stream, RpcMsgReq::NewAddress)?;
+            send_rpc_req(stream, &rpc_cookie, RpcMsgReq::NewAddress)?;
         }
         Commands::SendToAddress {
             address,
@@ -110,6 +120,7 @@ fn main() -> Result<(), MakerError> {
         } => {
             send_rpc_req(
                 stream,
+                &rpc_cookie,
                 RpcMsgReq::SendToAddress {
                     address,
                     amount,
@@ -118,33 +129,47 @@ fn main() -> Result<(), MakerError> {
             )?;
         }
         Commands::ShowTorAddress => {
-            send_rpc_req(stream, RpcMsgReq::GetTorAddress)?;
+            send_rpc_req(stream, &rpc_cookie, RpcMsgReq::GetTorAddress)?;
         }
         Commands::ShowDataDir => {
-            send_rpc_req(stream, RpcMsgReq::GetDataDir)?;
+            send_rpc_req(stream, &rpc_cookie, RpcMsgReq::GetDataDir)?;
         }
         Commands::Stop => {
-            send_rpc_req(stream, RpcMsgReq::Stop)?;
+            send_rpc_req(stream, &rpc_cookie, RpcMsgReq::Stop)?;
         }
         Commands::ShowFidelity => {
-            send_rpc_req(stream, RpcMsgReq::ListFidelity)?;
+            send_rpc_req(stream, &rpc_cookie, RpcMsgReq::ListFidelity)?;
         }
         Commands::SyncWallet => {
-            send_rpc_req(stream, RpcMsgReq::SyncWallet)?;
+            send_rpc_req(stream, &rpc_cookie, RpcMsgReq::SyncWallet)?;
         }
         Commands::VerifyDeniability { swap_id } => {
-            send_rpc_req(stream, RpcMsgReq::VerifyDeniability { swap_id })?;
+            send_rpc_req(
+                stream,
+                &rpc_cookie,
+                RpcMsgReq::VerifyDeniability { swap_id },
+            )?;
         }
     }
 
     Ok(())
 }
 
-fn send_rpc_req(mut stream: TcpStream, req: RpcMsgReq) -> Result<(), MakerError> {
+fn send_rpc_req(
+    mut stream: TcpStream,
+    rpc_cookie: &str,
+    request: RpcMsgReq,
+) -> Result<(), MakerError> {
     // stream.set_read_timeout(Some(Duration::from_secs(20)))?;
     stream.set_write_timeout(Some(Duration::from_secs(20)))?;
 
-    send_message(&mut stream, &req)?;
+    send_message(
+        &mut stream,
+        &AuthenticatedRpcRequest {
+            token: rpc_cookie.to_owned(),
+            request,
+        },
+    )?;
 
     let response_bytes = read_message(&mut stream)?;
     let response: RpcMsgResp = serde_cbor::from_slice(&response_bytes)?;
