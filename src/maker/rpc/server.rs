@@ -79,8 +79,8 @@ fn handle_request<M: MakerRpc>(
         Ok(envelope) if cookie_matches(&envelope.token, rpc_cookie) => envelope,
         _ => {
             log::warn!(
-                "Rejected unauthenticated RPC request from {:?}",
-                socket.peer_addr()
+                "Rejected unauthenticated RPC request from {}",
+                socket.peer_addr().unwrap()
             );
             send_message(socket, &RpcMsgResp::ServerError("unauthorized".to_string()))?;
             return Ok(());
@@ -266,6 +266,12 @@ pub(crate) fn start_rpc_server<M: MakerRpc>(maker: Arc<M>) -> Result<(), MakerEr
         }
 
         sleep(HEART_BEAT_INTERVAL);
+    }
+
+    if let Err(e) = fs::remove_file(maker.data_dir().join(RPC_COOKIE_FILE)) {
+        if e.kind() != ErrorKind::NotFound {
+            log::warn!("Failed to remove RPC cookie during shutdown: {e}");
+        }
     }
 
     Ok(())
