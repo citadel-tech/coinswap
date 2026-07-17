@@ -101,7 +101,8 @@ fn plainwallet_plainbackup_plainrestore() {
 
     wallet.sync_and_save().unwrap();
 
-    let (backup, _) = load_sensitive_struct::<WalletBackup, SerdeJson>(&wallet_backup_file, None);
+    let (backup, _) =
+        load_sensitive_struct::<WalletBackup, SerdeJson>(&wallet_backup_file, None).unwrap();
 
     let restored_wallet =
         Wallet::restore(&backup, &restored_wallet_file, &rpc_config, None).unwrap();
@@ -139,7 +140,8 @@ fn encwallet_encbackup_encrestore() {
 
     wallet.sync_and_save().unwrap();
 
-    let (backup, _) = load_sensitive_struct::<WalletBackup, SerdeJson>(&wallet_backup_file, None);
+    let (backup, _) =
+        load_sensitive_struct::<WalletBackup, SerdeJson>(&wallet_backup_file, None).unwrap();
 
     let restored_wallet =
         Wallet::restore(&backup, &restored_wallet_file, &rpc_config, km.clone()).unwrap();

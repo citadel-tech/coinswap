@@ -154,7 +154,14 @@ impl Wallet {
             restored_path.file_name()
         );
 
-        let (backup, _) = load_sensitive_struct::<WalletBackup, SerdeJson>(backup_file_path, None);
+        let (backup, _) =
+            match load_sensitive_struct::<WalletBackup, SerdeJson>(backup_file_path, None) {
+                Ok(backup) => backup,
+                Err(err) => {
+                    log::error!("Wallet backup load failed: {err}");
+                    return;
+                }
+            };
         let restore_enc_material = KeyMaterial::new_interactive(Some(
             "Enter restored walled encryption passphrase(empty for no encryption): ".to_string(),
         ));

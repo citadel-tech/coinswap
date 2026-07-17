@@ -45,10 +45,16 @@ pub fn restore_wallet_gui_app(
     backup_file_path: PathBuf,
     password: Option<String>,
 ) {
-    let (backup, encryption_material) = load_sensitive_struct::<WalletBackup, SerdeJson>(
+    let (backup, encryption_material) = match load_sensitive_struct::<WalletBackup, SerdeJson>(
         &backup_file_path,
         Some(password.unwrap_or_default()),
-    );
+    ) {
+        Ok(backup) => backup,
+        Err(err) => {
+            log::error!("Wallet backup load failed: {err}");
+            return;
+        }
+    };
     let restored_wallet_filename = wallet_file_name.unwrap_or("".to_string());
 
     let restored_wallet_path = data_dir

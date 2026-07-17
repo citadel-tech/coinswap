@@ -149,10 +149,8 @@ impl WalletStore {
         backup_file_path: &Path,
         password: String,
     ) -> Result<(Self, Option<KeyMaterial>), WalletError> {
-        Ok(load_sensitive_struct::<Self, SerdeCbor>(
-            backup_file_path,
-            Some(password),
-        ))
+        load_sensitive_struct::<Self, SerdeCbor>(backup_file_path, Some(password))
+            .map_err(Into::into)
     }
 }
 
@@ -207,22 +205,12 @@ mod tests {
         )
         .unwrap();
 
-        let load_result = std::panic::catch_unwind(|| {
-            WalletStore::read_from_disk(&file_path, "wallet password".to_string())
-        });
-        let panic_payload =
-            load_result.expect_err("a password must require an encrypted wallet file");
-        let panic_msg = if let Some(s) = panic_payload.downcast_ref::<String>() {
-            s.as_str()
-        } else if let Some(s) = panic_payload.downcast_ref::<&str>() {
-            *s
-        } else {
-            "<non-string panic payload>"
-        };
+        let load_result = WalletStore::read_from_disk(&file_path, "wallet password".to_string());
+        let error = load_result.expect_err("a password must require an encrypted wallet file");
         assert!(
-            panic_msg.contains("Expected encrypted file"),
-            "unexpected panic message: {}",
-            panic_msg
+            error.to_string().contains("expected encrypted file"),
+            "unexpected error: {}",
+            error
         );
     }
 
@@ -244,6 +232,10 @@ mod tests {
             &encryption_material,
         )
         .unwrap();
+
+        let error = WalletStore::read_from_disk(&file_path, "wrong password".to_string())
+            .expect_err("a wrong password must fail authentication");
+        assert!(error.to_string().contains("decryption failed"));
 
         let (read_wallet, read_encryption_material) =
             WalletStore::read_from_disk(&file_path, password).unwrap();
