@@ -2586,4 +2586,7 @@ pub enum TakerBehavior {
     InvalidTaprootContractAmount,
     /// Close connection when receiving maker's contract data response (taproot taker abort).
     CloseAtSendersContractFromMaker,
+    /// Skip the Legacy sender-signature request, broadcast real funding, and
+    /// send ProofOfFunding directly (maker_rejects_proof_of_funding_with_missing_contract_cache).
+    SkipSenderContractSigs,
 }

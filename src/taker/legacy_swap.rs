@@ -266,7 +266,22 @@ impl Taker {
                 )
             };
 
-            if is_first_peer {
+            #[cfg(feature = "integration-test")]
+            let skip_sender_contract_sigs =
+                is_first_peer && self.behavior == super::api::TakerBehavior::SkipSenderContractSigs;
+            #[cfg(not(feature = "integration-test"))]
+            let skip_sender_contract_sigs = false;
+
+            if skip_sender_contract_sigs {
+                // IT path: leave the maker's prevout-to-contract map
+                // empty, but continue through real funding confirmation and
+                // ProofOfFunding construction to exercise its fail-closed check.
+                log::warn!(
+                    "Test behavior: skipping sender contract signature request before funding"
+                );
+            }
+
+            if is_first_peer && !skip_sender_contract_sigs {
                 log::info!(
                     "Step 1: Requesting sender contract signatures from maker {}",
                     maker_idx
