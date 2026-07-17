@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use bitcoin::{Amount, OutPoint, PublicKey};
+use bitcoind::bitcoincore_rpc::{jsonrpc::error::Error as JsonRpcError, Error as BitcoinRpcError};
 
 use super::{
     error::MakerError,
@@ -21,7 +22,7 @@ use crate::{
     utill::estimate_funding_tx_fee_sats,
     wallet::{
         swapcoin::{IncomingSwapCoin, OutgoingSwapCoin},
-        MakerReport,
+        MakerReport, WalletError,
     },
 };
 
@@ -355,6 +356,16 @@ fn process_taproot_contract<M: Maker>(
         }
     }
 
+    // Persist swapcoins before broadcasting contract txs. A later broadcast
+    // failure can leave earlier Taproot contract txs on-chain, and the wallet
+    // needs these records for timelock recovery after a restart.
+    for incoming in &incoming_swapcoins {
+        maker.save_incoming_swapcoin(incoming)?;
+    }
+    for outgoing in &outgoing_swapcoins {
+        maker.save_outgoing_swapcoin(outgoing)?;
+    }
+
     for (outgoing, contract_outpoint) in outgoing_swapcoins.iter().zip(reserved.iter()) {
         match maker.broadcast_transaction(&outgoing.contract_tx) {
             Ok(txid) => {
@@ -365,26 +376,31 @@ fn process_taproot_contract<M: Maker>(
                     data.id
                 );
             }
-            Err(e) => {
-                log::warn!(
-                    "[{}] Failed to broadcast Taproot contract tx (may already be broadcast): {:?}",
+            Err(MakerError::Wallet(WalletError::Rpc(BitcoinRpcError::JsonRpc(
+                JsonRpcError::Rpc(rpc_error),
+            )))) if rpc_error.code == -27 || {
+                let message = rpc_error.message.to_ascii_lowercase();
+                message.contains("already in block chain")
+                    || message.contains("already in mempool")
+                    || message.contains("already in utxo set")
+                    || message.contains("txn-already-in-mempool")
+            } =>
+            {
+                let txid = outgoing.contract_tx.compute_txid();
+                log::info!(
+                    "[{}] Taproot contract tx {} for swap {} was already broadcast",
                     maker.network_port(),
-                    e
+                    txid,
+                    data.id
                 );
             }
+            Err(e) => return Err(e),
         }
         maker.register_watch_outpoint(*contract_outpoint);
     }
 
     state.funding_broadcast = true;
     state.phase = SwapPhase::AwaitingPrivateKeyHandover;
-
-    for incoming in &incoming_swapcoins {
-        maker.save_incoming_swapcoin(incoming)?;
-    }
-    for outgoing in &outgoing_swapcoins {
-        maker.save_outgoing_swapcoin(outgoing)?;
-    }
 
     maker.store_connection_state(&data.id, state)?;
 
