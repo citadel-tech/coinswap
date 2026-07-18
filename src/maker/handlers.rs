@@ -411,6 +411,16 @@ fn handle_taker_hello<M: Maker>(
     let config = maker.get_config();
     state.phase = SwapPhase::AwaitingOfferRequest;
 
+    let session_id = state
+        .session_id
+        .ok_or(MakerError::General("Connection did not start"))?;
+    let (tweakable_privkey, _, _) = maker.get_tweakable_keypair()?;
+    let secp = bitcoin::secp256k1::Secp256k1::new();
+    let session_id_sig = secp.sign_ecdsa_low_r(
+        &bitcoin::secp256k1::Message::from_digest(session_id.to_bytes()),
+        &tweakable_privkey,
+    );
+
     log::info!(
         "[{}] Supported protocols: {:?}",
         Maker::network_port(maker.as_ref()),
@@ -418,6 +428,7 @@ fn handle_taker_hello<M: Maker>(
     );
     Ok(Some(MakerToTakerMessage::MakerHello(MakerHello {
         supported_protocols: config.supported_protocols,
+        session_id_sig,
     })))
 }
 
@@ -495,16 +506,7 @@ fn handle_swap_details<M: Maker>(
 
     maker.store_connection_state(&details.id, state)?;
 
-    let (tweakable_privkey, tweakable_point, _) = maker.get_tweakable_keypair()?;
-
-    let session_id = state
-        .session_id
-        .ok_or(MakerError::General("Connection did not start"))?;
-    let secp = bitcoin::secp256k1::Secp256k1::new();
-    let session_id_sig = secp.sign_ecdsa_low_r(
-        &bitcoin::secp256k1::Message::from_digest(session_id.to_bytes()),
-        &tweakable_privkey,
-    );
+    let (_, tweakable_point, _) = maker.get_tweakable_keypair()?;
 
     log::info!(
         "[{}] Accepting swap (id: {})",
@@ -523,8 +525,6 @@ fn handle_swap_details<M: Maker>(
 
     Ok(Some(MakerToTakerMessage::AckSwap(AckSwapDetails::accept(
         tweakable_point,
-        session_id.to_bytes(),
-        session_id_sig,
     ))))
 }
 
@@ -554,6 +554,7 @@ fn restore_state_if_needed<M: Maker>(maker: &Arc<M>, state: &mut ConnectionState
             state.contract_feerate = stored.contract_feerate;
             state.service_fee_sats = stored.service_fee_sats;
             state.swap_start_time = stored.swap_start_time;
+            state.refund_locktime_offset = stored.refund_locktime_offset
         }
     }
 }

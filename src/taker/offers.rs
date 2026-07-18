@@ -1054,7 +1054,7 @@ impl MakerAddress {
         log::debug!("Downloading offer from maker: {}", self);
 
         #[cfg(feature = "integration-test")]
-        let mut socket = {
+        let socket = {
             let _ = socks_port;
             // Integration test: self.0 is "ip:port"
             TcpStream::connect(self.to_string())?

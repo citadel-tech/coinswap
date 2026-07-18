@@ -49,6 +49,8 @@ pub struct TakerHello;
 pub struct MakerHello {
     /// Protocol versions this maker supports.
     pub supported_protocols: Vec<ProtocolVersion>,
+    /// ECDSA signature over session_id using the maker's identity key, proving ownership and binding to maker address.
+    pub session_id_sig: bitcoin::secp256k1::ecdsa::Signature,
 }
 
 /// Request for offer from Taker to Maker.
@@ -106,24 +108,12 @@ pub struct SwapDetails {
 pub struct AckSwapDetails {
     /// The maker's tweakable public key for this swap.
     pub tweakable_point: PublicKey,
-    /// Unique session ID for this connection (32 bytes).
-    pub session_id: [u8; 32],
-    /// ECDSA signature over session_id using the maker's identity key, proving ownership and binding to maker address.
-    pub session_id_sig: bitcoin::secp256k1::ecdsa::Signature,
 }
 
 impl AckSwapDetails {
     /// Create an acceptance response.
-    pub fn accept(
-        tweakable_point: PublicKey,
-        session_id: [u8; 32],
-        session_id_sig: bitcoin::secp256k1::ecdsa::Signature,
-    ) -> Self {
-        AckSwapDetails {
-            tweakable_point,
-            session_id,
-            session_id_sig,
-        }
+    pub fn accept(tweakable_point: PublicKey) -> Self {
+        AckSwapDetails { tweakable_point }
     }
 }
 
