@@ -6,12 +6,12 @@
 use crate::{
     security::{load_sensitive_struct, KeyMaterial, SerdeJson},
     utill::{get_taker_dir, parse_checked_address, MIN_FEE_RATE},
-    wallet::{
-        infer_address_type, AddressType, Destination, RPCConfig, Wallet, WalletBackup, WalletError,
-    },
+    wallet::{infer_address_type, AddressType, Destination, Wallet, WalletBackup, WalletError},
 };
 use bitcoin::{Amount, OutPoint, Txid};
-use bitcoind::bitcoincore_rpc::{json::ListTransactionResult, RpcApi};
+use bitcoind::bitcoincore_rpc::json::ListTransactionResult;
+
+use super::blockchain::{BackendConfig, Blockchain};
 use std::path::{Path, PathBuf};
 
 pub use super::report::{
@@ -40,7 +40,7 @@ pub use super::report::{
 pub fn restore_wallet_gui_app(
     data_dir: Option<PathBuf>,
     wallet_file_name: Option<String>,
-    rpc_config: RPCConfig,
+    backend: BackendConfig,
     backup_file_path: PathBuf,
     password: Option<String>,
 ) {
@@ -59,7 +59,7 @@ pub fn restore_wallet_gui_app(
     if let Err(e) = Wallet::restore(
         &backup,
         &restored_wallet_path,
-        &rpc_config,
+        &backend,
         encryption_material,
     ) {
         log::error!("Wallet restore failed: {e:?}");
@@ -128,7 +128,8 @@ impl Wallet {
         count: Option<usize>,
         skip: Option<usize>,
     ) -> Result<Vec<ListTransactionResult>, WalletError> {
-        Ok(self.rpc.list_transactions(None, count, skip, Some(true))?)
+        self.blockchain
+            .list_transactions(None, count, skip, Some(true))
     }
 
     /// Sends specified Amount of Satoshis to an External Address

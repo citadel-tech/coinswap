@@ -50,9 +50,6 @@ rpcport=38332
 rpcbind=127.0.0.1
 rpcallowip=127.0.0.1
 
-# Enable Bitcoin Core REST interface (used by the watchtower for fast, read-only access)
-rest=1
-
 # ZMQ configuration for real-time transaction and block notifications (needed by the watchers)
 zmqpubrawblock=tcp://127.0.0.1:28332
 zmqpubrawtx=tcp://127.0.0.1:28332

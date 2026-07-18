@@ -48,13 +48,11 @@ pub struct RespContractSigsForSender {
     pub sigs: Vec<EcdsaSignature>,
 }
 
-/// Confirmed funding transaction with SPV proof.
+/// Confirmed funding transaction.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FundingTxInfo {
     /// The funding transaction.
     pub funding_tx: Transaction,
-    /// Merkle proof for SPV verification.
-    pub funding_tx_merkleproof: String,
     /// The 2-of-2 multisig redeem script.
     pub multisig_redeemscript: ScriptBuf,
     /// Nonce for deriving the multisig pubkey.

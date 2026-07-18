@@ -4,11 +4,9 @@ use std::time::Duration;
 
 use bitcoin::{
     hashes::{hash160::Hash as Hash160, Hash},
-    hex::DisplayHex,
     secp256k1::{self, rand::rngs::OsRng, Secp256k1, SecretKey},
     Amount, Network, OutPoint, PublicKey, ScriptBuf, Transaction, Txid,
 };
-use bitcoind::bitcoincore_rpc::RpcApi;
 
 use crate::{
     protocol::{
@@ -26,7 +24,7 @@ use crate::{
     utill::{generate_keypair, generate_maker_keys, read_message, send_message, MIN_FEE_RATE},
     wallet::{
         swapcoin::{IncomingSwapCoin, OutgoingSwapCoin, WatchOnlySwapCoin},
-        Wallet, WalletError,
+        Wallet,
     },
 };
 
@@ -343,15 +341,20 @@ impl Taker {
                 // Register outgoing funding outpoints as sentinels with the breach detector.
                 // Each sentinel maps a funding outpoint to its expected contract txid.
                 // Only a spend matching the contract txid is adversarial.
-                let sentinels: Vec<(OutPoint, bitcoin::Txid)> = self
+                let sentinels: Vec<(OutPoint, bitcoin::Txid, bitcoin::ScriptBuf)> = self
                     .swap_state()?
                     .outgoing_swapcoins
                     .iter()
-                    .map(|sc| {
-                        (
-                            sc.contract_tx.input[0].previous_output,
-                            sc.contract_tx.compute_txid(),
-                        )
+                    .filter_map(|sc| {
+                        let funding_outpoint = sc.contract_tx.input[0].previous_output;
+                        let funding_spk = sc
+                            .funding_tx
+                            .as_ref()?
+                            .output
+                            .get(funding_outpoint.vout as usize)?
+                            .script_pubkey
+                            .clone();
+                        Some((funding_outpoint, sc.contract_tx.compute_txid(), funding_spk))
                     })
                     .collect();
                 if let Some(ref detector) = self.breach_detector {
@@ -690,13 +693,17 @@ impl Taker {
 
             // Register this maker's funding outpoints as sentinels for subsequent waits.
             // Each sentinel maps a funding outpoint to its expected contract txid.
-            let maker_sentinels: Vec<(bitcoin::OutPoint, bitcoin::Txid)> =
+            let maker_sentinels: Vec<(bitcoin::OutPoint, bitcoin::Txid, bitcoin::ScriptBuf)> =
                 senders_contract_txs_info
                     .iter()
                     .map(|info| {
+                        let funding_spk = bitcoin::ScriptBuf::new_p2wsh(
+                            &info.multisig_redeemscript.wscript_hash(),
+                        );
                         (
                             info.contract_tx.input[0].previous_output,
                             info.contract_tx.compute_txid(),
+                            funding_spk,
                         )
                     })
                     .collect();
@@ -933,7 +940,6 @@ impl Taker {
     ) -> Result<(Vec<Transaction>, Vec<SenderContractTxInfo>), TakerError> {
         let mut stream = self.net_connect(maker_address)?;
         let confirmed_funding_txes: Vec<FundingTxInfo> = {
-            let wallet = self.read_wallet()?;
             funding_txs
                 .iter()
                 .zip(multisig_redeemscripts.iter())
@@ -945,14 +951,8 @@ impl Taker {
                         (((funding_tx, multisig_rs), contract_rs), &multisig_nonce),
                         &hashlock_nonce,
                     )| {
-                        let txids = [funding_tx.compute_txid()];
-                        let merkle_proof = wallet
-                            .rpc
-                            .get_tx_out_proof(&txids, None)
-                            .map_err(WalletError::Rpc)?;
                         Ok(FundingTxInfo {
                             funding_tx: funding_tx.clone(),
-                            funding_tx_merkleproof: merkle_proof.to_lower_hex_string(),
                             multisig_redeemscript: multisig_rs.clone(),
                             multisig_nonce,
                             contract_redeemscript: contract_rs.clone(),

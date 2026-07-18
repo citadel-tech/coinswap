@@ -17,7 +17,7 @@ use crate::{
     nostr_coinswap::broadcast_bond_on_nostr,
     protocol::common_messages::{FidelityProof, MakerToTakerMessage, TakerToMakerMessage},
     utill::HEART_BEAT_INTERVAL,
-    wallet::RecoveryReport,
+    wallet::{Blockchain, RecoveryReport},
 };
 
 use super::{
@@ -396,20 +396,26 @@ fn handle_connection(maker: Arc<MakerServer>, stream: TcpStream) -> Result<(), M
             // Unwatch all contract outputs now that the swap is complete.
             for incoming in &state.incoming_swapcoins {
                 let txid = incoming.contract_tx.compute_txid();
-                for (vout, _) in incoming.contract_tx.output.iter().enumerate() {
-                    maker.unwatch_outpoint(bitcoin::OutPoint {
-                        txid,
-                        vout: vout as u32,
-                    });
+                for (vout, txout) in incoming.contract_tx.output.iter().enumerate() {
+                    maker.unwatch_outpoint(
+                        bitcoin::OutPoint {
+                            txid,
+                            vout: vout as u32,
+                        },
+                        txout.script_pubkey.clone(),
+                    );
                 }
             }
             for outgoing in &state.outgoing_swapcoins {
                 let txid = outgoing.contract_tx.compute_txid();
-                for (vout, _) in outgoing.contract_tx.output.iter().enumerate() {
-                    maker.unwatch_outpoint(bitcoin::OutPoint {
-                        txid,
-                        vout: vout as u32,
-                    });
+                for (vout, txout) in outgoing.contract_tx.output.iter().enumerate() {
+                    maker.unwatch_outpoint(
+                        bitcoin::OutPoint {
+                            txid,
+                            vout: vout as u32,
+                        },
+                        txout.script_pubkey.clone(),
+                    );
                 }
             }
 
@@ -710,7 +716,6 @@ fn recover_from_swap(
     outgoing_swapcoins: Vec<crate::wallet::swapcoin::OutgoingSwapCoin>,
 ) -> Result<(), MakerError> {
     use super::swap_tracker::{MakerRecoveryPhase, MakerSwapPhase};
-    use bitcoind::bitcoincore_rpc::RpcApi;
 
     // For Taproot, get_timelock() returns an absolute CLTV height.
     // For Legacy, it returns a relative CSV offset — but Legacy recovery
@@ -725,9 +730,9 @@ fn recover_from_swap(
         .wallet
         .read()
         .map_err(|_| MakerError::General("Failed to lock wallet"))?
-        .rpc
+        .blockchain
         .get_block_count()
-        .map_err(crate::wallet::WalletError::Rpc)? as u32;
+        .map_err(MakerError::Wallet)? as u32;
 
     log::info!(
         "[{}] recover_from_swap started | height={} timelock_expiry={} | incoming={} outgoing={}",
@@ -754,12 +759,7 @@ fn recover_from_swap(
             );
 
         for (txid, vout) in contract_txids {
-            if wallet
-                .rpc
-                .get_tx_out(&txid, vout, None)
-                .map_err(crate::wallet::WalletError::Rpc)?
-                .is_some()
-            {
+            if wallet.blockchain.get_tx_out(&txid, vout, None)?.is_some() {
                 return Ok(false);
             }
         }
@@ -929,9 +929,9 @@ fn recover_from_swap(
             .wallet
             .read()
             .map_err(|_| MakerError::General("Failed to lock wallet"))?
-            .rpc
+            .blockchain
             .get_block_count()
-            .map_err(crate::wallet::WalletError::Rpc)? as u32;
+            .map_err(MakerError::Wallet)? as u32;
 
         if current_height >= timelock_expiry {
             log::info!(

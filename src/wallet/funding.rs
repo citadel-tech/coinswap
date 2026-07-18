@@ -8,8 +8,6 @@ use bitcoin::{
     Address, Amount, OutPoint, Transaction,
 };
 
-use bitcoind::bitcoincore_rpc::RpcApi;
-
 use crate::{utill::calculate_fee_sats, wallet::Destination};
 
 use super::Wallet;
@@ -123,90 +121,6 @@ impl Wallet {
         Ok(output_values)
     }
 
-    /// This function creates a single funding transaction with random, distrubuted, bounded amounts
-    /// Which are distributed among the destinations in different outputs.
-    #[hotpath::measure]
-    pub fn create_funding_txes_regular_swaps(
-        &mut self,
-        normie_flag: bool,
-        coinswap_amount: Amount,
-        destinations: Vec<Address>,
-        fee_rate: Amount,
-        manually_selected_outpoints: Option<Vec<OutPoint>>,
-        excluded_outpoints: Option<Vec<OutPoint>>,
-    ) -> Result<CreateFundingTxesResult, WalletError> {
-        // Unlock all unspent UTXOs
-        self.rpc.unlock_unspent_all()?;
-
-        // Unlock all unspent UTXOs && Lock all unspendable UTXOs
-        self.lock_unspendable_utxos()?;
-
-        let mut funding_txes = Vec::<Transaction>::new();
-        let mut payment_output_positions = Vec::<u32>::new();
-        let mut total_miner_fee = 0;
-        let mut locked_utxos = Vec::new();
-
-        // Here, we are gonna use a closure to ensure proper cleanup on error (since we need a rollback)
-        let result = (|| {
-            let selected_utxo = self.coin_select(
-                coinswap_amount,
-                fee_rate.to_sat() as f64,
-                infer_address_type(&destinations[0].script_pubkey()),
-                manually_selected_outpoints,
-                excluded_outpoints,
-            )?;
-
-            let outpoints: Vec<OutPoint> = selected_utxo
-                .iter()
-                .map(|(utxo, _)| OutPoint::new(utxo.txid, utxo.vout))
-                .collect();
-
-            // // Lock the selected UTXOs immediately after selection
-            self.rpc.lock_unspent(&outpoints)?;
-
-            // Store the locked UTXOs for later unlocking in case of error
-            locked_utxos.extend(outpoints);
-
-            // Here, prepare coins for spend_coins API, since this API would require owned data to avoid lifetime issues
-            let coins_to_spend = selected_utxo
-                .iter()
-                .map(|(unspent, spend_info)| (unspent.clone(), spend_info.clone()))
-                .collect::<Vec<_>>();
-
-            // Create destination with output
-            let destination = if normie_flag {
-                Destination::Multi {
-                    outputs: vec![(destinations[0].clone(), coinswap_amount)],
-                    op_return_data: None,
-                    change_address_type: AddressType::P2TR,
-                }
-            } else {
-                Destination::MultiDynamic(coinswap_amount, destinations)
-            };
-
-            // Creates and Signs Transactions via the spend_coins API
-            let funding_tx =
-                self.spend_coins(&coins_to_spend, destination, fee_rate.to_sat() as f64)?;
-
-            // Record this transaction in our results.
-            let payment_pos = 0; // assuming the payment output position is 0
-
-            funding_txes.push(funding_tx);
-            payment_output_positions.push(payment_pos as u32);
-            total_miner_fee += fee_rate.to_sat();
-
-            Ok(CreateFundingTxesResult {
-                funding_txes,
-                payment_output_positions,
-                total_miner_fee,
-            })
-        })();
-
-        self.rpc.unlock_unspent_all()?;
-
-        result
-    }
-
     // This function creates funding transactions with random amounts
     // The total `coinswap_amount` is randomly distributed among number of destinations.
     fn create_funding_txes_random_amounts(
@@ -220,7 +134,7 @@ impl Wallet {
         let output_values = Wallet::generate_amount_fractions(destinations.len(), coinswap_amount)?;
 
         // Flow of Lock Step 1. Unlock all unspent UTXOs
-        self.rpc.unlock_unspent_all()?;
+        self.unlock_all_utxos();
 
         // FLow of Lock Step 2. Lock all unspendable UTXOs
         self.lock_unspendable_utxos()?;
@@ -254,7 +168,7 @@ impl Wallet {
                     .map(|(utxo, _)| OutPoint::new(utxo.txid, utxo.vout))
                     .collect();
                 // Flow of Lock Step 3. Lock the selected UTXOs immediately after selection
-                self.rpc.lock_unspent(&outpoints)?;
+                self.lock_utxos(&outpoints);
                 // Flow of Lock Step 4. Store the locked UTXOs for later unlocking in case of error
                 locked_utxos.extend(outpoints);
 
@@ -294,7 +208,7 @@ impl Wallet {
             })
         })();
 
-        self.rpc.unlock_unspent_all()?;
+        self.unlock_all_utxos();
 
         #[cfg(debug_assertions)]
         if let Ok(funding) = &result {

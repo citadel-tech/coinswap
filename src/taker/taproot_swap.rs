@@ -6,8 +6,6 @@ use bitcoin::{
     Amount, Network, OutPoint, PublicKey, ScriptBuf,
 };
 
-use bitcoind::bitcoincore_rpc::RpcApi;
-
 use crate::{
     protocol::{
         common_messages::{MakerToTakerMessage, TakerToMakerMessage},
@@ -17,7 +15,7 @@ use crate::{
     utill::{read_message, send_message, MIN_FEE_RATE},
     wallet::{
         swapcoin::{IncomingSwapCoin, OutgoingSwapCoin, WatchOnlySwapCoin},
-        Wallet,
+        Blockchain, Wallet,
     },
 };
 
@@ -72,7 +70,7 @@ impl Taker {
         let base_height = match reference_height {
             Some(h) => h,
             None => wallet
-                .rpc
+                .blockchain
                 .get_block_count()
                 .map_err(|e| TakerError::General(format!("RPC error: {:?}", e)))?
                 as u32,
@@ -652,7 +650,11 @@ impl Taker {
                 .position(|o| o.value == swapcoin.funding_amount)
                 .unwrap_or(0) as u32;
             let outpoint = OutPoint { txid, vout };
-            self.watch_service.register_watch_request(outpoint);
+            let script_pubkey = swapcoin.contract_tx.output[vout as usize]
+                .script_pubkey
+                .clone();
+            self.watch_service
+                .register_watch_request(outpoint, script_pubkey);
         }
 
         wallet.save_to_disk()?;
@@ -724,7 +726,7 @@ impl Taker {
                 let wallet = self.read_wallet()?;
                 contract_txids.iter().all(|txid| {
                     wallet
-                        .rpc
+                        .blockchain
                         .get_raw_transaction_info(txid, None)
                         .ok()
                         .and_then(|info| info.confirmations)

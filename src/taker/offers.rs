@@ -34,8 +34,8 @@ use crate::{
         error::ProtocolError,
     },
     utill::{read_message, send_message},
-    wallet::verify_fidelity_checks,
-    watch_tower::{registry_storage::FileRegistry, rest_backend::BitcoinRest},
+    wallet::{verify_fidelity_checks, AnyBlockchain, Blockchain},
+    watch_tower::registry_storage::FileRegistry,
 };
 
 /// Maximum number of attempts to connect to a maker.
@@ -409,12 +409,13 @@ impl Drop for SyncGuard<'_> {
     }
 }
 
-/// Service run on taker to check if the offerbook makers are active or not
+/// Service run on taker to check if the offerbook makers are active or not.
 pub struct OfferSyncService {
     offerbook: OfferBookHandle,
     registry: FileRegistry,
     socks_port: u16,
-    rest_backend: BitcoinRest,
+    /// Shared so per-maker offer-fetch workers can each hold a handle.
+    blockchain: Arc<AnyBlockchain>,
     /// Set to `true` by Nostr discovery after the first EOSE is received.
     initial_sync_complete: Arc<AtomicBool>,
 }
@@ -516,14 +517,14 @@ impl OfferSyncService {
         offerbook: OfferBookHandle,
         registry: FileRegistry,
         socks_port: u16,
-        rest_backend: BitcoinRest,
+        blockchain: Arc<AnyBlockchain>,
         initial_sync_complete: Arc<AtomicBool>,
     ) -> Self {
         Self {
             offerbook,
             registry,
             socks_port,
-            rest_backend,
+            blockchain,
             initial_sync_complete,
         }
     }
@@ -539,10 +540,10 @@ impl OfferSyncService {
             .unwrap_or(Duration::ZERO)
             .as_secs();
 
-        let height = match self.rest_backend.get_block_count() {
+        let height = match self.blockchain.get_block_count() {
             Ok(h) => h as u32,
             Err(e) => {
-                log::warn!("get_block_count failed; skipping fidelity prune this cycle: {e}");
+                log::warn!("get_block_count failed; skipping fidelity prune this cycle: {e:?}");
                 0
             }
         };
@@ -588,7 +589,7 @@ impl OfferSyncService {
     fn fetch_and_record_one(
         addr: MakerAddress,
         socks_port: u16,
-        rest_backend: &BitcoinRest,
+        blockchain: &AnyBlockchain,
         offerbook: &Arc<RwLock<OfferBook>>,
         offerbook_path: &Path,
         now: u64,
@@ -598,7 +599,7 @@ impl OfferSyncService {
         match downloaded {
             Some(oa) => {
                 match verify_fidelity_with_backend(
-                    rest_backend,
+                    blockchain,
                     &oa.offer.fidelity,
                     &oa.address.to_string(),
                     &oa.offer.tweakable_point,
@@ -646,7 +647,7 @@ impl OfferSyncService {
         Self::fetch_and_record_one(
             address,
             self.socks_port,
-            &self.rest_backend,
+            &self.blockchain,
             &self.offerbook.inner,
             &self.offerbook.path,
             now,
@@ -665,7 +666,7 @@ impl OfferSyncService {
         let offerbook = self.offerbook.inner.clone();
         let offerbook_path = self.offerbook.path.clone();
         let socks_port = self.socks_port;
-        let rest_backend = self.rest_backend.clone();
+        let blockchain = self.blockchain.clone();
 
         let mut handles = Vec::with_capacity(workers);
 
@@ -673,7 +674,7 @@ impl OfferSyncService {
             let queue = Arc::clone(&queue);
             let offerbook = Arc::clone(&offerbook);
             let offerbook_path = offerbook_path.clone();
-            let rest_backend = rest_backend.clone();
+            let blockchain = blockchain.clone();
 
             let handle = Builder::new()
                 .name(format!("offer-fetch-worker-{i}"))
@@ -692,7 +693,7 @@ impl OfferSyncService {
                     let _ = Self::fetch_and_record_one(
                         addr,
                         socks_port,
-                        &rest_backend,
+                        &blockchain,
                         &offerbook,
                         &offerbook_path,
                         now,
@@ -792,18 +793,24 @@ impl OfferSyncService {
     }
 }
 
-/// Verifies a fidelity proof against the blockchain using the given REST backend.
+/// Verifies a fidelity proof against the blockchain.
 fn verify_fidelity_with_backend(
-    rest_backend: &BitcoinRest,
+    blockchain: &AnyBlockchain,
     proof: &FidelityProof,
     onion_addr: &str,
     tweakable_point: &bitcoin::PublicKey,
     tweak_chain_code: &bitcoin::bip32::ChainCode,
 ) -> Result<(), TakerError> {
     let txid = proof.bond.outpoint.txid;
-    let transaction = rest_backend.get_raw_tx(&txid)?;
-    let current_height = rest_backend.get_block_count()?;
-    let confirmation_height = rest_backend.get_utxo_confirmation_height(&proof.bond.outpoint())?;
+    let transaction = blockchain.get_raw_transaction(&txid, None)?;
+    let current_height = blockchain.get_block_count()?;
+    let tx_info = blockchain.get_raw_transaction_info(&txid, None)?;
+    let block_hash = tx_info.blockhash.ok_or_else(|| {
+        TakerError::General(format!(
+            "Fidelity bond transaction {txid} is not yet confirmed"
+        ))
+    })?;
+    let confirmation_height = blockchain.get_block_header_info(&block_hash)?.height as u32;
 
     verify_fidelity_checks(
         proof,

@@ -30,6 +30,17 @@ pub enum WalletError {
     /// Typically occurs during communication with a Bitcoin node.
     Rpc(bitcoind::bitcoincore_rpc::Error),
 
+    /// Represents an error returned by the Electrum client.
+    ///
+    /// Typically occurs during communication with an Electrum server.
+    /// Backend-side conditions without a client error (unexpected responses,
+    /// poisoned locks) are wrapped as [`electrum_client::Error::Message`].
+    Electrum(electrum_client::Error),
+
+    /// Represents an error from the ZMQ notification transport of the Bitcoin
+    /// Core backend (socket setup, connect, or subscription failures).
+    Zmq(String),
+
     /// Represents an error related to BIP32 (Hierarchical Deterministic Wallets).
     ///
     /// This may occur during key derivation or wallet operations involving BIP32 paths.
@@ -47,17 +58,6 @@ pub enum WalletError {
 
     /// Waiting was interrupted by an external signal (shutdown/abort).
     Interrupted(&'static str),
-
-    /// Represents an invalid Merkle proof for a transaction.
-    ///
-    /// `got` contains the txids returned by `verifytxoutproof`, which may be
-    /// empty if the proof failed SPV verification or is not in the best chain.
-    MerkleProofInvalid {
-        /// The txid the proof was expected to commit to.
-        expected: bitcoin::Txid,
-        /// The txids actually returned by `verifytxoutproof`.
-        got: Vec<bitcoin::Txid>,
-    },
 
     /// Represents an error related to protocol violations or unexpected protocol behavior.
     Protocol(ProtocolError),
@@ -116,6 +116,12 @@ impl From<std::io::Error> for WalletError {
 impl From<bitcoind::bitcoincore_rpc::Error> for WalletError {
     fn from(value: bitcoind::bitcoincore_rpc::Error) -> Self {
         Self::Rpc(value)
+    }
+}
+
+impl From<electrum_client::Error> for WalletError {
+    fn from(value: electrum_client::Error) -> Self {
+        Self::Electrum(value)
     }
 }
 
@@ -216,17 +222,12 @@ impl std::fmt::Display for WalletError {
             WalletError::Cbor(e) => write!(f, "CBOR error: {}", e),
             WalletError::Json(e) => write!(f, "JSON error: {}", e),
             WalletError::Rpc(e) => write!(f, "Bitcoin RPC error: {}", e),
+            WalletError::Electrum(e) => write!(f, "Electrum error: {}", e),
+            WalletError::Zmq(msg) => write!(f, "ZMQ error: {}", msg),
             WalletError::BIP32(e) => write!(f, "BIP32 error: {}", e),
             WalletError::BIP39(e) => write!(f, "BIP39 error: {}", e),
             WalletError::General(msg) => write!(f, "{}", msg),
             WalletError::Interrupted(reason) => write!(f, "Interrupted: {}", reason),
-            WalletError::MerkleProofInvalid { expected, got } => {
-                write!(
-                    f,
-                    "MerkleProofInvalid | expected: {} | got: {:?}",
-                    expected, got
-                )
-            }
             WalletError::Protocol(e) => write!(f, "Protocol error: {}", e),
             WalletError::Fidelity(e) => write!(f, "Fidelity error: {}", e),
             WalletError::Locktime(e) => write!(f, "Locktime conversion error: {}", e),
@@ -255,6 +256,7 @@ impl std::error::Error for WalletError {
             WalletError::Cbor(e) => Some(e),
             WalletError::Json(e) => Some(e),
             WalletError::Rpc(e) => Some(e),
+            WalletError::Electrum(e) => Some(e),
             WalletError::BIP32(e) => Some(e),
             WalletError::BIP39(e) => Some(e),
             WalletError::Locktime(e) => Some(e),
