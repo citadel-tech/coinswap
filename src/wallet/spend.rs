@@ -21,7 +21,7 @@ use super::{error::WalletError, AddressType, Wallet};
 #[derive(Debug, Clone, PartialEq)]
 pub enum Destination {
     /// Sweep
-    Sweep(Address),
+    Sweep(Address, Option<Box<[u8]>>),
     /// Multi
     Multi {
         /// List of outputs (address, amounts)
@@ -107,7 +107,7 @@ impl Wallet {
         };
 
         let change_addr = &self.get_next_internal_addresses(1, destination_address_type)?[0];
-        let destination = Destination::Sweep(change_addr.clone());
+        let destination = Destination::Sweep(change_addr.clone(), None);
 
         // Find utxo corresponding to expired fidelity bond.
         let utxo = self
@@ -266,13 +266,29 @@ impl Wallet {
         }
 
         match destination {
-            Destination::Sweep(addr) => {
+            Destination::Sweep(addr, op_return_data) => {
                 // Send Max Amount case
                 let txout = TxOut {
                     script_pubkey: addr.script_pubkey(),
                     value: Amount::ZERO, // Temp Value
                 };
                 tx.output.push(txout);
+
+                if let Some(data) = op_return_data {
+                    let mut push_bytes = PushBytesBuf::new();
+                    push_bytes.extend_from_slice(&data).map_err(|_| {
+                        WalletError::General(
+                            "Failed to add OP_RETURN data to transaction output".to_owned(),
+                        )
+                    })?;
+                    let op_return_script = ScriptBuf::new_op_return(&push_bytes);
+                    let txout = TxOut {
+                        script_pubkey: op_return_script,
+                        value: Amount::ZERO,
+                    };
+                    tx.output.push(txout);
+                }
+
                 let base_size = tx.base_size();
                 let vsize = (base_size * 4 + total_witness_size + 2).div_ceil(4); // base * 4 + witness size + marker + flag
 
