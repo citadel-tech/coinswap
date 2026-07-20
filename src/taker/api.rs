@@ -82,6 +82,12 @@ pub enum ConnectionType {
 /// Timeout for connecting to makers.
 pub const CONNECT_TIMEOUT_SECS: u64 = 30;
 
+/// Keep active funding waits comfortably below the maker's idle timeout.
+#[cfg(feature = "integration-test")]
+pub(crate) const FUNDING_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(20);
+#[cfg(not(feature = "integration-test"))]
+pub(crate) const FUNDING_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(300);
+
 /// Base refund locktime (in blocks) for the innermost hop.
 ///
 /// In integration tests the idle-connection timeout fires after ~200 blocks

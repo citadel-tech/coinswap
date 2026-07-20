@@ -21,7 +21,11 @@ use crate::{
     },
 };
 
-use super::{api::Taker, error::TakerError, swap_tracker::SwapPhase};
+use super::{
+    api::{Taker, FUNDING_KEEPALIVE_INTERVAL},
+    error::TakerError,
+    swap_tracker::SwapPhase,
+};
 
 impl Taker {
     /// Build contract data from a previous maker's response (for forwarding to the next maker).
@@ -750,7 +754,7 @@ impl Taker {
                 )));
             }
 
-            std::thread::sleep(crate::utill::HEART_BEAT_INTERVAL);
+            std::thread::sleep(FUNDING_KEEPALIVE_INTERVAL);
         }
     }
 }

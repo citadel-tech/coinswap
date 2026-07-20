@@ -1,6 +1,9 @@
 //! Legacy (ECDSA) specific swap methods for the Taker.
 
-use std::time::Duration;
+use std::{
+    cell::Cell,
+    time::{Duration, Instant},
+};
 
 use bitcoin::{
     hashes::{hash160::Hash as Hash160, Hash},
@@ -30,7 +33,10 @@ use crate::{
     },
 };
 
-use super::{api::Taker, error::TakerError};
+use super::{
+    api::{Taker, FUNDING_KEEPALIVE_INTERVAL},
+    error::TakerError,
+};
 
 /// Delay to allow the Maker to broadcast its funding transactions before we poll.
 const MAKER_BROADCAST_DELAY: Duration = Duration::from_secs(2);
@@ -638,10 +644,40 @@ impl Taker {
                 .collect();
 
             let required_confirms = self.swap_state()?.params.required_confirms;
+            // Legacy may wait longer than the maker's idle timeout for funding
+            // confirmations. Keep this swap alive so the maker does not mistake
+            // it for a dropped taker and start contract recovery.
+            let mut keepalive_stream = self.net_connect(&maker_address)?;
+            self.net_handshake(&mut keepalive_stream)?;
+            let keepalive_stream = std::cell::RefCell::new(keepalive_stream);
+            let last_keepalive = Cell::new(Instant::now());
+            let keepalive_failed = Cell::new(false);
             let abort_check = || {
-                self.breach_detector
+                if keepalive_failed.get() {
+                    return true;
+                }
+
+                let breached = self
+                    .breach_detector
                     .as_ref()
-                    .is_some_and(|d| d.is_breached())
+                    .is_some_and(|d| d.is_breached());
+                if !breached && last_keepalive.get().elapsed() >= FUNDING_KEEPALIVE_INTERVAL {
+                    if let Err(error) = send_message(
+                        &mut keepalive_stream.borrow_mut(),
+                        &TakerToMakerMessage::WaitingFundingConfirmation(swap_id.clone()),
+                    ) {
+                        log::error!(
+                            "Maker closed keepalive connection during funding wait: {:?}",
+                            error
+                        );
+                        // Do not mask a confirmation that may already be visible
+                        // in this polling iteration; interrupt on the next check.
+                        keepalive_failed.set(true);
+                        return false;
+                    }
+                    last_keepalive.set(Instant::now());
+                }
+                breached
             };
             let maker_confirm_height = {
                 let wallet = self.read_wallet()?;
@@ -652,6 +688,11 @@ impl Taker {
                     Some(&abort_check),
                 ) {
                     Ok(h) => h,
+                    Err(crate::wallet::WalletError::Interrupted(_)) if keepalive_failed.get() => {
+                        return Err(TakerError::General(
+                            "Maker closed keepalive connection during funding wait".to_string(),
+                        ));
+                    }
                     Err(crate::wallet::WalletError::Interrupted(_)) => {
                         return Err(TakerError::ContractsBroadcasted(vec![]));
                     }

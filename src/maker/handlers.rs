@@ -384,6 +384,9 @@ pub fn handle_message<M: Maker>(
                 maker.network_port(),
                 id
             );
+            if let Some(stored_state) = maker.get_connection_state(id) {
+                maker.store_connection_state(id, &stored_state)?;
+            }
             state.touch();
             Ok(None)
         }
@@ -544,6 +547,21 @@ fn restore_state_if_needed<M: Maker>(maker: &Arc<M>, state: &mut ConnectionState
     }
 }
 
+/// Ensure a protocol-specific message matches the protocol negotiated for this swap.
+fn ensure_negotiated_protocol(
+    state: &ConnectionState,
+    message_protocol: ProtocolVersion,
+) -> Result<(), MakerError> {
+    if state.protocol != message_protocol {
+        return Err(MakerError::UnexpectedMessage {
+            expected: format!("{:?} protocol message", state.protocol),
+            got: format!("{:?} protocol message", message_protocol),
+        });
+    }
+
+    Ok(())
+}
+
 /// Dispatch to Legacy handlers.
 #[hotpath::measure]
 fn handle_legacy_dispatch<M: Maker>(
@@ -561,6 +579,7 @@ fn handle_legacy_dispatch<M: Maker>(
     );
 
     restore_state_if_needed(maker, state, &swap_id);
+    ensure_negotiated_protocol(state, ProtocolVersion::Legacy)?;
 
     super::legacy_handlers::handle_legacy_message(maker, state, legacy_msg)
 }
@@ -582,6 +601,7 @@ fn handle_taproot_dispatch<M: Maker>(
     );
 
     restore_state_if_needed(maker, state, &swap_id);
+    ensure_negotiated_protocol(state, ProtocolVersion::Taproot)?;
 
     super::taproot_handlers::handle_taproot_message(maker, state, taproot_msg)
 }
