@@ -372,6 +372,13 @@ fn handle_connection(maker: Arc<MakerServer>, stream: TcpStream) -> Result<(), M
         }
 
         if state.phase == super::handlers::SwapPhase::Completed {
+            // Remove the completed in-memory state before slow wallet sweeping/syncing.
+            // Otherwise the idle checker can race the sweep and launch recovery for
+            // a swap that has already completed successfully.
+            if let Some(ref swap_id) = state.swap_id {
+                maker.remove_connection_state(swap_id);
+            }
+
             log::info!(
                 "[{}] Swap completed, sweeping incoming swapcoins",
                 maker.config.network_port
@@ -411,10 +418,6 @@ fn handle_connection(maker: Arc<MakerServer>, stream: TcpStream) -> Result<(), M
                         vout: vout as u32,
                     });
                 }
-            }
-
-            if let Some(ref swap_id) = state.swap_id {
-                maker.remove_connection_state(swap_id);
             }
 
             #[cfg(feature = "hotpath")]

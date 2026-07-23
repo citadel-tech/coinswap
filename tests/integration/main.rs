@@ -14,6 +14,7 @@ mod fidelity;
 mod fidelity_renewal;
 mod malice1;
 mod malice2;
+mod mixed_protocol_concurrent_swaps;
 mod multi_taker;
 mod skip_funding_recovery;
 mod standard_swap;
