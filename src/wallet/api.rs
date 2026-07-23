@@ -1039,33 +1039,24 @@ impl Wallet {
         })
     }
 
-    /// Checks if the previous output (prevout) matches the cached contract in the wallet.
+    /// Ensures a funding prevout is bound to the expected cached contract.
     ///
-    /// This function is used in two scenarios:
-    /// 1. When the Maker has received the message `signsendercontracttx`.
-    /// 2. When the Maker receives the message `proofoffunding`.
-    ///
-    /// ## Cases when receiving `signsendercontracttx`:
-    /// - Case 1: Previous output in cache doesn't have any contract => Ok
-    /// - Case 2: Previous output has a contract, and it matches the given contract => Ok
-    /// - Case 3: Previous output has a contract, but it doesn't match the given contract => Reject
-    ///
-    /// ## Cases when receiving `proofoffunding`:
-    /// - Case 1: Previous output doesn't have an entry => Weird, how did they get a signature?
-    /// - Case 2: Previous output has an entry that matches the contract => Ok
-    /// - Case 3: Previous output has an entry that doesn't match the contract => Reject
-    ///
-    /// The two cases are mostly the same, except for Case 1 in `proofoffunding`, which shouldn't happen.
-    pub(crate) fn does_prevout_match_cached_contract(
+    /// Proof-of-funding verification must fail closed when the binding is absent:
+    /// the maker only caches it after approving the sender contract transaction.
+    pub(crate) fn ensure_prevout_matches_cached_contract(
         &self,
         prevout: &OutPoint,
         contract_scriptpubkey: &Script,
-    ) -> Result<bool, WalletError> {
-        //let wallet_file_data = Wallet::load_wallet_file_data(&self.wallet_file_path[..])?;
-        Ok(match self.store.prevout_to_contract_map.get(prevout) {
-            Some(c) => c == contract_scriptpubkey,
-            None => true,
-        })
+    ) -> Result<(), WalletError> {
+        match self.store.prevout_to_contract_map.get(prevout) {
+            Some(cached_contract) if cached_contract == contract_scriptpubkey => Ok(()),
+            Some(_) => Err(WalletError::General(
+                "Provided contract does not match the cached sender contract".to_string(),
+            )),
+            None => Err(WalletError::General(format!(
+                "No cached sender contract for funding prevout {prevout}"
+            ))),
+        }
     }
 
     /// Dynamic address import count function. 10 for tests, 5000 for production.
@@ -1080,17 +1071,32 @@ impl Wallet {
         }
     }
 
-    /// Stores an entry into [`WalletStore`]'s prevout-to-contract map.
-    /// If the prevout already existed with a contract script, this will update the existing contract.
-    pub(crate) fn cache_prevout_to_contract(
+    /// Persistently binds funding prevouts to contracts after the maker approves them.
+    ///
+    /// The full batch is checked before mutation and saved with one disk write.
+    /// Repeating identical bindings is idempotent, but rebinding an outpoint to
+    /// a different contract is rejected because a signature may already exist.
+    pub(crate) fn cache_prevout_to_contracts(
         &mut self,
-        prevout: OutPoint,
-        contract: ScriptBuf,
+        bindings: &[(OutPoint, ScriptBuf)],
     ) -> Result<(), WalletError> {
-        if let Some(contract) = self.store.prevout_to_contract_map.insert(prevout, contract) {
-            log::warn!("Prevout to Contract map updated.\nExisting Contract: {contract}");
+        for (prevout, contract) in bindings {
+            if self
+                .store
+                .prevout_to_contract_map
+                .get(prevout)
+                .is_some_and(|cached_contract| cached_contract != contract)
+            {
+                return Err(WalletError::General(format!(
+                    "Refusing to rebind funding prevout {prevout} to a different contract"
+                )));
+            }
         }
-        Ok(())
+
+        self.store
+            .prevout_to_contract_map
+            .extend(bindings.iter().cloned());
+        self.save_to_disk()
     }
 
     //pub(crate) fn get_recovery_phrase_from_file()
@@ -2790,5 +2796,105 @@ impl Wallet {
                 thread::sleep(Duration::from_secs(1));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod prevout_contract_tests {
+    use super::*;
+    use bitcoind::tempfile::tempdir;
+
+    fn test_wallet(path: &Path) -> Wallet {
+        let master_key = Xpriv::new_master(bitcoin::Network::Regtest, &[42; 32]).unwrap();
+        let store = WalletStore::init(
+            "prevout-contract-test".to_string(),
+            path,
+            bitcoin::Network::Regtest,
+            master_key,
+            None,
+            &None,
+        )
+        .unwrap();
+
+        Wallet {
+            rpc: Client::try_from(&RPCConfig::default()).unwrap(),
+            wallet_file_path: path.to_path_buf(),
+            store,
+            store_enc_material: None,
+        }
+    }
+
+    #[test]
+    fn proof_of_funding_rejects_missing_cached_contract() {
+        let temp_dir = tempdir().unwrap();
+        let wallet = test_wallet(&temp_dir.path().join("wallet.cbor"));
+
+        let error = wallet
+            .ensure_prevout_matches_cached_contract(
+                &OutPoint::null(),
+                ScriptBuf::from_bytes(vec![0x51]).as_script(),
+            )
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            WalletError::General(message) if message.contains("No cached sender contract")
+        ));
+    }
+
+    #[test]
+    fn cached_contract_matches_only_the_approved_script() {
+        let temp_dir = tempdir().unwrap();
+        let mut wallet = test_wallet(&temp_dir.path().join("wallet.cbor"));
+        let prevout = OutPoint::null();
+        let approved_contract = ScriptBuf::from_bytes(vec![0x51]);
+        let different_contract = ScriptBuf::from_bytes(vec![0x52]);
+
+        wallet
+            .cache_prevout_to_contracts(&[(prevout, approved_contract.clone())])
+            .unwrap();
+
+        wallet
+            .ensure_prevout_matches_cached_contract(&prevout, approved_contract.as_script())
+            .unwrap();
+        assert!(wallet
+            .ensure_prevout_matches_cached_contract(&prevout, different_contract.as_script())
+            .is_err());
+    }
+
+    #[test]
+    fn cached_contract_is_idempotent_immutable_and_persistent() {
+        let temp_dir = tempdir().unwrap();
+        let wallet_path = temp_dir.path().join("wallet.cbor");
+        let mut wallet = test_wallet(&wallet_path);
+        let prevout = OutPoint::null();
+        let new_prevout = OutPoint {
+            txid: prevout.txid,
+            vout: 1,
+        };
+        let approved_contract = ScriptBuf::from_bytes(vec![0x51]);
+
+        wallet
+            .cache_prevout_to_contracts(&[(prevout, approved_contract.clone())])
+            .unwrap();
+        wallet
+            .cache_prevout_to_contracts(&[(prevout, approved_contract.clone())])
+            .unwrap();
+        assert!(wallet
+            .cache_prevout_to_contracts(&[
+                (new_prevout, ScriptBuf::from_bytes(vec![0x53])),
+                (prevout, ScriptBuf::from_bytes(vec![0x52])),
+            ])
+            .is_err());
+        assert!(!wallet
+            .store
+            .prevout_to_contract_map
+            .contains_key(&new_prevout));
+
+        let (reloaded_store, _) = WalletStore::read_from_disk(&wallet_path, String::new()).unwrap();
+        assert_eq!(
+            reloaded_store.prevout_to_contract_map.get(&prevout),
+            Some(&approved_contract)
+        );
     }
 }

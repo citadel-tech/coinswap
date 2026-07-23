@@ -38,6 +38,7 @@ mod funding_dynamic_splits;
 #[cfg(feature = "hotpath")]
 mod hotpath_profile;
 mod legacy_malformed_contract;
+mod legacy_missing_contract_cache;
 mod liquidity_test;
 mod offerbook_sync_race;
 mod taker_cli;

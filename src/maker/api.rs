@@ -1228,17 +1228,22 @@ impl MakerTrait for MakerServer {
             self.config.network_port,
         )?;
 
-        let mut sigs = Vec::new();
-
-        for txinfo in txs_info {
-            self.wallet
-                .write()
-                .map_err(|_| MakerError::General("Failed to lock wallet"))?
-                .cache_prevout_to_contract(
+        let bindings = txs_info
+            .iter()
+            .map(|txinfo| {
+                (
                     txinfo.senders_contract_tx.input[0].previous_output,
                     txinfo.senders_contract_tx.output[0].script_pubkey.clone(),
-                )?;
+                )
+            })
+            .collect::<Vec<_>>();
+        self.wallet
+            .write()
+            .map_err(|_| MakerError::General("Failed to lock wallet"))?
+            .cache_prevout_to_contracts(&bindings)?;
 
+        let mut sigs = Vec::new();
+        for txinfo in txs_info {
             // Derive multisig privkey using the nonce
             let multisig_privkey = tweakable_privkey
                 .add_tweak(&txinfo.multisig_nonce.into())
@@ -1363,17 +1368,13 @@ impl MakerTrait for MakerServer {
             // Check that the provided contract matches the scriptpubkey from the cache
             let contract_spk = redeemscript_to_scriptpubkey(&funding_info.contract_redeemscript)?;
 
-            if !wallet_read.does_prevout_match_cached_contract(
+            wallet_read.ensure_prevout_matches_cached_contract(
                 &OutPoint {
                     txid: funding_txid,
                     vout: funding_output_index,
                 },
                 &contract_spk,
-            )? {
-                return Err(MakerError::General(
-                    "Provided contract does not match sender contract tx, rejecting",
-                ));
-            }
+            )?;
 
             // Extract and verify hashvalue
             let this_hashvalue = read_hashvalue_from_contract(&funding_info.contract_redeemscript)?;
