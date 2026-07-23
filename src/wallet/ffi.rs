@@ -36,7 +36,8 @@ pub use super::report::{
 /// - `data_dir`: Target directory, defaults to `~/.coinswap/taker`
 /// - `wallet_file_name`: Restored wallet filename, defaults to name from backup if empty
 /// - `backup_file_path`: Path to the JSON file containing the wallet backup (encrypted or plain)
-/// - `password`: Required if backup is encrypted, ignored otherwise
+/// - `password`: Required if the backup is encrypted. Supplying a non-empty password
+///   also requires the backup file itself to be encrypted; plaintext is rejected.
 pub fn restore_wallet_gui_app(
     data_dir: Option<PathBuf>,
     wallet_file_name: Option<String>,
@@ -44,10 +45,16 @@ pub fn restore_wallet_gui_app(
     backup_file_path: PathBuf,
     password: Option<String>,
 ) {
-    let (backup, encryption_material) = load_sensitive_struct::<WalletBackup, SerdeJson>(
+    let (backup, encryption_material) = match load_sensitive_struct::<WalletBackup, SerdeJson>(
         &backup_file_path,
         Some(password.unwrap_or_default()),
-    );
+    ) {
+        Ok(backup) => backup,
+        Err(err) => {
+            log::error!("Wallet backup load failed: {err}");
+            return;
+        }
+    };
     let restored_wallet_filename = wallet_file_name.unwrap_or("".to_string());
 
     let restored_wallet_path = data_dir

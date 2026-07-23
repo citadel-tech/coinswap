@@ -1,6 +1,6 @@
 //! All Wallet-related errors.
 
-use crate::protocol::error::ProtocolError;
+use crate::{protocol::error::ProtocolError, security::SecurityError};
 
 use super::fidelity::FidelityError;
 
@@ -24,6 +24,9 @@ pub enum WalletError {
     ///
     /// This is used for encoding/decoding the wallet backup.
     Json(serde_json::Error),
+
+    /// Represents an error while loading or decrypting sensitive wallet data.
+    Security(SecurityError),
 
     /// Represents an error returned by the Bitcoin Core RPC client.
     ///
@@ -149,6 +152,12 @@ impl From<serde_json::Error> for WalletError {
     }
 }
 
+impl From<SecurityError> for WalletError {
+    fn from(value: SecurityError) -> Self {
+        Self::Security(value)
+    }
+}
+
 impl From<FidelityError> for WalletError {
     fn from(value: FidelityError) -> Self {
         Self::Fidelity(value)
@@ -215,6 +224,7 @@ impl std::fmt::Display for WalletError {
             WalletError::IO(e) => write!(f, "I/O error: {}", e),
             WalletError::Cbor(e) => write!(f, "CBOR error: {}", e),
             WalletError::Json(e) => write!(f, "JSON error: {}", e),
+            WalletError::Security(e) => write!(f, "Security error: {}", e),
             WalletError::Rpc(e) => write!(f, "Bitcoin RPC error: {}", e),
             WalletError::BIP32(e) => write!(f, "BIP32 error: {}", e),
             WalletError::BIP39(e) => write!(f, "BIP39 error: {}", e),
@@ -254,6 +264,7 @@ impl std::error::Error for WalletError {
             WalletError::IO(e) => Some(e),
             WalletError::Cbor(e) => Some(e),
             WalletError::Json(e) => Some(e),
+            WalletError::Security(e) => Some(e),
             WalletError::Rpc(e) => Some(e),
             WalletError::BIP32(e) => Some(e),
             WalletError::BIP39(e) => Some(e),

@@ -149,10 +149,8 @@ impl WalletStore {
         backup_file_path: &Path,
         password: String,
     ) -> Result<(Self, Option<KeyMaterial>), WalletError> {
-        let (wallet_store, store_enc_material) =
-            load_sensitive_struct::<Self, SerdeCbor>(backup_file_path, Some(password));
-
-        Ok((wallet_store, store_enc_material))
+        load_sensitive_struct::<Self, SerdeCbor>(backup_file_path, Some(password))
+            .map_err(Into::into)
     }
 }
 
@@ -188,5 +186,60 @@ mod tests {
 
         let (read_wallet, _nonce) = WalletStore::read_from_disk(&file_path, String::new()).unwrap();
         assert_eq!(original_wallet_store, read_wallet);
+    }
+
+    #[test]
+    fn rejects_plaintext_wallet_when_password_is_supplied() {
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("test_wallet.cbor");
+        let seed: [u8; 16] = thread_rng().gen();
+        let master_key = Xpriv::new_master(Network::Bitcoin, &seed).unwrap();
+
+        WalletStore::init(
+            "test_wallet".to_string(),
+            &file_path,
+            Network::Bitcoin,
+            master_key,
+            None,
+            &None,
+        )
+        .unwrap();
+
+        let load_result = WalletStore::read_from_disk(&file_path, "wallet password".to_string());
+        let error = load_result.expect_err("a password must require an encrypted wallet file");
+        assert!(
+            error.to_string().contains("expected encrypted file"),
+            "unexpected error: {}",
+            error
+        );
+    }
+
+    #[test]
+    fn reads_encrypted_wallet_when_password_is_supplied() {
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("test_wallet.cbor");
+        let seed: [u8; 16] = thread_rng().gen();
+        let master_key = Xpriv::new_master(Network::Bitcoin, &seed).unwrap();
+        let password = "wallet password".to_string();
+        let encryption_material = KeyMaterial::new_from_password(Some(password.clone()));
+
+        let original_wallet_store = WalletStore::init(
+            "test_wallet".to_string(),
+            &file_path,
+            Network::Bitcoin,
+            master_key,
+            None,
+            &encryption_material,
+        )
+        .unwrap();
+
+        let error = WalletStore::read_from_disk(&file_path, "wrong password".to_string())
+            .expect_err("a wrong password must fail authentication");
+        assert!(error.to_string().contains("decryption failed"));
+
+        let (read_wallet, read_encryption_material) =
+            WalletStore::read_from_disk(&file_path, password).unwrap();
+        assert_eq!(original_wallet_store, read_wallet);
+        assert!(read_encryption_material.is_some());
     }
 }

@@ -18,6 +18,44 @@ use sha2::Sha256;
 use crate::utill;
 use std::{fs, path::Path};
 
+/// Errors returned while loading or decrypting sensitive data.
+#[derive(Debug)]
+pub enum SecurityError {
+    /// The sensitive file could not be read.
+    Io(std::io::Error),
+    /// The file did not match the required serialization format.
+    Format(String),
+    /// Authentication or decryption failed.
+    Decryption,
+    /// The decrypted CBOR payload was invalid.
+    Cbor(serde_cbor::Error),
+}
+
+impl std::fmt::Display for SecurityError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io(err) => write!(f, "I/O error: {err}"),
+            Self::Format(err) => write!(f, "format error: {err}"),
+            Self::Decryption => write!(f, "decryption failed; wrong password or corrupted data"),
+            Self::Cbor(err) => write!(f, "CBOR error: {err}"),
+        }
+    }
+}
+
+impl std::error::Error for SecurityError {}
+
+impl From<std::io::Error> for SecurityError {
+    fn from(err: std::io::Error) -> Self {
+        Self::Io(err)
+    }
+}
+
+impl From<serde_cbor::Error> for SecurityError {
+    fn from(err: serde_cbor::Error) -> Self {
+        Self::Cbor(err)
+    }
+}
+
 /// Errors that can occur during the encryption process.
 ///
 /// This enum covers serialization errors from CBOR encoding as well as
@@ -269,7 +307,7 @@ pub fn encrypt_struct<T: Serialize>(
 pub fn decrypt_struct<T: DeserializeOwned>(
     encrypted_struct: EncryptedData,
     enc_material: &KeyMaterial,
-) -> Result<T, serde_cbor::Error> {
+) -> Result<T, SecurityError> {
     // Deserialize the outer EncryptedWalletStore wrapper.
 
     let nonce_vec = encrypted_struct.nonce;
@@ -282,14 +320,16 @@ pub fn decrypt_struct<T: DeserializeOwned>(
     // Decrypt the inner CBOR bytes.
     let plaintext_cbor = cipher
         .decrypt(&nonce, encrypted_struct.encrypted_payload.as_ref())
-        .expect("Error decrypting wallet, wrong passphrase?");
+        .map_err(|_| SecurityError::Decryption)?;
 
     // Deserialize the inner CBOR into the original type
-    utill::deserialize_from_cbor::<T>(plaintext_cbor)
+    Ok(utill::deserialize_from_cbor::<T>(plaintext_cbor)?)
 }
 /// Loads a sensitive struct from a file, supporting both encrypted and plaintext formats.
 ///
-/// This function tries to deserialize the file contents in two steps:
+/// When a non-empty password is supplied, this function requires the file to
+/// deserialize as [`EncryptedData`] and never attempts a plaintext fallback.
+/// Without a password, it tries to deserialize the file contents in two steps:
 ///
 /// 1. **Unencrypted:** Attempts to deserialize the file directly as `T`.
 /// 2. **Encrypted:** If that fails, attempts to deserialize as [`EncryptedData`],
@@ -304,8 +344,27 @@ pub fn decrypt_struct<T: DeserializeOwned>(
 pub fn load_sensitive_struct<T: DeserializeOwned, F: SerdeFormat>(
     file: &Path,
     password: Option<String>,
-) -> (T, Option<KeyMaterial>) {
-    let content = fs::read(file).unwrap_or_else(|_| panic!("Failed to read the file: {:?}", file));
+) -> Result<(T, Option<KeyMaterial>), SecurityError> {
+    let content = fs::read(file)?;
+
+    let password = match password {
+        Some(encryption_password) if !encryption_password.is_empty() => {
+            let encrypted_struct = F::from_slice::<EncryptedData>(&content).map_err(|err| {
+                SecurityError::Format(format!(
+                    "expected encrypted file {file:?} because a password was supplied: {err}"
+                ))
+            })?;
+            let enc_material = KeyMaterial::existing(
+                encryption_password,
+                encrypted_struct.nonce,
+                encrypted_struct.pbkdf2_salt,
+            );
+            let decrypted = decrypt_struct::<T>(encrypted_struct, &enc_material)?;
+
+            return Ok((decrypted, Some(enc_material)));
+        }
+        password => password,
+    };
 
     let (sensitive_struct, encryption_material) = match F::from_slice::<T>(&content) {
         Ok(unencrypted_struct) => (unencrypted_struct, None),
@@ -313,8 +372,7 @@ pub fn load_sensitive_struct<T: DeserializeOwned, F: SerdeFormat>(
             Ok(encrypted_struct) => {
                 let encryption_password = match password {
                     Some(p) => p,
-                    None => utill::prompt_password("Enter encryption passphrase: ".to_string())
-                        .expect("Failed to read password"),
+                    None => utill::prompt_password("Enter encryption passphrase: ".to_string())?,
                 };
                 let enc_material = KeyMaterial::existing(
                     encryption_password,
@@ -322,21 +380,19 @@ pub fn load_sensitive_struct<T: DeserializeOwned, F: SerdeFormat>(
                     encrypted_struct.pbkdf2_salt,
                 );
 
-                let decrypted = decrypt_struct::<T>(encrypted_struct, &enc_material)
-                    .unwrap_or_else(|err| panic!("Failed to decrypt file {:?}: {:?}", file, err));
+                let decrypted = decrypt_struct::<T>(encrypted_struct, &enc_material)?;
 
                 (decrypted, Some(enc_material))
             }
             Err(encrypted_err) => {
-                panic!(
-                    "Failed to deserialize file {:?}:\n- As unencrypted: {}\n- As encrypted: {}",
-                    file, unencrypted_err, encrypted_err
-                );
+                return Err(SecurityError::Format(format!(
+                    "failed to deserialize file {file:?}; as plaintext: {unencrypted_err}; as encrypted: {encrypted_err}"
+                )));
             }
         },
     };
 
-    (sensitive_struct, encryption_material)
+    Ok((sensitive_struct, encryption_material))
 }
 
 #[cfg(test)]
