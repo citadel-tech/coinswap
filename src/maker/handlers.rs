@@ -2,6 +2,7 @@
 
 use std::{sync::Arc, time::Instant};
 
+use bip324::SessionId;
 use bitcoin::{bip32::ChainCode, Amount, PublicKey, Transaction};
 
 use super::error::MakerError;
@@ -63,6 +64,8 @@ pub const MIN_CONTRACT_REACTION_TIME: u16 = 10;
 pub struct ConnectionState {
     /// Protocol version being used for this connection.
     pub protocol: ProtocolVersion,
+    /// Unique identifier for the connection, None indicates no connection yet
+    pub session_id: Option<SessionId>,
     /// Current phase of the swap.
     pub phase: SwapPhase,
     /// Unique swap identifier.
@@ -116,6 +119,7 @@ impl Default for ConnectionState {
     fn default() -> Self {
         ConnectionState {
             protocol: ProtocolVersion::Legacy,
+            session_id: None,
             phase: SwapPhase::AwaitingHello,
             swap_id: None,
             swap_amount: Amount::ZERO,
@@ -410,14 +414,24 @@ fn handle_taker_hello<M: Maker>(
     let config = maker.get_config();
     state.phase = SwapPhase::AwaitingOfferRequest;
 
+    let session_id = state
+        .session_id
+        .ok_or(MakerError::General("Connection did not start"))?;
+    let (tweakable_privkey, _, _) = maker.get_tweakable_keypair()?;
+    let secp = bitcoin::secp256k1::Secp256k1::new();
+    let session_id_sig = secp.sign_ecdsa_low_r(
+        &bitcoin::secp256k1::Message::from_digest(session_id.to_bytes()),
+        &tweakable_privkey,
+    );
+
     log::info!(
         "[{}] Supported protocols: {:?}",
         Maker::network_port(maker.as_ref()),
         config.supported_protocols
     );
-
     Ok(Some(MakerToTakerMessage::MakerHello(MakerHello {
         supported_protocols: config.supported_protocols,
+        session_id_sig,
     })))
 }
 
@@ -512,9 +526,9 @@ fn handle_swap_details<M: Maker>(
         return Err(MakerError::General("Test: closing after ack response"));
     }
 
-    Ok(Some(MakerToTakerMessage::AckSwapDetails(
-        AckSwapDetails::accept(tweakable_point),
-    )))
+    Ok(Some(MakerToTakerMessage::AckSwap(AckSwapDetails::accept(
+        tweakable_point,
+    ))))
 }
 
 /// Restore connection state if this is a new/reconnected connection.
@@ -543,6 +557,7 @@ fn restore_state_if_needed<M: Maker>(maker: &Arc<M>, state: &mut ConnectionState
             state.contract_feerate = stored.contract_feerate;
             state.service_fee_sats = stored.service_fee_sats;
             state.swap_start_time = stored.swap_start_time;
+            state.refund_locktime_offset = stored.refund_locktime_offset
         }
     }
 }

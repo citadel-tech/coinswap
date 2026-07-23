@@ -39,10 +39,7 @@ use crate::{
         },
         contract::calculate_pubkey_from_nonce,
     },
-    utill::{
-        estimate_funding_tx_fee_sats, generate_maker_keys, get_taker_dir, read_message,
-        send_message,
-    },
+    utill::{estimate_funding_tx_fee_sats, generate_maker_keys, get_taker_dir, Bip324Stream},
     wallet::{
         swapcoin::{IncomingSwapCoin, OutgoingSwapCoin, WatchOnlySwapCoin},
         MakerFeeInfo as ReportMakerFeeInfo, RPCConfig, RecoveryOutcome, SwapStatus, TakerReport,
@@ -301,7 +298,7 @@ pub struct SwapSummary {
 }
 
 /// State for an ongoing swap.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub(crate) struct OngoingSwapState {
     /// Unique swap ID.
     pub(crate) id: String,
@@ -332,7 +329,7 @@ pub(crate) struct OngoingSwapState {
 }
 
 /// Connection state for a maker in the swap route.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(crate) struct MakerConnection {
     /// Maker's network address.
     pub(crate) address: MakerAddress,
@@ -349,6 +346,8 @@ pub(crate) struct MakerConnection {
     pub(crate) exchange: ExchangeProgress,
     /// Shared finalization milestones (preimage, privkey exchange).
     pub(crate) finalization: FinalizationProgress,
+    /// BIP324 channel to this maker, held across swap
+    pub(crate) stream: Option<Bip324Stream>,
 }
 
 impl MakerConnection {
@@ -518,6 +517,7 @@ impl Taker {
         std::fs::create_dir_all(&data_dir)?;
 
         let (wallet, rpc_config) = Self::init_wallet(&config, &data_dir)?;
+        let network = wallet.store.network;
         let (watch_service, registry, initial_sync_complete) =
             Self::init_watch_service(&config, &rpc_config, &data_dir)?;
         Self::init_taker_config(&config, &data_dir)?;
@@ -526,6 +526,7 @@ impl Taker {
             &offerbook,
             registry,
             config.socks_port,
+            network,
             rpc_config,
             initial_sync_complete,
         )?;
@@ -705,6 +706,7 @@ impl Taker {
         offerbook: &OfferBookHandle,
         registry: FileRegistry,
         socks_port: u16,
+        network: bitcoin::Network,
         rpc_config: RPCConfig,
         initial_sync_complete: Arc<AtomicBool>,
     ) -> Result<OfferSyncHandle, TakerError> {
@@ -713,6 +715,7 @@ impl Taker {
             offerbook.clone(),
             registry,
             socks_port,
+            network,
             rest_backend,
             initial_sync_complete,
         )
@@ -797,6 +800,7 @@ impl Taker {
         });
 
         self.discover_makers()?;
+        log::info!("Discovered {} makers for swap id {}", maker_count, swap_id);
         self.persist_swap(SwapPhase::MakersDiscovered)?;
 
         #[cfg(feature = "integration-test")]
@@ -807,6 +811,10 @@ impl Taker {
             ));
         }
 
+        log::info!(
+            "Negotiating swap details with makers for swap id {}",
+            swap_id
+        );
         self.negotiate_swap_details()?;
         self.persist_swap(SwapPhase::Negotiated)?;
 
@@ -1150,6 +1158,7 @@ impl Taker {
                         negotiated_timelock: 0,
                         exchange,
                         finalization: FinalizationProgress::default(),
+                        stream: None,
                     }
                 })
                 .collect();
@@ -1213,6 +1222,7 @@ impl Taker {
                         negotiated_timelock: 0,
                         exchange,
                         finalization: FinalizationProgress::default(),
+                        stream: None,
                     }
                 })
                 .collect();
@@ -1306,6 +1316,7 @@ impl Taker {
                             negotiated_timelock: 0,
                             exchange,
                             finalization: FinalizationProgress::default(),
+                            stream: None,
                         };
                         self.swap_state_mut()?.makers[i] = replacement;
                         // Don't increment i — retry with the replacement
@@ -1331,6 +1342,42 @@ impl Taker {
         Ok(())
     }
 
+    /// returns the save authenticated stream,
+    /// reestablish and does handshake and BIP324 authentication if no stream found on this maker
+    /// Should only be called after offer tweakable point is known after AckSwap
+    pub(crate) fn take_connection(&mut self, maker_idx: usize) -> Result<Bip324Stream, TakerError> {
+        let stream = match self.swap_state_mut()?.makers[maker_idx].stream.take() {
+            Some(s) => s,
+            None => {
+                log::warn!("Bip324Stream not found reconnecting");
+                let addr = self.swap_state()?.makers[maker_idx].address.to_string();
+                let mut s = self.net_connect(&addr)?;
+                let tweakable_point = {
+                    let swap = self.swap_state()?;
+                    swap.makers[maker_idx].tweakable_point.ok_or_else(|| {
+                        TakerError::General(
+                            "No cached offer for tweakable point binding check".to_string(),
+                        )
+                    })?
+                };
+
+                let (_, session_id_sig) = self.net_handshake(&mut s)?;
+                s.authenticate(&tweakable_point, &session_id_sig)?;
+                s
+            }
+        };
+        Ok(stream)
+    }
+
+    pub(crate) fn return_connection(
+        &mut self,
+        maker_idx: usize,
+        stream: Bip324Stream,
+    ) -> Result<(), TakerError> {
+        self.swap_state_mut()?.makers[maker_idx].stream = Some(stream);
+        Ok(())
+    }
+
     /// Negotiate swap details with a single maker at the given route index.
     #[hotpath::measure]
     fn negotiate_with_maker(
@@ -1346,15 +1393,14 @@ impl Taker {
         log::info!("Connecting to maker {} at {}", maker_idx, maker_address);
 
         let mut stream = self.net_connect(&maker_address)?;
+        let (negotiated_protocol, session_id_sig) = self.net_handshake(&mut stream)?;
 
-        let negotiated_protocol = self.net_handshake(&mut stream)?;
         log::info!("Handshake complete, protocol: {:?}", negotiated_protocol);
 
         // Fetch the maker's offer before proposing swap details.
         // This gives us the fee schedule for amount verification later.
-        send_message(&mut stream, &TakerToMakerMessage::GetOffer(GetOffer))?;
-        let offer_bytes = read_message(&mut stream)?;
-        let offer_msg: MakerToTakerMessage = serde_cbor::from_slice(&offer_bytes)?;
+        stream.send_message(&TakerToMakerMessage::GetOffer(GetOffer))?;
+        let offer_msg: MakerToTakerMessage = stream.read_message()?;
         match offer_msg {
             MakerToTakerMessage::Offer(offer) => {
                 log::info!(
@@ -1364,6 +1410,23 @@ impl Taker {
                     offer.amount_relative_fee_pct,
                     offer.time_relative_fee_pct
                 );
+                if let Some(expected_tweakable_point) = self.swap_state()?.makers[maker_idx]
+                    .offer
+                    .as_ref()
+                    .map(|offer| offer.tweakable_point)
+                {
+                    log::warn!("Negotiating, we have offer already OFFER_ALREADY");
+                    if offer.tweakable_point != expected_tweakable_point {
+                        return Err(TakerError::General(format!(
+                            "Maker {} changed offer tweakable point: expected {}, got {}",
+                            maker_idx, expected_tweakable_point, offer.tweakable_point,
+                        )));
+                    }
+                } else {
+                    log::warn!("Negotiating, No offer already NO_OFFER_ALREADY");
+                }
+                stream.authenticate(&offer.tweakable_point, &session_id_sig)?;
+
                 Self::validate_offer(&offer, maker_idx, send_amount)?;
                 self.swap_state_mut()?.makers[maker_idx].offer = Some(*offer);
             }
@@ -1394,41 +1457,47 @@ impl Taker {
             refund_locktime_offset,
         };
 
-        send_message(&mut stream, &TakerToMakerMessage::SwapDetails(swap_details))?;
+        stream.send_message(&TakerToMakerMessage::SwapDetails(swap_details))?;
 
-        let msg_bytes = read_message(&mut stream)?;
-        let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
+        let msg: MakerToTakerMessage = stream.read_message()?;
 
         match msg {
-            MakerToTakerMessage::AckSwapDetails(ack) => {
-                if let Some(tweakable_point) = ack.tweakable_point {
-                    let swap = self.swap_state_mut()?;
-                    swap.makers[maker_idx].tweakable_point = Some(tweakable_point);
-                    swap.makers[maker_idx].protocol = negotiated_protocol;
-                    swap.makers[maker_idx].negotiated_timelock = timelock;
-                    log::info!("Maker {} accepted swap with tweakable point", maker_idx);
-
-                    #[cfg(feature = "integration-test")]
-                    if self.behavior == TakerBehavior::CloseAtAckResponse {
-                        log::warn!(
-                            "Test behavior: closing after receiving AckSwapDetails from maker {}",
-                            maker_idx
-                        );
-                        return Err(TakerError::General(
-                            "Test: closing at ack response".to_string(),
-                        ));
-                    }
-
-                    Ok(())
-                } else {
-                    Err(TakerError::General(format!(
-                        "Maker {} rejected swap",
+            MakerToTakerMessage::AckSwap(ack_details) => {
+                #[cfg(feature = "integration-test")]
+                if self.behavior == TakerBehavior::CloseAtAckResponse {
+                    log::warn!(
+                        "Test behavior: closing after receiving AckSwapDetails from maker {}",
                         maker_idx
-                    )))
+                    );
+                    return Err(TakerError::General(
+                        "Test: closing at ack response".to_string(),
+                    ));
                 }
+
+                let swap = self.swap_state()?;
+                let offer = swap.makers[maker_idx].offer.as_ref().ok_or_else(|| {
+                    TakerError::General(
+                        "No cached offer for tweakable point binding check".to_string(),
+                    )
+                })?;
+                if ack_details.tweakable_point != offer.tweakable_point {
+                    return Err(TakerError::General(format!(
+                        "AckSwap tweakable point mismatch: expected {}, got {}",
+                        offer.tweakable_point, ack_details.tweakable_point,
+                    )));
+                }
+
+                let swap = self.swap_state_mut()?;
+                swap.makers[maker_idx].tweakable_point = Some(ack_details.tweakable_point);
+                swap.makers[maker_idx].protocol = negotiated_protocol;
+                swap.makers[maker_idx].negotiated_timelock = timelock;
+                log::info!("Maker {} accepted swap with tweakable point", maker_idx);
+                // Cache the verified channel for the contract-exchange and finalization phases
+                self.return_connection(maker_idx, stream)?;
+                Ok(())
             }
             _ => Err(TakerError::General(format!(
-                "Unexpected message from maker {}: expected AckSwapDetails",
+                "Unexpected message from maker {}: expected AckSwap",
                 maker_idx
             ))),
         }
@@ -1531,6 +1600,7 @@ impl Taker {
             negotiated_timelock: 0,
             exchange,
             finalization: FinalizationProgress::default(),
+            stream: None,
         };
         self.swap_state_mut()?.makers[target_idx] = replacement;
 
@@ -1730,19 +1800,18 @@ impl Taker {
     #[hotpath::measure]
     pub(crate) fn net_handshake(
         &self,
-        stream: &mut TcpStream,
-    ) -> Result<ProtocolVersion, TakerError> {
+        stream: &mut Bip324Stream,
+    ) -> Result<(ProtocolVersion, bitcoin::secp256k1::ecdsa::Signature), TakerError> {
         // Send TakerHello
-        send_message(stream, &TakerToMakerMessage::TakerHello(TakerHello))?;
+        stream.send_message(&TakerToMakerMessage::TakerHello(TakerHello))?;
 
-        let msg_bytes = read_message(stream)?;
-        let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
+        let msg: MakerToTakerMessage = stream.read_message()?;
 
         match msg {
             MakerToTakerMessage::MakerHello(maker_hello) => {
                 let desired = self.swap_state()?.params.protocol;
                 if maker_hello.supported_protocols.contains(&desired) {
-                    Ok(desired)
+                    Ok((desired, maker_hello.session_id_sig))
                 } else {
                     Err(TakerError::General(format!(
                         "Maker does not support {:?}. Supported: {:?}",
@@ -1758,9 +1827,10 @@ impl Taker {
 
     /// Connect to a maker using either direct connection or Tor proxy.
     #[hotpath::measure]
-    pub(crate) fn net_connect(&self, address: &str) -> Result<TcpStream, TakerError> {
+    pub(crate) fn net_connect(&self, address: &str) -> Result<Bip324Stream, TakerError> {
         log::debug!("Connecting to maker at {}", address);
         let timeout = Duration::from_secs(CONNECT_TIMEOUT_SECS);
+        let network = self.read_wallet()?.store.network;
 
         #[cfg(feature = "integration-test")]
         let socket = TcpStream::connect(address)
@@ -1792,7 +1862,7 @@ impl Taker {
             .and_then(|_| socket.set_write_timeout(Some(timeout)))
             .map_err(|e| TakerError::General(format!("Failed to set socket timeout: {}", e)))?;
 
-        Ok(socket)
+        Ok(Bip324Stream::new(socket, network, bip324::Role::Initiator)?)
     }
 
     /// Finalize the swap by exchanging private keys with all makers.
@@ -1870,18 +1940,14 @@ impl Taker {
         }
 
         for i in 0..num_makers {
-            let maker_address = self.swap_state()?.makers[i].address.to_string();
-            let mut stream = self.net_connect(&maker_address)?;
-
-            self.net_handshake(&mut stream)?;
+            let mut stream = self.take_connection(i)?;
 
             log::info!("Sending privkey to maker {} and awaiting response", i);
 
             let msg = Self::msg_build_handover(protocol, swap_id.clone(), &current_privkeys);
-            send_message(&mut stream, &msg)?;
+            stream.send_message(&msg)?;
 
-            let msg_bytes = read_message(&mut stream)?;
-            let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
+            let msg: MakerToTakerMessage = stream.read_message()?;
 
             let received_privkeys: Vec<SecretKey> = match msg {
                 MakerToTakerMessage::LegacyPrivateKeyHandover(handover)
@@ -1952,6 +2018,9 @@ impl Taker {
             }
 
             current_privkeys = received_privkeys;
+
+            // Cache the channel for any subsequent retry on this maker.
+            self.return_connection(i, stream)?;
         }
 
         Ok(())

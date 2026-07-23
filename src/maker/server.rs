@@ -14,9 +14,10 @@ use std::{
 #[cfg(not(feature = "integration-test"))]
 use crate::maker::rpc::server::MakerRpc;
 use crate::{
+    error::{Bip324Error, NetError},
     nostr_coinswap::broadcast_bond_on_nostr,
-    protocol::common_messages::{FidelityProof, MakerToTakerMessage, TakerToMakerMessage},
-    utill::HEART_BEAT_INTERVAL,
+    protocol::common_messages::{FidelityProof, TakerToMakerMessage},
+    utill::{Bip324Stream, HEART_BEAT_INTERVAL},
     wallet::RecoveryReport,
 };
 
@@ -311,7 +312,8 @@ fn handle_connection(maker: Arc<MakerServer>, stream: TcpStream) -> Result<(), M
         "[{}] Starting connection handler",
         maker.config.network_port
     );
-
+    let mut encrypted_stream = Bip324Stream::new(stream, maker.network(), bip324::Role::Responder)?;
+    state.session_id = Some(*encrypted_stream.protocol.session_id());
     loop {
         // Check for shutdown
         if maker.is_shutdown() {
@@ -327,16 +329,13 @@ fn handle_connection(maker: Arc<MakerServer>, stream: TcpStream) -> Result<(), M
             break;
         }
 
-        let message = match read_message(&stream) {
-            Ok(msg) => msg,
-            Err(e) => {
-                log::debug!(
-                    "[{}] Read error (may be normal disconnect): {:?}",
-                    maker.config.network_port,
-                    e
-                );
+        let message: TakerToMakerMessage = match encrypted_stream.read_message() {
+            Ok(b) => b,
+            Err(NetError::Bip324Error(Bip324Error::ConnectionClosed)) => {
+                log::info!("[{}] Client disconnected", maker.config.network_port);
                 break;
             }
+            Err(e) => return Err(e.into()),
         };
 
         log::debug!(
@@ -361,7 +360,7 @@ fn handle_connection(maker: Arc<MakerServer>, stream: TcpStream) -> Result<(), M
                 response
             );
 
-            if let Err(e) = send_message(&stream, &response) {
+            if let Err(e) = encrypted_stream.send_message(&response) {
                 log::error!(
                     "[{}] Failed to send response: {:?}",
                     maker.config.network_port,
@@ -1012,50 +1011,6 @@ fn recover_from_swap(
 
         sleep(HEART_BEAT_INTERVAL);
     }
-
-    Ok(())
-}
-
-/// Read a message from a stream.
-fn read_message(stream: &TcpStream) -> Result<TakerToMakerMessage, MakerError> {
-    let mut len_buf = [0u8; 4];
-    use std::io::Read;
-
-    let mut stream_ref = stream;
-    stream_ref
-        .read_exact(&mut len_buf)
-        .map_err(MakerError::IO)?;
-
-    let len = u32::from_be_bytes(len_buf) as usize;
-
-    if len > 10 * 1024 * 1024 {
-        return Err(MakerError::General("Message too large"));
-    }
-
-    let mut buf = vec![0u8; len];
-    stream_ref.read_exact(&mut buf).map_err(MakerError::IO)?;
-
-    let message: TakerToMakerMessage = serde_cbor::from_slice(&buf)
-        .map_err(|_| MakerError::General("Failed to deserialize message"))?;
-
-    Ok(message)
-}
-
-/// Send a message to a stream.
-fn send_message(stream: &TcpStream, message: &MakerToTakerMessage) -> Result<(), MakerError> {
-    let buf = serde_cbor::to_vec(message)
-        .map_err(|_| MakerError::General("Failed to serialize message"))?;
-
-    let len = buf.len() as u32;
-    use std::io::Write;
-
-    let mut stream_ref = stream;
-    stream_ref
-        .write_all(&len.to_be_bytes())
-        .map_err(MakerError::IO)?;
-
-    stream_ref.write_all(&buf).map_err(MakerError::IO)?;
-    stream_ref.flush().map_err(MakerError::IO)?;
 
     Ok(())
 }

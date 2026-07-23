@@ -26,7 +26,7 @@ use crate::{
             RespContractSigsForRecvrAndSender, SenderContractTxInfo,
         },
     },
-    utill::{generate_keypair, generate_maker_keys, read_message, send_message, MIN_FEE_RATE},
+    utill::{generate_keypair, generate_maker_keys, Bip324Stream, MIN_FEE_RATE},
     wallet::{
         swapcoin::{IncomingSwapCoin, OutgoingSwapCoin, WatchOnlySwapCoin},
         Wallet, WalletError,
@@ -175,12 +175,10 @@ impl Taker {
             );
 
             // Connect to this maker
-            let mut stream = self.net_connect(&maker_address)?;
-            self.net_handshake(&mut stream)?;
+            let mut stream = self.take_connection(maker_idx)?;
             self.swap_state_mut()?.makers[maker_idx]
                 .legacy_exchange_mut()?
                 .connected = true;
-            drop(stream);
             // Determine our position
             let is_first_peer = maker_idx == 0;
             let is_last_peer = maker_idx == maker_count - 1;
@@ -293,7 +291,7 @@ impl Taker {
                     maker_idx
                 );
                 let sender_sigs = self.exchange_req_sender_sigs(
-                    &maker_address,
+                    &mut stream,
                     &swap_id,
                     &self.swap_state()?.outgoing_swapcoins,
                     outgoing_locktime,
@@ -416,7 +414,7 @@ impl Taker {
 
             let (receivers_contract_txs, senders_contract_txs_info) = self
                 .exchange_send_proof_of_funding(
-                    &maker_address,
+                    &mut stream,
                     &swap_id,
                     maker_idx,
                     &funding_txs,
@@ -501,19 +499,21 @@ impl Taker {
                 // with the spare's keys for the next hop.
                 log::info!("Requesting sender signatures from next maker");
                 let forward_result = (|| -> Result<Vec<bitcoin::ecdsa::Signature>, TakerError> {
-                    let next_addr = self.swap_state()?.makers[maker_idx + 1].address.to_string();
-
+                    let next_idx = maker_idx + 1;
                     let hashvalue = Hash160::hash(&self.swap_state()?.preimage);
                     let next_locktime =
                         self.swap_state()?.makers[maker_idx + 1].negotiated_timelock as u16;
 
-                    self.exchange_req_sender_sigs_forwarded(
-                        &next_addr,
+                    let mut next_stream = self.take_connection(next_idx)?;
+                    let sigs = self.exchange_req_sender_sigs_forwarded(
+                        &mut next_stream,
                         &swap_id,
                         &senders_contract_txs_info,
                         hashvalue,
                         next_locktime,
-                    )
+                    )?;
+                    self.return_connection(next_idx, next_stream)?;
+                    Ok(sigs)
                 })();
 
                 match forward_result {
@@ -581,15 +581,16 @@ impl Taker {
             } else {
                 log::info!("Requesting receiver signatures from previous maker");
                 // For subsequent hops, request from previous maker
-                let prev_maker_address =
-                    self.swap_state()?.makers[maker_idx - 1].address.to_string();
-
-                self.exchange_req_receiver_sigs(
-                    &prev_maker_address,
+                let prev_idx = maker_idx - 1;
+                let mut prev_stream = self.take_connection(prev_idx)?;
+                let receivers_sigs = self.exchange_req_receiver_sigs(
+                    &mut prev_stream,
                     &swap_id,
                     &receivers_contract_txs,
                     prev_senders_info.as_ref().unwrap(),
-                )?
+                )?;
+                self.return_connection(prev_idx, prev_stream)?;
+                receivers_sigs
             };
             self.swap_state_mut()?.makers[maker_idx]
                 .legacy_exchange_mut()?
@@ -599,12 +600,7 @@ impl Taker {
                 "Sending RespContractSigsForRecvrAndSender to maker {}",
                 maker_idx
             );
-            self.exchange_send_combined_sigs(
-                &maker_address,
-                &swap_id,
-                receivers_sigs,
-                senders_sigs,
-            )?;
+            self.exchange_send_combined_sigs(&mut stream, &swap_id, receivers_sigs, senders_sigs)?;
             self.swap_state_mut()?.makers[maker_idx]
                 .legacy_exchange_mut()?
                 .combined_sigs_sent = true;
@@ -613,6 +609,7 @@ impl Taker {
             // Store this maker's outgoing info for next hop
             prev_senders_info = Some(senders_contract_txs_info.clone());
 
+            self.return_connection(maker_idx, stream)?;
             // For non-first hops, the taker doesn't own these contracts — track as watch-only
             if !is_first_peer {
                 let watchonly_coins: Vec<WatchOnlySwapCoin> = senders_contract_txs_info
@@ -841,9 +838,8 @@ impl Taker {
             // Request the last maker's contract signature on the incoming contracts.
             // This allows the taker to broadcast the incoming contract tx during recovery
             // (for hashlock spending) without depending on the Maker.
-            let last_maker_address = self.swap_state()?.makers[maker_count - 1]
-                .address
-                .to_string();
+            let last_idx = maker_count - 1;
+            let last_maker_address = self.swap_state()?.makers[last_idx].address.to_string();
             log::info!(
                 "Requesting receiver contract sigs from last maker: {}",
                 last_maker_address
@@ -853,12 +849,14 @@ impl Taker {
                 .map(|info| info.contract_tx.clone())
                 .collect();
 
+            let mut last_stream = self.take_connection(last_idx)?;
             let receiver_sigs = self.exchange_req_receiver_sigs(
-                &last_maker_address,
+                &mut last_stream,
                 &swap_id,
                 &incoming_contract_txs,
                 last_senders_info,
             )?;
+            self.return_connection(last_idx, last_stream)?;
 
             // Store the maker's signatures on the incoming swapcoins
             let swap = self.swap_state_mut()?;
@@ -883,12 +881,11 @@ impl Taker {
     #[hotpath::measure]
     fn exchange_req_sender_sigs(
         &self,
-        maker_address: &str,
+        stream: &mut Bip324Stream,
         swap_id: &str,
         outgoing_swapcoins: &[OutgoingSwapCoin],
         locktime: u16,
     ) -> Result<Vec<bitcoin::ecdsa::Signature>, TakerError> {
-        let mut stream = self.net_connect(maker_address)?;
         let secp = Secp256k1::new();
 
         // Use the correct nonces from swap state — these are the nonces that
@@ -935,13 +932,9 @@ impl Taker {
             locktime,
         };
 
-        send_message(
-            &mut stream,
-            &TakerToMakerMessage::ReqContractSigsForSender(req),
-        )?;
+        stream.send_message(&TakerToMakerMessage::ReqContractSigsForSender(req))?;
 
-        let msg_bytes = read_message(&mut stream)?;
-        let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
+        let msg: MakerToTakerMessage = stream.read_message()?;
 
         match msg {
             MakerToTakerMessage::RespContractSigsForSender(resp) => {
@@ -973,7 +966,7 @@ impl Taker {
     #[hotpath::measure]
     fn exchange_send_proof_of_funding(
         &self,
-        maker_address: &str,
+        stream: &mut Bip324Stream,
         swap_id: &str,
         maker_idx: usize,
         funding_txs: &[Transaction],
@@ -987,7 +980,6 @@ impl Taker {
         next_hashlock_nonces: &[SecretKey],
         refund_locktime: u16,
     ) -> Result<(Vec<Transaction>, Vec<SenderContractTxInfo>), TakerError> {
-        let mut stream = self.net_connect(maker_address)?;
         let confirmed_funding_txes: Vec<FundingTxInfo> = {
             let wallet = self.read_wallet()?;
             funding_txs
@@ -1045,10 +1037,9 @@ impl Taker {
             contract_feerate: MIN_FEE_RATE,
         };
 
-        send_message(&mut stream, &TakerToMakerMessage::ProofOfFunding(pof))?;
+        stream.send_message(&TakerToMakerMessage::ProofOfFunding(pof))?;
 
-        let msg_bytes = read_message(&mut stream)?;
-        let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
+        let msg: MakerToTakerMessage = stream.read_message()?;
 
         match msg {
             MakerToTakerMessage::ReqContractSigsAsRecvrAndSender(req) => {
@@ -1085,22 +1076,20 @@ impl Taker {
     #[hotpath::measure]
     fn exchange_send_combined_sigs(
         &self,
-        maker_address: &str,
+        stream: &mut Bip324Stream,
         swap_id: &str,
         receivers_sigs: Vec<bitcoin::ecdsa::Signature>,
         senders_sigs: Vec<bitcoin::ecdsa::Signature>,
     ) -> Result<(), TakerError> {
-        let mut stream = self.net_connect(maker_address)?;
         let resp = RespContractSigsForRecvrAndSender {
             id: swap_id.to_string(),
             receivers_sigs,
             senders_sigs,
         };
 
-        send_message(
-            &mut stream,
-            &TakerToMakerMessage::RespContractSigsForRecvrAndSender(resp),
-        )?;
+        stream.send_message(&TakerToMakerMessage::RespContractSigsForRecvrAndSender(
+            resp,
+        ))?;
 
         log::info!(
             "Sent RespContractSigsForRecvrAndSender for swap {}",
@@ -1113,13 +1102,12 @@ impl Taker {
     #[hotpath::measure]
     fn exchange_req_sender_sigs_forwarded(
         &self,
-        maker_address: &str,
+        stream: &mut Bip324Stream,
         swap_id: &str,
         senders_info: &[SenderContractTxInfo],
         hashvalue: Hash160,
         locktime: u16,
     ) -> Result<Vec<bitcoin::ecdsa::Signature>, TakerError> {
-        let mut stream = self.net_connect(maker_address)?;
         // Build ContractTxInfoForSender from SenderContractTxInfo
         let txs_info: Vec<ContractTxInfoForSender> = senders_info
             .iter()
@@ -1140,13 +1128,9 @@ impl Taker {
             locktime,
         };
 
-        send_message(
-            &mut stream,
-            &TakerToMakerMessage::ReqContractSigsForSender(req),
-        )?;
+        stream.send_message(&TakerToMakerMessage::ReqContractSigsForSender(req))?;
 
-        let msg_bytes = read_message(&mut stream)?;
-        let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
+        let msg: MakerToTakerMessage = stream.read_message()?;
 
         match msg {
             MakerToTakerMessage::RespContractSigsForSender(resp) => {
@@ -1166,12 +1150,11 @@ impl Taker {
     #[hotpath::measure]
     fn exchange_req_receiver_sigs(
         &self,
-        maker_address: &str,
+        stream: &mut Bip324Stream,
         swap_id: &str,
         receivers_txs: &[Transaction],
         prev_senders_info: &[SenderContractTxInfo],
     ) -> Result<Vec<bitcoin::ecdsa::Signature>, TakerError> {
-        let mut stream = self.net_connect(maker_address)?;
         // Build ContractTxInfoForRecvr for each receiver contract
         let txs: Vec<ContractTxInfoForRecvr> = receivers_txs
             .iter()
@@ -1187,13 +1170,9 @@ impl Taker {
             txs,
         };
 
-        send_message(
-            &mut stream,
-            &TakerToMakerMessage::ReqContractSigsForRecvr(req),
-        )?;
+        stream.send_message(&TakerToMakerMessage::ReqContractSigsForRecvr(req))?;
 
-        let msg_bytes = read_message(&mut stream)?;
-        let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
+        let msg: MakerToTakerMessage = stream.read_message()?;
 
         match msg {
             MakerToTakerMessage::RespContractSigsForRecvr(resp) => {

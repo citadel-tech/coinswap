@@ -39,6 +39,7 @@ rustls = { version = "0.23.40", default-features = false, features = ["std", "ri
 nostr = "0.44.2"
 crossbeam-channel = "0.5.15"
 hotpath = "0.15.0"
+bip324 = { git = "https://github.com/rust-bitcoin/bip324", rev = "7c8894452929e1f1019e27a84ef8d6834facaa47" } # TODO move to v0.12.0 when it releases
 
 [dev-dependencies]
 flate2 = {version = "1.0.35"}

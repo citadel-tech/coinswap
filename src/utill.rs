@@ -40,10 +40,12 @@ use std::{
 static LOGGER: OnceLock<()> = OnceLock::new();
 
 use crate::{
-    error::NetError,
+    error::{Bip324Error, NetError},
     protocol::{contract::derive_maker_pubkey_and_nonce, error::ProtocolError},
+    taker::error::TakerError,
     wallet::{UTXOSpendInfo, WalletError},
 };
+use bip324::io::Payload;
 
 const INPUT_CHARSET: &str =
     "0123456789()[],'/*abcdefgh@:$%{}IJKLMNOPQRSTUVWXYZ&+-.;<=>?!^_|~ijklmnopqrstuvwxyzABCDEFGH`#\"\\ ";
@@ -981,6 +983,96 @@ pub fn interactive_select(
 
     Ok(selected_utxo)
 }
+pub(crate) enum CoinswapRole {
+    Maker,
+    Taker {
+        /// True iff the maker's `session_id_sig` was verified against its tweakable key during the handshake.
+        /// This field is only relevant to Taker
+        is_authenticated: bool,
+    },
+}
+
+pub(crate) struct Bip324Stream {
+    pub protocol: bip324::io::Protocol<std::io::BufReader<TcpStream>, TcpStream>,
+    pub role: CoinswapRole,
+}
+
+impl std::fmt::Debug for Bip324Stream {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Bip324Stream").finish_non_exhaustive()
+    }
+}
+
+impl Bip324Stream {
+    pub fn new(
+        stream: TcpStream,
+        network: bitcoin::Network,
+        bip324_role: bip324::Role,
+    ) -> Result<Self, NetError> {
+        let reader = std::io::BufReader::new(stream.try_clone()?);
+        let writer = stream;
+        let protocol = bip324::io::Protocol::new(
+            network.magic(),
+            bip324_role,
+            None,
+            None, // no garbage or decoys
+            reader,
+            writer,
+        )?;
+
+        Ok(Self {
+            protocol,
+            role: match bip324_role {
+                bip324::Role::Initiator => CoinswapRole::Taker {
+                    is_authenticated: false,
+                },
+                bip324::Role::Responder => CoinswapRole::Maker,
+            },
+        })
+    }
+
+    /// Reads the next genuine application message from the BIP324 stream.
+    pub(crate) fn read_message<T: serde::de::DeserializeOwned>(&mut self) -> Result<T, NetError> {
+        loop {
+            let payload = self.protocol.read()?;
+            match payload.packet_type() {
+                // currently we never send decoys but we are handling it
+                bip324::PacketType::Decoy => {
+                    log::debug!("Skipped decoy packet");
+                }
+                bip324::PacketType::Genuine => {
+                    return Ok(serde_cbor::from_slice(payload.contents())?);
+                }
+            }
+        }
+    }
+
+    /// CBOR-serializes the message and sends it as a genuine BIP324 payload.
+    pub(crate) fn send_message(&mut self, message: &impl serde::Serialize) -> Result<(), NetError> {
+        let msg_bytes = serde_cbor::ser::to_vec(message)?;
+        let to_send = Payload::genuine(msg_bytes);
+
+        self.protocol.write(&to_send)?;
+
+        Ok(())
+    }
+
+    pub(crate) fn authenticate(
+        &mut self,
+        tweakable_point: &PublicKey,
+        session_id_sig: &bitcoin::secp256k1::ecdsa::Signature,
+    ) -> Result<(), TakerError> {
+        let session_id = *self.protocol.session_id().as_bytes();
+        let secp = Secp256k1::new();
+        let sighash = bitcoin::secp256k1::Message::from_digest(session_id);
+        secp.verify_ecdsa(&sighash, session_id_sig, &tweakable_point.inner)
+            .map_err(|e| TakerError::Net(Bip324Error::SessionIdSigInvalid(e).into()))?;
+        if let CoinswapRole::Taker { is_authenticated } = &mut self.role {
+            *is_authenticated = true;
+        }
+        Ok(())
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -1001,8 +1093,13 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
 
+        let secp = Secp256k1::new();
+        let (sk, _) = secp.generate_keypair(&mut thread_rng());
+        let msg = bitcoin::secp256k1::Message::from_digest([0u8; 32]);
+        let session_id_sig = secp.sign_ecdsa_low_r(&msg, &sk);
         let message = MakerToTakerMessage::MakerHello(MakerHello {
             supported_protocols: vec![ProtocolVersion::Legacy, ProtocolVersion::Taproot],
+            session_id_sig,
         });
 
         thread::spawn(move || {
