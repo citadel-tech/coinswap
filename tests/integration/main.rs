@@ -33,6 +33,7 @@ mod taproot_timelock_recovery;
 mod wallet_backup;
 
 mod concurrent_takers;
+mod duplicate_funding_outpoint;
 mod fidelity_timelock_violation;
 mod funding_dynamic_splits;
 #[cfg(feature = "hotpath")]

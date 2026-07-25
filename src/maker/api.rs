@@ -1289,6 +1289,7 @@ impl MakerTrait for MakerServer {
         };
         use bitcoin::{hashes::Hash, OutPoint};
         use bitcoind::bitcoincore_rpc::RpcApi;
+        use std::collections::HashSet;
 
         log::info!(
             "[{}] Verifying proof of funding for swap {}",
@@ -1302,6 +1303,9 @@ impl MakerTrait for MakerServer {
 
         let min_reaction_time = MIN_CONTRACT_REACTION_TIME;
         let mut hashvalue: Option<crate::protocol::Hash160> = None;
+        // Each proof can be valid on its own, but repeating one outpoint makes the
+        // maker count the same incoming value twice and fund excess outgoing value.
+        let mut seen_outpoints = HashSet::with_capacity(message.confirmed_funding_txes.len());
 
         for funding_info in &message.confirmed_funding_txes {
             // Check that the new locktime is sufficiently short enough
@@ -1325,6 +1329,13 @@ impl MakerTrait for MakerServer {
                 as u32;
 
             let funding_txid = funding_info.funding_tx.compute_txid();
+            let funding_outpoint = OutPoint {
+                txid: funding_txid,
+                vout: funding_output_index,
+            };
+            if !seen_outpoints.insert(funding_outpoint) {
+                return Err(MakerError::General("Duplicate funding outpoint"));
+            }
 
             // Check the funding_tx is confirmed to required depth
             let wallet_read = self
@@ -1368,13 +1379,7 @@ impl MakerTrait for MakerServer {
             // Check that the provided contract matches the scriptpubkey from the cache
             let contract_spk = redeemscript_to_scriptpubkey(&funding_info.contract_redeemscript)?;
 
-            wallet_read.ensure_prevout_matches_cached_contract(
-                &OutPoint {
-                    txid: funding_txid,
-                    vout: funding_output_index,
-                },
-                &contract_spk,
-            )?;
+            wallet_read.ensure_prevout_matches_cached_contract(&funding_outpoint, &contract_spk)?;
 
             // Extract and verify hashvalue
             let this_hashvalue = read_hashvalue_from_contract(&funding_info.contract_redeemscript)?;
