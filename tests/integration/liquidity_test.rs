@@ -98,6 +98,14 @@ fn test_low_swap_liquidity() {
         AddressType::P2TR,
     );
 
+    // The offerbook still holds the drained max_size=0 offer fetched moments
+    // ago, and a sync round would skip re-polling it while it is within
+    // OFFER_MAX_AGE_BEFORE_REFRESH, which is 10s for tests. Poll this maker directly so selection sees
+    // the re-funded liquidity.
+    taker
+        .poll_maker(format!("127.0.0.1:{}", maker.config.network_port))
+        .expect("re-poll of the re-funded maker should succeed");
+
     // Attempt the swap again, it should succeed
     let swap_params = SwapParams::new(ProtocolVersion::Taproot, Amount::from_sat(500000), 1)
         .with_tx_count(2)

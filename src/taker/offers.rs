@@ -281,36 +281,7 @@ impl OfferBookHandle {
 
     /// All current good makers
     pub fn active_makers(&self, protocol: &MakerProtocol) -> Vec<OfferAndAddress> {
-        #[cfg(not(feature = "integration-test"))]
-        {
-            self.inner.read().unwrap().active_makers(protocol)
-        }
-        #[cfg(feature = "integration-test")]
-        {
-            use std::{
-                thread::sleep,
-                time::{Duration, Instant},
-            };
-
-            const POLL_INTERVAL_MS: u64 = 200;
-            const MAX_WAIT_SECS: u64 = 30;
-
-            let start = Instant::now();
-
-            loop {
-                let snapshot = self.inner.read().unwrap().active_makers(protocol);
-
-                if !snapshot.is_empty() {
-                    return snapshot;
-                }
-
-                if start.elapsed().as_secs() >= MAX_WAIT_SECS {
-                    return snapshot;
-                }
-
-                sleep(Duration::from_millis(POLL_INTERVAL_MS));
-            }
-        }
+        self.inner.read().unwrap().active_makers(protocol)
     }
 
     /// Fetch all good makers
@@ -714,9 +685,6 @@ impl OfferSyncService {
             .name("offer-sync-service".to_string())
             .spawn(move || {
                 log::info!("Offer sync service started");
-
-                #[cfg(feature = "integration-test")]
-                std::thread::sleep(Duration::from_secs(7));
 
                 while !shutdown_flag.load(Ordering::Relaxed) {
                     log::info!("Running offerbook sync");

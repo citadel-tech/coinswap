@@ -768,6 +768,10 @@ impl Taker {
             reference_height: None,
         });
 
+        // Run a blocking offer sync thread here,
+        // to update the offerbook with latest offer data before starting discovery.
+        // Without it theres a race condition in tests and extra safety for production.
+        self.sync_offerbook_and_wait()?;
         self.discover_makers()?;
         self.persist_swap(SwapPhase::MakersDiscovered)?;
 
