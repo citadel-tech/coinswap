@@ -267,7 +267,7 @@ fn test_concurrent_takers_taproot() {
         }
     }
 
-    let expected_maker_spendable = [1250197, 1250197];
+    let expected_maker_spendable = [1250309, 1250272];
 
     // Verify maker balances
     for (i, (maker, original_spendable)) in makers.iter().zip(maker_spendable_balance).enumerate() {

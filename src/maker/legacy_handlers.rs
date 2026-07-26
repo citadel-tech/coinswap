@@ -132,6 +132,20 @@ fn process_proof_of_funding<M: Maker>(
     ])?;
     state.check_swap_id(&pof.id)?;
 
+    // The fee is charged on `pof.refund_locktime`, so a taker could shrink it here
+    // and pay less than what it agreed to. Reject before we build anything from it.
+    if pof.refund_locktime as u32 != state.timelock {
+        log::error!(
+            "[{}] ProofOfFunding refund_locktime {} does not match negotiated timelock {}",
+            maker.network_port(),
+            pof.refund_locktime,
+            state.timelock
+        );
+        return Err(MakerError::General(
+            "ProofOfFunding refund locktime does not match the negotiated timelock",
+        ));
+    }
+
     #[cfg(feature = "integration-test")]
     {
         use super::handlers::MakerBehavior;

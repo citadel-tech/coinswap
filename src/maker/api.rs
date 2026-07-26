@@ -18,6 +18,7 @@ use bitcoind::bitcoincore_rpc::RpcApi;
 use crate::{
     nostr_coinswap::NOSTR_RELAYS,
     protocol::common_messages::{FidelityProof, ProtocolVersion, SwapDetails},
+    taker::api::REFUND_LOCKTIME_STEP,
     utill::{get_maker_dir, parse_field, parse_toml, MIN_FEE_RATE},
     wallet::{
         swapcoin::{IncomingSwapCoin, OutgoingSwapCoin},
@@ -70,6 +71,9 @@ struct SwapState {
     last_activity: Instant,
     /// Time when this swap was accepted by the maker.
     swap_start_time: Instant,
+    /// How many blocks the funds stay locked, derived from `timelock` when the swap was
+    /// accepted. This value is persisted across connection so swap fee calculation remains consistent.
+    refund_locktime_offset: u16,
 }
 
 impl Default for SwapState {
@@ -88,6 +92,7 @@ impl Default for SwapState {
             reserve_utxo: Vec::new(),
             last_activity: Instant::now(),
             swap_start_time: Instant::now(),
+            refund_locktime_offset: 0,
         }
     }
 }
@@ -826,7 +831,7 @@ impl MakerTrait for MakerServer {
     }
 
     #[hotpath::measure]
-    fn validate_swap_parameters(&self, details: &SwapDetails) -> Result<(), MakerError> {
+    fn validate_swap_parameters(&self, details: &SwapDetails) -> Result<u16, MakerError> {
         use super::handlers::MIN_CONTRACT_REACTION_TIME;
 
         let config = self.get_config();
@@ -861,8 +866,9 @@ impl MakerTrait for MakerServer {
             }
         }
 
-        // Check timelock bounds
-        if details.protocol_version == ProtocolVersion::Legacy {
+        // Check timelock bounds and work out how long the funds stay locked. Taproot reads the
+        // tip once for both, so a block arriving mid-check cannot price the swap differently.
+        let locked_blocks = if details.protocol_version == ProtocolVersion::Legacy {
             if details.timelock < MIN_CONTRACT_REACTION_TIME as u32 {
                 log::warn!(
                     "Legacy timelock {} is below minimum reaction time {}",
@@ -873,11 +879,30 @@ impl MakerTrait for MakerServer {
                     "Legacy timelock is below minimum reaction time",
                 ));
             }
-        } else if details.timelock == 0 {
-            return Err(MakerError::General("Taproot timelock is zero"));
+            details.timelock
+        } else {
+            let current_height = self.get_current_height()?;
+            if details.timelock.saturating_add(REFUND_LOCKTIME_STEP as u32)
+                < current_height.saturating_add(MIN_CONTRACT_REACTION_TIME as u32)
+            {
+                log::error!(
+                    "Taproot timelock {} leaves less than {} blocks of reaction time at height {}",
+                    details.timelock,
+                    MIN_CONTRACT_REACTION_TIME,
+                    current_height
+                );
+                return Err(MakerError::General(
+                    "Taproot timelock leaves too little contract reaction time",
+                ));
+            }
+            details.timelock.saturating_sub(current_height)
+        };
+
+        if locked_blocks == 0 || locked_blocks > u16::MAX as u32 {
+            return Err(MakerError::General("Swap timelock out of range"));
         }
 
-        Ok(())
+        Ok(locked_blocks as u16)
     }
 
     fn calculate_swap_fee(&self, amount: Amount, timelock: u32) -> Amount {
@@ -1151,6 +1176,7 @@ impl MakerTrait for MakerServer {
         swap_state.reserve_utxo = state.reserve_utxo.clone();
         swap_state.last_activity = Instant::now();
         swap_state.swap_start_time = state.swap_start_time;
+        swap_state.refund_locktime_offset = state.refund_locktime_offset;
         log::debug!(
             "[{}] Stored connection state for {}: amount={}, timelock={}, protocol={:?}, outgoing_count={}",
             self.config.network_port,
@@ -1180,6 +1206,7 @@ impl MakerTrait for MakerServer {
             state.service_fee_sats = s.service_fee_sats;
             state.reserve_utxo = s.reserve_utxo.clone();
             state.swap_start_time = s.swap_start_time;
+            state.refund_locktime_offset = s.refund_locktime_offset;
             state
         })
     }

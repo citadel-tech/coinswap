@@ -141,8 +141,8 @@ fn test_concurrent_legacy_and_taproot_swaps() {
         .for_each(|handle| handle.join().unwrap());
 
     let expected_taker_regular = [14_499_076, 14_299_076];
-    let expected_taker_swap = [494_587, 694_992];
-    let expected_taker_fees = [6_337, 5_932];
+    let expected_taker_swap = [494_587, 694_730];
+    let expected_taker_fees = [6_337, 6_194];
 
     for (i, (taker, original_balance)) in takers
         .iter()
@@ -198,9 +198,9 @@ fn test_concurrent_legacy_and_taproot_swaps() {
     }
 
     generate_blocks(bitcoind, 1);
-    let expected_maker_regular = [13_802_109, 13_806_515];
-    let expected_maker_swap = [1_198_428, 1_193_985];
-    let expected_maker_earnings = [1_023, 986];
+    let expected_maker_regular = [13_802_266, 13_806_777];
+    let expected_maker_swap = [1_198_428, 1_193_828];
+    let expected_maker_earnings = [1_180, 1_091];
 
     for (i, (maker, original_balance)) in makers
         .iter()

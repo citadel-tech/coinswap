@@ -205,8 +205,8 @@ pub trait Maker: Send + Sync {
     /// Get maker configuration values.
     fn get_config(&self) -> MakerConfig;
 
-    /// Validate swap parameters.
-    fn validate_swap_parameters(&self, details: &SwapDetails) -> Result<(), MakerError>;
+    /// Validate swap parameters and return how many blocks the funds stay locked.
+    fn validate_swap_parameters(&self, details: &SwapDetails) -> Result<u16, MakerError>;
 
     /// Calculate the swap fee.
     fn calculate_swap_fee(&self, amount: Amount, timelock: u32) -> Amount;
@@ -481,15 +481,17 @@ fn handle_swap_details<M: Maker>(
         details.protocol_version
     );
 
-    maker.validate_swap_parameters(&details)?;
+    // The fee pays for how long our funds stay locked, so use the length derived from the
+    // timelock. Otherwise the taker could ask for a long lock and pay for a short one.
+    let refund_locktime_offset = maker.validate_swap_parameters(&details)?;
 
     state.swap_id = Some(details.id.clone());
     state.swap_amount = details.amount;
     state.timelock = details.timelock;
-    state.refund_locktime_offset = details.refund_locktime_offset;
+    state.refund_locktime_offset = refund_locktime_offset;
     state.protocol = details.protocol_version;
     state.swap_start_time = Instant::now();
-    let swap_fee = maker.calculate_swap_fee(details.amount, details.refund_locktime_offset as u32);
+    let swap_fee = maker.calculate_swap_fee(details.amount, state.refund_locktime_offset as u32);
     state.service_fee_sats = swap_fee.to_sat();
     state.phase = SwapPhase::AwaitingContractData;
 
@@ -543,6 +545,7 @@ fn restore_state_if_needed<M: Maker>(maker: &Arc<M>, state: &mut ConnectionState
             state.contract_feerate = stored.contract_feerate;
             state.service_fee_sats = stored.service_fee_sats;
             state.swap_start_time = stored.swap_start_time;
+            state.refund_locktime_offset = stored.refund_locktime_offset;
         }
     }
 }
