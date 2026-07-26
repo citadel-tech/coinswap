@@ -22,19 +22,13 @@ use bitcoin::{
     Address, BlockHash, CompressedPublicKey, Script, ScriptBuf, Transaction, Txid,
 };
 use bitcoind::bitcoincore_rpc::json::{
-    GetBlockHeaderResult, GetBlockchainInfoResult, GetRawTransactionResult, GetTxOutResult,
-    ListUnspentResultEntry,
+    GetBlockchainInfoResult, GetRawTransactionResult, GetTxOutResult, ListUnspentResultEntry,
 };
 use electrum_client::{Client as ElectrumClient, ElectrumApi, Param};
 use serde_json::{json, Value};
 
 use super::{network_from_electrum_genesis, BlockRef, Blockchain, HdOrigin, WatchEvent};
 use crate::wallet::error::WalletError;
-
-/// How far back from the chain tip [`Electrum::resolve_height`] scans when a block
-/// hash isn't already cached. Comfortably covers confirmation-wait and recovery
-/// lookups (which target recent blocks) without an unbounded walk.
-const HASH_LOOKUP_SCAN_DEPTH: u64 = 200;
 
 /// Configuration for connecting to an Electrum-protocol server.
 ///
@@ -81,11 +75,9 @@ pub struct Electrum {
     watched: Mutex<HashSet<ScriptBuf>>,
     /// HD-origin hint per watched script, for UTXO classification without a descriptor.
     hd_paths: Mutex<HashMap<ScriptBuf, HdOrigin>>,
-    /// height → hash cache to optimize `get_block_hash`/`get_block_header`.
-    /// Only stores hashes for previously queried heights.
+    /// height → hash cache to optimize `get_block_hash`. Only stores hashes for
+    /// previously queried heights.
     height_to_hash: Mutex<HashMap<u64, BlockHash>>,
-    /// Reverse cache for `get_block_header(&hash)`.
-    hash_to_height: Mutex<HashMap<BlockHash, u64>>,
     /// Network derived from the server's reported genesis hash.
     network: bitcoin::Network,
     /// Watchtower notification bookkeeping.
@@ -126,7 +118,6 @@ impl Electrum {
             watched: Mutex::new(HashSet::new()),
             hd_paths: Mutex::new(HashMap::new()),
             height_to_hash: Mutex::new(HashMap::new()),
-            hash_to_height: Mutex::new(HashMap::new()),
             network,
             notifier: Mutex::new(NotifierState {
                 last_height,
@@ -141,58 +132,6 @@ impl Electrum {
     /// its own connection without threading the config around separately.
     pub fn reconnect(&self) -> Result<Self, WalletError> {
         Self::new(&self.config)
-    }
-
-    /// Resolve the height of a block `hash`.
-    ///
-    /// Electrum indexes blocks by height, not hash, so there is no direct
-    /// hash→height lookup. We first consult the local `hash_to_height` cache
-    /// (populated whenever a height is queried); on a miss we scan downward from
-    /// the chain tip, comparing hashes (and warming the cache via
-    /// [`Self::get_block_hash`]) until we match. Callers that hold a block hash
-    /// rather than a height (e.g. a freshly-confirmed tx's `blockhash`) are
-    /// almost always near the tip, so the scan terminates in a few steps; it is
-    /// bounded by [`HASH_LOOKUP_SCAN_DEPTH`] to avoid an unbounded walk for an
-    /// unknown/very old hash.
-    fn resolve_height(&self, hash: &BlockHash) -> Result<u64, WalletError> {
-        if let Some(h) = self
-            .hash_to_height
-            .lock()
-            .map_err(poisoned)?
-            .get(hash)
-            .copied()
-        {
-            return Ok(h);
-        }
-        let tip = self.get_block_count()?;
-        let floor = tip.saturating_sub(HASH_LOOKUP_SCAN_DEPTH);
-        let mut height = tip;
-        loop {
-            // `get_block_hash` populates both height↔hash caches as a side effect.
-            if self.get_block_hash(height)? == *hash {
-                return Ok(height);
-            }
-            if height <= floor {
-                break;
-            }
-            height -= 1;
-        }
-        Err(electrum_err(format!(
-            "unknown block hash {hash} (not found within {HASH_LOOKUP_SCAN_DEPTH} blocks of tip)"
-        )))
-    }
-
-    /// Look up the block hash for a height, populating the local caches.
-    fn header_at(&self, height: u64) -> Result<Header, WalletError> {
-        let header = self.inner.block_header(height as usize)?;
-        let hash = header.block_hash();
-        if let (Ok(mut h2h), Ok(mut hash_map)) =
-            (self.height_to_hash.lock(), self.hash_to_height.lock())
-        {
-            h2h.insert(height, hash);
-            hash_map.insert(hash, height);
-        }
-        Ok(header)
     }
 
     /// Expand a wallet-emitted descriptor (`wpkh(<xpub>/<chain>/*)` or
@@ -313,38 +252,42 @@ impl Blockchain for Electrum {
                 return Ok(*h);
             }
         }
-        Ok(self.header_at(height)?.block_hash())
+        Ok(self.header_at_height(height)?.block_hash())
     }
 
-    fn get_block_header(&self, hash: &BlockHash) -> Result<Header, WalletError> {
-        let height = self.resolve_height(hash)?;
-        self.header_at(height)
+    fn header_at_height(&self, height: u64) -> Result<Header, WalletError> {
+        let header = self.inner.block_header(height as usize)?;
+        if let Ok(mut cache) = self.height_to_hash.lock() {
+            cache.insert(height, header.block_hash());
+        }
+        Ok(header)
     }
 
-    fn get_block_header_info(&self, hash: &BlockHash) -> Result<GetBlockHeaderResult, WalletError> {
-        let height = self.resolve_height(hash)?;
-        let header = self.header_at(height)?;
-        let tip = self.get_block_count()?;
-        let confirmations = ((tip + 1).saturating_sub(height)) as i32;
-        let v = json!({
-            "hash": hash,
-            "confirmations": confirmations,
-            "height": height as usize,
-            "version": header.version,
-            // `version_hex` uses a hex-string deserializer that rejects `null`;
-            // omit it so serde's `default` fills in `None`.
-            "merkleroot": header.merkle_root,
-            "time": header.time as usize,
-            "mediantime": null,
-            "nonce": header.nonce,
-            "bits": format!("{:08x}", header.bits.to_consensus()),
-            "difficulty": 0.0,
-            "chainwork": "",
-            "nTx": 0,
-            "previousblockhash": header.prev_blockhash,
-            "nextblockhash": null,
-        });
-        Ok(serde_json::from_value(v)?)
+    fn tx_block_height(&self, txid: &Txid) -> Result<Option<u64>, WalletError> {
+        // Electrum has no txid→height index, but `scripthash.get_history` reports
+        // the mined height of every tx touching a script, so any output of this tx
+        // serves as the lookup key. That height is the server's own answer — no
+        // arithmetic against a tip that may have moved — and works at any depth,
+        // for scripts inside or outside our watch set.
+        let tx = self.inner.transaction_get(txid)?;
+        for txout in &tx.output {
+            // Unspendable outputs (OP_RETURN) have no scripthash history.
+            if txout.script_pubkey.is_op_return() {
+                continue;
+            }
+            let Ok(history) = self
+                .inner
+                .script_get_history(txout.script_pubkey.as_script())
+            else {
+                continue;
+            };
+            if let Some(entry) = history.iter().find(|e| e.tx_hash == *txid) {
+                // `height` is 0 for a mempool tx and -1 for one with unconfirmed
+                // parents; both mean "not mined yet".
+                return Ok((entry.height > 0).then_some(entry.height as u64));
+            }
+        }
+        Ok(None)
     }
 
     fn get_raw_transaction(
@@ -379,6 +322,23 @@ impl Blockchain for Electrum {
             electrum_err(format!("electrum: invalid transaction hex for {txid}: {e}"))
         })?;
         let tx: Transaction = bitcoin::consensus::deserialize(&bytes)?;
+
+        let vout: Vec<Value> = tx
+            .output
+            .iter()
+            .enumerate()
+            .map(|(n, o)| {
+                json!({
+                    "value": o.value.to_btc(),
+                    "n": n,
+                    "scriptPubKey": {
+                        "asm": "",
+                        "hex": serialize_hex(&o.script_pubkey),
+                        "type": null,
+                    },
+                })
+            })
+            .collect();
         let stub = json!({
             "in_active_chain": null,
             "hex": hex,
@@ -389,7 +349,7 @@ impl Blockchain for Electrum {
             "version": tx.version.0 as u32,
             "locktime": tx.lock_time.to_consensus_u32(),
             "vin": [],
-            "vout": [],
+            "vout": vout,
             "blockhash": value.get("blockhash"),
             "confirmations": confirmations,
             "time": value.get("time"),
@@ -402,7 +362,7 @@ impl Blockchain for Electrum {
         &self,
         txid: &Txid,
         vout: u32,
-        _include_mempool: Option<bool>,
+        include_mempool: Option<bool>,
     ) -> Result<Option<GetTxOutResult>, WalletError> {
         // Core's `gettxout` returns `None` once the output is spent — recovery and
         // funding-confirmation logic rely on this transition. Electrum's
@@ -442,6 +402,10 @@ impl Blockchain for Electrum {
             .get("confirmations")
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as u32;
+        // with `include_mempool = false`, only confirmed outputs are returned.
+        if include_mempool == Some(false) && confirmations == 0 {
+            return Ok(None);
+        }
         let v = json!({
             "bestblock": BlockHash::all_zeros(),
             "confirmations": confirmations,

@@ -801,13 +801,11 @@ fn verify_fidelity_with_backend(
     let txid = proof.bond.outpoint.txid;
     let transaction = blockchain.get_raw_transaction(&txid, None)?;
     let current_height = blockchain.get_block_count()?;
-    let tx_info = blockchain.get_raw_transaction_info(&txid, None)?;
-    let block_hash = tx_info.blockhash.ok_or_else(|| {
+    let confirmation_height = blockchain.tx_block_height(&txid)?.ok_or_else(|| {
         TakerError::General(format!(
             "Fidelity bond transaction {txid} is not yet confirmed"
         ))
-    })?;
-    let confirmation_height = blockchain.get_block_header_info(&block_hash)?.height as u32;
+    })? as u32;
 
     verify_fidelity_checks(
         proof,

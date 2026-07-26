@@ -67,8 +67,13 @@ fn run_electrum_swap(protocol: ProtocolVersion) {
         .iter()
         .for_each(|maker| maker.shutdown.store(true, Relaxed));
     maker_threads.into_iter().for_each(|t| t.join().unwrap());
+    // electrs indexes asynchronously; let it reach the tip before the
+    // post-swap syncs so the asserted balances aren't computed from a
+    // stale index.
+    test_framework.wait_for_electrs_tip();
     taker.get_wallet().write().unwrap().sync_and_save().unwrap();
     generate_blocks(bitcoind, 1);
+    test_framework.wait_for_electrs_tip();
     for maker in &makers {
         maker.wallet.write().unwrap().sync_and_save().unwrap();
     }

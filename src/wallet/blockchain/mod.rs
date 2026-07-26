@@ -29,9 +29,9 @@ use bitcoin::{
     address::NetworkUnchecked, block::Header, Address, BlockHash, Script, Transaction, Txid,
 };
 use bitcoind::bitcoincore_rpc::json::{
-    EstimateMode, EstimateSmartFeeResult, GetAddressInfoResult, GetBlockHeaderResult,
-    GetBlockchainInfoResult, GetRawTransactionResult, GetTxOutResult, ListTransactionResult,
-    ListUnspentResultEntry, ScanningDetails,
+    EstimateMode, EstimateSmartFeeResult, GetAddressInfoResult, GetBlockchainInfoResult,
+    GetRawTransactionResult, GetTxOutResult, ListTransactionResult, ListUnspentResultEntry,
+    ScanningDetails,
 };
 use serde_json::Value;
 
@@ -119,10 +119,17 @@ pub trait Blockchain: Send + Sync + 'static {
     fn get_block_count(&self) -> Result<u64, WalletError>;
     /// Block hash at `height`.
     fn get_block_hash(&self, height: u64) -> Result<BlockHash, WalletError>;
-    /// Block header for `hash`.
-    fn get_block_header(&self, hash: &BlockHash) -> Result<Header, WalletError>;
-    /// Verbose block header (incl. confirmations); used by fidelity locktime logic.
-    fn get_block_header_info(&self, hash: &BlockHash) -> Result<GetBlockHeaderResult, WalletError>;
+    /// Block header at `height`.
+    ///
+    /// Height-keyed rather than hash-keyed on purpose: the Electrum protocol
+    /// indexes blocks only by height and offers no hash→height lookup, so a
+    /// hash-keyed accessor would force the backend to emulate one with a bounded
+    /// scan down from the tip. Every caller here already holds a height (or gets
+    /// one from [`tx_block_height`](Self::tx_block_height)).
+    fn header_at_height(&self, height: u64) -> Result<Header, WalletError>;
+    /// Height of the block that mined `txid`, or `None` if it is unconfirmed or
+    /// unknown to the backend.
+    fn tx_block_height(&self, txid: &Txid) -> Result<Option<u64>, WalletError>;
     /// Fetch a raw transaction by txid.
     fn get_raw_transaction(
         &self,
@@ -135,15 +142,57 @@ pub trait Blockchain: Send + Sync + 'static {
         txid: &Txid,
         block_hash: Option<&BlockHash>,
     ) -> Result<GetRawTransactionResult, WalletError>;
-    /// UTXO at `txid:vout`, or `None` once spent. The `None` transition is
-    /// load-bearing for recovery and funding-confirmation logic.
+    /// Unspent output at `txid:vout`, following Core's `gettxout`.
+    ///
+    /// `include_mempool`:
+    /// * `None` / `Some(true)` — mempool included: unconfirmed outputs exist, and
+    ///   ones already spent by an unconfirmed tx do not.
+    /// * `Some(false)` — confirmed state only. Callers use this as an
+    ///   "is it mined yet?" gate before spending on top of an output.
+    ///
+    /// Result:
+    /// * `Ok(Some(_))` — still unspent; `confirmations` is `0` if unconfirmed.
+    /// * `Ok(None)` — not spendable, but *why* is ambiguous: spent, never
+    ///   broadcast, or filtered out by `include_mempool`. Callers that need to
+    ///   tell these apart follow up with
+    ///   [`get_raw_transaction_info`](Self::get_raw_transaction_info).
+    /// * `Err(_)` — the query itself failed; says nothing about the output.
+    ///
+    /// One backend divergence: for an output confirmed but spent only in the
+    /// mempool, `Some(false)` reports it live on Core and gone on Electrum.
     fn get_tx_out(
         &self,
         txid: &Txid,
         vout: u32,
         include_mempool: Option<bool>,
     ) -> Result<Option<GetTxOutResult>, WalletError>;
-    /// List wallet UTXOs with at least `minconf` (and at most `maxconf`) confirmations.
+    /// UTXOs the backend considers ours: Core's watch-only wallet, or the scripts
+    /// registered via [`watch_script`](Self::watch_script) on Electrum.
+    ///
+    /// Both bounds are inclusive, and a mempool UTXO counts as `0` confirmations:
+    /// * `minconf` — lower bound; `Some(0)` includes the mempool, `Some(1)` does
+    ///   not. `None` means Core's default of `1` but Electrum's `0`, so pass it
+    ///   explicitly.
+    /// * `maxconf` — upper bound, honoured only by Core (`None` → `9999999`).
+    ///   Electrum ignores it and returns everything at or above `minconf`.
+    ///
+    /// Result:
+    /// * `Ok(entries)` — one per matching UTXO. Not every field is meaningful on
+    ///   both backends:
+    ///   * `txid`, `vout`, `amount`, `script_pub_key`, `confirmations` — always
+    ///     populated; safe to rely on.
+    ///   * `descriptor`, `address`, `label` — Core only. Electrum has no
+    ///     server-side wallet to name a UTXO, so these are always `None` there;
+    ///     to recover which key derived it, look the entry's `script_pub_key` up
+    ///     with [`hd_origin_for_script`](Self::hd_origin_for_script).
+    ///   * `spendable`, `solvable`, `safe` — Core's real assessment; Electrum
+    ///     always reports `true`, so they carry no information there.
+    /// * `Ok(empty)` — nothing matched (on Electrum, also the answer before any
+    ///   script has been registered).
+    /// * `Err(_)` — the query failed.
+    ///
+    /// Coin locking is wallet-side (`Wallet::locked_utxos`), so locked UTXOs are
+    /// still listed here; callers doing coin selection must filter them out.
     fn list_unspent(
         &self,
         minconf: Option<usize>,
@@ -303,16 +352,16 @@ impl Blockchain for AnyBlockchain {
             AnyBlockchain::Electrum(b) => b.get_block_hash(height),
         }
     }
-    fn get_block_header(&self, hash: &BlockHash) -> Result<Header, WalletError> {
+    fn header_at_height(&self, height: u64) -> Result<Header, WalletError> {
         match self {
-            AnyBlockchain::CoreRPC(b) => b.get_block_header(hash),
-            AnyBlockchain::Electrum(b) => b.get_block_header(hash),
+            AnyBlockchain::CoreRPC(b) => b.header_at_height(height),
+            AnyBlockchain::Electrum(b) => b.header_at_height(height),
         }
     }
-    fn get_block_header_info(&self, hash: &BlockHash) -> Result<GetBlockHeaderResult, WalletError> {
+    fn tx_block_height(&self, txid: &Txid) -> Result<Option<u64>, WalletError> {
         match self {
-            AnyBlockchain::CoreRPC(b) => b.get_block_header_info(hash),
-            AnyBlockchain::Electrum(b) => b.get_block_header_info(hash),
+            AnyBlockchain::CoreRPC(b) => b.tx_block_height(txid),
+            AnyBlockchain::Electrum(b) => b.tx_block_height(txid),
         }
     }
     fn get_raw_transaction(
@@ -472,6 +521,7 @@ pub fn network_from_electrum_genesis(genesis: &[u8]) -> Option<bitcoin::Network>
     for net in [
         bitcoin::Network::Bitcoin,
         bitcoin::Network::Testnet,
+        bitcoin::Network::Testnet4,
         bitcoin::Network::Signet,
         bitcoin::Network::Regtest,
     ] {
@@ -494,8 +544,8 @@ pub fn chain_name_for(net: bitcoin::Network) -> &'static str {
     match net {
         bitcoin::Network::Bitcoin => "main",
         bitcoin::Network::Testnet => "test",
+        bitcoin::Network::Testnet4 => "testnet4",
         bitcoin::Network::Signet => "signet",
         bitcoin::Network::Regtest => "regtest",
-        _ => "unknown",
     }
 }

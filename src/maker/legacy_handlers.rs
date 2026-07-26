@@ -259,6 +259,10 @@ fn process_proof_of_funding<M: Maker>(
     );
 
     let swap_fee = maker.calculate_swap_fee(incoming_amount, pof.refund_locktime as u32);
+    // The fee stored at swap-details time was computed from the proposed
+    // amount; overwrite with the fee on the actual incoming amount so
+    // success reports match what was really earned.
+    state.service_fee_sats = swap_fee.to_sat();
     let mining_fee =
         Amount::from_sat(estimate_funding_tx_fee_sats() * pof.next_coinswap_info.len() as u64);
     let outgoing_amount = incoming_amount
@@ -556,7 +560,22 @@ fn process_resp_contract_sigs_for_recvr_and_sender<M: Maker>(
                     resp.id,
                 );
             }
-            Err(e) => return Err(e),
+            Err(e) => {
+                // This captures the Electrum counterpart of the rebroadcast error.
+                // Electrum doesn't throw a reliable error. So we manually check if the transaction
+                // is already broadcasted. An error here means the backend connection is down.
+                let txid = funding_tx.compute_txid();
+                if maker.is_transaction_known(&txid) {
+                    log::info!(
+                        "[{}] Legacy funding tx {} for swap {} was already broadcast",
+                        maker.network_port(),
+                        txid,
+                        resp.id,
+                    );
+                } else {
+                    return Err(e);
+                }
+            }
         }
     }
 

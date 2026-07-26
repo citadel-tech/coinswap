@@ -329,7 +329,7 @@ fn main() -> Result<(), TakerError> {
     if let Commands::Restore { ref backup_file } = args.command {
         coinswap::taker::Taker::restore_wallet(
             args.data_directory,
-            args.wallet_name,
+            Some(wallet_name), // Use the actual translated wallet name here.
             backend,
             backup_file,
         );

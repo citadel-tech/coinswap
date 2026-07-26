@@ -139,18 +139,24 @@ impl<R: Role> Watcher<R> {
         }
         // Electrum: re-subscribe to all the watched scripts.
         if self.blockchain.is_electrum() {
-            for watch in self.registry.list_watches() {
+            for mut watch in self.registry.list_watches() {
                 if watch.spent_tx.is_some() {
                     continue;
                 }
-                let spk = match &watch.script_pubkey {
-                    Some(spk) => spk.clone(),
+                let spk = match watch.script_pubkey.clone() {
+                    Some(spk) => spk,
                     None => match self
                         .blockchain
                         .get_raw_transaction(&watch.outpoint.txid, None)
                     {
                         Ok(tx) => match tx.output.get(watch.outpoint.vout as usize) {
-                            Some(txout) => txout.script_pubkey.clone(),
+                            Some(txout) => {
+                                let spk = txout.script_pubkey.clone();
+                                // rewrite old watch request for restarts. Critical for the electrum path.
+                                watch.script_pubkey = Some(spk.clone());
+                                self.registry.upsert_watch(&watch);
+                                spk
+                            }
                             None => {
                                 log::warn!(
                                     "vout {} out of bounds for {}",

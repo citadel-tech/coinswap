@@ -678,8 +678,13 @@ impl Taker {
             let script_pubkey = swapcoin.contract_tx.output[vout as usize]
                 .script_pubkey
                 .clone();
-            self.watch_service
-                .register_watch_request(outpoint, script_pubkey);
+            // If a watch request fails, log the error, don't panic.
+            if let Err(e) = self
+                .watch_service
+                .register_watch_request(outpoint, script_pubkey)
+            {
+                log::error!("watch registration for {outpoint} failed (watcher gone): {e}");
+            }
         }
 
         wallet.save_to_disk()?;

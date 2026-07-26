@@ -6,20 +6,22 @@ use std::{
 use bip39::rand;
 use bitcoin::{Address, Amount};
 use bitcoind::{
-    bitcoincore_rpc::{self, Auth, RpcApi},
+    bitcoincore_rpc::{self, Auth},
     BitcoinD,
 };
 use electrsd::ElectrsD;
 use log::info;
 
 use coinswap::wallet::{
-    AddressType, AnyBlockchain, BackendConfig, Blockchain, CoreRPC, CoreRpcConfig, Electrum,
-    ElectrumConfig, Wallet, WalletBackup,
+    AddressType, AnyBlockchain, BackendConfig, CoreRPC, CoreRpcConfig, Electrum, ElectrumConfig,
+    Wallet, WalletBackup,
 };
 
 use coinswap::security::{load_sensitive_struct, KeyMaterial, SerdeJson};
 
-use super::test_framework::{generate_blocks, init_bitcoind, init_electrsd, send_to_address};
+use super::test_framework::{
+    generate_blocks, init_bitcoind, init_electrsd, send_to_address, wait_for_electrs_tip,
+};
 
 fn setup(test_name: String) -> (PathBuf, CoreRpcConfig, PathBuf, BitcoinD, PathBuf, PathBuf) {
     let root_dir = std::env::temp_dir().join(format!("coinswap-{}", rand::random::<u64>()));
@@ -219,34 +221,6 @@ fn setup_electrum(test_name: &str) -> ElectrumSetup {
     }
 }
 
-/// Wait until electrs has indexed up to bitcoind's tip.
-///
-/// electrs syncs asynchronously, so a wallet sync right after mining can read
-/// a stale tip and cache UTXOs with outdated confirmation counts — which then
-/// differs from a wallet synced after electrs caught up, failing the equality
-/// assertion. `trigger()` (SIGUSR1) nudges electrs to sync on each poll.
-fn wait_for_electrs_tip(bitcoind: &BitcoinD, electrsd: &ElectrsD, cfg: &ElectrumConfig) {
-    let expected = bitcoind.client.get_block_count().unwrap();
-    let probe = Electrum::new(cfg).unwrap();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
-    loop {
-        let _ = electrsd.trigger();
-        if probe
-            .get_block_count()
-            .map(|tip| tip >= expected)
-            .unwrap_or(false)
-        {
-            return;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "electrs did not reach tip {} within 60s",
-            expected
-        );
-        std::thread::sleep(std::time::Duration::from_millis(200));
-    }
-}
-
 #[test]
 fn plainwallet_plainbackup_plainrestore_electrum() {
     info!("Running Test: Electrum-backed Wallet backup-restore");
@@ -272,7 +246,8 @@ fn plainwallet_plainbackup_plainrestore_electrum() {
 
     wallet.sync_and_save().unwrap();
 
-    let (backup, _) = load_sensitive_struct::<WalletBackup, SerdeJson>(&s.backup_file, None);
+    let (backup, _) =
+        load_sensitive_struct::<WalletBackup, SerdeJson>(&s.backup_file, None).unwrap();
 
     let restored_wallet = Wallet::restore(
         &backup,
@@ -314,7 +289,8 @@ fn encwallet_encbackup_encrestore_electrum() {
 
     wallet.sync_and_save().unwrap();
 
-    let (backup, _) = load_sensitive_struct::<WalletBackup, SerdeJson>(&s.backup_file, None);
+    let (backup, _) =
+        load_sensitive_struct::<WalletBackup, SerdeJson>(&s.backup_file, None).unwrap();
 
     let restored_wallet = Wallet::restore(
         &backup,

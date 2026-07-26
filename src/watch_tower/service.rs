@@ -6,7 +6,7 @@ use std::{
     path::Path,
     sync::{
         atomic::AtomicBool,
-        mpsc::{self, Sender as StdSender},
+        mpsc::{self, SendError, Sender as StdSender},
         Arc,
     },
     thread,
@@ -42,26 +42,37 @@ impl WatchService {
     }
 
     /// Registers an outpoint to be monitored for future spends.
-    pub fn register_watch_request(&self, outpoint: OutPoint, script_pubkey: ScriptBuf) {
-        let _ = self.tx.send(WatcherCommand::RegisterWatchRequest {
+    /// Errs if the watcher thread is gone.
+    pub fn register_watch_request(
+        &self,
+        outpoint: OutPoint,
+        script_pubkey: ScriptBuf,
+    ) -> Result<(), SendError<WatcherCommand>> {
+        self.tx.send(WatcherCommand::RegisterWatchRequest {
             outpoint,
             script_pubkey,
-        });
+        })
     }
 
     /// Queries whether a previously registered outpoint has been spent.
-    pub fn watch_request(&self, outpoint: OutPoint) {
-        let _ = self.tx.send(WatcherCommand::WatchRequest { outpoint });
+    /// Errs if the watcher thread is gone.
+    pub fn watch_request(&self, outpoint: OutPoint) -> Result<(), SendError<WatcherCommand>> {
+        self.tx.send(WatcherCommand::WatchRequest { outpoint })
     }
 
     /// Stops monitoring an outpoint by removing its watch entry from the
     /// registry. The `scriptPubKey` lets the watcher drop the Electrum
     /// subscription too without re-resolving it from the network.
-    pub fn unwatch(&self, outpoint: OutPoint, script_pubkey: ScriptBuf) {
-        let _ = self.tx.send(WatcherCommand::Unwatch {
+    /// Errs if the watcher thread is gone.
+    pub fn unwatch(
+        &self,
+        outpoint: OutPoint,
+        script_pubkey: ScriptBuf,
+    ) -> Result<(), SendError<WatcherCommand>> {
+        self.tx.send(WatcherCommand::Unwatch {
             outpoint,
             script_pubkey,
-        });
+        })
     }
 
     /// Attempts a non-blocking receive; returns `None` if no event is pending.

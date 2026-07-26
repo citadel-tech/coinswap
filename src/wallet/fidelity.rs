@@ -435,19 +435,13 @@ impl Wallet {
             .expect("This can't error")
             .as_secs();
 
-        let hash = self
-            .blockchain
-            .get_block_hash(bond.conf_height.ok_or(FidelityError::BondDoesNotExist)? as u64)?;
-
-        let confirmation_time = self.blockchain.get_block_header_info(&hash)?.time as u64;
+        let conf_height = bond.conf_height.ok_or(FidelityError::BondDoesNotExist)? as u64;
+        let confirmation_time = self.blockchain.header_at_height(conf_height)?.time as u64;
 
         let locktime = match bond.lock_time {
             LockTime::Blocks(blocks) => {
-                let tip_hash = self.blockchain.get_blockchain_info()?.best_block_hash;
-                let (tip_height, tip_time) = {
-                    let info = self.blockchain.get_block_header_info(&tip_hash)?;
-                    (info.height, info.time as u64)
-                };
+                let tip_height = self.blockchain.get_block_count()?;
+                let tip_time = self.blockchain.header_at_height(tip_height)?.time as u64;
                 // Estimated locktime from block height = [current-time + (maturity-height - block-count) * 10 * 60] sec
                 let height_diff =
                     if let Some(x) = blocks.to_consensus_u32().checked_sub(tip_height as u32) {

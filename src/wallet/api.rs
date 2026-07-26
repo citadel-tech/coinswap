@@ -1692,6 +1692,10 @@ impl Wallet {
         count: u32,
         address_type: AddressType,
     ) -> Result<Vec<Address>, WalletError> {
+        // Return early. If count = 0 the calculation below will overflow.
+        if count == 0 {
+            return Ok(Vec::new());
+        }
         let start = self.store.internal_index;
         let descriptors = self.get_wallet_descriptors(address_type)?;
         let change_branch_descriptor = descriptors
@@ -2659,22 +2663,18 @@ impl Wallet {
                             );
                             break;
                         }
+                        // The tx is already in the mempool and block discovery is
+                        // random, so no timeout is meaningful — wait as long as it
+                        // takes to confirm before sweeping on top of it.
                         wait_secs += 10;
-                        if wait_secs > 600 {
-                            log::warn!(
-                                "Timed out waiting for contract tx {}:{} to confirm for {}",
+                        if wait_secs.is_multiple_of(60) {
+                            log::info!(
+                                "Still waiting for {}:{} to confirm ({}s elapsed)",
                                 utxo_txid,
                                 utxo_vout,
-                                swap_id
+                                wait_secs
                             );
-                            break;
                         }
-                        log::info!(
-                            "Still waiting for {}:{} to confirm ({}s elapsed)",
-                            utxo_txid,
-                            utxo_vout,
-                            wait_secs
-                        );
                         std::thread::sleep(std::time::Duration::from_secs(10));
                     }
                 } else if swapcoin.other_privkey.is_none() && swapcoin.others_contract_sig.is_some()
@@ -2862,15 +2862,14 @@ impl Wallet {
                             );
                             all_confirmed = false;
                         } else {
-                            // QA: Derive the mined height from the block itself;
+                            // QA: Ask the backend for the mined height directly;
                             // tip-height arithmetic can race with a newly mined block.
-                            let block_hash = tx_info.blockhash.ok_or_else(|| {
-                                WalletError::General(format!(
-                                    "Confirmed transaction {txid} has no block hash"
-                                ))
-                            })?;
                             let confirm_height =
-                                self.blockchain.get_block_header_info(&block_hash)?.height as u32;
+                                self.blockchain.tx_block_height(txid)?.ok_or_else(|| {
+                                    WalletError::General(format!(
+                                        "Confirmed transaction {txid} has no block height"
+                                    ))
+                                })? as u32;
                             max_confirm_height = max_confirm_height.max(confirm_height);
                         }
                     }
@@ -2984,8 +2983,11 @@ impl Wallet {
                     self.blockchain.watch_script(&multisig_spk, None);
                 }
                 if let Some(redeem) = contract_redeemscript {
-                    if let Ok(contract_spk) = redeemscript_to_scriptpubkey(redeem) {
-                        self.blockchain.watch_script(&contract_spk, None);
+                    match redeemscript_to_scriptpubkey(redeem) {
+                        Ok(contract_spk) => self.blockchain.watch_script(&contract_spk, None),
+                        Err(e) => {
+                            log::error!("Malformed Redeemscript. Cannot watch for contract! {e:?}")
+                        }
                     }
                 }
             };
@@ -3023,7 +3025,7 @@ impl Wallet {
     ///
     /// Returns the full unspent set; coin locking is applied wallet-side at
     /// selection time (see [`Wallet::coin_select`]), not by filtering here.
-    fn get_all_utxo_from_rpc(&self) -> Result<Vec<ListUnspentResultEntry>, WalletError> {
+    fn get_all_utxo_from_blockchain(&self) -> Result<Vec<ListUnspentResultEntry>, WalletError> {
         let all_utxos = self.blockchain.list_unspent(Some(0), Some(9999999))?;
         Ok(all_utxos)
     }
@@ -3040,7 +3042,9 @@ impl Wallet {
         let mut descriptors_to_import = self.descriptors_to_import()?;
 
         if descriptors_to_import.is_empty() {
-            return Ok(());
+            // Nothing new to import, but the chain may have moved: refresh state.
+            self.update_utxo_cache(self.get_all_utxo_from_blockchain()?);
+            return self.post_sync_updates();
         }
 
         // Sometimes in tests multiple wallet scans can occur at the same time, resulting in error.
@@ -3065,8 +3069,7 @@ impl Wallet {
 
         log::info!("Re-scanning Blockchain from:{last_synced_height} to:{node_synced}");
 
-        let block_hash = self.blockchain.get_block_hash(last_synced_height)?;
-        let Header { time, .. } = self.blockchain.get_block_header(&block_hash)?;
+        let Header { time, .. } = self.blockchain.header_at_height(last_synced_height)?;
 
         // Rolling gap limit: a scan can reveal used addresses near the edge of
         // the imported window, widening it (e.g. after a seed restore) — then
@@ -3099,7 +3102,7 @@ impl Wallet {
                     }
                 }
             }
-            self.update_utxo_cache(self.get_all_utxo_from_rpc()?);
+            self.update_utxo_cache(self.get_all_utxo_from_blockchain()?);
             let window = (
                 self.max_watch_index(KeychainKind::External)?,
                 self.max_watch_index(KeychainKind::Internal)?,
@@ -3125,7 +3128,7 @@ impl Wallet {
         );
         loop {
             self.watch_wallet_scripts()?;
-            self.update_utxo_cache(self.get_all_utxo_from_rpc()?);
+            self.update_utxo_cache(self.get_all_utxo_from_blockchain()?);
             let window = (
                 self.max_watch_index(KeychainKind::External)?,
                 self.max_watch_index(KeychainKind::Internal)?,

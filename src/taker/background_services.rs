@@ -129,9 +129,10 @@ impl RecoveryLoop {
                                 true
                             } else {
                                 outgoing.iter().chain(incoming.iter()).all(|op| {
-                                    !matches!(
+                                    // Explicitly match that the contract transactions are spent.
+                                    matches!(
                                         w.blockchain.get_tx_out(&op.txid, op.vout, None),
-                                        Ok(Some(_))
+                                        Ok(None)
                                     )
                                 })
                             }
@@ -408,7 +409,11 @@ impl BreachDetector {
                     };
 
                     for (outpoint, expected_contract_txid) in &current_sentinels {
-                        watch_service.watch_request(*outpoint);
+                        // If a watch request fails, log the error, don't panic.
+                        if let Err(e) = watch_service.watch_request(*outpoint) {
+                            log::error!("watch request for {outpoint} failed (watcher gone): {e}");
+                            continue;
+                        }
                         if let Some(WatcherEvent::UtxoSpent {
                             spending_tx: Some(ref tx),
                             ..
@@ -458,7 +463,10 @@ impl BreachDetector {
         sentinels: &[(OutPoint, Txid, bitcoin::ScriptBuf)],
     ) {
         for (outpoint, _, spk) in sentinels {
-            watch_service.register_watch_request(*outpoint, spk.clone());
+            // If a watch request fails, propagate the error, don't panic.
+            if let Err(e) = watch_service.register_watch_request(*outpoint, spk.clone()) {
+                log::error!("sentinel registration for {outpoint} failed (watcher gone): {e}");
+            }
         }
         if let Ok(mut guard) = self.sentinels.lock() {
             #[cfg(debug_assertions)]

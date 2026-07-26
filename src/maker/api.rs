@@ -1006,6 +1006,13 @@ impl MakerTrait for MakerServer {
         wallet.send_tx(tx).map_err(MakerError::Wallet)
     }
 
+    fn is_transaction_known(&self, txid: &bitcoin::Txid) -> bool {
+        self.wallet
+            .read()
+            .map(|wallet| wallet.blockchain.get_raw_transaction(txid, None).is_ok())
+            .unwrap_or(false)
+    }
+
     fn save_incoming_swapcoin(
         &self,
         swapcoin: &crate::wallet::swapcoin::IncomingSwapCoin,
@@ -1031,12 +1038,18 @@ impl MakerTrait for MakerServer {
     }
 
     fn register_watch_outpoint(&self, outpoint: OutPoint, script_pubkey: bitcoin::ScriptBuf) {
-        self.watch_service
-            .register_watch_request(outpoint, script_pubkey);
+        if let Err(e) = self
+            .watch_service
+            .register_watch_request(outpoint, script_pubkey)
+        {
+            log::error!("watch registration for {outpoint} failed (watcher gone): {e}");
+        }
     }
 
     fn unwatch_outpoint(&self, outpoint: OutPoint, script_pubkey: bitcoin::ScriptBuf) {
-        self.watch_service.unwatch(outpoint, script_pubkey);
+        if let Err(e) = self.watch_service.unwatch(outpoint, script_pubkey) {
+            log::error!("unwatch for {outpoint} failed (watcher gone): {e}");
+        }
     }
 
     fn sync_and_save_wallet(&self) -> Result<(), MakerError> {

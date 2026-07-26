@@ -157,6 +157,10 @@ fn process_taproot_contract<M: Maker>(
 
     let total_incoming = data.amounts.iter().cloned().sum();
     let swap_fee = maker.calculate_swap_fee(total_incoming, state.refund_locktime_offset as u32);
+    // The fee stored at swap-details time was computed from the proposed
+    // amount; overwrite with the fee on the actual incoming amount so
+    // success reports match what was really earned.
+    state.service_fee_sats = swap_fee.to_sat();
     let mining_fee = Amount::from_sat(estimate_funding_tx_fee_sats() * n as u64);
     let fee = swap_fee + mining_fee;
     let outgoing_total = total_incoming
@@ -411,7 +415,22 @@ fn process_taproot_contract<M: Maker>(
                     data.id
                 );
             }
-            Err(e) => return Err(e),
+            Err(e) => {
+                // This captures the Electrum counterpart of the rebroadcast error.
+                // Electrum doesn't throw a reliable error. So we manually check if the transaction
+                // is already broadcasted. An error here means the backend connection is down.
+                let txid = outgoing.contract_tx.compute_txid();
+                if maker.is_transaction_known(&txid) {
+                    log::info!(
+                        "[{}] Taproot contract tx {} for swap {} was already broadcast",
+                        maker.network_port(),
+                        txid,
+                        data.id
+                    );
+                } else {
+                    return Err(e);
+                }
+            }
         }
         maker.register_watch_outpoint(
             *contract_outpoint,

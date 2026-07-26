@@ -41,8 +41,8 @@ use coinswap::{
     taker::{Taker, TakerBehavior, TakerInitConfig},
     utill::setup_logger,
     wallet::{
-        verify_deniability, AddressType, AnyBlockchain, BackendConfig, CoreRPC, CoreRpcConfig,
-        ElectrumConfig,
+        verify_deniability, AddressType, AnyBlockchain, BackendConfig, Blockchain, CoreRPC,
+        CoreRpcConfig, Electrum, ElectrumConfig,
     },
 };
 use electrsd::ElectrsD;
@@ -338,6 +338,8 @@ pub fn fund_makers(
     let mut spendable_balances = Vec::new();
 
     for maker in makers {
+        let prev_regular = maker.wallet.read().unwrap().get_balances().unwrap().regular;
+
         // Send funds with the wallet locked just long enough to derive each address.
         for _ in 0..utxo_count {
             let mut wallet = maker.wallet.write().unwrap();
@@ -347,7 +349,9 @@ pub fn fund_makers(
         }
 
         generate_blocks(bitcoind, 1);
-        let expected_regular = utxo_value * utxo_count.into();
+        // Wait for the funding delta on top of whatever the wallet already
+        // held, not an absolute target.
+        let expected_regular = prev_regular + utxo_value * utxo_count.into();
         let balances = wait_for_balance(&maker.wallet, expected_regular, 30);
 
         assert!(
@@ -457,6 +461,35 @@ impl TestBackend for ElectrumBackend {
         BackendConfig::Electrum(ElectrumConfig {
             url: ensure_electrum_url(),
         })
+    }
+}
+
+/// Wait until electrs has indexed up to bitcoind's tip.
+///
+/// electrs syncs asynchronously, so a wallet sync right after mining can read
+/// a stale tip and cache UTXOs with outdated confirmation counts — which then
+/// differs from a wallet synced after electrs caught up, failing equality
+/// assertions. `trigger()` (SIGUSR1) nudges electrs to sync on each poll.
+#[allow(dead_code)]
+pub fn wait_for_electrs_tip(bitcoind: &BitcoinD, electrsd: &ElectrsD, cfg: &ElectrumConfig) {
+    let expected = bitcoind.client.get_block_count().unwrap();
+    let probe = Electrum::new(cfg).unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    loop {
+        let _ = electrsd.trigger();
+        if probe
+            .get_block_count()
+            .map(|tip| tip >= expected)
+            .unwrap_or(false)
+        {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "electrs did not reach tip {} within 60s",
+            expected
+        );
+        std::thread::sleep(std::time::Duration::from_millis(200));
     }
 }
 
@@ -644,6 +677,18 @@ impl TestFramework {
         });
         log::info!("✅ Test Framework initialization complete");
         (framework, takers, makers, generate_blocks_handle)
+    }
+
+    /// Wait for electrs (if this framework runs one) to reach bitcoind's tip.
+    /// No-op on the Core backend.
+    #[allow(dead_code)]
+    pub fn wait_for_electrs_tip(&self) {
+        if let Some(electrsd) = self.electrsd.as_ref() {
+            let cfg = ElectrumConfig {
+                url: format!("tcp://{}", electrsd.electrum_url),
+            };
+            wait_for_electrs_tip(&self.bitcoind, electrsd, &cfg);
+        }
     }
 
     /// Terminate the per-test nostr relay child process, if still running.

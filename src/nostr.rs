@@ -307,10 +307,8 @@ fn handle_relay_message(
             );
 
             // Check the seen-cache before any RPC work to avoid wasted
-            // `get_raw_tx` calls on duplicate events. The txid is not marked
-            // seen here, that happens only after a successful fetch +
-            // fidelity verification below, so a transient backend failure
-            // make the transaction eligible for retry in the next round.
+            // `get_raw_tx` calls on duplicate events.
+            // only a transient fetch failure leaves it eligible for retry.
             if seen_txid.lock()?.contains(&txid) {
                 log::info!("Skipping already-seen txid {txid} via {relay_url}");
                 registry.save_nostr_cursor(relay_url, event.created_at.as_secs());
@@ -324,6 +322,11 @@ fn handle_relay_message(
                     return Ok(false);
                 }
             };
+
+            // The txid is marked seen once fetched (regardless of validation outcome) so a relay
+            // replaying an invalid txid can't force re-validation every time;
+            seen_txid.lock()?.insert(txid);
+            log::info!("Added txid to Nostr discovery cache: {txid}");
 
             match process_fidelity(&tx) {
                 Some(fidelity) => {
@@ -340,9 +343,6 @@ fn handle_relay_message(
                                 expires_at_height
                             );
                     }
-                    // Verified successfully, now it is safe to mark as seen.
-                    seen_txid.lock()?.insert(txid);
-                    log::info!("Added txid to Nostr discovery cache: {txid}");
                 }
                 None => {
                     log::warn!(

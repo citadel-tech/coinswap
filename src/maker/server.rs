@@ -579,7 +579,10 @@ fn check_for_preimage_via_watchtower(
                 txid: contract_txid,
                 vout: vout as u32,
             };
-            maker.watch_service.watch_request(outpoint);
+            // If something is wrong at watchtower, log the error, don't suppress fully.
+            if let Err(e) = maker.watch_service.watch_request(outpoint) {
+                log::error!("watch request for {outpoint} failed (watcher gone): {e}");
+            }
 
             if let Some(crate::watch_tower::watcher::WatcherEvent::UtxoSpent {
                 spending_tx: Some(spending_tx),

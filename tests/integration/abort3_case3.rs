@@ -115,9 +115,11 @@ fn maker_abort3_case3() {
     taker.log_tracker_state();
 
     // Wait for timelocks to mature. Maker timeout is 60s in tests;
-    // block generation thread mines 5 blocks every 3s, so 150s ~ 250 blocks.
+    // block generation thread mines 5 blocks every 3s (~1.67 blk/s).
+    // Recovery starts at ~60s (idle detection), needs 150 CSV blocks (~90s).
+    // Total: ~150s minimum — use 300s for CI margin (same as abort3_case2).
     info!("Waiting for makers to timeout and blocks to mature timelocks...");
-    thread::sleep(Duration::from_secs(150));
+    thread::sleep(Duration::from_secs(300));
 
     // Shut down makers
     makers

@@ -634,9 +634,11 @@ impl Taker {
                 config.tor_auth_password.clone().unwrap_or_default(),
             )),
         );
-        let _ = thread::Builder::new()
+        // Propagate the error if something goes wrong here.
+        thread::Builder::new()
             .name("Watcher thread".to_string())
-            .spawn(move || watcher.run(initial_sync_clone));
+            .spawn(move || watcher.run(initial_sync_clone))
+            .map_err(|e| TakerError::General(format!("failed to spawn watcher thread: {e}")))?;
 
         Ok((
             WatchService::new(tx_requests, rx_responses),

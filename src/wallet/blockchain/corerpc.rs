@@ -6,9 +6,9 @@ use std::sync::Mutex;
 use bitcoin::{address::NetworkUnchecked, block::Header, Address, BlockHash, Transaction, Txid};
 use bitcoind::bitcoincore_rpc::{
     json::{
-        EstimateMode, EstimateSmartFeeResult, GetAddressInfoResult, GetBlockHeaderResult,
-        GetBlockchainInfoResult, GetRawTransactionResult, GetTxOutResult, ListTransactionResult,
-        ListUnspentResultEntry, ScanningDetails,
+        EstimateMode, EstimateSmartFeeResult, GetAddressInfoResult, GetBlockchainInfoResult,
+        GetRawTransactionResult, GetTxOutResult, ListTransactionResult, ListUnspentResultEntry,
+        ScanningDetails,
     },
     Auth, Client, RpcApi,
 };
@@ -199,12 +199,16 @@ impl Blockchain for CoreRPC {
         Ok(self.rpc.get_block_hash(height)?)
     }
 
-    fn get_block_header(&self, hash: &BlockHash) -> Result<Header, WalletError> {
-        Ok(self.rpc.get_block_header(hash)?)
+    fn header_at_height(&self, height: u64) -> Result<Header, WalletError> {
+        let hash = self.rpc.get_block_hash(height)?;
+        Ok(self.rpc.get_block_header(&hash)?)
     }
 
-    fn get_block_header_info(&self, hash: &BlockHash) -> Result<GetBlockHeaderResult, WalletError> {
-        Ok(self.rpc.get_block_header_info(hash)?)
+    fn tx_block_height(&self, txid: &Txid) -> Result<Option<u64>, WalletError> {
+        match self.rpc.get_raw_transaction_info(txid, None)?.blockhash {
+            Some(hash) => Ok(Some(self.rpc.get_block_header_info(&hash)?.height as u64)),
+            None => Ok(None),
+        }
     }
 
     fn get_raw_transaction(

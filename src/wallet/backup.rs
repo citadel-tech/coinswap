@@ -3,7 +3,7 @@ use std::{env, ffi::OsStr, fs, io::Write, path::PathBuf};
 use crate::{
     security::{encrypt_struct, load_sensitive_struct, KeyMaterial, SecurityError, SerdeJson},
     utill::prompt_password,
-    wallet::{Wallet, WalletError},
+    wallet::{Blockchain, Wallet, WalletError},
 };
 
 use super::{
@@ -115,6 +115,15 @@ impl Wallet {
         }
 
         let blockchain = AnyBlockchain::from_config(&backend_config_test)?;
+
+        // Refuse to restore against a backend on a different chain.
+        let chain = blockchain.get_blockchain_info()?.chain;
+        if chain != wallet_backup.network {
+            return Err(WalletError::General(format!(
+                "backend chain `{chain}` does not match backup network `{}`",
+                wallet_backup.network
+            )));
+        }
 
         // Initialise wallet
         let store = WalletStore::init(
