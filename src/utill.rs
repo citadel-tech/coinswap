@@ -559,10 +559,8 @@ pub(crate) fn check_tor_status(control_port: u16, password: &str) -> Result<(), 
     Ok(())
 }
 
-#[cfg(not(any(feature = "integration-test", test)))]
 struct RawModeGuard;
 
-#[cfg(not(any(feature = "integration-test", test)))]
 impl RawModeGuard {
     fn new() -> io::Result<Self> {
         enable_raw_mode()?;
@@ -570,7 +568,6 @@ impl RawModeGuard {
     }
 }
 
-#[cfg(not(any(feature = "integration-test", test)))]
 impl Drop for RawModeGuard {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
@@ -588,59 +585,50 @@ pub(crate) fn now_unix_secs() -> u64 {
 /// Temporarily disables canonical mode and echo to mask each typed
 /// character with `*` as feedback.
 pub fn prompt_password(message: String) -> io::Result<String> {
-    #[cfg(any(feature = "integration-test", test))]
-    {
-        let _ = message;
-        Ok("integration-test".to_string())
-    }
+    let mut stdout = io::stdout();
+    let stdin = io::stdin();
 
-    #[cfg(not(any(feature = "integration-test", test)))]
-    {
-        let mut stdout = io::stdout();
-        let stdin = io::stdin();
+    print!("{message}");
+    stdout.flush()?; // Ensure the prompt is printed
 
-        print!("{message}");
-        stdout.flush()?; // Ensure the prompt is printed
+    let _guard = RawModeGuard::new()?;
 
-        let _guard = RawModeGuard::new()?;
+    let mut password = String::new();
+    let mut buf = [0u8; 1];
 
-        let mut password = String::new();
-        let mut buf = [0u8; 1];
+    while stdin.lock().read(&mut buf)? == 1 {
+        let c = buf[0] as char;
 
-        while stdin.lock().read(&mut buf)? == 1 {
-            let c = buf[0] as char;
-
-            match c {
-                '\n' | '\r' => {
-                    // - If the byte is newline (`\n`, ASCII 0x0A) or carriage return (`\r`, ASCII 0x0D),
-                    //   it signals the end of input, so we break the loop.
-                    println!();
-                    break;
-                }
-                '\x08' | '\x7f' => {
-                    // - If the byte is Backspace (ASCII 0x08 or 0x7f),
-                    //   we remove the last character from the password (if any),
-                    //   and erase the asterisk from the terminal by moving the cursor back,
-                    //   writing a space to overwrite, then moving the cursor back again.
-                    if !password.is_empty() {
-                        password.pop();
-                        print!("\x08 \x08");
-                        stdout.flush()?;
-                    }
-                }
-                _ => {
-                    // - Otherwise, for any other character, we append it to the password string
-                    //   and print an asterisk '*' as a visual placeholder for the typed character.
-                    password.push(c);
-                    print!("*");
+        match c {
+            '\n' | '\r' => {
+                // - If the byte is newline (`\n`, ASCII 0x0A) or carriage return (`\r`, ASCII 0x0D),
+                //   it signals the end of input, so we break the loop.
+                println!();
+                break;
+            }
+            '\x08' | '\x7f' => {
+                // - If the byte is Backspace (ASCII 0x08 or 0x7f),
+                //   we remove the last character from the password (if any),
+                //   and erase the asterisk from the terminal by moving the cursor back,
+                //   writing a space to overwrite, then moving the cursor back again.
+                if !password.is_empty() {
+                    password.pop();
+                    print!("\x08 \x08");
                     stdout.flush()?;
                 }
             }
+            _ => {
+                // - Otherwise, for any other character, we append it to the password string
+                //   and print an asterisk '*' as a visual placeholder for the typed character.
+                password.push(c);
+                print!("*");
+                stdout.flush()?;
+            }
         }
-
-        println!(); // move to next line after input
-        Ok(password.trim_end().to_string())
     }
+
+    println!(); // move to next line after input
+    Ok(password.trim_end().to_string())
 }
 
 #[cfg(not(feature = "integration-test"))]

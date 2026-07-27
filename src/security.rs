@@ -29,6 +29,10 @@ pub enum SecurityError {
     Decryption,
     /// The decrypted CBOR payload was invalid.
     Cbor(serde_cbor::Error),
+    /// The file is encrypted but no password was supplied. The caller is
+    /// responsible for obtaining a password (e.g. by prompting the user)
+    /// and retrying with `Some(password)`.
+    PasswordRequired,
 }
 
 impl std::fmt::Display for SecurityError {
@@ -38,6 +42,7 @@ impl std::fmt::Display for SecurityError {
             Self::Format(err) => write!(f, "format error: {err}"),
             Self::Decryption => write!(f, "decryption failed; wrong password or corrupted data"),
             Self::Cbor(err) => write!(f, "CBOR error: {err}"),
+            Self::PasswordRequired => write!(f, "file is encrypted but no password was supplied"),
         }
     }
 }
@@ -332,8 +337,9 @@ pub fn decrypt_struct<T: DeserializeOwned>(
 /// Without a password, it tries to deserialize the file contents in two steps:
 ///
 /// 1. **Unencrypted:** Attempts to deserialize the file directly as `T`.
-/// 2. **Encrypted:** If that fails, attempts to deserialize as [`EncryptedData`],
-///    then decrypts it using a user-supplied passphrase (prompted interactively).
+/// 2. **Encrypted:** If that fails, attempts to deserialize as [`EncryptedData`].
+///    If no password was supplied, returns [`SecurityError::PasswordRequired`]
+///    so the caller can obtain one (e.g. by prompting the user) and retry.
 ///
 /// The deserialization format (CBOR or JSON) is defined by the [`SerdeFormat`] trait
 /// implementation passed via the type parameter `F`.
@@ -372,7 +378,7 @@ pub fn load_sensitive_struct<T: DeserializeOwned, F: SerdeFormat>(
             Ok(encrypted_struct) => {
                 let encryption_password = match password {
                     Some(p) => p,
-                    None => utill::prompt_password("Enter encryption passphrase: ".to_string())?,
+                    None => return Err(SecurityError::PasswordRequired),
                 };
                 let enc_material = KeyMaterial::existing(
                     encryption_password,

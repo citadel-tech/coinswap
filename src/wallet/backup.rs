@@ -1,7 +1,8 @@
 use std::{convert::TryFrom, env, ffi::OsStr, fs, io::Write, path::PathBuf};
 
 use crate::{
-    security::{encrypt_struct, load_sensitive_struct, KeyMaterial, SerdeJson},
+    security::{encrypt_struct, load_sensitive_struct, KeyMaterial, SecurityError, SerdeJson},
+    utill::prompt_password,
     wallet::{Wallet, WalletError},
 };
 
@@ -157,6 +158,26 @@ impl Wallet {
         let (backup, _) =
             match load_sensitive_struct::<WalletBackup, SerdeJson>(backup_file_path, None) {
                 Ok(backup) => backup,
+                Err(SecurityError::PasswordRequired) => {
+                    let password =
+                        match prompt_password("Enter encryption passphrase: ".to_string()) {
+                            Ok(password) => password,
+                            Err(err) => {
+                                log::error!("Failed to read passphrase: {err}");
+                                return;
+                            }
+                        };
+                    match load_sensitive_struct::<WalletBackup, SerdeJson>(
+                        backup_file_path,
+                        Some(password),
+                    ) {
+                        Ok(backup) => backup,
+                        Err(err) => {
+                            log::error!("Wallet backup load failed: {err}");
+                            return;
+                        }
+                    }
+                }
                 Err(err) => {
                     log::error!("Wallet backup load failed: {err}");
                     return;
