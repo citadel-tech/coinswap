@@ -213,8 +213,18 @@ pub struct SwapParams {
     pub send_amount: Amount,
     /// Number of makers (hops) to use.
     pub maker_count: usize,
-    /// Number of transaction splits (Taproot only, defaults to 1 for Legacy).
-    pub tx_count: u32,
+    /// Per-hop transaction split counts (Taproot only; Legacy uses a uniform count).
+    ///
+    /// One entry per funding hop, so the length is `maker_count + 1`. Index 0 is the
+    /// taker's own funding into the first maker; index `i` (for `i` in `1..=maker_count`)
+    /// is maker `i-1`'s outgoing count, which is also maker `i`'s incoming count. This is
+    /// what lets a route look like `[1, 3, 1]`: fund once, fan out to three mid-route,
+    /// collapse back to one.
+    ///
+    /// An empty vector means "not set" and resolves to a uniform count of 1 everywhere.
+    /// Use [`SwapParams::resolved_tx_counts`] to read the effective, length-checked
+    /// counts rather than indexing this directly.
+    pub tx_counts: Vec<u32>,
     /// Required confirmations for funding transactions.
     pub required_confirms: u32,
     /// User-selected UTXOs (optional).
@@ -231,17 +241,43 @@ impl SwapParams {
             protocol,
             send_amount,
             maker_count,
-            tx_count: 1,
+            tx_counts: Vec::new(),
             required_confirms: 1,
             manually_selected_outpoints: None,
             preferred_makers: None,
         }
     }
 
-    /// Set the number of transaction splits.
+    /// Set a uniform transaction split count across every hop.
+    ///
+    /// Expands to `maker_count + 1` entries all equal to `tx_count`, so it must be
+    /// called after `maker_count` is set (as `new` does). This is the uniform-fill
+    /// helper that preserves the pre-per-hop behavior; use [`with_tx_counts`] for
+    /// per-hop counts.
+    ///
+    /// [`with_tx_counts`]: SwapParams::with_tx_counts
     pub fn with_tx_count(mut self, tx_count: u32) -> Self {
-        self.tx_count = tx_count;
+        self.tx_counts = vec![tx_count; self.maker_count + 1];
         self
+    }
+
+    /// Set explicit per-hop split counts. The vector must have exactly
+    /// `maker_count + 1` entries (validated when the swap starts, not here).
+    pub fn with_tx_counts(mut self, tx_counts: Vec<u32>) -> Self {
+        self.tx_counts = tx_counts;
+        self
+    }
+
+    /// Resolve the effective per-hop counts: the configured `tx_counts` if it has the
+    /// expected length (`maker_count + 1`), otherwise a uniform count of 1 for every
+    /// hop. Callers should read counts through this rather than indexing `tx_counts`
+    /// directly, so an unset or malformed vector degrades to safe uniform behavior.
+    pub fn resolved_tx_counts(&self) -> Vec<u32> {
+        if self.tx_counts.len() == self.maker_count + 1 {
+            self.tx_counts.clone()
+        } else {
+            vec![1; self.maker_count + 1]
+        }
     }
 
     /// Set the required confirmations.
@@ -294,7 +330,11 @@ pub struct SwapSummary {
     pub send_amount: Amount,
     /// Per-maker fee breakdown (one entry per hop, in route order).
     pub makers: Vec<MakerFeeInfo>,
-    /// Total estimated fees across all hops.
+    /// Total estimated mining fee the taker pays across every funding hop, including
+    /// its own funding transaction. Scales with the per-hop split counts, so a route
+    /// that fans out costs more mining fee than a uniform one.
+    pub total_mining_fee: Amount,
+    /// Total estimated fees across all hops (maker service fees + total mining fee).
     pub total_estimated_fee: Amount,
     /// Estimated amount the taker will receive after all fees.
     pub estimated_receive_amount: Amount,
@@ -393,10 +433,12 @@ impl Taker {
         let swap = self.swap_state().ok()?;
         let send_amount = swap.params.send_amount;
         let maker_count = swap.makers.len();
+        // Per-hop counts: maker `i` builds tx_counts[i + 1] outgoing contracts and so
+        // pays a mining fee proportional to that count, not to a single global count.
+        let tx_counts = swap.params.resolved_tx_counts();
 
         // TODO : Have the makers derive the fee & a smart messaging layer to send the estimated target to the taker sequentially.
-        let per_hop_mining_fee =
-            (estimate_funding_tx_fee_sats() * swap.params.tx_count as u64) as f64;
+        let mining_fee_per_split = estimate_funding_tx_fee_sats() as f64;
 
         // Iteratively compute the amount reaching each hop after deducting fees.
         let mut amount_sats = send_amount.to_sat() as f64;
@@ -408,6 +450,8 @@ impl Taker {
                 + (amount_sats * offer.amount_relative_fee_pct) / 100.0
                 + (amount_sats * locktime as f64 * offer.time_relative_fee_pct) / 100.0;
             let fee_with_margin = fee * FEE_VERIFICATION_MARGIN;
+            // Mining fee this hop pays scales with its own outgoing split count.
+            let per_hop_mining_fee = mining_fee_per_split * tx_counts[i + 1] as f64;
             amount_sats = (amount_sats - fee_with_margin - per_hop_mining_fee).max(0.0);
         }
 
@@ -749,6 +793,30 @@ impl Taker {
             params.protocol
         );
 
+        // Validate per-hop split counts loudly, before touching the network. An empty
+        // `tx_counts` is the "uniform 1" default and always valid; a non-empty vector
+        // must have exactly `maker_count + 1` entries, each in `1..=MAX_SPLITS`.
+        if !params.tx_counts.is_empty() {
+            if params.tx_counts.len() != params.maker_count + 1 {
+                return Err(TakerError::General(format!(
+                    "tx_counts must have exactly {} entries (maker_count + 1), got {}",
+                    params.maker_count + 1,
+                    params.tx_counts.len()
+                )));
+            }
+            if let Some(&bad) = params
+                .tx_counts
+                .iter()
+                .find(|&&c| c == 0 || c as usize > crate::wallet::MAX_SPLITS)
+            {
+                return Err(TakerError::General(format!(
+                    "tx_counts entry {} is out of range (must be 1..={})",
+                    bad,
+                    crate::wallet::MAX_SPLITS
+                )));
+            }
+        }
+
         let available = self.read_wallet()?.get_balances()?.spendable;
         let required = params.send_amount + Amount::from_sat(10000);
         if available < required {
@@ -845,7 +913,14 @@ impl Taker {
             amount_sats = (amount_sats - fee).max(0.0);
         }
 
-        let total_fee_sats: u64 = maker_fees.iter().map(|m| m.estimated_fee_sats).sum();
+        let service_fee_sats: u64 = maker_fees.iter().map(|m| m.estimated_fee_sats).sum();
+        // Mining cost across every funding hop: the taker's own funding (tx_counts[0])
+        // plus each maker's outgoing splits (tx_counts[1..]). Summing the resolved counts
+        // gives the full split count the taker ultimately pays mining fee for.
+        let tx_counts = swap.params.resolved_tx_counts();
+        let total_splits: u64 = tx_counts.iter().map(|&c| c as u64).sum();
+        let total_mining_fee_sats = estimate_funding_tx_fee_sats() * total_splits;
+        let total_fee_sats = service_fee_sats + total_mining_fee_sats;
         let estimated_receive = send_amount
             .checked_sub(Amount::from_sat(total_fee_sats))
             .unwrap_or(Amount::ZERO);
@@ -855,6 +930,7 @@ impl Taker {
             protocol,
             send_amount,
             makers: maker_fees,
+            total_mining_fee: Amount::from_sat(total_mining_fee_sats),
             total_estimated_fee: Amount::from_sat(total_fee_sats),
             estimated_receive_amount: estimated_receive,
         };
@@ -1250,7 +1326,10 @@ impl Taker {
         let maker_count = swap.params.maker_count;
         let swap_id = swap.id.clone();
         let send_amount = swap.params.send_amount;
-        let tx_count = swap.params.tx_count;
+        // Per-hop counts, length maker_count + 1. Maker `i` receives tx_counts[i]
+        // contracts and builds tx_counts[i+1]. Resolved once so it degrades to uniform
+        // if unset/malformed.
+        let tx_counts = swap.params.resolved_tx_counts();
         let protocol = swap.params.protocol;
 
         // Get reference height once for consistent absolute timelocks (Taproot).
@@ -1270,7 +1349,8 @@ impl Taker {
                 i,
                 &swap_id,
                 send_amount,
-                tx_count,
+                tx_counts[i],
+                tx_counts[i + 1],
                 maker_count,
                 reference_height,
             );
@@ -1316,23 +1396,25 @@ impl Taker {
 
         #[cfg(debug_assertions)]
         log::debug!(
-            "[SWAP_ROUTE] Source: taker::api::negotiate_swap_details | SwapID: {} | NegotiatedMakers: {} | Protocol: {:?} | ReferenceHeight: {} | TxCount: {}",
+            "[SWAP_ROUTE] Source: taker::api::negotiate_swap_details | SwapID: {} | NegotiatedMakers: {} | Protocol: {:?} | ReferenceHeight: {} | TxCounts: {:?}",
             swap_id,
             maker_count,
             protocol,
             reference_height,
-            tx_count
+            tx_counts
         );
         Ok(())
     }
 
     /// Negotiate swap details with a single maker at the given route index.
+    #[allow(clippy::too_many_arguments)]
     fn negotiate_with_maker(
         &mut self,
         maker_idx: usize,
         swap_id: &str,
         send_amount: Amount,
-        tx_count: u32,
+        incoming_tx_count: u32,
+        outgoing_tx_count: u32,
         maker_count: usize,
         reference_height: u32,
     ) -> Result<(), TakerError> {
@@ -1349,17 +1431,20 @@ impl Taker {
         send_message(&mut stream, &TakerToMakerMessage::GetOffer(GetOffer))?;
         let offer_bytes = read_message(&mut stream)?;
         let offer_msg: MakerToTakerMessage = serde_cbor::from_slice(&offer_bytes)?;
-        match offer_msg {
+        let maker_max_tx_splits: Option<u32> = match offer_msg {
             MakerToTakerMessage::Offer(offer) => {
                 log::info!(
-                    "Received offer from maker {}: base_fee={}, amt_pct={}, time_pct={}",
+                    "Received offer from maker {}: base_fee={}, amt_pct={}, time_pct={}, max_tx_splits={:?}",
                     maker_idx,
                     offer.base_fee,
                     offer.amount_relative_fee_pct,
-                    offer.time_relative_fee_pct
+                    offer.time_relative_fee_pct,
+                    offer.max_tx_splits
                 );
                 Self::validate_offer(&offer, maker_idx, send_amount)?;
+                let max_tx_splits = offer.max_tx_splits;
                 self.swap_state_mut()?.makers[maker_idx].offer = Some(*offer);
+                max_tx_splits
             }
             other => {
                 return Err(TakerError::General(format!(
@@ -1367,7 +1452,36 @@ impl Taker {
                     maker_idx, other
                 )));
             }
-        }
+        };
+
+        // Decide what to put in `outgoing_tx_count`. Only genuinely uneven hops (where
+        // the outgoing count differs from the incoming count) require a maker that reads
+        // the field; uniform hops send `None` so the wire stays identical to an old
+        // taker's and any maker version mirrors its incoming count. A hop that needs an
+        // uneven split but lands on a maker that can't honor it aborts here, before any
+        // funds are committed — `negotiate_swap_details` then substitutes a spare maker,
+        // which is the "route around unsupported makers" path.
+        let outgoing_tx_count_field = if negotiated_protocol == ProtocolVersion::Taproot
+            && outgoing_tx_count != incoming_tx_count
+        {
+            match maker_max_tx_splits {
+                Some(cap) if (1..=cap).contains(&outgoing_tx_count) => Some(outgoing_tx_count),
+                Some(cap) => {
+                    return Err(TakerError::General(format!(
+                        "Maker {} advertised max_tx_splits {} but this hop needs an outgoing split of {}",
+                        maker_idx, cap, outgoing_tx_count
+                    )));
+                }
+                None => {
+                    return Err(TakerError::General(format!(
+                        "Maker {} predates per-hop splitting (no max_tx_splits) but this hop needs an uneven outgoing split of {} (incoming {})",
+                        maker_idx, outgoing_tx_count, incoming_tx_count
+                    )));
+                }
+            }
+        } else {
+            None
+        };
 
         let refund_locktime_offset =
             REFUND_LOCKTIME_BASE + REFUND_LOCKTIME_STEP * (maker_count - maker_idx - 1) as u16;
@@ -1383,7 +1497,8 @@ impl Taker {
             id: swap_id.to_string(),
             protocol_version: negotiated_protocol,
             amount: send_amount,
-            tx_count,
+            tx_count: incoming_tx_count,
+            outgoing_tx_count: outgoing_tx_count_field,
             timelock,
         };
 
@@ -1528,7 +1643,7 @@ impl Taker {
         // Negotiate with the spare maker.
         let swap_id = self.swap_state()?.id.clone();
         let send_amount = self.swap_state()?.params.send_amount;
-        let tx_count = self.swap_state()?.params.tx_count;
+        let tx_counts = self.swap_state()?.params.resolved_tx_counts();
         let maker_count = self.swap_state()?.params.maker_count;
         let reference_height =
             {
@@ -1542,7 +1657,8 @@ impl Taker {
             target_idx,
             &swap_id,
             send_amount,
-            tx_count,
+            tx_counts[target_idx],
+            tx_counts[target_idx + 1],
             maker_count,
             reference_height,
         )?;
@@ -1613,7 +1729,11 @@ impl Taker {
         let preimage = swap.preimage;
         let send_amount = swap.params.send_amount;
         let swap_id = swap.id.clone();
-        let swap_tx_count = swap.params.tx_count as usize;
+        // The taker's own funding count is index 0 of the per-hop counts (the number of
+        // contracts it funds into the first maker). Legacy counts are uniform, so [0]
+        // is also the correct Legacy split count.
+        let taker_tx_count = swap.params.resolved_tx_counts()[0];
+        let swap_tx_count = taker_tx_count as usize;
         let manually_selected_outpoints = swap.params.manually_selected_outpoints.clone();
         let reference_height = swap.reference_height;
 
@@ -1621,7 +1741,7 @@ impl Taker {
             generate_maker_keys(
                 &tweakable_point,
                 if protocol == ProtocolVersion::Legacy {
-                    swap.params.tx_count
+                    taker_tx_count
                 } else {
                     1
                 },

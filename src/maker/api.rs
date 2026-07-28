@@ -74,6 +74,11 @@ struct SwapState {
     /// How many blocks the funds stay locked, derived from `timelock` when the swap was
     /// accepted. This value is persisted across connection so swap fee calculation remains consistent.
     refund_locktime_offset: u16,
+    /// Requested outgoing contract count for this hop (Taproot per-hop splitting).
+    /// Persisted across connections so `process_taproot_contract` still sees the count
+    /// the taker asked for when the contract arrives on a later connection. `None` means
+    /// mirror the incoming count (legacy behaviour).
+    outgoing_tx_count: Option<u32>,
 }
 
 impl Default for SwapState {
@@ -93,6 +98,7 @@ impl Default for SwapState {
             last_activity: Instant::now(),
             swap_start_time: Instant::now(),
             refund_locktime_offset: 0,
+            outgoing_tx_count: None,
         }
     }
 }
@@ -861,6 +867,22 @@ impl MakerTrait for MakerServer {
             }
         }
 
+        // Check the requested outgoing split count against the advertised ceiling.
+        // Enforced here, before the taker funds anything, so an over-cap request fails
+        // at connect time rather than mid-swap. This is advisory: it does not guarantee
+        // the maker has enough confirmed UTXOs to actually build that many contracts
+        // (concurrent swaps may consume them), so the taker still needs its abort path.
+        if let Some(requested) = details.outgoing_tx_count {
+            if requested == 0 {
+                return Err(MakerError::General("Requested outgoing_tx_count is zero"));
+            }
+            if requested as usize > crate::wallet::MAX_SPLITS {
+                return Err(MakerError::General(
+                    "Requested outgoing_tx_count exceeds maximum splits",
+                ));
+            }
+        }
+
         // Check timelock bounds and work out how long the funds stay locked. Taproot reads the
         // tip once for both, so a block arriving mid-check cannot price the swap differently.
         let locked_blocks = if details.protocol_version == ProtocolVersion::Legacy {
@@ -1163,6 +1185,7 @@ impl MakerTrait for MakerServer {
         swap_state.last_activity = Instant::now();
         swap_state.swap_start_time = state.swap_start_time;
         swap_state.refund_locktime_offset = state.refund_locktime_offset;
+        swap_state.outgoing_tx_count = state.outgoing_tx_count;
         log::debug!(
             "[{}] Stored connection state for {}: amount={}, timelock={}, protocol={:?}, outgoing_count={}",
             self.config.network_port,
@@ -1193,6 +1216,7 @@ impl MakerTrait for MakerServer {
             state.reserve_utxo = s.reserve_utxo.clone();
             state.swap_start_time = s.swap_start_time;
             state.refund_locktime_offset = s.refund_locktime_offset;
+            state.outgoing_tx_count = s.outgoing_tx_count;
             state
         })
     }

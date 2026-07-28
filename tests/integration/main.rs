@@ -24,6 +24,7 @@ mod taproot_maker_abort2;
 mod taproot_maker_abort3;
 mod taproot_multi_maker;
 mod taproot_multi_taker;
+mod taproot_per_hop_splits;
 mod taproot_reboot_recovery;
 mod taproot_swap;
 mod taproot_taker_abort1;

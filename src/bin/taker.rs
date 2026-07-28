@@ -130,8 +130,15 @@ enum Commands {
         /// Sets the swap amount in sats.
         #[clap(long, short = 'a', default_value = "20000")]
         amount: u64,
+        /// Uniform number of transaction splits per hop (Taproot only). Ignored if
+        /// `--tx-counts` is given.
         #[clap(long = "tx-count", default_value = "1")]
         tx_count: u32,
+        /// Per-hop split counts as a comma-separated list, e.g. `1,3,1` (Taproot only).
+        /// Must have exactly `makers + 1` entries: index 0 is the taker's own funding,
+        /// each later entry is a maker's outgoing split. Overrides `--tx-count`.
+        #[clap(long = "tx-counts", value_delimiter = ',')]
+        tx_counts: Option<Vec<u32>>,
         /// Protocol version to use: "legacy" or "taproot"
         #[clap(long, default_value = "legacy")]
         protocol: String,
@@ -471,12 +478,55 @@ fn main() -> Result<(), TakerError> {
             makers,
             amount,
             tx_count,
+            tx_counts,
             protocol,
             maker_addresses,
             auto_select,
             yes,
         } => {
             let protocol_version = parse_protocol(protocol)?;
+
+            // Resolve per-hop counts up front so a malformed `--tx-counts` fails loudly
+            // before any network activity. Expected length is `makers + 1`.
+            let resolved_tx_counts: Vec<u32> = match tx_counts {
+                Some(counts) => {
+                    if counts.len() != *makers + 1 {
+                        return Err(TakerError::General(format!(
+                            "--tx-counts must have exactly {} entries (makers + 1), got {}",
+                            *makers + 1,
+                            counts.len()
+                        )));
+                    }
+                    if counts.contains(&0) {
+                        return Err(TakerError::General(
+                            "--tx-counts entries must all be >= 1".to_string(),
+                        ));
+                    }
+                    if let Some(&c) = counts
+                        .iter()
+                        .find(|&&c| c as usize > coinswap::wallet::MAX_SPLITS)
+                    {
+                        return Err(TakerError::General(format!(
+                            "--tx-counts entry {} exceeds the maximum of {} splits",
+                            c,
+                            coinswap::wallet::MAX_SPLITS
+                        )));
+                    }
+                    counts.clone()
+                }
+                None => {
+                    if *tx_count == 0 {
+                        return Err(TakerError::General("--tx-count must be >= 1".to_string()));
+                    }
+                    if *tx_count as usize > coinswap::wallet::MAX_SPLITS {
+                        return Err(TakerError::General(format!(
+                            "--tx-count exceeds the maximum of {} splits",
+                            coinswap::wallet::MAX_SPLITS
+                        )));
+                    }
+                    vec![*tx_count; *makers + 1]
+                }
+            };
 
             #[cfg(not(feature = "integration-test"))]
             let manually_selected_outpoints = if !auto_select {
@@ -502,7 +552,7 @@ fn main() -> Result<(), TakerError> {
 
             let mut swap_params =
                 SwapParams::new(protocol_version, Amount::from_sat(*amount), *makers);
-            swap_params.tx_count = *tx_count;
+            swap_params.tx_counts = resolved_tx_counts.clone();
             swap_params.manually_selected_outpoints = manually_selected_outpoints;
             if !maker_addresses.is_empty() {
                 swap_params.preferred_makers = Some(maker_addresses.clone());
@@ -528,6 +578,8 @@ fn main() -> Result<(), TakerError> {
                 );
             }
             println!();
+            println!("Tx splits per hop:   {resolved_tx_counts:?}");
+            println!("Total mining fee:    {}", summary.total_mining_fee);
             println!("Total estimated fee: {}", summary.total_estimated_fee);
             println!("Estimated receive:   {}", summary.estimated_receive_amount);
             println!("==================================\n");

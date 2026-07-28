@@ -53,6 +53,15 @@ pub enum MakerBehavior {
     MalformedLegacyFundingOutput,
     /// Underfund the Taproot contract while claiming the expected amount.
     UnderfundTaprootContract,
+    /// Build one MORE outgoing Taproot contract than the taker requested, to prove the
+    /// taker rejects a maker that over-splits a per-hop fan-out.
+    OverSplitTaprootContract,
+    /// Build one FEWER outgoing Taproot contract than the taker requested (minimum 1), to
+    /// prove the taker rejects a maker that under-splits a per-hop fan-out.
+    UnderSplitTaprootContract,
+    /// Advertise an Offer with `max_tx_splits: None`, simulating a maker that predates
+    /// per-hop splitting, to exercise the taker's version-downgrade / route-around path.
+    AdvertiseNoSplitSupport,
 }
 
 /// Minimum time required to react to contract broadcasts (in blocks).
@@ -73,6 +82,13 @@ pub struct ConnectionState {
     pub timelock: u32,
     /// Relative locktime offset for deterministic fee calculation.
     pub refund_locktime_offset: u16,
+    /// Number of outgoing contracts to build for this hop (Taproot per-hop splitting).
+    ///
+    /// `None` means the taker did not request a specific outgoing count, so the maker
+    /// mirrors its incoming contract count (legacy behavior). Carried from
+    /// [`SwapDetails::outgoing_tx_count`] so `process_taproot_contract` can decouple its
+    /// outgoing count from the incoming one.
+    pub outgoing_tx_count: Option<u32>,
     /// Incoming swap coins (we receive).
     pub incoming_swapcoins: Vec<IncomingSwapCoin>,
     /// Outgoing swap coins (we send).
@@ -121,6 +137,7 @@ impl Default for ConnectionState {
             swap_amount: Amount::ZERO,
             timelock: 0,
             refund_locktime_offset: 0,
+            outgoing_tx_count: None,
             incoming_swapcoins: Vec::new(),
             outgoing_swapcoins: Vec::new(),
             pending_funding_txes: Vec::new(),
@@ -449,6 +466,18 @@ fn handle_get_offer<M: Maker>(
         tweakable_point,
         fidelity,
         tweak_chain_code,
+        // Advertise support for per-hop splitting up to the global ceiling. Presence
+        // (Some) is what tells the taker this maker reads `outgoing_tx_count`; the
+        // value bounds how many outgoing contracts it will build for a single hop.
+        #[cfg(not(feature = "integration-test"))]
+        max_tx_splits: Some(crate::wallet::MAX_SPLITS as u32),
+        // In tests, one behavior suppresses this to emulate a pre-feature maker.
+        #[cfg(feature = "integration-test")]
+        max_tx_splits: if maker.behavior() == MakerBehavior::AdvertiseNoSplitSupport {
+            None
+        } else {
+            Some(crate::wallet::MAX_SPLITS as u32)
+        },
     };
 
     log::info!(
@@ -485,6 +514,7 @@ fn handle_swap_details<M: Maker>(
     state.swap_amount = details.amount;
     state.timelock = details.timelock;
     state.refund_locktime_offset = refund_locktime_offset;
+    state.outgoing_tx_count = details.outgoing_tx_count;
     state.protocol = details.protocol_version;
     state.swap_start_time = Instant::now();
     let swap_fee = maker.calculate_swap_fee(details.amount, state.refund_locktime_offset as u32);
@@ -541,6 +571,7 @@ fn restore_state_if_needed<M: Maker>(maker: &Arc<M>, state: &mut ConnectionState
             state.service_fee_sats = stored.service_fee_sats;
             state.swap_start_time = stored.swap_start_time;
             state.refund_locktime_offset = stored.refund_locktime_offset;
+            state.outgoing_tx_count = stored.outgoing_tx_count;
         }
     }
 }
