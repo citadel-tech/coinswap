@@ -767,7 +767,14 @@ fn verify_fidelity_with_backend(
     tweak_chain_code: &bitcoin::bip32::ChainCode,
 ) -> Result<(), TakerError> {
     let txid = proof.bond.outpoint.txid;
+    let vout = proof.bond.outpoint.vout;
     let transaction = blockchain.get_raw_transaction(&txid, None)?;
+    // The bond output must still be unspent.
+    if blockchain.get_tx_out(&txid, vout, Some(true))?.is_none() {
+        return Err(TakerError::General(format!(
+            "Fidelity bond output {txid}:{vout} is spent or does not exist"
+        )));
+    }
     let current_height = blockchain.get_block_count()?;
     let confirmation_height = blockchain.tx_block_height(&txid)?.ok_or_else(|| {
         TakerError::General(format!(

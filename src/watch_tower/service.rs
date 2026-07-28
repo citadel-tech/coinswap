@@ -119,8 +119,7 @@ pub fn start_maker_watch_service(
     // Makers don't run discovery, so pass an already-complete flag.
     thread::Builder::new()
         .name("Watcher thread".to_string())
-        .spawn(move || watcher.run(Arc::new(AtomicBool::new(true))))
-        .expect("failed to spawn watcher thread");
+        .spawn(move || watcher.run(Arc::new(AtomicBool::new(true))))?;
 
     Ok(WatchService::new(tx_requests, rx_responses))
 }

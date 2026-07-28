@@ -19,20 +19,18 @@
 //! cargo run --example taker_basic
 //! ```
 
-#[cfg(feature = "integration-test")]
-fn main() {}
-#[cfg(not(feature = "integration-test"))]
+use bitcoin::Amount;
+use bitcoind::{
+    bitcoincore_rpc::{Auth, RpcApi},
+    BitcoinD,
+};
+use coinswap::{
+    protocol::common_messages::ProtocolVersion,
+    taker::{SwapParams, Taker, TakerInitConfig},
+    wallet::{AddressType, BackendConfig, CoreRpcConfig},
+};
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    use bitcoin::Amount;
-    use bitcoind::{
-        bitcoincore_rpc::{Auth, RpcApi},
-        BitcoinD,
-    };
-    use coinswap::{
-        protocol::common_messages::ProtocolVersion,
-        taker::{SwapParams, Taker, TakerInitConfig},
-        wallet::{AddressType, BackendConfig, CoreRpcConfig},
-    };
     println!("=== Coinswap Taker Basic Example ===");
     println!("NOTE: When prompted for encryption passphrase, press Enter for no encryption");
 
@@ -58,9 +56,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Starting Bitcoin Core in regtest mode...");
 
+    // bitcoind must publish on the same address the wallet's ZMQ subscriber connects to.
+    const ZMQ_ADDR: &str = "tcp://127.0.0.1:28332";
+    let zmq_rawtx = format!("-zmqpubrawtx={ZMQ_ADDR}");
+    let zmq_rawblock = format!("-zmqpubrawblock={ZMQ_ADDR}");
+
     // Setup bitcoind configuration
     let mut conf = bitcoind::Conf::default();
     conf.args.push("-txindex=1"); // Required for wallet sync
+    conf.args.push(&zmq_rawtx);
+    conf.args.push(&zmq_rawblock);
     conf.staticdir = Some(data_dir.join(".bitcoin"));
 
     let exe_path = bitcoind::exe_path().unwrap();
@@ -85,7 +90,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         url: bitcoind.rpc_url().split_at(7).1.to_string(), // Remove "http://" prefix
         auth: Auth::CookieFile(bitcoind.params.cookie_file.clone()),
         wallet_name: "taker-example".to_string(), // Use specific wallet name
-        zmq_addr: "tcp://127.0.0.1:3321".to_string(),
+        zmq_addr: ZMQ_ADDR.to_string(),
     };
 
     // Initialize Taker with builder-style config

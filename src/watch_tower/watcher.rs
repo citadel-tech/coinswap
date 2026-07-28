@@ -10,7 +10,6 @@ use std::{
         mpsc::{Receiver as StdReceiver, TryRecvError},
         Arc,
     },
-    time::Duration,
 };
 
 use bitcoin::{
@@ -21,6 +20,7 @@ use crossbeam_channel::Sender as CbSender;
 
 use crate::{
     nostr,
+    utill::HEART_BEAT_INTERVAL,
     wallet::{blockchain::WatchEvent, AnyBlockchain, Blockchain},
     watch_tower::{
         registry_storage::{Checkpoint, FileRegistry, WatchRequest},
@@ -43,6 +43,9 @@ pub struct Watcher<R: Role> {
     tx_events: CbSender<WatcherEvent>,
     nostr_relays: Vec<String>,
     nostr_tor_config: Option<(u16, String)>,
+    /// Watches whose script-subscribe failed; without a retry they stay
+    /// undetected until restart. Retried on the heartbeat tick.
+    pending_subscribes: Vec<(OutPoint, ScriptBuf)>,
     _role: PhantomData<R>,
 }
 
@@ -103,6 +106,7 @@ impl<R: Role> Watcher<R> {
             tx_events,
             nostr_relays,
             nostr_tor_config,
+            pending_subscribes: Vec::new(),
             _role: PhantomData,
         }
     }
@@ -167,7 +171,7 @@ impl<R: Role> Watcher<R> {
                             }
                         },
                         Err(e) => {
-                            log::warn!(
+                            log::error!(
                                 "could not resolve SPK for persisted watch {}: {e:?}",
                                 watch.outpoint
                             );
@@ -176,10 +180,11 @@ impl<R: Role> Watcher<R> {
                     },
                 };
                 if let Err(e) = self.blockchain.subscribe_script(&spk) {
-                    log::warn!(
+                    log::error!(
                         "re-subscribe failed for persisted watch {}: {e:?}",
                         watch.outpoint
                     );
+                    self.pending_subscribes.push((watch.outpoint, spk));
                 }
             }
         }
@@ -196,36 +201,36 @@ impl<R: Role> Watcher<R> {
         let registry = self.registry.clone();
         let nostr_relays = self.nostr_relays.clone();
         let nostr_tor_config = self.nostr_tor_config.clone();
-        std::thread::scope(move |s| {
-            let discovery_clone = discovery_shutdown.clone();
+        std::thread::scope(move |s| -> Result<(), WatcherError> {
+            let shutdown_clone = discovery_shutdown.clone();
+            let mut discovery_handle = None;
             if R::RUN_DISCOVERY {
                 if let Some(nostr_tor_config) = nostr_tor_config {
                     // Discovery requires it's own dedicated backend to not overlap with regular watch requests.
-                    match self.blockchain.new_connection() {
-                        Ok(chain) => {
-                            s.spawn(move || {
-                                if let Err(e) = nostr::run_discovery(
-                                    chain,
-                                    network,
-                                    registry,
-                                    discovery_shutdown.clone(),
-                                    initial_sync_complete,
-                                    &nostr_relays,
-                                    nostr_tor_config,
-                                ) {
-                                    log::error!("Discovery thread failed: {:?}", e);
-                                }
-                            });
+                    let chain = self.blockchain.new_connection()?;
+                    // The thread runs until shutdown, so its outcome is only
+                    // known at the join below.
+                    discovery_handle = Some(s.spawn(move || {
+                        let result = nostr::run_discovery(
+                            chain,
+                            network,
+                            registry,
+                            discovery_shutdown.clone(),
+                            initial_sync_complete,
+                            &nostr_relays,
+                            nostr_tor_config,
+                        );
+                        if let Err(e) = &result {
+                            log::error!("Discovery thread failed: {e:?}");
                         }
-                        Err(e) => log::error!("Discovery backend build failed: {e:?}"),
-                    }
+                        result
+                    }));
                 }
             }
             loop {
                 match self.rx_requests.try_recv() {
                     Ok(cmd) => {
                         if !self.handle_command(cmd) {
-                            discovery_clone.store(true, Ordering::SeqCst);
                             break;
                         }
                     }
@@ -236,12 +241,30 @@ impl<R: Role> Watcher<R> {
                 if let Some(event) = self.blockchain.poll_event() {
                     self.handle_event(event);
                 } else {
+                    self.retry_subscribes();
                     // Avoid busy-looping when there are no commands and no events.
-                    std::thread::sleep(Duration::from_millis(5));
+                    // Loop at system's heartbeat.
+                    std::thread::sleep(HEART_BEAT_INTERVAL);
                 }
             }
-        });
-        Ok(())
+
+            // Stop and join the discovery thread on exit path.
+            shutdown_clone.store(true, Ordering::SeqCst);
+            if let Some(handle) = discovery_handle {
+                // join() nests two results: the panic payload, then discovery's own error.
+                // The first `?` surfaces a panic, the second discovery's WatcherError.
+                handle.join().map_err(|payload| {
+                    // pull out the panic message by downcast.
+                    let msg = payload
+                        .downcast_ref::<&str>()
+                        .map(|s| s.to_string())
+                        .or_else(|| payload.downcast_ref::<String>().cloned())
+                        .unwrap_or_else(|| "unknown payload".to_string());
+                    WatcherError::General(format!("Discovery thread panicked: {msg}"))
+                })??;
+            }
+            Ok(())
+        })
     }
 
     fn handle_command(&mut self, cmd: WatcherCommand) -> bool {
@@ -258,9 +281,9 @@ impl<R: Role> Watcher<R> {
                     spent_tx: None,
                 };
                 self.registry.upsert_watch(&req);
-                // A failed subscribe just degrades to "no spend notifications until next-block poll" — funds are still safe via timelock recovery.
                 if let Err(e) = self.blockchain.subscribe_script(&script_pubkey) {
-                    log::warn!("electrum script-subscribe failed for {outpoint}: {e}");
+                    log::error!("electrum script-subscribe failed for {outpoint}: {e}");
+                    self.pending_subscribes.push((outpoint, script_pubkey));
                 }
             }
             WatcherCommand::WatchRequest { outpoint } => {
@@ -286,6 +309,7 @@ impl<R: Role> Watcher<R> {
             } => {
                 log::info!("Intercepted unwatch request : {outpoint}");
                 self.registry.remove_watch(outpoint);
+                self.pending_subscribes.retain(|(o, _)| *o != outpoint);
                 // Drop the Electrum subscription.
                 if let Err(e) = self.blockchain.unsubscribe_script(&script_pubkey) {
                     log::warn!("electrum script-unsubscribe failed for {outpoint}: {e}");
@@ -296,6 +320,28 @@ impl<R: Role> Watcher<R> {
         true
     }
 
+    /// Retry script-subscribes that failed earlier. The backend records a
+    /// subscription only on success, so retrying an armed script is a no-op.
+    fn retry_subscribes(&mut self) {
+        // Destructured so the closure can call the backend while `retain`
+        // holds the vec; borrowing `self` twice would not compile.
+        let Self {
+            blockchain,
+            pending_subscribes,
+            ..
+        } = self;
+        pending_subscribes.retain(|(outpoint, spk)| match blockchain.subscribe_script(spk) {
+            Ok(()) => {
+                log::info!("re-subscribe succeeded for {outpoint}");
+                false
+            }
+            Err(e) => {
+                log::warn!("re-subscribe still failing for {outpoint}: {e}");
+                true
+            }
+        });
+    }
+
     /// Scan the node mempool into the registry.
     fn process_mempool(&mut self) -> Result<(), WatcherError> {
         let txids = self
@@ -303,10 +349,15 @@ impl<R: Role> Watcher<R> {
             .get_raw_mempool()
             .map_err(WatcherError::from)?;
         for txid in &txids {
-            let tx = self
-                .blockchain
-                .get_raw_transaction(txid, None)
-                .map_err(WatcherError::from)?;
+            let tx = match self.blockchain.get_raw_transaction(txid, None) {
+                Ok(tx) => tx,
+                Err(e) => {
+                    // There can be lot of txs in mempool.
+                    // failing one fetch should not abort the scan.
+                    log::error!("could not fetch mempool tx {txid}: {e:?}");
+                    continue;
+                }
+            };
             process_transaction(&tx, &mut self.registry, false);
         }
         Ok(())

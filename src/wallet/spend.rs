@@ -164,8 +164,6 @@ impl Wallet {
         let current_height = self.blockchain.get_block_count()?;
         let lock_time = LockTime::from_height(current_height as u32)?;
 
-        let coins = coins.to_vec();
-
         let mut tx = Transaction {
             version: Version::TWO,
             lock_time,
@@ -175,7 +173,7 @@ impl Wallet {
 
         let mut total_input_value = Amount::ZERO;
         let mut total_witness_size = 0;
-        for (utxo_data, spend_info) in coins.iter() {
+        for (utxo_data, spend_info) in coins {
             match spend_info {
                 UTXOSpendInfo::SeedCoin { .. } | UTXOSpendInfo::SweptCoin { .. } => {
                     tx.input.push(TxIn {

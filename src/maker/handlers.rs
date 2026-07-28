@@ -222,8 +222,9 @@ pub trait Maker: Send + Sync {
     /// Broadcast a transaction.
     fn broadcast_transaction(&self, tx: &Transaction) -> Result<bitcoin::Txid, MakerError>;
 
-    /// Whether the backend already knows this transaction (mempool or chain).
-    /// Used to treat duplicate-broadcast errors on Electrum.
+    /// Whether the backend already knows this transaction (mempool or chain);
+    /// used to tolerate duplicate-broadcast errors. `false` also covers
+    /// "backend down". Core must run with `-txindex=1`.
     fn is_transaction_known(&self, txid: &bitcoin::Txid) -> bool;
 
     /// Save incoming swapcoin to wallet.

@@ -626,7 +626,7 @@ impl Wallet {
             .values()
             .map(|sc| OutPoint {
                 txid: sc.contract_tx.compute_txid(),
-                vout: 0,
+                vout: sc.get_contract_output_vout(),
             })
             .collect()
     }
@@ -638,7 +638,7 @@ impl Wallet {
             .values()
             .map(|sc| OutPoint {
                 txid: sc.contract_tx.compute_txid(),
-                vout: 0,
+                vout: sc.get_contract_output_vout(),
             })
             .collect()
     }
@@ -2435,32 +2435,41 @@ impl Wallet {
     ) -> Result<(Address, SecretKey), WalletError> {
         let (my_pubkey, my_privkey) = generate_keypair();
 
-        // Derive the wsh(multi(2,...)) address locally — Electrum has no
-        // getdescriptorinfo/deriveaddresses. Sort keys per BIP67 to match the
-        // redeem-script ordering so descriptor + address stay in lockstep.
+        // create_multisig_reedemscript already follows BIP67 lexicographic ordering.
+        // So this reedemscript is equavalent to `sortedmulti` descriptor.
+        // This is revalidated again for Core backend only.
         let redeem_script = create_multisig_redeemscript(&my_pubkey, other_pubkey);
         let network = self.store.network;
         let address = Address::p2wsh(&redeem_script, network);
 
-        let (k1, k2) = {
-            let (a, b) = (my_pubkey, *other_pubkey);
-            if a.inner.serialize()[..] < b.inner.serialize()[..] {
-                (a, b)
-            } else {
-                (b, a)
-            }
-        };
-        let descriptor_without_checksum = format!("wsh(multi(2,{k1},{k2}))");
+        let descriptor_without_checksum = format!("wsh(sortedmulti(2,{my_pubkey},{other_pubkey}))");
         let descriptor = format!(
             "{descriptor_without_checksum}#{}",
             compute_checksum(&descriptor_without_checksum)?
         );
-        debug_assert_eq!(
-            address.script_pubkey(),
-            ScriptBuf::new_p2wsh(&redeem_script.wscript_hash()),
-            "descriptor key order must reproduce the redeem-script p2wsh"
-        );
+
+        // Check for equvalence from Core backend
+        // Electrum cannot do this.
+        if !self.blockchain.is_electrum() {
+            let derived = self
+                .blockchain
+                .derive_addresses(&descriptor, None)?
+                .first()
+                .map(|a| a.clone().assume_checked())
+                .ok_or_else(|| {
+                    WalletError::General(format!(
+                        "deriveaddresses returned no address for {descriptor}"
+                    ))
+                })?;
+            if derived != address {
+                return Err(WalletError::General(format!(
+                    "descriptor {descriptor} derives {derived}, expected {address}"
+                )));
+            }
+        }
+        // Import into Core
         self.import_descriptors(std::slice::from_ref(&descriptor), None, None)?;
+        // Import into Electrum
         self.blockchain.watch_script(&address.script_pubkey(), None);
 
         Ok((address, my_privkey))
@@ -2916,10 +2925,8 @@ impl Wallet {
     /// populates the local watch set so `list_unspent` returns the right UTXOs.
     pub(crate) fn watch_wallet_scripts(&self) -> Result<(), WalletError> {
         let secp = crate::utill::global_secp();
-        let max_watch_indices = [
-            self.max_watch_index(KeychainKind::External)?,
-            self.max_watch_index(KeychainKind::Internal)?,
-        ];
+
+        // Add the descriptor utxos to the watch list.
         for address_type in [AddressType::P2WPKH, AddressType::P2TR] {
             // Derive the account-level Xpriv once per address_type; every
             // (keychain, index) below it is then a cheap child derive.
@@ -2930,7 +2937,7 @@ impl Wallet {
             let fingerprint = account.fingerprint(secp).to_string();
             let is_taproot = matches!(address_type, AddressType::P2TR);
             for keychain in [KeychainKind::External, KeychainKind::Internal] {
-                for index in 0..=max_watch_indices[keychain.index_num() as usize] {
+                for index in 0..=self.max_watch_index(keychain)? {
                     let child = account.derive_priv(
                         secp,
                         &DerivationPath::from(vec![
@@ -2967,46 +2974,35 @@ impl Wallet {
                 }
             }
         }
-        // Non-HD scripts: fidelity bonds, then per-swapcoin multisig + contract SPKs.
-        // Required on Electrum for restart-recovery; no-op on Bitcoin Core.
+
+        // Watch fidelity bonds
         for bond in self.store.fidelity_bond.iter() {
             self.blockchain.watch_script(&bond.script_pub_key(), None);
         }
 
-        let register_swap_scripts =
-            |my_pubkey: Option<PublicKey>,
-             other_pubkey: Option<PublicKey>,
-             contract_redeemscript: Option<&ScriptBuf>| {
-                if let (Some(mine), Some(other)) = (my_pubkey, other_pubkey) {
-                    let multisig_redeem = create_multisig_redeemscript(&mine, &other);
-                    let multisig_spk = ScriptBuf::new_p2wsh(&multisig_redeem.wscript_hash());
-                    self.blockchain.watch_script(&multisig_spk, None);
-                }
-                if let Some(redeem) = contract_redeemscript {
-                    match redeemscript_to_scriptpubkey(redeem) {
-                        Ok(contract_spk) => self.blockchain.watch_script(&contract_spk, None),
-                        Err(e) => {
-                            log::error!("Malformed Redeemscript. Cannot watch for contract! {e:?}")
-                        }
-                    }
-                }
-            };
-        let incoming = self.store.incoming_swapcoins.values().map(|sc| {
-            (
-                sc.my_pubkey,
-                sc.other_pubkey,
-                sc.contract_redeemscript.as_ref(),
+        // Add the incoming and outgoing swapcoins into watch list.
+        // Any malformed script will error here.
+        for (my_pubkey, other_pubkey, contract_redeemscript) in self
+            .store
+            .incoming_swapcoins
+            .values()
+            .map(|sc| (sc.my_pubkey, sc.other_pubkey, sc.contract_redeemscript()))
+            .chain(
+                self.store
+                    .outgoing_swapcoins
+                    .values()
+                    .map(|sc| (sc.my_pubkey, sc.other_pubkey, sc.contract_redeemscript())),
             )
-        });
-        let outgoing = self.store.outgoing_swapcoins.values().map(|sc| {
-            (
-                sc.my_pubkey,
-                sc.other_pubkey,
-                sc.contract_redeemscript.as_ref(),
-            )
-        });
-        for (mine, other, redeem) in incoming.chain(outgoing) {
-            register_swap_scripts(mine, other, redeem);
+        {
+            if let (Some(mine), Some(other)) = (my_pubkey, other_pubkey) {
+                let multisig_redeem = create_multisig_redeemscript(&mine, &other);
+                let multisig_spk = ScriptBuf::new_p2wsh(&multisig_redeem.wscript_hash());
+                self.blockchain.watch_script(&multisig_spk, None);
+            }
+            if let Some(redeem) = contract_redeemscript {
+                let contract_spk = redeemscript_to_scriptpubkey(redeem)?;
+                self.blockchain.watch_script(&contract_spk, None);
+            }
         }
 
         Ok(())
@@ -3081,7 +3077,7 @@ impl Wallet {
             self.max_watch_index(KeychainKind::Internal)?,
         );
         loop {
-            let _ = self.import_descriptors(&descriptors_to_import, Some(time), None);
+            self.import_descriptors(&descriptors_to_import, Some(time), None)?;
 
             // Returns when the scanning is completed.
             loop {

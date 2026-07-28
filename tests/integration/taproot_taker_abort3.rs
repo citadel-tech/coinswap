@@ -113,11 +113,11 @@ fn test_taproot_taker_abort3() {
     info!("Swap failed as expected: {:?}", swap_result.err().unwrap());
     taker.log_tracker_state();
 
-    // Wait for makers to timeout and blocks to mature timelocks.
-    // Maker timeout is 60s in tests; block generation thread mines 5 blocks every 3s,
-    // so 150s ~ 250 blocks -- more than enough for the 60-block CSV timelock.
+    // Sleep budget: 60s maker idle timeout (test builds) + 225-block outer-hop
+    // timelock (REFUND_LOCKTIME_BASE 150 + STEP 75, 2 makers) ≈ 135s at
+    // 5 blocks/3s; remaining ~105s is scheduling margin.
     info!("Waiting for makers to timeout and blocks to mature timelocks...");
-    thread::sleep(Duration::from_secs(150));
+    thread::sleep(Duration::from_secs(300));
 
     // Shut down makers
     makers

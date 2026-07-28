@@ -19,10 +19,12 @@ use bitcoin::{
     block::Header,
     consensus::encode::{serialize, serialize_hex},
     hashes::Hash,
-    Address, BlockHash, CompressedPublicKey, Script, ScriptBuf, Transaction, Txid,
+    Address, BlockHash, CompressedPublicKey, Script, ScriptBuf, SignedAmount, Transaction, Txid,
 };
 use bitcoind::bitcoincore_rpc::json::{
-    GetBlockchainInfoResult, GetRawTransactionResult, GetTxOutResult, ListUnspentResultEntry,
+    Bip125Replaceable, GetBlockchainInfoResult, GetRawTransactionResult,
+    GetTransactionResultDetail, GetTransactionResultDetailCategory, GetTxOutResult,
+    ListTransactionResult, ListUnspentResultEntry, WalletTxInfo,
 };
 use electrum_client::{Client as ElectrumClient, ElectrumApi, Param};
 use serde_json::{json, Value};
@@ -44,7 +46,7 @@ pub struct ElectrumConfig {
 impl Default for ElectrumConfig {
     fn default() -> Self {
         Self {
-            url: "electrum1.bluewallet.io:50001".to_string(),
+            url: "tcp://electrum1.bluewallet.io:50001".to_string(),
         }
     }
 }
@@ -57,6 +59,9 @@ struct NotifierState {
     last_height: i64,
     /// Txids already surfaced for each subscribed scriptPubKey.
     subscriptions: HashMap<ScriptBuf, HashSet<Txid>>,
+    /// Scripts whose history still needs re-reading after a failed tx fetch. The
+    /// server only notifies on status changes, so nothing else would revisit them.
+    dirty: HashSet<ScriptBuf>,
     /// Events buffered between `poll_event` calls (one notification can yield
     /// many new transactions; we hand them back one at a time).
     pending: VecDeque<WatchEvent>,
@@ -108,10 +113,7 @@ impl Electrum {
         })?;
         // Arm the header subscription so the watchtower's `poll_event` sees tip
         // updates; harmless for the wallet's instance, which never polls.
-        let last_height = inner
-            .block_headers_subscribe()
-            .map(|tip| tip.height as i64)
-            .unwrap_or(0);
+        let last_height = inner.block_headers_subscribe()?.height as i64;
         Ok(Self {
             inner,
             config,
@@ -144,6 +146,10 @@ impl Electrum {
         end: u32,
     ) -> Result<Vec<Address>, WalletError> {
         let bad = |msg: String| electrum_err(format!("deriveaddresses: {msg}"));
+
+        if start > end {
+            return Err(bad(format!("inverted range: start {start} > end {end}")));
+        }
 
         let body = descriptor.split('#').next().unwrap_or(descriptor);
         let (kind, inner) = if let Some(rest) = body.strip_prefix("wpkh(") {
@@ -218,13 +224,7 @@ impl Blockchain for Electrum {
         // Build via serde so we don't have to enumerate every field (some are
         // private or non-`Default` upstream).
         let v = json!({
-            "chain": match self.network {
-                bitcoin::Network::Bitcoin => "main",
-                bitcoin::Network::Testnet => "test",
-                bitcoin::Network::Signet => "signet",
-                bitcoin::Network::Regtest => "regtest",
-                _ => "regtest",
-            },
+            "chain": super::chain_name_for(self.network),
             "blocks": tip.height as u64,
             "headers": tip.height as u64,
             "bestblockhash": best,
@@ -392,8 +392,7 @@ impl Blockchain for Electrum {
                 entries
                     .iter()
                     .any(|e| e.tx_hash == *txid && e.tx_pos as u32 == vout)
-            })
-            .unwrap_or(false);
+            })?;
         if !still_unspent {
             return Ok(None);
         }
@@ -423,7 +422,7 @@ impl Blockchain for Electrum {
     fn list_unspent(
         &self,
         minconf: Option<usize>,
-        _maxconf: Option<usize>,
+        maxconf: Option<usize>,
     ) -> Result<Vec<ListUnspentResultEntry>, WalletError> {
         let watched: Vec<ScriptBuf> = self
             .watched
@@ -434,6 +433,8 @@ impl Blockchain for Electrum {
             .collect();
         let tip = self.get_block_count()?;
         let min_conf = minconf.unwrap_or(0) as u32;
+        // Mirror Bitcoin Core's `listunspent` default: no upper bound.
+        let max_conf = maxconf.map(|c| c as u32).unwrap_or(u32::MAX);
 
         // Batch the per-script queries so N watched scripts become ~N/BATCH
         // round-trips. Some servers cap batch payload size, so we chunk.
@@ -449,7 +450,7 @@ impl Blockchain for Electrum {
                     } else {
                         (tip + 1).saturating_sub(e.height as u64) as u32
                     };
-                    if confirmations < min_conf {
+                    if confirmations < min_conf || confirmations > max_conf {
                         continue;
                     }
                     // HD-origin is surfaced out-of-band via `hd_origin_for_script`,
@@ -493,6 +494,157 @@ impl Blockchain for Electrum {
             .collect())
     }
 
+    fn list_transactions(
+        &self,
+        _label: Option<&str>,
+        count: Option<usize>,
+        skip: Option<usize>,
+        _include_watchonly: Option<bool>,
+    ) -> Result<Vec<ListTransactionResult>, WalletError> {
+        let watched: Vec<ScriptBuf> = self
+            .watched
+            .lock()
+            .map_err(poisoned)?
+            .iter()
+            .cloned()
+            .collect();
+        let watched_set: HashSet<&ScriptBuf> = watched.iter().collect();
+
+        // Every transaction touching a watched script, with the height the server
+        // mined it at (0 in the mempool, -1 with unconfirmed parents).
+        const HISTORY_BATCH: usize = 200;
+        let mut heights: HashMap<Txid, i32> = HashMap::new();
+        for chunk in watched.chunks(HISTORY_BATCH) {
+            let refs: Vec<&Script> = chunk.iter().map(|s| s.as_script()).collect();
+            for entries in self.inner.batch_script_get_history(refs.iter().copied())? {
+                for e in entries {
+                    heights.insert(e.tx_hash, e.height);
+                }
+            }
+        }
+
+        // Page over the txid list before fetching anything, so a long history
+        // costs one batched round-trip instead of a `transaction.get` per entry.
+        let mut ordered: Vec<(Txid, i32)> = heights.into_iter().collect();
+        let rank = |height: i32| if height > 0 { height } else { i32::MAX };
+        ordered.sort_by(|a, b| rank(b.1).cmp(&rank(a.1)).then(a.0.cmp(&b.0)));
+        let mut page: Vec<(Txid, i32)> = ordered
+            .into_iter()
+            .skip(skip.unwrap_or(0))
+            .take(count.unwrap_or(10))
+            .collect();
+        // Core hands back the requested window oldest-first.
+        page.reverse();
+
+        let tip = self.get_block_count()?;
+        let mut headers: HashMap<u64, Header> = HashMap::new();
+        let mut out = Vec::new();
+        for (txid, height) in page {
+            let tx = self.inner.transaction_get(&txid)?;
+
+            // Value our own inputs: that is what separates a spend from a
+            // receive, and the input total gives the fee.
+            let mut input_total = bitcoin::Amount::ZERO;
+            let mut spent_by_us = bitcoin::Amount::ZERO;
+            let is_coinbase = tx.is_coinbase();
+            if !is_coinbase {
+                for input in &tx.input {
+                    let prev = self.inner.transaction_get(&input.previous_output.txid)?;
+                    let prev_out = prev
+                        .output
+                        .get(input.previous_output.vout as usize)
+                        .ok_or_else(|| {
+                            electrum_err(format!(
+                                "electrum: {} spends missing output {}",
+                                txid, input.previous_output
+                            ))
+                        })?;
+                    input_total += prev_out.value;
+                    if watched_set.contains(&prev_out.script_pubkey) {
+                        spent_by_us += prev_out.value;
+                    }
+                }
+            }
+            let is_send = spent_by_us > bitcoin::Amount::ZERO;
+            let output_total: bitcoin::Amount = tx.output.iter().map(|o| o.value).sum();
+            let fee = (is_send && !is_coinbase).then(|| {
+                SignedAmount::from_sat(output_total.to_sat() as i64 - input_total.to_sat() as i64)
+            });
+
+            let confirmations = if height > 0 {
+                (tip + 1).saturating_sub(height as u64) as i32
+            } else {
+                0
+            };
+            let (blockhash, blocktime, blockheight) = if height > 0 {
+                let header = match headers.get(&(height as u64)) {
+                    Some(h) => *h,
+                    None => {
+                        let h = self.header_at_height(height as u64)?;
+                        headers.insert(height as u64, h);
+                        h
+                    }
+                };
+                (
+                    Some(header.block_hash()),
+                    Some(header.time as u64),
+                    Some(height as u32),
+                )
+            } else {
+                (None, None, None)
+            };
+
+            for (vout, txout) in tx.output.iter().enumerate() {
+                let ours = watched_set.contains(&txout.script_pubkey);
+                let category = if ours {
+                    // Change coming back from our own spend is not a payment to
+                    // us, and Core leaves it out of the history too.
+                    let is_change = self
+                        .hd_origin_for_script(&txout.script_pubkey)
+                        .is_some_and(|hd| hd.keychain_idx == 1);
+                    if is_send && is_change {
+                        continue;
+                    }
+                    GetTransactionResultDetailCategory::Receive
+                } else if is_send {
+                    GetTransactionResultDetailCategory::Send
+                } else {
+                    continue;
+                };
+                let value = SignedAmount::from_sat(txout.value.to_sat() as i64);
+                let amount = if ours { value } else { -value };
+                out.push(ListTransactionResult {
+                    info: WalletTxInfo {
+                        confirmations,
+                        blockhash,
+                        blockindex: None,
+                        blocktime,
+                        blockheight,
+                        txid,
+                        time: blocktime.unwrap_or(0),
+                        timereceived: blocktime.unwrap_or(0),
+                        bip125_replaceable: Bip125Replaceable::Unknown,
+                        wallet_conflicts: Vec::new(),
+                    },
+                    detail: GetTransactionResultDetail {
+                        address: Address::from_script(&txout.script_pubkey, self.network)
+                            .ok()
+                            .map(|a| a.as_unchecked().clone()),
+                        category,
+                        amount,
+                        label: None,
+                        vout: vout as u32,
+                        fee: if ours { None } else { fee },
+                        abandoned: None,
+                    },
+                    trusted: None,
+                    comment: None,
+                });
+            }
+        }
+        Ok(out)
+    }
+
     fn watch_script(&self, script: &Script, hd: Option<HdOrigin>) {
         if let Ok(mut w) = self.watched.lock() {
             w.insert(script.to_owned());
@@ -514,13 +666,17 @@ impl Blockchain for Electrum {
         if state.subscriptions.contains_key(spk) {
             return Ok(());
         }
-        state.subscriptions.insert(spk.to_owned(), HashSet::new());
-        self.inner.script_subscribe(spk)?;
+        // Record the subscription only once both calls succeed, so a failure here
+        // doesn't make every retry an early-return no-op.
+        if let Err(e) = self.inner.script_subscribe(spk) {
+            if !matches!(e, electrum_client::Error::AlreadySubscribed(_)) {
+                return Err(e.into());
+            }
+        }
         let hist = self.inner.script_get_history(spk)?;
-        let seen = state
-            .subscriptions
-            .get_mut(spk)
-            .expect("just inserted above");
+
+        // Backend subscription works. Now record it as seen.
+        let seen = state.subscriptions.entry(spk.to_owned()).or_default();
         for h in hist {
             if !seen.insert(h.tx_hash) {
                 continue;
@@ -529,9 +685,11 @@ impl Blockchain for Electrum {
                 Ok(tx) => state.pending.push_back(WatchEvent::TxSeen {
                     raw_tx: serialize(&tx),
                 }),
-                // Couldn't fetch now; roll back so we retry on the next poll.
+                // Couldn't fetch now. Forget it and flag the script, so a later poll
+                // re-reads this history instead of waiting for a notification.
                 Err(_) => {
                     seen.remove(&h.tx_hash);
+                    state.dirty.insert(spk.to_owned());
                 }
             }
         }
@@ -540,11 +698,10 @@ impl Blockchain for Electrum {
 
     fn unsubscribe_script(&self, spk: &Script) -> Result<(), WalletError> {
         let mut guard = self.notifier.lock().map_err(poisoned)?;
-        if guard.subscriptions.remove(spk).is_none() {
-            return Ok(());
-        }
-        // Local state already freed; if the server call fails, `poll_event` still
-        // won't walk this script anymore.
+        guard.subscriptions.remove(spk);
+        guard.dirty.remove(spk);
+        // A partial subscribe failure can leave the server subscribed with no
+        // local entry, so always tell the server to unsubscribe also.
         self.inner.script_unsubscribe(spk)?;
         Ok(())
     }
@@ -575,10 +732,15 @@ impl Blockchain for Electrum {
         // current history against last-seen and queue new txs.
         let scripts: Vec<ScriptBuf> = state.subscriptions.keys().cloned().collect();
         for spk in scripts {
-            if !matches!(self.inner.script_pop(&spk), Ok(Some(_))) {
+            // A flagged script is re-read without a fresh notification; the server
+            // won't send one just because our last fetch failed. Rate-limited to the
+            // ping tick so a broken server isn't hammered.
+            let flagged = ping_due && state.dirty.remove(&spk);
+            if !flagged && !matches!(self.inner.script_pop(&spk), Ok(Some(_))) {
                 continue;
             }
             let Ok(hist) = self.inner.script_get_history(&spk) else {
+                state.dirty.insert(spk.clone());
                 continue;
             };
             let seen = state
@@ -593,6 +755,7 @@ impl Blockchain for Electrum {
                         });
                     } else {
                         seen.remove(&h.tx_hash);
+                        state.dirty.insert(spk.clone());
                     }
                 }
             }

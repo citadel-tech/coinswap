@@ -173,8 +173,8 @@ pub trait Blockchain: Send + Sync + 'static {
     /// * `minconf` — lower bound; `Some(0)` includes the mempool, `Some(1)` does
     ///   not. `None` means Core's default of `1` but Electrum's `0`, so pass it
     ///   explicitly.
-    /// * `maxconf` — upper bound, honoured only by Core (`None` → `9999999`).
-    ///   Electrum ignores it and returns everything at or above `minconf`.
+    /// * `maxconf` — upper bound. `None` means no bound (Core's own default
+    ///   is `9999999`).
     ///
     /// Result:
     /// * `Ok(entries)` — one per matching UTXO. Not every field is meaningful on
@@ -206,17 +206,15 @@ pub trait Blockchain: Send + Sync + 'static {
         descriptor: &str,
         range: Option<[u32; 2]>,
     ) -> Result<Vec<Address<NetworkUnchecked>>, WalletError>;
-    /// Recent wallet transactions (Core only; used by the FFI history view).
-    /// Defaults to an error on backends without a server-side wallet (Electrum).
+    /// Recent wallet transactions, newest window first, ordered oldest-first
+    /// like Core. Used by the FFI history view, so every backend must answer it.
     fn list_transactions(
         &self,
-        _label: Option<&str>,
-        _count: Option<usize>,
-        _skip: Option<usize>,
-        _include_watchonly: Option<bool>,
-    ) -> Result<Vec<ListTransactionResult>, WalletError> {
-        Err(unsupported("list_transactions"))
-    }
+        label: Option<&str>,
+        count: Option<usize>,
+        skip: Option<usize>,
+        include_watchonly: Option<bool>,
+    ) -> Result<Vec<ListTransactionResult>, WalletError>;
     /// `estimatesmartfee` for `conf_target` blocks. Defaults to an error on
     /// Electrum (callers fall back to the mempool.space/esplora estimators).
     fn estimate_smart_fee(
@@ -266,7 +264,8 @@ pub trait Blockchain: Send + Sync + 'static {
 
     /// Non-blocking poll for the next chain event (new tx or connected block).
     /// Lazily establishes the notification channel (ZMQ socket / Electrum
-    /// header subscription) on first call.
+    /// header subscription) on first call. `None` means no event is pending;
+    /// transport failures are logged by the backend.
     fn poll_event(&self) -> Option<WatchEvent>;
     /// Arm a per-script notification so future activity surfaces via
     /// [`poll_event`](Self::poll_event). No-op on Bitcoin Core (the `rawtx`

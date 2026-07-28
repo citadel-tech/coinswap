@@ -113,12 +113,9 @@ fn maker_abort2_case3() {
     info!("Swap failed as expected: {:?}", swap_result.err().unwrap());
     taker.log_tracker_state();
 
-    // Wait for timelocks to mature. Maker timeout is 60s in tests;
-    // block generation thread mines 5 blocks every 3s (~300 blocks/180s).
-    // The maker's contract tx is broadcast late (after idle timeout), so its CSV
-    // timelock (225 blocks) needs to mature from that point: ~60s timeout +
-    // ~145s of mining puts maturity right at the 180s mark — a race that
-    // intermittently fails on CI. 300s ~ 500 blocks leaves ample margin.
+    // Sleep budget: 60s maker idle timeout (test builds) + 225-block outer-hop
+    // timelock (REFUND_LOCKTIME_BASE 150 + STEP 75, 2 makers) ≈ 135s at
+    // 5 blocks/3s; remaining ~105s is scheduling margin.
     info!("Waiting for makers to timeout and blocks to mature timelocks...");
     thread::sleep(Duration::from_secs(300));
 

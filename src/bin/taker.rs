@@ -213,13 +213,14 @@ fn display_makers_with_summary(
     makers: &[MakerOfferCandidate],
 ) -> Result<(), TakerError> {
     let (mut good, mut bad, mut unresponsive) = (0, 0, 0);
+    let (tip_height, tip_time) = wallet.chain_tip()?;
     for maker in makers {
         match maker.state {
             MakerState::Good => good += 1,
             MakerState::Bad => bad += 1,
             MakerState::Unresponsive { .. } => unresponsive += 1,
         }
-        println!("{}", display_offer(wallet, maker)?);
+        println!("{}", display_offer(wallet, maker, tip_height, tip_time)?);
     }
     println!(
         "\nOfferbook summary → good: {}, bad: {}, unresponsive: {} (total: {})",
@@ -232,7 +233,12 @@ fn display_makers_with_summary(
 }
 
 /// Format a maker offer candidate as a human-readable string.
-fn display_offer(wallet: &Wallet, candidate: &MakerOfferCandidate) -> Result<String, TakerError> {
+fn display_offer(
+    wallet: &Wallet,
+    candidate: &MakerOfferCandidate,
+    tip_height: u64,
+    tip_time: u64,
+) -> Result<String, TakerError> {
     let header = format!(
         r#"
     Maker
@@ -255,7 +261,7 @@ fn display_offer(wallet: &Wallet, candidate: &MakerOfferCandidate) -> Result<Str
     };
 
     let bond = &offer.fidelity.bond;
-    let bond_value = wallet.calculate_bond_value(bond)?;
+    let bond_value = wallet.calculate_bond_value(bond, tip_height, tip_time)?;
 
     Ok(format!(
         r#"{header}
@@ -474,7 +480,8 @@ fn main() -> Result<(), TakerError> {
         Commands::PollMaker { address } => {
             let result = taker.poll_maker(address.clone())?;
             let wallet = taker.get_wallet().read().unwrap();
-            println!("{}", display_offer(&wallet, &result)?);
+            let (tip_height, tip_time) = wallet.chain_tip()?;
+            println!("{}", display_offer(&wallet, &result, tip_height, tip_time)?);
         }
         Commands::RemoveMaker { address } => {
             let removed = taker.remove_maker(address.clone())?;

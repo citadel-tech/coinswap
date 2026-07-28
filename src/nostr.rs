@@ -306,10 +306,9 @@ fn handle_relay_message(
                 event.created_at
             );
 
-            // Check the seen-cache before any RPC work to avoid wasted
-            // `get_raw_tx` calls on duplicate events.
-            // only a transient fetch failure leaves it eligible for retry.
-            if seen_txid.lock()?.contains(&txid) {
+            // Claim the txid before any RPC work, so duplicate events and
+            // concurrent relay sessions don't repeat the fetch and validation.
+            if !seen_txid.lock()?.claim(txid) {
                 log::info!("Skipping already-seen txid {txid} via {relay_url}");
                 registry.save_nostr_cursor(relay_url, event.created_at.as_secs());
                 return Ok(false);
@@ -319,6 +318,8 @@ fn handle_relay_message(
                 Ok(tx) => tx,
                 Err(e) => {
                     log::warn!("Failed to fetch raw tx {txid:?} via {relay_url}: {e}");
+                    // A transient fetch failure leaves the txid eligible for retry.
+                    seen_txid.lock()?.release(&txid);
                     return Ok(false);
                 }
             };

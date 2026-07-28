@@ -22,6 +22,8 @@ pub(crate) struct SeenTxids {
     seen: HashSet<Txid>,
     /// Tracks insertion order FIFO
     order: VecDeque<Txid>,
+    /// Txids claimed by a thread for validation. Other threads will skip this.
+    in_flight: HashSet<Txid>,
 }
 
 /// Fidelity announcement done by watcher to registry
@@ -181,18 +183,26 @@ impl SeenTxids {
         Self {
             seen: HashSet::new(),
             order: VecDeque::new(),
+            in_flight: HashSet::new(),
         }
     }
 
-    /// Returns true if `txid` is already in the seen-cache.
-    pub fn contains(&self, txid: &Txid) -> bool {
-        self.seen.contains(txid)
+    /// Claims `txid` for processing. Returns false if it is already seen or
+    /// claimed by another thread, so only one thread does the work.
+    pub fn claim(&mut self, txid: Txid) -> bool {
+        !self.seen.contains(&txid) && self.in_flight.insert(txid)
+    }
+
+    /// Drops a claim without marking it seen, leaving the txid open for retry.
+    pub fn release(&mut self, txid: &Txid) {
+        self.in_flight.remove(txid);
     }
 
     /// Returns true if txid was newly inserted (not seen before).
     /// Returns false if txid was already present.
     /// Uses FIFO eviction when capacity is exceeded.
     pub fn insert(&mut self, txid: Txid) -> bool {
+        self.in_flight.remove(&txid);
         if self.seen.insert(txid) {
             self.order.push_back(txid);
 

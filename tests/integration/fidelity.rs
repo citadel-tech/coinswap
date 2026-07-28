@@ -99,7 +99,10 @@ fn test_fidelity() {
             .get_fidelity_bonds()
             .get(highest_bond_index as usize)
             .unwrap();
-        let bond_value = wallet_read.calculate_bond_value(bond).unwrap();
+        let (tip_height, tip_time) = wallet_read.chain_tip().unwrap();
+        let bond_value = wallet_read
+            .calculate_bond_value(bond, tip_height, tip_time)
+            .unwrap();
         // Bond value depends on wall-clock time and regtest block timing,
         // so it varies between runs. Just sanity-check it's in a reasonable range.
         assert!(

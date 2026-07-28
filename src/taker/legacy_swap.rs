@@ -358,18 +358,30 @@ impl Taker {
                     .swap_state()?
                     .outgoing_swapcoins
                     .iter()
-                    .filter_map(|sc| {
-                        let funding_outpoint = sc.contract_tx.input[0].previous_output;
-                        let funding_spk = sc
-                            .funding_tx
-                            .as_ref()?
+                    .map(|sc| {
+                        let contract_input = sc.contract_tx.input.first().ok_or_else(|| {
+                            TakerError::General(
+                                "Outgoing swapcoin contract tx has no inputs".to_string(),
+                            )
+                        })?;
+                        let funding_outpoint = contract_input.previous_output;
+                        let funding_tx = sc.funding_tx.as_ref().ok_or_else(|| {
+                            TakerError::General("Outgoing swapcoin missing funding_tx".to_string())
+                        })?;
+                        let funding_spk = funding_tx
                             .output
-                            .get(funding_outpoint.vout as usize)?
+                            .get(funding_outpoint.vout as usize)
+                            .ok_or_else(|| {
+                                TakerError::General(format!(
+                                    "Funding tx has no output at vout {}",
+                                    funding_outpoint.vout
+                                ))
+                            })?
                             .script_pubkey
                             .clone();
-                        Some((funding_outpoint, sc.contract_tx.compute_txid(), funding_spk))
+                        Ok((funding_outpoint, sc.contract_tx.compute_txid(), funding_spk))
                     })
-                    .collect();
+                    .collect::<Result<Vec<_>, TakerError>>()?; // An error here means something big is internally broken
                 if let Some(ref detector) = self.breach_detector {
                     detector.add_sentinels(&self.watch_service, &sentinels);
                 }

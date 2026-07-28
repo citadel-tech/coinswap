@@ -58,12 +58,6 @@ struct ZmqSubscriber {
     socket: Mutex<Option<zmq::Socket>>,
 }
 
-/// Wrap a ZMQ transport problem (socket setup, connect, or subscription
-/// failure) in the dedicated [`WalletError::Zmq`] kind.
-fn zmq_err(msg: String) -> WalletError {
-    WalletError::Zmq(msg)
-}
-
 impl ZmqSubscriber {
     fn new(addr: String) -> Self {
         Self {
@@ -84,35 +78,61 @@ impl ZmqSubscriber {
         let mut guard = self
             .socket
             .lock()
-            .map_err(|_| zmq_err("ZMQ socket mutex poisoned".to_string()))?;
+            .map_err(|_| WalletError::Zmq("ZMQ socket mutex poisoned".to_string()))?;
         if guard.is_some() {
             return Ok(());
         }
         let ctx = zmq::Context::new();
         let socket = ctx
             .socket(zmq::SUB)
-            .map_err(|e| zmq_err(format!("ZMQ socket: {e}")))?;
+            .map_err(|e| WalletError::Zmq(format!("ZMQ socket: {e}")))?;
         socket
             .connect(&self.addr)
-            .map_err(|e| zmq_err(format!("ZMQ connect {}: {e}", self.addr)))?;
+            .map_err(|e| WalletError::Zmq(format!("ZMQ connect {}: {e}", self.addr)))?;
         socket
             .set_subscribe(b"rawtx")
-            .map_err(|e| zmq_err(format!("ZMQ subscribe rawtx: {e}")))?;
+            .map_err(|e| WalletError::Zmq(format!("ZMQ subscribe rawtx: {e}")))?;
         socket
             .set_subscribe(b"rawblock")
-            .map_err(|e| zmq_err(format!("ZMQ subscribe rawblock: {e}")))?;
+            .map_err(|e| WalletError::Zmq(format!("ZMQ subscribe rawblock: {e}")))?;
         *guard = Some(socket);
         Ok(())
     }
 
     /// Read the next raw ZMQ multipart message `(topic, payload)`, non-blocking.
-    /// Connects the SUB socket on first call.
+    /// Connects the SUB socket on first call. `None` means nothing was queued.
+    ///
+    /// A transport error drops the socket so the next call reconnects —
+    /// otherwise a dead socket would stay installed and notifications would
+    /// never resume.
     fn recv_event(&self) -> Option<(String, Vec<u8>)> {
-        self.ensure_connected().ok()?;
-        let guard = self.socket.lock().ok()?;
-        let socket = guard.as_ref()?;
-        let msg = socket.recv_multipart(zmq::DONTWAIT).ok()?;
+        if let Err(e) = self.ensure_connected() {
+            log::warn!("ZMQ connect {}: {e:?}", self.addr);
+            return None;
+        }
+        let mut guard = self.socket.lock().ok()?;
+        let received = {
+            let socket = guard.as_ref()?;
+            socket.recv_multipart(zmq::DONTWAIT)
+        };
+        let msg = match received {
+            Ok(msg) => msg,
+            // The only non-failure outcome of a DONTWAIT recv: the queue is
+            // empty right now. The socket stays healthy.
+            Err(zmq::Error::EAGAIN) => return None,
+            Err(e) => {
+                *guard = None;
+                log::warn!("ZMQ recv {}: {e}", self.addr);
+                return None;
+            }
+        };
+        // Core publishes topic/body/sequence, so a shorter message is malformed.
         if msg.len() < 2 {
+            log::warn!(
+                "ZMQ recv {}: malformed message with {} frames",
+                self.addr,
+                msg.len()
+            );
             return None;
         }
         Some((String::from_utf8_lossy(&msg[0]).to_string(), msg[1].clone()))
@@ -338,7 +358,12 @@ impl Blockchain for CoreRPC {
                 height: 0,
                 hash: payload,
             })),
-            _ => None,
+            // We only subscribe to the two topics above, so anything else means
+            // the socket is not carrying what we asked for.
+            other => {
+                log::warn!("ZMQ unexpected topic {other:?}");
+                None
+            }
         }
     }
 

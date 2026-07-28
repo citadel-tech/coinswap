@@ -509,12 +509,9 @@ impl MakerServer {
                 .get(i as usize)
                 .unwrap()
                 .clone();
-            let current_height = wallet_read
-                .blockchain
-                .get_block_count()
-                .map_err(MakerError::Wallet)? as u32;
+            let (current_height, tip_time) = wallet_read.chain_tip().map_err(MakerError::Wallet)?;
             let bond_value = wallet_read
-                .calculate_bond_value(&bond)
+                .calculate_bond_value(&bond, current_height, tip_time)
                 .map_err(MakerError::Wallet)?
                 .to_sat();
             drop(wallet_read);
@@ -531,7 +528,7 @@ impl MakerServer {
                 highest_proof.bond.outpoint,
                 i,
                 bond.amount.to_sat(),
-                bond.lock_time.to_consensus_u32() - current_height,
+                bond.lock_time.to_consensus_u32() - current_height as u32,
                 bond_value
             );
 

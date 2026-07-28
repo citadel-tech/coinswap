@@ -25,6 +25,8 @@ pub enum WatcherError {
     WebSocket(tungstenite::Error),
     /// Nostr message parsing error
     NostrParsingError(nostr::message::MessageHandleError),
+    /// Error from the wallet layer.
+    Wallet(crate::wallet::WalletError),
     /// Represents a mutex poisoning error.
     MutexPoison,
     /// Represents a general error with a descriptive message.
@@ -45,7 +47,7 @@ impl From<bitcoind::bitcoincore_rpc::Error> for WatcherError {
 
 impl From<crate::wallet::WalletError> for WatcherError {
     fn from(value: crate::wallet::WalletError) -> Self {
-        WatcherError::General(value.to_string())
+        WatcherError::Wallet(value)
     }
 }
 
@@ -107,6 +109,7 @@ impl WatcherError {
             WatcherError::SerdeCbor(_) => "SerdeCbor",
             WatcherError::WebSocket(_) => "WebSocket",
             WatcherError::NostrParsingError(_) => "NostrParsingError",
+            WatcherError::Wallet(_) => "Wallet",
             WatcherError::MutexPoison => "MutexPoison",
             WatcherError::General(_) => "General",
         }

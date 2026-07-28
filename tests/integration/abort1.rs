@@ -108,9 +108,11 @@ fn taker_abort1() {
     info!("Swap failed as expected: {:?}", swap_result.err().unwrap());
     taker.log_tracker_state();
 
-    // Wait for makers to timeout and broadcast contracts, then blocks mature timelocks.
+    // Sleep budget: 60s maker idle timeout (test builds) + 225-block outer-hop
+    // timelock (REFUND_LOCKTIME_BASE 150 + STEP 75, 2 makers) ≈ 135s at
+    // 5 blocks/3s; remaining ~105s is scheduling margin.
     info!("Waiting for makers to timeout and blocks to mature timelocks...");
-    thread::sleep(Duration::from_secs(150));
+    thread::sleep(Duration::from_secs(300));
 
     // Shut down makers
     makers

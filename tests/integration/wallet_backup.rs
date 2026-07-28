@@ -259,6 +259,8 @@ fn plainwallet_plainbackup_plainrestore_electrum() {
 
     assert_eq!(wallet, restored_wallet);
 
+    // Kill electrs before cleanup wipes root_dir, which holds its datadir.
+    drop(s.electrsd);
     cleanup(&mut s.bitcoind, &s.root_dir);
 
     info!("🎉 Electrum wallet backup-restore test ran successfully!");
@@ -302,5 +304,7 @@ fn encwallet_encbackup_encrestore_electrum() {
 
     assert_eq!(wallet, restored_wallet);
 
+    // Kill electrs before cleanup wipes root_dir, which holds its datadir.
+    drop(s.electrsd);
     cleanup(&mut s.bitcoind, &s.root_dir);
 }

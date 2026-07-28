@@ -115,9 +115,9 @@ fn test_malice2_maker_broadcast_contract() {
     info!("Swap failed as expected: {:?}", swap_result.err().unwrap());
     taker.log_tracker_state();
 
-    // Wait for makers to timeout and blocks to mature timelocks.
-    // Maker timeout is 60s in tests; block generation thread mines 5 blocks every 3s,
-    // so 300s ~ 500 blocks -- more than enough for the CSV timelocks to mature.
+    // Sleep budget: 60s maker idle timeout (test builds) + 225-block outer-hop
+    // timelock (REFUND_LOCKTIME_BASE 150 + STEP 75, 2 makers) ≈ 135s at
+    // 5 blocks/3s; remaining ~105s is scheduling margin.
     info!("Waiting for makers to timeout and blocks to mature timelocks...");
     thread::sleep(Duration::from_secs(300));
 

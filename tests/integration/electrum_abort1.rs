@@ -148,9 +148,11 @@ fn run_electrum_abort1(protocol: ProtocolVersion, expected: &ExpectedBalances) {
     info!("Swap failed as expected: {:?}", swap_result.err().unwrap());
     taker.log_tracker_state();
 
-    // Wait for makers to timeout and broadcast contracts, then blocks mature timelocks.
+    // Sleep budget: 60s maker idle timeout (test builds) + 225-block outer-hop
+    // timelock (REFUND_LOCKTIME_BASE 150 + STEP 75, 2 makers) ≈ 135s at
+    // 5 blocks/3s; remaining ~105s is scheduling margin.
     info!("Waiting for makers to timeout and blocks to mature timelocks...");
-    thread::sleep(Duration::from_secs(150));
+    thread::sleep(Duration::from_secs(300));
 
     // Shut down makers
     makers
@@ -196,6 +198,9 @@ fn run_electrum_abort1(protocol: ProtocolVersion, expected: &ExpectedBalances) {
 
     // Mine a block to confirm recovery txs, then sync wallet
     generate_blocks(bitcoind, 1);
+    // electrs indexes asynchronously; without the wait the sync can read a
+    // stale tip and the exact balance assertions below flake.
+    test_framework.wait_for_electrs_tip();
     taker.get_wallet().write().unwrap().sync_and_save().unwrap();
 
     // Verify taker balance
