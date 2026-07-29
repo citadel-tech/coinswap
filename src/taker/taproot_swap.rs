@@ -454,30 +454,18 @@ impl Taker {
                         .collect();
                     let required_confirms = self.swap_state()?.params.required_confirms;
                     log::info!(
-                        "Waiting for maker {}'s Taproot funding to confirm ({} tx)...",
+                        "Waiting for maker {}'s Taproot funding to confirm ({} tx), keeping the swap alive...",
                         i,
                         maker_funding_txids.len()
                     );
-                    let abort_check = || {
-                        self.breach_detector
-                            .as_ref()
-                            .is_some_and(|d| d.is_breached())
-                    };
-                    {
-                        let wallet = self.read_wallet()?;
-                        match wallet.wait_for_tx_confirmation(
-                            &maker_funding_txids,
-                            required_confirms,
-                            None,
-                            Some(&abort_check),
-                        ) {
-                            Ok(_) => {}
-                            Err(crate::wallet::WalletError::Interrupted(_)) => {
-                                return Err(TakerError::ContractsBroadcasted(vec![]));
-                            }
-                            Err(e) => return Err(e.into()),
-                        }
-                    }
+                    let swap_id = self.swap_state()?.id.clone();
+                    // Keep the session alive so the maker's idle checker does not start recovery.
+                    self.wait_for_funding_with_keepalive(
+                        &mut stream,
+                        &maker_funding_txids,
+                        required_confirms,
+                        &swap_id,
+                    )?;
 
                     received_contracts.push(*maker_contract);
                     self.swap_state_mut()?.makers[i]
@@ -710,7 +698,7 @@ impl Taker {
         }
 
         log::info!(
-            "Waiting for {} confirmation(s) on {} contract tx(s), keeping maker 0 warm...",
+            "Waiting for {} confirmation(s) on {} contract tx(s), keeping maker warm...",
             required_confirms,
             contract_txids.len()
         );
@@ -749,7 +737,7 @@ impl Taker {
                 // error instead of waiting out the full confirmation and then
                 // hitting EOF on the contract exchange.
                 return Err(TakerError::General(format!(
-                    "Maker 0 closed connection during funding wait: {:?}",
+                    "Maker closed connection during funding wait: {:?}",
                     e
                 )));
             }
