@@ -330,6 +330,12 @@ fn main() -> Result<(), TakerError> {
 
     let mut taker = Taker::init(config)?;
 
+    if let Some(mnemonic) = taker.get_wallet().write().unwrap().take_new_mnemonic() {
+        println!("\n========== New Wallet Seed Phrase ==========");
+        println!("{}", mnemonic.words());
+        println!("\nWrite these words down and store them offline. They will not be shown again.");
+    }
+
     // Sync wallet after initialization
     taker.get_wallet().write().unwrap().sync_and_save()?;
 

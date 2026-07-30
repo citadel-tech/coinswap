@@ -105,6 +105,13 @@ fn main() -> Result<(), MakerError> {
     config.write_to_file(&config_path)?;
 
     let maker = Arc::new(MakerServer::init(config)?);
+
+    if let Some(mnemonic) = maker.wallet.write().unwrap().take_new_mnemonic() {
+        println!("\n========== New Wallet Seed Phrase ==========");
+        println!("{}", mnemonic.words());
+        println!("\nWrite these words down and store them offline. They will not be shown again.");
+    }
+
     start_server(maker)?;
 
     Ok(())

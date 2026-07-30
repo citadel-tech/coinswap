@@ -7,8 +7,9 @@ use crate::{
 };
 
 use super::{rpc::RPCConfig, storage::WalletStore};
+use bip39::Mnemonic;
 use bitcoin::{bip32::Xpriv, Network};
-use bitcoind::bitcoincore_rpc::Client;
+use bitcoind::bitcoincore_rpc::{Client, RpcApi};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -98,6 +99,12 @@ impl Wallet {
         rpc_config: &RPCConfig,
         restored_enc_material: Option<KeyMaterial>,
     ) -> Result<Wallet, WalletError> {
+        if wallet_path.exists() {
+            return Err(WalletError::General(format!(
+                "a wallet already exists at {wallet_path:?}; refusing to overwrite it"
+            )));
+        }
+
         let wallet_file_name = wallet_path
             .file_name()
             .unwrap_or(OsStr::new(&wallet_backup.file_name)) // If no name filename for the restored one is provided use the previous one
@@ -125,10 +132,47 @@ impl Wallet {
             wallet_file_path: wallet_path.to_path_buf(),
             store,
             store_enc_material: restored_enc_material,
+            new_mnemonic: None,
         };
         tmp_wallet.sync_and_save()?;
 
         Ok(tmp_wallet)
+    }
+
+    /// Restores a `Wallet` from its BIP39 seed phrase, via [`Wallet::restore`].
+    ///
+    /// `wallet_birthday` is a floor on the Bitcoin Core rescan — `None` scans from
+    /// genesis, and the effective start may be up to 2h of blocks later. Electrum
+    /// ignores it and never rescans.
+    ///
+    /// Recovers exactly what a [`WalletBackup`] file does: HD funds, including
+    /// already-swept swap coins — though those lose the label that keeps them out of
+    /// the regular coin pool. Live swap keys are per-swap `OsRng` and unrecoverable
+    /// from any seed.
+    pub fn restore_from_mnemonic(
+        phrase: &str,
+        wallet_path: &Path,
+        rpc_config: &RPCConfig,
+        wallet_birthday: Option<u64>,
+        restored_enc_material: Option<KeyMaterial>,
+    ) -> Result<Wallet, WalletError> {
+        let network = Client::try_from(rpc_config)?.get_blockchain_info()?.chain;
+
+        let file_name = wallet_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default()
+            .to_string();
+
+        let mnemonic = Mnemonic::parse(phrase)?;
+        let backup = WalletBackup {
+            network,
+            master_key: Wallet::master_key_from_mnemonic(&mnemonic, network)?,
+            wallet_birthday,
+            file_name,
+        };
+
+        Wallet::restore(&backup, wallet_path, rpc_config, restored_enc_material)
     }
 
     /// Interactively restores a wallet from a backup file.

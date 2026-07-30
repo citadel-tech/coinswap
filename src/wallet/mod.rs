@@ -15,7 +15,7 @@ mod storage;
 pub(crate) mod swapcoin;
 
 pub(crate) use api::{contract_and_timelock_vsize, infer_address_type, SpendKind};
-pub use api::{Balances, RecoveryOutcome, UTXOSpendInfo, Wallet};
+pub use api::{Balances, RecoveryOutcome, SecretMnemonic, UTXOSpendInfo, Wallet};
 pub use backup::WalletBackup;
 pub use deniability::{verify_deniability, DeniabilityProof, DeniabilityProofData};
 pub use error::WalletError;
