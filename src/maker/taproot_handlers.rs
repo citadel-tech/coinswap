@@ -7,7 +7,7 @@ use bitcoind::bitcoincore_rpc::{jsonrpc::error::Error as JsonRpcError, Error as 
 
 use super::{
     error::MakerError,
-    handlers::{ConnectionState, Maker, SwapPhase},
+    handlers::{ConnectionState, Maker, SwapPhase, MIN_CONTRACT_REACTION_TIME},
 };
 use crate::{
     protocol::{
@@ -19,6 +19,7 @@ use crate::{
         },
         taproot_messages::{SerializableScalar, TaprootContractData, TaprootTakerMessage},
     },
+    taker::api::REFUND_LOCKTIME_STEP,
     utill::estimate_funding_tx_fee_sats,
     wallet::{
         swapcoin::{IncomingSwapCoin, OutgoingSwapCoin},
@@ -99,6 +100,24 @@ fn process_taproot_contract<M: Maker>(
         state.timelock,
         maker.network_port(),
     )?;
+
+    // The taker picks when to send this message, so blocks have passed since we agreed the swap.
+    // We can only sweep our incoming contract until `timelock + REFUND_LOCKTIME_STEP`, so
+    // check time is still left - a stalling taker would otherwise strand our funds.
+    let current_height = maker.get_current_height()?;
+    if state.timelock.saturating_add(REFUND_LOCKTIME_STEP as u32)
+        < current_height.saturating_add(MIN_CONTRACT_REACTION_TIME as u32)
+    {
+        log::warn!(
+            "[{}] Contract data arrived too late: timelock {} at height {}",
+            maker.network_port(),
+            state.timelock,
+            current_height
+        );
+        return Err(MakerError::General(
+            "Taproot contract data arrived too late to sweep safely",
+        ));
+    }
     #[cfg(debug_assertions)]
     log::debug!(
         "[CONTRACT_STATE] Role: Maker | Protocol: Taproot | SwapID: {} | ContractTxs: {} | Amounts: {} | Timelock: {} | Status: verified",

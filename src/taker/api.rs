@@ -1391,7 +1391,6 @@ impl Taker {
             amount: send_amount,
             tx_count,
             timelock,
-            refund_locktime_offset,
         };
 
         send_message(&mut stream, &TakerToMakerMessage::SwapDetails(swap_details))?;

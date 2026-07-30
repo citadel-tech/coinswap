@@ -127,7 +127,7 @@ fn test_taproot_coinswap() {
     );
     assert_eq!(
         taker_balances.swap.to_sat(),
-        495002,
+        494815,
         "Taker swap balance mismatch"
     );
     assert_eq!(
@@ -145,11 +145,14 @@ fn test_taproot_coinswap() {
 
     assert_eq!(
         balance_diff.to_sat(),
-        5922,
+        6109,
         "Taker spendable balance change mismatch"
     );
 
     // Verify makers earned fees
+    let expected_regular = [14500865, 14503103];
+    let expected_swap = [499328, 497053];
+    let expected_fee = [679, 642];
     for (i, (maker, original_spendable)) in makers.iter().zip(maker_spendable_balance).enumerate() {
         let balances = maker.wallet.read().unwrap().get_balances().unwrap();
 
@@ -158,14 +161,12 @@ fn test_taproot_coinswap() {
             i, balances.regular, balances.swap, balances.contract, balances.fidelity, balances.spendable,
         );
 
-        let expected_regular = [14500753, 14502916];
         assert_eq!(
             balances.regular.to_sat(),
             expected_regular[i],
             "Maker {} regular balance mismatch",
             i
         );
-        let expected_swap = [499328, 497165];
         assert_eq!(
             balances.swap.to_sat(),
             expected_swap[i],
@@ -191,7 +192,12 @@ fn test_taproot_coinswap() {
             maker_fee.to_sat()
         );
 
-        assert_eq!(maker_fee.to_sat(), 567, "Maker {} fee earned mismatch", i);
+        assert_eq!(
+            maker_fee.to_sat(),
+            expected_fee[i],
+            "Maker {} fee earned mismatch",
+            i
+        );
     }
 
     info!("All taproot swap tests completed successfully!");
