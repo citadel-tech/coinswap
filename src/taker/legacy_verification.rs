@@ -28,7 +28,6 @@ impl Taker {
     ///
     /// Each signature must be valid against the corresponding outgoing swapcoin's
     /// contract tx, multisig redeemscript, funding amount, and the maker's pubkey.
-    #[hotpath::measure]
     pub(crate) fn verify_sender_sigs(
         &self,
         sigs: &[bitcoin::ecdsa::Signature],
@@ -78,7 +77,6 @@ impl Taker {
     ///
     /// Uses `SenderContractTxInfo` (from the current maker's response) rather than
     /// outgoing swapcoins (which only exist for the first hop).
-    #[hotpath::measure]
     pub(crate) fn verify_sender_sigs_from_info(
         &self,
         sigs: &[bitcoin::ecdsa::Signature],
@@ -125,7 +123,6 @@ impl Taker {
     ///
     /// The receiver contract tx is signed by the previous maker using one of the
     /// pubkeys from the multisig redeemscript.
-    #[hotpath::measure]
     pub(crate) fn verify_receiver_sigs(
         &self,
         sigs: &[bitcoin::ecdsa::Signature],
@@ -171,7 +168,6 @@ impl Taker {
     }
 
     /// Verify the maker's sender contract data from `ReqContractSigsAsRecvrAndSender`.
-    #[hotpath::measure]
     pub(crate) fn verify_maker_sender_contracts(
         &self,
         senders_info: &[SenderContractTxInfo],
@@ -335,7 +331,6 @@ impl Taker {
     }
 
     /// Verify the maker's receiver contract transactions from `ReqContractSigsAsRecvrAndSender`.
-    #[hotpath::measure]
     pub(crate) fn verify_maker_receiver_contracts(
         &self,
         receivers_contract_txs: &[Transaction],

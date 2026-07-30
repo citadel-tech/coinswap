@@ -16,7 +16,6 @@ use crate::{
 use super::error::MakerError;
 
 /// Verify incoming Taproot contract data from the taker.
-#[hotpath::measure]
 pub(crate) fn verify_taproot_contract_data(
     data: &TaprootContractData,
     maker_timelock: u32,
@@ -259,7 +258,6 @@ pub(crate) fn verify_taproot_contract_data(
 }
 
 /// Verify Taproot private key handover from the taker.
-#[hotpath::measure]
 pub(crate) fn verify_taproot_privkey_handover(
     privkeys: &[SwapPrivkey],
     incoming_swapcoins: &[crate::wallet::swapcoin::IncomingSwapCoin],
