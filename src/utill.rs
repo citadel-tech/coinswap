@@ -63,6 +63,10 @@ pub const REQUIRED_CONFIRMS: u32 = 1;
 /// This replaces the hardcoded MINER_FEE constant
 pub const MIN_FEE_RATE: f64 = 2.0;
 
+/// Maximum size of a length-prefixed protocol or RPC message.
+/// 10 MiB limit
+pub const MAX_RPC_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
+
 /// Get the system specific home directory.
 /// Uses "/tmp" directory for integration tests
 fn get_home_dir() -> PathBuf {
@@ -227,6 +231,10 @@ pub fn read_message(reader: &mut TcpStream) -> Result<Vec<u8>, NetError> {
     let mut len_buff = [0u8; 4];
     reader.read_exact(&mut len_buff)?; // This can give UnexpectedEOF error if theres no data to read
     let length = u32::from_be_bytes(len_buff);
+
+    if length as usize > MAX_RPC_MESSAGE_SIZE {
+        return Err(NetError::MessageTooLarge);
+    }
 
     // the actual data
     let mut buffer = vec![0; length as usize];
@@ -1026,6 +1034,24 @@ mod tests {
 
         let mut stream = TcpStream::connect(address).unwrap();
         send_message(&mut stream, &message).unwrap();
+    }
+
+    #[test]
+    fn test_read_message_rejects_oversized_payload() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+
+        let sender = thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let oversized_length = (MAX_RPC_MESSAGE_SIZE as u32 + 1).to_be_bytes();
+            socket.write_all(&oversized_length).unwrap();
+        });
+
+        let mut stream = TcpStream::connect(address).unwrap();
+        let error = read_message(&mut stream).unwrap_err();
+
+        assert!(matches!(error, NetError::MessageTooLarge));
+        sender.join().unwrap();
     }
 
     #[test]

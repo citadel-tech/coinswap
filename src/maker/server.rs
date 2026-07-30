@@ -16,7 +16,7 @@ use crate::maker::rpc::server::MakerRpc;
 use crate::{
     nostr_coinswap::broadcast_bond_on_nostr,
     protocol::common_messages::{FidelityProof, MakerToTakerMessage, TakerToMakerMessage},
-    utill::HEART_BEAT_INTERVAL,
+    utill::{HEART_BEAT_INTERVAL, MAX_RPC_MESSAGE_SIZE},
     wallet::RecoveryReport,
 };
 
@@ -1028,7 +1028,7 @@ fn read_message(stream: &TcpStream) -> Result<TakerToMakerMessage, MakerError> {
 
     let len = u32::from_be_bytes(len_buf) as usize;
 
-    if len > 10 * 1024 * 1024 {
+    if len > MAX_RPC_MESSAGE_SIZE {
         return Err(MakerError::General("Message too large"));
     }
 

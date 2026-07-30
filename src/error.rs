@@ -16,6 +16,9 @@ pub enum NetError {
     /// Error indicating that a connection attempt timed out.
     ConnectionTimedOut,
 
+    /// Error indicating that a peer-declared message length exceeds the allowed maximum.
+    MessageTooLarge,
+
     /// Error caused by an invalid network address.
     InvalidNetworkAddress,
 
