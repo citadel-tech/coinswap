@@ -127,9 +127,32 @@ fn process_taproot_contract<M: Maker>(
 
     let n = data.contract_txs.len();
     let mut incoming_swapcoins = Vec::with_capacity(n);
+    let required_confirms = maker.get_config().required_confirms;
     for j in 0..n {
         let incoming_contract_tx = data.contract_txs[j].clone();
-        maker.verify_contract_tx_on_chain(&incoming_contract_tx.compute_txid())?;
+        // A mempool-only contract may be replaced via RBF after we fund the next hop,
+        // so require confirmations before proceeding.
+        let funded_at =
+            maker.wait_for_tx_on_chain(&incoming_contract_tx.compute_txid(), required_confirms)?;
+
+        // Check here that the stated timelock and refund_locktime_offset actually matches
+        // the funding transaction confirmation height.
+        if state
+            .timelock
+            .saturating_sub(state.refund_locktime_offset as u32)
+            > funded_at
+        {
+            log::error!(
+                "[{}] Timelock {} priced at {} blocks reaches past funding confirmed at {}",
+                maker.network_port(),
+                state.timelock,
+                state.refund_locktime_offset,
+                funded_at
+            );
+            return Err(MakerError::General(
+                "Taproot timelock reaches beyond the priced lock duration",
+            ));
+        }
 
         let incoming_funding_amount = data.amounts[j];
 

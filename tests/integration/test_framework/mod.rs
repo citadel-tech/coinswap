@@ -37,9 +37,9 @@ use bitcoind::{
 
 use coinswap::{
     maker::{MakerBehavior, MakerServer, MakerServerConfig},
-    protocol::common_messages::ProtocolVersion,
+    protocol::common_messages::{ProtocolVersion, COINSWAP_PORT},
     taker::{Taker, TakerBehavior, TakerInitConfig},
-    utill::setup_logger,
+    utill::{check_tor_status, get_ephemeral_address, setup_logger},
     wallet::{
         verify_deniability, AddressType, AnyBlockchain, BackendConfig, Blockchain, CoreRPC,
         CoreRpcConfig, Electrum, ElectrumConfig,
@@ -438,6 +438,42 @@ pub trait TestBackend {
 pub struct BitcoindBackend;
 /// Marker selecting the Electrum backend in tests.
 pub struct ElectrumBackend;
+/// Marker selecting the Electrum backend reached over a Tor SOCKS5 proxy.
+///
+/// Publishes the local `electrsd` as an ephemeral onion service so the client
+/// has something a proxy can actually route to — Tor cannot reach a loopback
+/// address. Requires a bootstrapped `tor`; see `electrum_tor.rs` for the gating.
+pub struct TorElectrumBackend;
+
+/// Tor control port used by the Tor integration tests.
+pub const TOR_CONTROL_PORT: u16 = 9051;
+/// Tor SOCKS port used by the Tor integration tests.
+pub const TOR_SOCKS_PORT: u16 = 9050;
+
+/// Control-port password for the Tor tests, from `COINSWAP_TOR_PASSWORD`
+/// (empty when unset, which matches a cookie-less `HashedControlPassword ""`).
+pub fn tor_password() -> String {
+    std::env::var("COINSWAP_TOR_PASSWORD").unwrap_or_default()
+}
+
+/// True when the Tor integration tests should run.
+///
+/// `COINSWAP_TOR_IT=1` means "I require Tor", so a missing daemon **panics**
+/// rather than skipping. CI gates on these tests, and a silent skip would look
+/// exactly like a pass. Without the variable set they skip, for local runs.
+pub fn tor_it_enabled() -> bool {
+    if std::env::var("COINSWAP_TOR_IT").as_deref() != Ok("1") {
+        log::warn!("skipping Tor integration test: COINSWAP_TOR_IT=1 not set");
+        return false;
+    }
+    if let Err(e) = check_tor_status(TOR_CONTROL_PORT, &tor_password()) {
+        panic!(
+            "COINSWAP_TOR_IT=1 but tor control port {} is unreachable: {:?}",
+            TOR_CONTROL_PORT, e
+        );
+    }
+    true
+}
 
 impl TestBackend for BitcoindBackend {
     fn make_backend_config(
@@ -460,8 +496,80 @@ impl TestBackend for ElectrumBackend {
     ) -> BackendConfig {
         BackendConfig::Electrum(ElectrumConfig {
             url: ensure_electrum_url(),
+            ..Default::default()
         })
     }
+}
+
+impl TestBackend for TorElectrumBackend {
+    fn make_backend_config(
+        _rpc_config: &CoreRpcConfig,
+        _zmq_addr: &str,
+        ensure_electrum_url: &mut dyn FnMut() -> String,
+    ) -> BackendConfig {
+        // `ensure_electrum_url` yields "host:port" for the local electrsd; we only
+        // need its port, since the onion service maps to 127.0.0.1.
+        let local = ensure_electrum_url();
+        let local_port: u16 = local
+            .rsplit_once(':')
+            .and_then(|(_, p)| p.parse().ok())
+            .unwrap_or_else(|| panic!("could not parse electrum port from {}", local));
+
+        // `Flags=Detach` means the service outlives this process. Acceptable: the
+        // CI job's tor is ephemeral and drops it on restart.
+        let onion = get_ephemeral_address(
+            TOR_CONTROL_PORT,
+            local_port,
+            &tor_password(),
+            "NEW:ED25519-V3",
+            None,
+        )
+        .expect("ADD_ONION failed; call tor_it_enabled() before using this backend");
+
+        // The helper fixes the onion-side port to COINSWAP_PORT and maps it to
+        // electrsd's real local port.
+        let url = format!("tcp://{onion}:{COINSWAP_PORT}");
+        log::info!("Tor electrum backend: {url} via socks 127.0.0.1:{TOR_SOCKS_PORT}");
+
+        // `timeout` and `poll_interval_secs` are left at their derived proxied
+        // defaults so the test exercises the cadence production actually ships.
+        let cfg = ElectrumConfig {
+            url,
+            socks5: Some(format!("127.0.0.1:{TOR_SOCKS_PORT}")),
+            ..Default::default()
+        };
+        warm_up_onion(&cfg);
+        BackendConfig::Electrum(cfg)
+    }
+}
+
+/// Connect once before handing the config out, retrying until it works.
+///
+/// A fresh onion service is not reachable until its descriptor reaches the HSDir
+/// ring and the client fetches it, which takes tens of seconds and is where
+/// nearly all Tor flakiness lives. Tor caches the descriptor after the first
+/// success, so paying for it once here makes every participant's connect fast.
+fn warm_up_onion(cfg: &ElectrumConfig) {
+    const ATTEMPTS: u32 = 12;
+    const GAP: std::time::Duration = std::time::Duration::from_secs(10);
+
+    for attempt in 1..=ATTEMPTS {
+        match Electrum::new(cfg) {
+            Ok(probe) => match probe.get_block_count() {
+                Ok(tip) => {
+                    log::info!("onion reachable on attempt {attempt} (tip {tip})");
+                    return;
+                }
+                Err(e) => log::warn!("onion connected but no tip on attempt {attempt}: {e:?}"),
+            },
+            Err(e) => log::warn!("onion not reachable yet on attempt {attempt}: {e:?}"),
+        }
+        std::thread::sleep(GAP);
+    }
+    panic!(
+        "onion service never became reachable after {} attempts",
+        ATTEMPTS
+    );
 }
 
 /// Wait until electrs has indexed up to bitcoind's tip.
@@ -686,6 +794,7 @@ impl TestFramework {
         if let Some(electrsd) = self.electrsd.as_ref() {
             let cfg = ElectrumConfig {
                 url: format!("tcp://{}", electrsd.electrum_url),
+                ..Default::default()
             };
             wait_for_electrs_tip(&self.bitcoind, electrsd, &cfg);
         }

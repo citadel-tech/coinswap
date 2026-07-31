@@ -525,8 +525,12 @@ impl From<serde_cbor::Error> for TorError {
     }
 }
 
-#[cfg(not(feature = "integration-test"))]
-pub(crate) fn check_tor_status(control_port: u16, password: &str) -> Result<(), TorError> {
+/// Authenticate against the Tor control port and report bootstrap progress.
+///
+/// Returns `Ok(())` once the control connection authenticates. A still-starting
+/// Tor is logged as a warning rather than an error, since callers only need the
+/// daemon to be reachable.
+pub fn check_tor_status(control_port: u16, password: &str) -> Result<(), TorError> {
     use std::{
         io::BufRead,
         net::{SocketAddr, ToSocketAddrs},
@@ -649,8 +653,18 @@ pub fn prompt_password(message: String) -> io::Result<String> {
     Ok(password.trim_end().to_string())
 }
 
-#[cfg(not(feature = "integration-test"))]
-pub(crate) fn get_ephemeral_address(
+/// Publish `local_port` as an ephemeral Tor onion service via `ADD_ONION`.
+///
+/// The service listens on [`COINSWAP_PORT`](crate::protocol::common_messages::COINSWAP_PORT)
+/// and forwards to `127.0.0.1:local_port`. Pass `"NEW:ED25519-V3"` as
+/// `private_key_data` for a fresh key, or `"ED25519-V3:<base64>"` to reuse one.
+/// When `service_id_data` is set, that service is removed first.
+///
+/// Created with `Flags=Detach`, so the service outlives the control connection
+/// and must be removed explicitly if it should not persist.
+///
+/// Returns the `<serviceid>.onion` hostname.
+pub fn get_ephemeral_address(
     control_port: u16,
     local_port: u16,
     password: &str,

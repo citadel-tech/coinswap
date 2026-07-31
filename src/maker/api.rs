@@ -18,7 +18,7 @@ use crate::{
     nostr_coinswap::NOSTR_RELAYS,
     protocol::common_messages::{FidelityProof, ProtocolVersion, SwapDetails},
     taker::api::REFUND_LOCKTIME_STEP,
-    utill::{get_maker_dir, parse_field, parse_toml, MIN_FEE_RATE},
+    utill::{get_maker_dir, parse_field, parse_toml, HEART_BEAT_INTERVAL, MIN_FEE_RATE},
     wallet::{
         swapcoin::{IncomingSwapCoin, OutgoingSwapCoin},
         AddressType, AnyBlockchain, BackendConfig, Blockchain, CoreRpcConfig, FidelityError,
@@ -39,6 +39,12 @@ use super::{
 
 /// Minimum swap amount in satoshis.
 pub const MIN_SWAP_AMOUNT: u64 = 10_000;
+
+/// How long to wait for a peer's tx to reach our mempool. Covers relay propagation
+/// and backend lag only - once we can see the tx, confirmations are waited for
+/// without a deadline. Sized above a full Electrum reconnect cycle so a transport
+/// blip does not fail an honest swap.
+const TX_BROADCAST_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Swap state tracked per swap_id (persisted across connections).
 #[derive(Debug, Clone)]
@@ -855,8 +861,7 @@ impl MakerTrait for MakerServer {
             }
         }
 
-        // Check timelock bounds and work out how long the funds stay locked. Taproot reads the
-        // tip once for both, so a block arriving mid-check cannot price the swap differently.
+        // Check timelock bounds and work out how long the funds stay locked.
         let locked_blocks = if details.protocol_version == ProtocolVersion::Legacy {
             if details.timelock < MIN_CONTRACT_REACTION_TIME as u32 {
                 log::warn!(
@@ -884,7 +889,10 @@ impl MakerTrait for MakerServer {
                     "Taproot timelock leaves too little contract reaction time",
                 ));
             }
-            details.timelock.saturating_sub(current_height)
+            // Price off the offset, not `timelock - current_height`. Our own tip moves
+            // while we negotiate, and that would make the same swap cost a different
+            // amount every run.
+            details.refund_locktime_offset as u32
         };
 
         if locked_blocks == 0 || locked_blocks > u16::MAX as u32 {
@@ -954,43 +962,74 @@ impl MakerTrait for MakerServer {
             .map_err(MakerError::Wallet)
     }
 
-    fn verify_contract_tx_on_chain(&self, txid: &bitcoin::Txid) -> Result<(), MakerError> {
-        // QA: A mempool-only contract may be replaced via RBF after the maker
-        // funds the next hop. Require at least one confirmation before proceeding.
-        const MAX_ATTEMPTS: u32 = 12;
-        const RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
-        let required_confirms = self.config.required_confirms.max(1);
+    /// Two different bounds apply. Waiting for the tx to reach our mempool is bounded
+    /// by `TX_BROADCAST_TIMEOUT` - if it never arrives, the peer never broadcast it
+    /// and there is nothing to wait for. Once we can see it, block intervals are
+    /// random and no deadline is meaningful, so confirmations are waited for until
+    /// they arrive or we shut down. The wallet lock is released between polls.
+    fn wait_for_tx_on_chain(
+        &self,
+        txid: &bitcoin::Txid,
+        required_confirms: u32,
+    ) -> Result<u32, MakerError> {
+        let required_confirms = required_confirms.max(1);
 
-        for attempt in 0..MAX_ATTEMPTS {
-            let confirmed = {
+        log::info!(
+            "[{}] Waiting for {} confirmation(s) on tx {}",
+            self.config.network_port,
+            required_confirms,
+            txid
+        );
+
+        let started = Instant::now();
+        let mut seen = false;
+
+        // Wait for confirmation or system shutdown
+        while !self.shutdown.load(Ordering::Relaxed) {
+            // Scoped so the wallet lock is released before we sleep.
+            {
                 let wallet = self
                     .wallet
                     .read()
                     .map_err(|_| MakerError::General("Failed to lock wallet"))?;
-                wallet
-                    .blockchain
-                    .get_raw_transaction_info(txid, None)
-                    .is_ok_and(|info| info.confirmations.unwrap_or(0) >= required_confirms)
-            };
 
-            if confirmed {
-                return Ok(());
+                // An `Ok` here means the tx is in our view at all, mempool or mined.
+                // Both backends error while it is still unknown to us.
+                if let Ok(info) = wallet.blockchain.get_raw_transaction_info(txid, None) {
+                    seen = true;
+                    log::info!("Tx seen in mempool. Waiting for confirmation.");
+                    if info.confirmations.unwrap_or(0) >= required_confirms {
+                        // Ask the backend for the mined height rather than deriving it
+                        // from the tip, which can race with a newly mined block.
+                        if let Some(height) = wallet
+                            .blockchain
+                            .tx_block_height(txid)
+                            .map_err(MakerError::Wallet)?
+                        {
+                            return Ok(height as u32);
+                        }
+                    }
+                }
             }
-
-            if attempt + 1 < MAX_ATTEMPTS {
-                log::info!(
-                    "Contract tx {} not yet confirmed (attempt {}/{}), retrying in {}s",
+            // Wait until timeout till the transaction reaches mempool
+            if !seen && started.elapsed() > TX_BROADCAST_TIMEOUT {
+                log::error!(
+                    "[{}] Tx {} never reached our mempool within {}s",
+                    self.config.network_port,
                     txid,
-                    attempt + 1,
-                    MAX_ATTEMPTS,
-                    RETRY_INTERVAL.as_secs()
+                    TX_BROADCAST_TIMEOUT.as_secs()
                 );
-                std::thread::sleep(RETRY_INTERVAL);
+                return Err(MakerError::General(
+                    "Tx did not reach our mempool before the broadcast timeout",
+                ));
             }
+            // Wait until confirmation, however long it might take.
+            log::info!("Tx {txid} not yet confirmed to {required_confirms} confirmation(s)");
+            thread::sleep(HEART_BEAT_INTERVAL);
         }
 
         Err(MakerError::General(
-            "Incoming contract tx does not have the required confirmations",
+            "Shutdown while waiting for tx confirmation",
         ))
     }
 
@@ -1356,24 +1395,12 @@ impl MakerTrait for MakerServer {
             }
 
             // Check the funding_tx is confirmed to required depth
+            self.wait_for_tx_on_chain(&funding_txid, REQUIRED_CONFIRMS)?;
+
             let wallet_read = self
                 .wallet
                 .read()
                 .map_err(|_| MakerError::General("Failed to lock wallet"))?;
-
-            if let Some(txout) = wallet_read
-                .blockchain
-                .get_tx_out(&funding_txid, funding_output_index, None)
-                .map_err(MakerError::Wallet)?
-            {
-                if txout.confirmations < REQUIRED_CONFIRMS {
-                    return Err(MakerError::General(
-                        "Funding tx not confirmed to required depth",
-                    ));
-                }
-            } else {
-                return Err(MakerError::General("Funding tx output doesn't exist"));
-            }
 
             check_reedemscript_is_multisig(&funding_info.multisig_redeemscript)?;
 

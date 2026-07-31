@@ -37,7 +37,7 @@ use std::{
 /// Exact post-recovery balances for one protocol run. Fees differ between the
 /// Legacy and Taproot transaction shapes (and locktime values), so each
 /// protocol pins its own values.
-struct ExpectedBalances {
+pub(crate) struct ExpectedBalances {
     taker_regular: u64,
     taker_swap: u64,
     taker_spendable_diff: u64,
@@ -46,7 +46,7 @@ struct ExpectedBalances {
     maker_spendable: [u64; 2],
 }
 
-const LEGACY_EXPECTED: ExpectedBalances = ExpectedBalances {
+pub(crate) const LEGACY_EXPECTED: ExpectedBalances = ExpectedBalances {
     taker_regular: 14499076,
     taker_swap: 493687,
     taker_spendable_diff: 7237,
@@ -55,18 +55,21 @@ const LEGACY_EXPECTED: ExpectedBalances = ExpectedBalances {
     maker_spendable: [14999065, 14999028],
 };
 
-const TAPROOT_EXPECTED: ExpectedBalances = ExpectedBalances {
+pub(crate) const TAPROOT_EXPECTED: ExpectedBalances = ExpectedBalances {
     taker_regular: 14499076,
-    taker_swap: 494744,
-    taker_spendable_diff: 6180,
-    maker_regular: [14500753, 14502916],
-    maker_swap: [499070, 496907],
-    maker_spendable: [14999823, 14999823],
+    taker_swap: 494557,
+    taker_spendable_diff: 6367,
+    maker_regular: [14500865, 14503103],
+    maker_swap: [499070, 496795],
+    maker_spendable: [14999935, 14999898],
 };
 
-/// Run the abort1 scenario (taker drops after funds broadcast) on the Electrum
-/// backend with the given protocol and assert the exact recovery balances.
-fn run_electrum_abort1(protocol: ProtocolVersion, expected: &ExpectedBalances) {
+/// Run the abort1 scenario (taker drops after funds broadcast) with the given
+/// protocol and assert the exact recovery balances.
+///
+/// Generic over the backend so `electrum_tor.rs` can run the identical body over
+/// Tor and assert the same balances.
+pub(crate) fn run_abort1<B: TestBackend>(protocol: ProtocolVersion, expected: &ExpectedBalances) {
     // ---- Setup ----
     warn!("Running Test: Taker Drops After Full Setup (Electrum backend, {protocol:?})");
 
@@ -75,7 +78,7 @@ fn run_electrum_abort1(protocol: ProtocolVersion, expected: &ExpectedBalances) {
     let maker_behaviors = vec![MakerBehavior::Normal, MakerBehavior::Normal];
 
     let (test_framework, mut takers, makers, block_generation_handle) =
-        TestFramework::init::<ElectrumBackend>(makers_config_map, taker_behavior, maker_behaviors);
+        TestFramework::init::<B>(makers_config_map, taker_behavior, maker_behaviors);
 
     let bitcoind = &test_framework.bitcoind;
     let taker = takers.get_mut(0).unwrap();
@@ -301,6 +304,6 @@ fn run_electrum_abort1(protocol: ProtocolVersion, expected: &ExpectedBalances) {
 
 #[test]
 fn electrum_taker_abort1() {
-    run_electrum_abort1(ProtocolVersion::Taproot, &TAPROOT_EXPECTED);
-    run_electrum_abort1(ProtocolVersion::Legacy, &LEGACY_EXPECTED);
+    run_abort1::<ElectrumBackend>(ProtocolVersion::Taproot, &TAPROOT_EXPECTED);
+    run_abort1::<ElectrumBackend>(ProtocolVersion::Legacy, &LEGACY_EXPECTED);
 }

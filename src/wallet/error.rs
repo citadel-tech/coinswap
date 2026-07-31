@@ -40,6 +40,19 @@ pub enum WalletError {
     /// poisoned locks) are wrapped as [`electrum_client::Error::Message`].
     Electrum(electrum_client::Error),
 
+    /// The Electrum backend could not be reached after exhausting every
+    /// reconnect attempt.
+    ///
+    /// Distinct from [`WalletError::Electrum`], which is a single failed call:
+    /// this means the transport itself is down (e.g. a Tor circuit that never
+    /// came back), so retrying at the call site will not help.
+    ElectrumUnreachable {
+        /// Connection attempts made before giving up.
+        attempts: u8,
+        /// Last transport error seen.
+        last: electrum_client::Error,
+    },
+
     /// Represents an error from the ZMQ notification transport of the Bitcoin
     /// Core backend (socket setup, connect, or subscription failures).
     Zmq(String),
@@ -233,6 +246,11 @@ impl std::fmt::Display for WalletError {
             WalletError::Security(e) => write!(f, "Security error: {}", e),
             WalletError::Rpc(e) => write!(f, "Bitcoin RPC error: {}", e),
             WalletError::Electrum(e) => write!(f, "Electrum error: {}", e),
+            WalletError::ElectrumUnreachable { attempts, last } => write!(
+                f,
+                "Electrum backend unreachable after {} attempt(s), last error: {}",
+                attempts, last
+            ),
             WalletError::Zmq(msg) => write!(f, "ZMQ error: {}", msg),
             WalletError::BIP32(e) => write!(f, "BIP32 error: {}", e),
             WalletError::BIP39(e) => write!(f, "BIP39 error: {}", e),

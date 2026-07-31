@@ -95,10 +95,9 @@ pub struct SwapDetails {
     /// Timelock value.
     /// - Legacy: relative block count (CSV).
     /// - Taproot: absolute block height (CLTV).
-    ///
-    /// The maker charges its time fee off this value, so the taker cannot claim a
-    /// shorter lock than the one it commits to.
     pub timelock: u32,
+    /// Relative locktime offset used for fee calculation (Taproot Only).
+    pub refund_locktime_offset: u16,
 }
 
 /// Acknowledgment of swap details from Maker.

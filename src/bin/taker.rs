@@ -63,6 +63,12 @@ struct Cli {
     #[clap(name = "ELECTRUM_URL", long)]
     pub electrum_url: Option<String>,
 
+    /// Route the Electrum backend through the Tor SOCKS proxy on `socks_port`.
+    /// Works with an onion or a clearnet server; an onion URL needs it.
+    /// Peer-to-peer Tor is unaffected either way.
+    #[clap(long)]
+    pub electrum_tor: bool,
+
     /// Sets the taker wallet's name. If the wallet file already exists, it will load that wallet. Default: taker-wallet
     #[clap(name = "WALLET", long, short = 'w')]
     pub wallet_name: Option<String>,
@@ -320,9 +326,15 @@ fn main() -> Result<(), TakerError> {
         .unwrap_or_else(|| "taker-wallet".to_string());
     // Build the unified taker config (also used by the Restore branch).
     // `--electrum-url` selects the Electrum backend; otherwise Bitcoin Core.
+    //
+    // The backend is needed by the Restore branch below, before `TakerInitConfig`
+    // exists, so read the socks port from the same default the config uses.
+    let socks_port = TakerInitConfig::default().socks_port;
     let backend = match args.electrum_url.as_ref() {
         Some(url) => coinswap::wallet::BackendConfig::Electrum(coinswap::wallet::ElectrumConfig {
             url: url.clone(),
+            socks5: args.electrum_tor.then(|| format!("127.0.0.1:{socks_port}")),
+            ..Default::default()
         }),
         None => coinswap::wallet::BackendConfig::CoreRpc(CoreRpcConfig {
             url: args.rpc.clone(),

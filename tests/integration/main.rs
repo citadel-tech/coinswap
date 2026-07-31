@@ -13,6 +13,8 @@ mod abort3_case3;
 mod electrum_abort1;
 mod electrum_list_transactions;
 mod electrum_swap;
+mod electrum_tor;
+mod electrum_transport;
 mod fidelity;
 mod fidelity_renewal;
 mod malice1;

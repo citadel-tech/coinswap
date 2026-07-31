@@ -30,8 +30,9 @@ use std::{
 /// Maker[1] completes the contract exchange, then broadcasts its outgoing
 /// contract transactions and closes the connection. The taker detects the
 /// failure and all parties recover via timelock.
-#[test]
-fn test_malice2_maker_broadcast_contract() {
+/// Generic over the backend so `electrum_tor.rs` can reuse the body over Tor.
+/// This is the only scenario driving the taker's breach detector.
+pub(crate) fn run_malice2<B: TestBackend>() {
     // ---- Setup ----
     warn!("Running Test: Malice2 - Maker Broadcasts Contract After Setup");
 
@@ -43,7 +44,7 @@ fn test_malice2_maker_broadcast_contract() {
     ];
 
     let (test_framework, mut takers, makers, block_generation_handle) =
-        TestFramework::init::<BitcoindBackend>(makers_config_map, taker_behavior, maker_behaviors);
+        TestFramework::init::<B>(makers_config_map, taker_behavior, maker_behaviors);
 
     let bitcoind = &test_framework.bitcoind;
     let taker = takers.get_mut(0).unwrap();
@@ -233,4 +234,9 @@ fn test_malice2_maker_broadcast_contract() {
     tracker_logger.stop();
     test_framework.stop();
     block_generation_handle.join().unwrap();
+}
+
+#[test]
+fn test_malice2_maker_broadcast_contract() {
+    run_malice2::<BitcoindBackend>();
 }

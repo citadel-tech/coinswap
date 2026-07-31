@@ -59,6 +59,11 @@ struct Cli {
     /// is initialised against an Electrum backend instead of Bitcoin Core.
     #[clap(name = "ELECTRUM_URL", long)]
     pub electrum_url: Option<String>,
+    /// Route the Electrum backend through the Tor SOCKS proxy on `socks_port`.
+    /// Works with an onion or a clearnet server; an onion URL needs it.
+    /// Peer-to-peer Tor is unaffected either way.
+    #[clap(long)]
+    pub electrum_tor: bool,
     #[clap(long, short = 't')]
     pub tor_auth: Option<String>,
     /// Optional wallet name. If the wallet exists, load the wallet, else create a new wallet with the given name. Default: maker-wallet
@@ -95,7 +100,13 @@ fn main() -> Result<(), MakerError> {
 
     // Set backend from CLI flags: --electrum-url takes precedence; otherwise Bitcoin Core.
     config.backend = match args.electrum_url {
-        Some(url) => BackendConfig::Electrum(ElectrumConfig { url }),
+        Some(url) => BackendConfig::Electrum(ElectrumConfig {
+            url,
+            socks5: args
+                .electrum_tor
+                .then(|| format!("127.0.0.1:{}", config.socks_port)),
+            ..Default::default()
+        }),
         None => BackendConfig::CoreRpc(CoreRpcConfig {
             url: args.rpc,
             auth: Auth::UserPass(args.auth.0, args.auth.1),

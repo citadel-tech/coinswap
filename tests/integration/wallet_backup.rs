@@ -214,7 +214,10 @@ fn setup_electrum(test_name: &str) -> ElectrumSetup {
         original_wallet: wallets_dir.join(&original_wallet_name),
         restored_wallet: wallets_dir.join(&restored_wallet_name),
         backup_file: wallets_dir.join("wallet-backup.json"),
-        electrum_cfg: ElectrumConfig { url: electrum_url },
+        electrum_cfg: ElectrumConfig {
+            url: electrum_url,
+            ..Default::default()
+        },
         bitcoind,
         electrsd,
         root_dir,

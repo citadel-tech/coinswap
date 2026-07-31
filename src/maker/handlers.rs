@@ -274,8 +274,14 @@ pub trait Maker: Send + Sync {
     /// Get the current block height from the Bitcoin node.
     fn get_current_height(&self) -> Result<u32, MakerError>;
 
-    /// Verify that a contract transaction has the required on-chain confirmations.
-    fn verify_contract_tx_on_chain(&self, txid: &bitcoin::Txid) -> Result<(), MakerError>;
+    /// Wait until a peer's tx is confirmed to `required_confirms` depth, returning the
+    /// height it was mined at. The wait for the tx to reach our mempool is bounded;
+    /// once it is there, confirmations are waited for until they arrive or we shut down.
+    fn wait_for_tx_on_chain(
+        &self,
+        txid: &bitcoin::Txid,
+        required_confirms: u32,
+    ) -> Result<u32, MakerError>;
 
     /// Verify and sign sender's contract transactions.
     fn verify_and_sign_sender_contract_txs(

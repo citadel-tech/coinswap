@@ -9,7 +9,10 @@
 
 use std::{
     collections::{HashMap, HashSet, VecDeque},
-    sync::Mutex,
+    sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Mutex, RwLock,
+    },
     time::Duration,
 };
 
@@ -17,8 +20,9 @@ use bitcoin::{
     address::NetworkUnchecked,
     bip32::{ChildNumber, Xpub},
     block::Header,
-    consensus::encode::{serialize, serialize_hex},
+    consensus::encode::serialize,
     hashes::Hash,
+    hex::DisplayHex,
     Address, BlockHash, CompressedPublicKey, Script, ScriptBuf, SignedAmount, Transaction, Txid,
 };
 use bitcoind::bitcoincore_rpc::json::{
@@ -26,7 +30,10 @@ use bitcoind::bitcoincore_rpc::json::{
     GetTransactionResultDetail, GetTransactionResultDetailCategory, GetTxOutResult,
     ListTransactionResult, ListUnspentResultEntry, WalletTxInfo,
 };
-use electrum_client::{Client as ElectrumClient, ElectrumApi, Param};
+use electrum_client::{
+    Client as ElectrumClient, Config as ClientConfig, ConfigBuilder, ElectrumApi, Param,
+    Socks5Config,
+};
 use serde_json::{json, Value};
 
 use super::{network_from_electrum_genesis, BlockRef, Blockchain, HdOrigin, WatchEvent};
@@ -41,14 +48,110 @@ pub struct ElectrumConfig {
     /// Electrum server endpoint (e.g. `"tcp://localhost:50001"` or
     /// `"ssl://electrum.example.org:50002"`).
     pub url: String,
+    /// SOCKS5 proxy to reach the server through, e.g. `"127.0.0.1:9050"` for Tor.
+    /// Works for onion and clearnet servers alike. `None` connects directly, which
+    /// cannot reach an onion address at all.
+    pub socks5: Option<String>,
+    /// Socket read timeout in seconds. `None` picks 30s direct and 120s through a
+    /// proxy, since a slow large response over Tor must not be mistaken for a
+    /// dead connection.
+    pub timeout: Option<u8>,
+    /// Seconds between notification pings. `None` picks 1s direct and 10s through
+    /// a proxy, where each ping costs a circuit round-trip.
+    pub poll_interval_secs: Option<u64>,
+    /// Reconnect attempts after a transport failure before giving up. A dropped
+    /// Tor circuit should not abort a swap.
+    pub max_retries: u8,
 }
 
 impl Default for ElectrumConfig {
     fn default() -> Self {
         Self {
-            url: "tcp://electrum1.bluewallet.io:50001".to_string(),
+            url: "tcp://<your-electrum-server>:<port>".to_string(),
+            socks5: None,
+            timeout: None,
+            poll_interval_secs: None,
+            max_retries: 3,
         }
     }
+}
+
+/// Ping cadence on a direct connection.
+pub const PING_INTERVAL_DIRECT: Duration = Duration::from_secs(1);
+/// Ping cadence through a proxy. A Tor round-trip costs far more than a local
+/// one, and every consumer of watchtower latency reacts on a block timescale.
+pub const PING_INTERVAL_PROXIED: Duration = Duration::from_secs(10);
+/// Read timeout for a direct connection.
+pub const READ_TIMEOUT_DIRECT_SECS: u8 = 30;
+/// Read timeout through a proxy. Generous on purpose: a large batched response
+/// over a congested circuit must not be mistaken for a dead transport, or we
+/// reconnect when we should have waited.
+pub const READ_TIMEOUT_PROXIED_SECS: u8 = 120;
+
+/// Host portion of an Electrum URL, without scheme or port.
+fn url_host(url: &str) -> &str {
+    let no_scheme = url.split_once("://").map(|(_, rest)| rest).unwrap_or(url);
+    no_scheme
+        .rsplit_once(':')
+        .map(|(host, _)| host)
+        .unwrap_or(no_scheme)
+}
+
+/// Notification ping cadence for a config: explicit override, else derived from
+/// whether a proxy is in play.
+fn derive_ping_interval(cfg: &ElectrumConfig) -> Duration {
+    cfg.poll_interval_secs
+        .map(Duration::from_secs)
+        .unwrap_or(if cfg.socks5.is_some() {
+            PING_INTERVAL_PROXIED
+        } else {
+            PING_INTERVAL_DIRECT
+        })
+}
+
+/// Socket read timeout for a config, in seconds. Proxied connections get a much
+/// longer one; see [`READ_TIMEOUT_PROXIED_SECS`].
+fn derive_timeout_secs(cfg: &ElectrumConfig) -> u8 {
+    cfg.timeout.unwrap_or(if cfg.socks5.is_some() {
+        READ_TIMEOUT_PROXIED_SECS
+    } else {
+        READ_TIMEOUT_DIRECT_SECS
+    })
+}
+
+/// Build the `electrum_client` config from ours.
+///
+/// `retry(0)` is deliberate. The client's own retry rebuilds the connection and
+/// then returns `Ok`, hiding the fact that every server-side script
+/// subscription was dropped — which leaves the watchtower deaf. Reconnection is
+/// handled by [`Electrum::call`] instead, which knows what to re-arm.
+fn client_config(cfg: &ElectrumConfig) -> ClientConfig {
+    let is_onion = url_host(&cfg.url).ends_with(".onion");
+    ConfigBuilder::new()
+        .socks5(cfg.socks5.as_deref().map(Socks5Config::new))
+        .timeout(Some(derive_timeout_secs(cfg)))
+        .retry(0)
+        // A hidden-service name has no certificate to validate against.
+        .validate_domain(!is_onion)
+        .build()
+}
+
+/// How long to wait before retry `attempt` (1-based): 1s, 2s, 4s, then capped.
+/// A Tor circuit needs a moment to rebuild, so the first retry is not immediate.
+fn retry_backoff(attempt: u8) -> Duration {
+    Duration::from_secs(1 << (attempt - 1).min(5))
+}
+
+/// True for errors that mean the request was answered, not that the transport
+/// failed. Reconnecting cannot help these. `NotSubscribed` is included because
+/// it is local client state, and after a rebuild it means "re-arm", not "retry".
+fn is_terminal(e: &electrum_client::Error) -> bool {
+    matches!(
+        e,
+        electrum_client::Error::Protocol(_)
+            | electrum_client::Error::AlreadySubscribed(_)
+            | electrum_client::Error::NotSubscribed(_)
+    )
 }
 
 /// Notification state for the watchtower path, mutated through a `Mutex` so the
@@ -72,10 +175,21 @@ struct NotifierState {
 /// Electrum-protocol backend. One owned connection serves both the wallet's
 /// queries and the watchtower's notifications for a given consumer.
 pub struct Electrum {
-    inner: ElectrumClient,
+    /// Held for the process lifetime and reused by every call. Swappable only so
+    /// [`Electrum::call`] can replace a dead connection in place — never
+    /// re-established per call.
+    inner: RwLock<ElectrumClient>,
     /// Connection config, retained so a fresh independent connection can be
     /// built via [`Electrum::reconnect`] (the watchtower needs its own).
     config: ElectrumConfig,
+    /// Ping cadence for `poll_event`, resolved from the config at construction.
+    ping_interval: Duration,
+    /// Set when `call` rebuilds the client. The fresh socket carries no
+    /// server-side script subscriptions, so `poll_event` must re-arm them.
+    needs_rearm: AtomicBool,
+    /// Times the transport was rebuilt. A healthy held connection leaves this at
+    /// 0; used by tests to prove we do not reconnect per sync or watch call.
+    reconnects: AtomicU64,
     /// Scripts the wallet asked us to track (Core's server-side wallet equivalent).
     watched: Mutex<HashSet<ScriptBuf>>,
     /// HD-origin hint per watched script, for UTXO classification without a descriptor.
@@ -102,21 +216,30 @@ impl Electrum {
     /// hash. Used by `AnyBlockchain::from_config`; each consumer gets its own
     /// connection.
     pub fn new(cfg: &ElectrumConfig) -> Result<Self, WalletError> {
-        let inner = ElectrumClient::new(&cfg.url)?;
+        // Without a proxy an onion host has no route: it cannot be resolved, so
+        // fail with the reason rather than an opaque DNS error.
+        if cfg.socks5.is_none() && url_host(&cfg.url).ends_with(".onion") {
+            return Err(electrum_err(format!(
+                "electrum url {} is an onion address but no socks5 proxy is configured",
+                cfg.url
+            )));
+        }
+        let (inner, genesis, last_height) = Self::connect(cfg)?;
         let config = cfg.clone();
-        let features = inner.server_features()?;
-        let network = network_from_electrum_genesis(&features.genesis_hash).ok_or_else(|| {
+        // Not retried: a server on the wrong chain will keep saying so.
+        let network = network_from_electrum_genesis(&genesis).ok_or_else(|| {
             electrum_err(format!(
                 "unknown genesis from electrum server: {:?}",
-                features.genesis_hash
+                genesis
             ))
         })?;
-        // Arm the header subscription so the watchtower's `poll_event` sees tip
-        // updates; harmless for the wallet's instance, which never polls.
-        let last_height = inner.block_headers_subscribe()?.height as i64;
+        let ping_interval = derive_ping_interval(cfg);
         Ok(Self {
-            inner,
+            inner: RwLock::new(inner),
             config,
+            ping_interval,
+            needs_rearm: AtomicBool::new(false),
+            reconnects: AtomicU64::new(0),
             watched: Mutex::new(HashSet::new()),
             hd_paths: Mutex::new(HashMap::new()),
             height_to_hash: Mutex::new(HashMap::new()),
@@ -128,12 +251,158 @@ impl Electrum {
         })
     }
 
+    /// Open the connection and run the opening handshake, retrying on transport
+    /// failure.
+    ///
+    /// A first connect over Tor often fails while the circuit or the onion
+    /// descriptor is still settling, and that should not kill process startup.
+    /// Returns the client, the server's genesis hash, and the tip height.
+    fn connect(cfg: &ElectrumConfig) -> Result<(ElectrumClient, [u8; 32], i64), WalletError> {
+        let once = || -> Result<(ElectrumClient, [u8; 32], i64), electrum_client::Error> {
+            let inner = ElectrumClient::from_config(&cfg.url, client_config(cfg))?;
+            let genesis = inner.server_features()?.genesis_hash;
+            // Arm the header subscription so the watchtower's `poll_event` sees
+            // tip updates; harmless for the wallet's instance, which never polls.
+            let last_height = inner.block_headers_subscribe()?.height as i64;
+            Ok((inner, genesis, last_height))
+        };
+
+        let mut last = match once() {
+            Ok(v) => return Ok(v),
+            Err(e) if is_terminal(&e) => return Err(e.into()),
+            Err(e) => e,
+        };
+
+        for attempt in 1..=cfg.max_retries {
+            let backoff = retry_backoff(attempt);
+            log::warn!(
+                "electrum connect to {} failed ({last:?}); retrying in {}s (attempt {attempt}/{})",
+                cfg.url,
+                backoff.as_secs(),
+                cfg.max_retries
+            );
+            std::thread::sleep(backoff);
+            match once() {
+                Ok(v) => return Ok(v),
+                Err(e) if is_terminal(&e) => return Err(e.into()),
+                Err(e) => last = e,
+            }
+        }
+
+        let attempts = cfg.max_retries.saturating_add(1);
+        log::error!(
+            "electrum backend {} unreachable at connect after {attempts} attempt(s): {last:?}",
+            cfg.url
+        );
+        Err(WalletError::ElectrumUnreachable { attempts, last })
+    }
+
     /// Open a fresh, independent Electrum connection with the same config.
     ///
     /// Used to give a separate consumer (e.g. the watchtower discovery thread)
-    /// its own connection without threading the config around separately.
+    /// its own connection without threading the config around separately. This is
+    /// not the reconnect-on-failure path, which replaces a dead socket in place.
     pub fn reconnect(&self) -> Result<Self, WalletError> {
         Self::new(&self.config)
+    }
+
+    /// Times the transport was rebuilt since construction.
+    ///
+    /// The connection is meant to be held, so a healthy run leaves this at 0.
+    /// A non-zero value means the socket died and was replaced, not that calls
+    /// failed.
+    pub fn reconnect_count(&self) -> u64 {
+        self.reconnects.load(Ordering::Relaxed)
+    }
+
+    /// Run a backend call, reconnecting and retrying on transport failure.
+    ///
+    /// The client is configured with `retry(0)`, so a dropped connection
+    /// surfaces here instead of being papered over. A rebuilt Tor circuit or a
+    /// restarted server must not abort a swap, so we reconnect and retry up to
+    /// `max_retries` times with a widening backoff before failing loudly.
+    ///
+    /// The happy path takes only a read lock, so the held connection is shared
+    /// by every caller and a successful call never reconnects.
+    fn call<T>(
+        &self,
+        f: impl Fn(&ElectrumClient) -> Result<T, electrum_client::Error>,
+    ) -> Result<T, WalletError> {
+        let mut last = match self.try_call(&f) {
+            Ok(v) => return Ok(v),
+            Err(e) if is_terminal(&e) => return Err(e.into()),
+            Err(e) => e,
+        };
+
+        for attempt in 1..=self.config.max_retries {
+            let backoff = retry_backoff(attempt);
+            // An idle server dropping the session is routine, so only the first
+            // attempt is a warning; the rest are noise until we actually fail.
+            let msg = format!(
+                "electrum call to {} failed ({last:?}); reconnecting in {}s (attempt {attempt}/{})",
+                self.config.url,
+                backoff.as_secs(),
+                self.config.max_retries
+            );
+            if attempt == 1 {
+                log::warn!("{msg}");
+            } else {
+                log::debug!("{msg}");
+            }
+            std::thread::sleep(backoff);
+
+            if let Err(e) = self.reconnect_client() {
+                last = e;
+                continue;
+            }
+            match self.try_call(&f) {
+                Ok(v) => return Ok(v),
+                Err(e) if is_terminal(&e) => return Err(e.into()),
+                Err(e) => last = e,
+            }
+        }
+
+        let attempts = self.config.max_retries.saturating_add(1);
+        log::error!(
+            "electrum backend {} unreachable after {attempts} attempt(s): {last:?}",
+            self.config.url
+        );
+        Err(WalletError::ElectrumUnreachable { attempts, last })
+    }
+
+    /// One attempt against the currently held client.
+    ///
+    /// A poisoned lock is recovered rather than propagated: the guarded value is
+    /// a live socket, and refusing to touch it would brick the backend for the
+    /// process lifetime with no way for `reconnect_client` to heal it.
+    fn try_call<T>(
+        &self,
+        f: &impl Fn(&ElectrumClient) -> Result<T, electrum_client::Error>,
+    ) -> Result<T, electrum_client::Error> {
+        let client = self.inner.read().unwrap_or_else(|e| e.into_inner());
+        f(&client)
+    }
+
+    /// Replace the held client with a fresh connection and flag subscriptions
+    /// for re-arming, since the new socket carries none.
+    fn reconnect_client(&self) -> Result<(), electrum_client::Error> {
+        let fresh = ElectrumClient::from_config(&self.config.url, client_config(&self.config))?;
+        let mut guard = self.inner.write().unwrap_or_else(|e| e.into_inner());
+        *guard = fresh;
+        self.needs_rearm.store(true, Ordering::SeqCst);
+        self.reconnects.fetch_add(1, Ordering::Relaxed);
+        log::info!("reconnected to electrum backend {}", self.config.url);
+        Ok(())
+    }
+
+    /// Arm the server-side scripthash subscription, treating an existing one as
+    /// success. Shared by the initial subscribe and the post-reconnect re-arm.
+    fn arm_subscription(&self, spk: &Script) -> Result<(), WalletError> {
+        match self.call(|c| c.script_subscribe(spk).map(|_| ())) {
+            Ok(()) => Ok(()),
+            Err(WalletError::Electrum(electrum_client::Error::AlreadySubscribed(_))) => Ok(()),
+            Err(e) => Err(e),
+        }
     }
 
     /// Expand a wallet-emitted descriptor (`wpkh(<xpub>/<chain>/*)` or
@@ -219,7 +488,7 @@ impl Blockchain for Electrum {
     }
 
     fn get_blockchain_info(&self) -> Result<GetBlockchainInfoResult, WalletError> {
-        let tip = self.inner.block_headers_subscribe()?;
+        let tip = self.call(|c| c.block_headers_subscribe())?;
         let best = self.get_block_hash(tip.height as u64)?;
         // Build via serde so we don't have to enumerate every field (some are
         // private or non-`Default` upstream).
@@ -242,7 +511,7 @@ impl Blockchain for Electrum {
     }
 
     fn get_block_count(&self) -> Result<u64, WalletError> {
-        let tip = self.inner.block_headers_subscribe()?;
+        let tip = self.call(|c| c.block_headers_subscribe())?;
         Ok(tip.height as u64)
     }
 
@@ -256,7 +525,7 @@ impl Blockchain for Electrum {
     }
 
     fn header_at_height(&self, height: u64) -> Result<Header, WalletError> {
-        let header = self.inner.block_header(height as usize)?;
+        let header = self.call(|c| c.block_header(height as usize))?;
         if let Ok(mut cache) = self.height_to_hash.lock() {
             cache.insert(height, header.block_hash());
         }
@@ -269,15 +538,13 @@ impl Blockchain for Electrum {
         // serves as the lookup key. That height is the server's own answer — no
         // arithmetic against a tip that may have moved — and works at any depth,
         // for scripts inside or outside our watch set.
-        let tx = self.inner.transaction_get(txid)?;
+        let tx = self.call(|c| c.transaction_get(txid))?;
         for txout in &tx.output {
             // Unspendable outputs (OP_RETURN) have no scripthash history.
             if txout.script_pubkey.is_op_return() {
                 continue;
             }
-            let Ok(history) = self
-                .inner
-                .script_get_history(txout.script_pubkey.as_script())
+            let Ok(history) = self.call(|c| c.script_get_history(txout.script_pubkey.as_script()))
             else {
                 continue;
             };
@@ -295,7 +562,7 @@ impl Blockchain for Electrum {
         txid: &Txid,
         _block_hash: Option<&BlockHash>,
     ) -> Result<Transaction, WalletError> {
-        Ok(self.inner.transaction_get(txid)?)
+        self.call(|c| c.transaction_get(txid))
     }
 
     fn get_raw_transaction_info(
@@ -305,10 +572,12 @@ impl Blockchain for Electrum {
     ) -> Result<GetRawTransactionResult, WalletError> {
         // Ask electrs for the verbose form so we can read `confirmations` directly.
         // Only the few fields the wallet actually reads are populated.
-        let value: Value = self.inner.raw_call(
-            "blockchain.transaction.get",
-            vec![Param::String(txid.to_string()), Param::Bool(true)],
-        )?;
+        let value: Value = self.call(|c| {
+            c.raw_call(
+                "blockchain.transaction.get",
+                vec![Param::String(txid.to_string()), Param::Bool(true)],
+            )
+        })?;
         let confirmations = value
             .get("confirmations")
             .and_then(|v| v.as_u64())
@@ -333,22 +602,53 @@ impl Blockchain for Electrum {
                     "n": n,
                     "scriptPubKey": {
                         "asm": "",
-                        "hex": serialize_hex(&o.script_pubkey),
+                        "hex": o.script_pubkey.as_bytes().to_lower_hex_string(),
                         "type": null,
                     },
                 })
             })
             .collect();
+
+        let is_coinbase = tx.is_coinbase();
+        let vin: Vec<Value> = tx
+            .input
+            .iter()
+            .map(|i| {
+                let script_sig = i.script_sig.as_bytes().to_lower_hex_string();
+                // Core prints a coinbase input as a bare `coinbase` script with no
+                // outpoint behind it; every other input carries txid/vout/scriptSig.
+                let mut v = if is_coinbase {
+                    json!({ "coinbase": script_sig, "sequence": i.sequence.0 })
+                } else {
+                    json!({
+                        "txid": i.previous_output.txid,
+                        "vout": i.previous_output.vout,
+                        "scriptSig": { "asm": "", "hex": script_sig },
+                        "sequence": i.sequence.0,
+                    })
+                };
+                // Core omits the field entirely for a non-witness input.
+                if !i.witness.is_empty() {
+                    let items: Vec<String> =
+                        i.witness.iter().map(|w| w.to_lower_hex_string()).collect();
+                    v["txinwitness"] = json!(items);
+                }
+                v
+            })
+            .collect();
+
         let stub = json!({
             "in_active_chain": null,
             "hex": hex,
             "txid": txid,
             "hash": tx.compute_wtxid(),
-            "size": bytes.len(),
-            "vsize": bytes.len(),
+            "size": tx.total_size(),
+            // BIP141 weight units, rounded up to whole vbytes — same as Core's
+            // `GetVirtualTransactionSize`.
+            "vsize": tx.vsize(),
             "version": tx.version.0 as u32,
             "locktime": tx.lock_time.to_consensus_u32(),
-            "vin": [],
+            "vin": vin,
             "vout": vout,
             "blockhash": value.get("blockhash"),
             "confirmations": confirmations,
@@ -368,10 +668,12 @@ impl Blockchain for Electrum {
         // funding-confirmation logic rely on this transition. Electrum's
         // `transaction.get` always returns the tx, so we confirm liveness via
         // `scripthash.listunspent`.
-        let value: Value = match self.inner.raw_call(
-            "blockchain.transaction.get",
-            vec![Param::String(txid.to_string()), Param::Bool(true)],
-        ) {
+        let value: Value = match self.call(|c| {
+            c.raw_call(
+                "blockchain.transaction.get",
+                vec![Param::String(txid.to_string()), Param::Bool(true)],
+            )
+        }) {
             Ok(v) => v,
             Err(_) => return Ok(None),
         };
@@ -386,8 +688,7 @@ impl Blockchain for Electrum {
 
         // Is this specific outpoint still unspent at its scriptPubKey?
         let still_unspent = self
-            .inner
-            .script_list_unspent(txout.script_pubkey.as_script())
+            .call(|c| c.script_list_unspent(txout.script_pubkey.as_script()))
             .map(|entries| {
                 entries
                     .iter()
@@ -411,7 +712,7 @@ impl Blockchain for Electrum {
             "value": txout.value.to_btc(),
             "scriptPubKey": {
                 "asm": "",
-                "hex": serialize_hex(&txout.script_pubkey),
+                "hex": txout.script_pubkey.as_bytes().to_lower_hex_string(),
                 "type": null,
             },
             "coinbase": false,
@@ -442,7 +743,7 @@ impl Blockchain for Electrum {
         let mut out = Vec::new();
         for chunk in watched.chunks(LIST_UNSPENT_BATCH) {
             let refs: Vec<&Script> = chunk.iter().map(|s| s.as_script()).collect();
-            let results = self.inner.batch_script_list_unspent(refs.iter().copied())?;
+            let results = self.call(|c| c.batch_script_list_unspent(refs.iter().copied()))?;
             for (script, entries) in chunk.iter().zip(results) {
                 for e in entries {
                     let confirmations = if e.height == 0 {
@@ -478,7 +779,7 @@ impl Blockchain for Electrum {
     }
 
     fn send_raw_transaction(&self, tx: &Transaction) -> Result<Txid, WalletError> {
-        Ok(self.inner.transaction_broadcast(tx)?)
+        self.call(|c| c.transaction_broadcast(tx))
     }
 
     fn derive_addresses(
@@ -516,7 +817,7 @@ impl Blockchain for Electrum {
         let mut heights: HashMap<Txid, i32> = HashMap::new();
         for chunk in watched.chunks(HISTORY_BATCH) {
             let refs: Vec<&Script> = chunk.iter().map(|s| s.as_script()).collect();
-            for entries in self.inner.batch_script_get_history(refs.iter().copied())? {
+            for entries in self.call(|c| c.batch_script_get_history(refs.iter().copied()))? {
                 for e in entries {
                     heights.insert(e.tx_hash, e.height);
                 }
@@ -540,7 +841,7 @@ impl Blockchain for Electrum {
         let mut headers: HashMap<u64, Header> = HashMap::new();
         let mut out = Vec::new();
         for (txid, height) in page {
-            let tx = self.inner.transaction_get(&txid)?;
+            let tx = self.call(|c| c.transaction_get(&txid))?;
 
             // Value our own inputs: that is what separates a spend from a
             // receive, and the input total gives the fee.
@@ -549,7 +850,7 @@ impl Blockchain for Electrum {
             let is_coinbase = tx.is_coinbase();
             if !is_coinbase {
                 for input in &tx.input {
-                    let prev = self.inner.transaction_get(&input.previous_output.txid)?;
+                    let prev = self.call(|c| c.transaction_get(&input.previous_output.txid))?;
                     let prev_out = prev
                         .output
                         .get(input.previous_output.vout as usize)
@@ -663,17 +964,13 @@ impl Blockchain for Electrum {
     fn subscribe_script(&self, spk: &Script) -> Result<(), WalletError> {
         let mut guard = self.notifier.lock().map_err(poisoned)?;
         let state = &mut *guard;
+        // Arm the server side first, even when a local entry already exists: a
+        // reconnect leaves the entry behind with no subscription under it.
+        self.arm_subscription(spk)?;
         if state.subscriptions.contains_key(spk) {
             return Ok(());
         }
-        // Record the subscription only once both calls succeed, so a failure here
-        // doesn't make every retry an early-return no-op.
-        if let Err(e) = self.inner.script_subscribe(spk) {
-            if !matches!(e, electrum_client::Error::AlreadySubscribed(_)) {
-                return Err(e.into());
-            }
-        }
-        let hist = self.inner.script_get_history(spk)?;
+        let hist = self.call(|c| c.script_get_history(spk))?;
 
         // Backend subscription works. Now record it as seen.
         let seen = state.subscriptions.entry(spk.to_owned()).or_default();
@@ -681,7 +978,7 @@ impl Blockchain for Electrum {
             if !seen.insert(h.tx_hash) {
                 continue;
             }
-            match self.inner.transaction_get(&h.tx_hash) {
+            match self.call(|c| c.transaction_get(&h.tx_hash)) {
                 Ok(tx) => state.pending.push_back(WatchEvent::TxSeen {
                     raw_tx: serialize(&tx),
                 }),
@@ -702,7 +999,7 @@ impl Blockchain for Electrum {
         guard.dirty.remove(spk);
         // A partial subscribe failure can leave the server subscribed with no
         // local entry, so always tell the server to unsubscribe also.
-        self.inner.script_unsubscribe(spk)?;
+        self.call(|c| c.script_unsubscribe(spk).map(|_| ()))?;
         Ok(())
     }
 
@@ -713,16 +1010,30 @@ impl Blockchain for Electrum {
             return Some(ev);
         }
 
+        // A reconnect hands us a socket with no server-side subscriptions.
+        // Re-arm them and force a history re-read so anything that happened
+        // while we were deaf still surfaces.
+        if self.needs_rearm.swap(false, Ordering::SeqCst) {
+            let armed: Vec<ScriptBuf> = state.subscriptions.keys().cloned().collect();
+            for spk in armed {
+                if let Err(e) = self.arm_subscription(&spk) {
+                    log::warn!("re-arm after reconnect failed: {e:?}");
+                    self.needs_rearm.store(true, Ordering::SeqCst);
+                }
+                state.dirty.insert(spk);
+            }
+        }
+
         // The electrum client only reads from the socket while waiting for a
         // reply to its own request, so notifications never arrive on an idle
-        // connection. Ping periodically to trigger a socket read.
-        const PING_INTERVAL: Duration = Duration::from_secs(1);
+        // connection. Ping periodically to trigger a socket read. The ping also
+        // keeps the held connection alive against server-side idle timeouts.
         let ping_due = state
             .last_ping
-            .is_none_or(|at| at.elapsed() >= PING_INTERVAL);
+            .is_none_or(|at| at.elapsed() >= self.ping_interval);
         if ping_due {
             state.last_ping = Some(std::time::Instant::now());
-            if let Err(e) = self.inner.ping() {
+            if let Err(e) = self.call(|c| c.ping()) {
                 log::warn!("electrum notification ping failed: {e:?}");
                 return None;
             }
@@ -736,10 +1047,23 @@ impl Blockchain for Electrum {
             // won't send one just because our last fetch failed. Rate-limited to the
             // ping tick so a broken server isn't hammered.
             let flagged = ping_due && state.dirty.remove(&spk);
-            if !flagged && !matches!(self.inner.script_pop(&spk), Ok(Some(_))) {
-                continue;
+            if !flagged {
+                match self.call(|c| c.script_pop(&spk)) {
+                    Ok(Some(_)) => {}
+                    Ok(None) => continue,
+                    // The client has no record of this subscription, so it was
+                    // rebuilt under us. Re-arm and re-read on the next tick
+                    // rather than skipping this script forever.
+                    Err(_) => {
+                        if let Err(e) = self.arm_subscription(&spk) {
+                            log::warn!("re-arm after script_pop failure: {e:?}");
+                        }
+                        state.dirty.insert(spk.clone());
+                        continue;
+                    }
+                }
             }
-            let Ok(hist) = self.inner.script_get_history(&spk) else {
+            let Ok(hist) = self.call(|c| c.script_get_history(&spk)) else {
                 state.dirty.insert(spk.clone());
                 continue;
             };
@@ -749,7 +1073,7 @@ impl Blockchain for Electrum {
                 .expect("subscription exists, just cloned its key");
             for h in hist {
                 if seen.insert(h.tx_hash) {
-                    if let Ok(tx) = self.inner.transaction_get(&h.tx_hash) {
+                    if let Ok(tx) = self.call(|c| c.transaction_get(&h.tx_hash)) {
                         state.pending.push_back(WatchEvent::TxSeen {
                             raw_tx: serialize(&tx),
                         });
@@ -765,7 +1089,7 @@ impl Blockchain for Electrum {
         }
 
         // Header tip update.
-        let n = self.inner.block_headers_pop().ok().flatten()?;
+        let n = self.call(|c| c.block_headers_pop()).ok().flatten()?;
         let height = n.height as i64;
         if height <= state.last_height {
             return None;
@@ -779,5 +1103,128 @@ impl Blockchain for Electrum {
 
     fn chain_name(&self) -> Result<String, WalletError> {
         Ok(super::chain_name_for(self.network).to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cfg(url: &str, socks5: Option<&str>) -> ElectrumConfig {
+        ElectrumConfig {
+            url: url.to_string(),
+            socks5: socks5.map(str::to_string),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn url_host_strips_scheme_and_port() {
+        assert_eq!(url_host("tcp://localhost:50001"), "localhost");
+        assert_eq!(
+            url_host("ssl://electrum.example.org:50002"),
+            "electrum.example.org"
+        );
+        assert_eq!(url_host("tcp://abcdef.onion:21"), "abcdef.onion");
+        // No scheme and no port are both tolerated.
+        assert_eq!(url_host("abcdef.onion"), "abcdef.onion");
+    }
+
+    #[test]
+    fn ping_cadence_follows_proxy() {
+        assert_eq!(
+            derive_ping_interval(&cfg("tcp://localhost:50001", None)),
+            PING_INTERVAL_DIRECT
+        );
+        assert_eq!(
+            derive_ping_interval(&cfg("tcp://x.onion:21", Some("127.0.0.1:9050"))),
+            PING_INTERVAL_PROXIED
+        );
+    }
+
+    #[test]
+    fn ping_cadence_override_wins() {
+        let mut c = cfg("tcp://x.onion:21", Some("127.0.0.1:9050"));
+        c.poll_interval_secs = Some(2);
+        assert_eq!(derive_ping_interval(&c), Duration::from_secs(2));
+
+        let mut c = cfg("tcp://localhost:50001", None);
+        c.poll_interval_secs = Some(45);
+        assert_eq!(derive_ping_interval(&c), Duration::from_secs(45));
+    }
+
+    #[test]
+    fn read_timeout_is_generous_when_proxied() {
+        assert_eq!(
+            derive_timeout_secs(&cfg("tcp://localhost:50001", None)),
+            READ_TIMEOUT_DIRECT_SECS
+        );
+        // A slow large response over Tor must not look like a dead transport.
+        assert_eq!(
+            derive_timeout_secs(&cfg("tcp://x.onion:21", Some("127.0.0.1:9050"))),
+            READ_TIMEOUT_PROXIED_SECS
+        );
+        let mut c = cfg("tcp://x.onion:21", Some("127.0.0.1:9050"));
+        c.timeout = Some(7);
+        assert_eq!(derive_timeout_secs(&c), 7);
+    }
+
+    #[test]
+    fn proxy_does_not_require_an_onion_url() {
+        // Tor reaches clearnet through an exit node, so a proxy suits any host.
+        let clearnet = client_config(&cfg(
+            "ssl://electrum.example.org:50002",
+            Some("127.0.0.1:9050"),
+        ));
+        assert!(clearnet.socks5().is_some());
+        // A real domain has a real certificate, so keep checking it.
+        assert!(clearnet.validate_domain());
+
+        // An onion host has no certificate, so validation is dropped there only.
+        let onion = client_config(&cfg("tcp://x.onion:21", Some("127.0.0.1:9050")));
+        assert!(!onion.validate_domain());
+    }
+
+    #[test]
+    fn onion_without_proxy_is_rejected_before_connecting() {
+        // The guard runs before any socket work, so this needs no server.
+        let err = Electrum::new(&cfg("tcp://abcdef.onion:21", None)).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("onion") && msg.contains("socks5"),
+            "expected an explicit onion/proxy error, got: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn clearnet_default_has_no_proxy() {
+        let c = ElectrumConfig::default();
+        assert!(c.socks5.is_none());
+        assert_eq!(derive_ping_interval(&c), PING_INTERVAL_DIRECT);
+        assert_eq!(derive_timeout_secs(&c), READ_TIMEOUT_DIRECT_SECS);
+        assert_eq!(c.max_retries, 3);
+    }
+
+    #[test]
+    fn terminal_errors_are_not_retried() {
+        use electrum_client::Error;
+        // Answered-but-negative, or local state: reconnecting cannot help.
+        assert!(is_terminal(&Error::AlreadySubscribed([0u8; 32].into())));
+        assert!(is_terminal(&Error::NotSubscribed([0u8; 32].into())));
+        // A transport-shaped error must stay retryable.
+        assert!(!is_terminal(&Error::Message("socket closed".into())));
+    }
+
+    #[test]
+    fn unreachable_error_names_the_attempt_count() {
+        let e = WalletError::ElectrumUnreachable {
+            attempts: 4,
+            last: electrum_client::Error::Message("no route".into()),
+        };
+        let msg = e.to_string();
+        assert!(msg.contains("unreachable"), "got: {}", msg);
+        assert!(msg.contains('4'), "got: {}", msg);
+        assert!(msg.contains("no route"), "got: {}", msg);
     }
 }

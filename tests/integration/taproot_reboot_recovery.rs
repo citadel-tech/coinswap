@@ -30,8 +30,11 @@ use std::{
 /// Test: maker reboot recovery should preserve Taproot swapcoins when funding
 /// was broadcast but the maker has not yet persisted an idle-recovery tracker
 /// record for the original swap id.
-#[test]
-fn test_taproot_maker_reboot_recovery_preserves_funded_swapcoins() {
+///
+/// Generic over the backend: this is the only scenario that restarts a maker
+/// mid-swap, so it is the only one exercising the watcher's startup re-subscribe
+/// of persisted watches. `electrum_tor.rs` reuses it to cover that path over Tor.
+pub(crate) fn run_reboot_recovery<B: TestBackend>() {
     warn!("Running Test: Taproot Maker Reboot Recovery Preserves Funded Swapcoins");
 
     let makers_config_map = vec![(7602, Some(20601)), (17602, Some(20602))];
@@ -42,7 +45,7 @@ fn test_taproot_maker_reboot_recovery_preserves_funded_swapcoins() {
     ];
 
     let (test_framework, mut takers, makers, block_generation_handle) =
-        TestFramework::init::<BitcoindBackend>(makers_config_map, taker_behavior, maker_behaviors);
+        TestFramework::init::<B>(makers_config_map, taker_behavior, maker_behaviors);
 
     let bitcoind = &test_framework.bitcoind;
     let taker = takers.get_mut(0).unwrap();
@@ -163,4 +166,9 @@ fn test_taproot_maker_reboot_recovery_preserves_funded_swapcoins() {
         before_incoming,
         after_incoming
     );
+}
+
+#[test]
+fn test_taproot_maker_reboot_recovery_preserves_funded_swapcoins() {
+    run_reboot_recovery::<BitcoindBackend>();
 }
