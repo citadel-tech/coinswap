@@ -2569,6 +2569,8 @@ pub enum TakerBehavior {
     CloseAtSendersContract,
     /// Send a Taproot contract amount that does not match the transaction output.
     InvalidTaprootContractAmount,
+    /// Repeat the same incoming funding outpoint in the maker request.
+    DuplicateFundingOutpoint,
     /// Close connection when receiving maker's contract data response (taproot taker abort).
     CloseAtSendersContractFromMaker,
     /// Skip the Legacy sender-signature request, broadcast real funding, and

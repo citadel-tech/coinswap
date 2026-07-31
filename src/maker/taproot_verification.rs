@@ -3,7 +3,9 @@
 //! Verifies taker messages received during the Taproot swap flow, mirroring
 //! the taker's `taproot_verification.rs` but from the maker's perspective.
 
-use bitcoin::{secp256k1::Secp256k1, PublicKey};
+use std::collections::HashSet;
+
+use bitcoin::{secp256k1::Secp256k1, OutPoint, PublicKey};
 
 use crate::{
     protocol::{
@@ -85,6 +87,16 @@ pub(crate) fn verify_taproot_contract_data(
         return Err(MakerError::General(
             "Taproot per-contract vectors have inconsistent lengths",
         ));
+    }
+
+    // Individually valid duplicate contracts would inflate total incoming value,
+    // causing the maker to allocate outgoing funds that the taker never provided.
+    let mut seen_outpoints = HashSet::with_capacity(data.contract_txs.len());
+    for tx in &data.contract_txs {
+        let contract_outpoint = OutPoint::new(tx.compute_txid(), 0);
+        if !seen_outpoints.insert(contract_outpoint) {
+            return Err(MakerError::General("Duplicate Taproot contract outpoint"));
+        }
     }
 
     let secp = Secp256k1::verification_only();
@@ -411,6 +423,23 @@ mod tests {
         data.amounts[0] += Amount::from_sat(1);
 
         assert!(verify_taproot_contract_data(&data, MAKER_TIMELOCK, 0).is_err());
+    }
+
+    #[test]
+    fn rejects_duplicate_contract_outpoints() {
+        let mut data = valid_contract_data();
+        data.pubkeys.push(data.pubkeys[0]);
+        data.internal_keys.push(data.internal_keys[0]);
+        data.tap_tweaks.push(data.tap_tweaks[0].clone());
+        data.timelock_scripts.push(data.timelock_scripts[0].clone());
+        data.contract_txs.push(data.contract_txs[0].clone());
+        data.amounts.push(data.amounts[0]);
+
+        let error = verify_taproot_contract_data(&data, MAKER_TIMELOCK, 0).unwrap_err();
+        assert!(matches!(
+            error,
+            MakerError::General("Duplicate Taproot contract outpoint")
+        ));
     }
 
     #[test]

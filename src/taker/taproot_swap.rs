@@ -255,12 +255,51 @@ impl Taker {
             };
 
             #[cfg(feature = "integration-test")]
-            let amounts =
+            let (pubkeys, timelock_scripts, internal_keys, tap_tweaks, contract_txs, amounts) = {
+                let (
+                    mut pubkeys,
+                    mut timelock_scripts,
+                    mut internal_keys,
+                    mut tap_tweaks,
+                    mut contract_txs,
+                    mut amounts,
+                ) = (
+                    pubkeys,
+                    timelock_scripts,
+                    internal_keys,
+                    tap_tweaks,
+                    contract_txs,
+                    amounts,
+                );
+
+                if self.behavior == super::api::TakerBehavior::DuplicateFundingOutpoint {
+                    if let Some(first) = contract_txs.first().cloned() {
+                        log::warn!(
+                            "Test behavior: duplicating Taproot contract outpoint for maker {}",
+                            i
+                        );
+                        pubkeys.push(pubkeys[0]);
+                        timelock_scripts.push(timelock_scripts[0].clone());
+                        internal_keys.push(internal_keys[0]);
+                        tap_tweaks.push(tap_tweaks[0].clone());
+                        contract_txs.push(first);
+                        amounts.push(amounts[0]);
+                    }
+                }
+
                 if self.behavior == super::api::TakerBehavior::InvalidTaprootContractAmount {
-                    vec![Amount::from_sat(50_000); amounts.len()]
-                } else {
-                    amounts
-                };
+                    amounts = vec![Amount::from_sat(50_000); amounts.len()];
+                }
+
+                (
+                    pubkeys,
+                    timelock_scripts,
+                    internal_keys,
+                    tap_tweaks,
+                    contract_txs,
+                    amounts,
+                )
+            };
 
             let secp = Secp256k1::new();
             let my_privkey = SecretKey::new(&mut OsRng);

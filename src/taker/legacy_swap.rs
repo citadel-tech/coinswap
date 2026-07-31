@@ -1016,6 +1016,19 @@ impl Taker {
                 .collect::<Result<Vec<_>, TakerError>>()?
         };
 
+        #[cfg(feature = "integration-test")]
+        let mut confirmed_funding_txes = confirmed_funding_txes;
+        #[cfg(feature = "integration-test")]
+        if self.behavior == super::api::TakerBehavior::DuplicateFundingOutpoint {
+            if let Some(first) = confirmed_funding_txes.first().cloned() {
+                log::warn!(
+                    "Test behavior: duplicating funding outpoint in ProofOfFunding for maker {}",
+                    maker_idx
+                );
+                confirmed_funding_txes.push(first);
+            }
+        }
+
         let next_coinswap_info: Vec<NextHopInfo> = next_multisig_pubkeys
             .iter()
             .zip(next_hashlock_pubkeys.iter())
