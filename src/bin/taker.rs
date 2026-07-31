@@ -145,12 +145,6 @@ enum Commands {
         /// Skip the confirmation prompt and proceed immediately.
         #[clap(long, short = 'y')]
         yes: bool,
-        #[cfg(feature = "hotpath")]
-        /// When enabled (and built with `--features 'hotpath hotpath-alloc'`), this will:
-        /// - write a JSON report under `{data_dir}/hotpath/`
-        /// - print timing + alloc tables after the swap completes
-        #[clap(long)]
-        hotpath: bool,
     },
     /// Recover from all failed swaps
     Recover,
@@ -481,8 +475,6 @@ fn main() -> Result<(), TakerError> {
             maker_addresses,
             auto_select,
             yes,
-            #[cfg(feature = "hotpath")]
-            hotpath,
         } => {
             let protocol_version = parse_protocol(protocol)?;
 
@@ -559,35 +551,7 @@ fn main() -> Result<(), TakerError> {
                 }
             }
 
-            // Phase 2: Execute — commit funds and complete the swap.
-            #[cfg(feature = "hotpath")]
-            let hotpath_run = if *hotpath {
-                let data_dir = args
-                    .data_directory
-                    .clone()
-                    .unwrap_or_else(coinswap::utill::get_taker_dir);
-
-                Some(
-                    coinswap::hotpath_local::HotpathRun::start(
-                        "coinswap_taker_swap",
-                        coinswap::hotpath_local::default_report_path(
-                            &data_dir,
-                            "taker_swap",
-                            &summary.swap_id,
-                        ),
-                    )
-                    .map_err(|e| TakerError::General(format!("Failed to start Hotpath: {e:?}")))?,
-                )
-            } else {
-                None
-            };
-
             taker.start_coinswap(&summary.swap_id)?;
-
-            #[cfg(feature = "hotpath")]
-            if let Some(run) = hotpath_run {
-                run.finish_and_print();
-            }
         }
         Commands::Recover => {
             taker.recover_active_swap()?;

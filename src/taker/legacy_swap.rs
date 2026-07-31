@@ -137,7 +137,6 @@ impl Taker {
     }
 
     /// Execute the multi-hop Legacy coinswap flow.
-    #[hotpath::measure]
     pub(crate) fn exchange_legacy(&mut self) -> Result<(), TakerError> {
         log::info!("Starting multi-hop Legacy swap with ProofOfFunding flow");
 
@@ -880,7 +879,6 @@ impl Taker {
     }
 
     /// Request contract signatures for sender from a maker.
-    #[hotpath::measure]
     fn exchange_req_sender_sigs(
         &self,
         maker_address: &str,
@@ -970,7 +968,6 @@ impl Taker {
     /// Send proof of funding and receive ReqContractSigsAsRecvrAndSender.
     #[allow(clippy::type_complexity)]
     #[allow(clippy::too_many_arguments)]
-    #[hotpath::measure]
     fn exchange_send_proof_of_funding(
         &self,
         maker_address: &str,
@@ -1082,7 +1079,6 @@ impl Taker {
     }
 
     /// Send collected signatures for both receiver and sender contracts (Legacy protocol).
-    #[hotpath::measure]
     fn exchange_send_combined_sigs(
         &self,
         maker_address: &str,
@@ -1110,7 +1106,6 @@ impl Taker {
     }
 
     /// Request sender contract signatures using SenderContractTxInfo.
-    #[hotpath::measure]
     fn exchange_req_sender_sigs_forwarded(
         &self,
         maker_address: &str,
@@ -1163,7 +1158,6 @@ impl Taker {
     }
 
     /// Request receiver signatures from previous maker.
-    #[hotpath::measure]
     fn exchange_req_receiver_sigs(
         &self,
         maker_address: &str,

@@ -35,8 +35,6 @@ mod wallet_backup;
 mod concurrent_takers;
 mod fidelity_timelock_violation;
 mod funding_dynamic_splits;
-#[cfg(feature = "hotpath")]
-mod hotpath_profile;
 mod legacy_malformed_contract;
 mod legacy_missing_contract_cache;
 mod liquidity_test;

@@ -308,7 +308,6 @@ impl Wallet {
     ///
     /// The path should include the full path for a wallet file.
     /// If the wallet file doesn't exist it will create a new wallet file.
-    #[hotpath::measure]
     pub fn init(
         path: &Path,
         rpc_config: &RPCConfig,
@@ -653,7 +652,6 @@ impl Wallet {
     }
 
     /// Attempt to recover timelocked outgoing swapcoins.
-    #[hotpath::measure]
     pub fn recover_timelocked_swapcoins(
         &mut self,
         fee_rate: f64,
@@ -936,7 +934,6 @@ impl Wallet {
     }
 
     /// Create a recovery transaction for a timelocked outgoing swapcoin.
-    #[hotpath::measure]
     fn create_timelock_recovery_tx(
         &mut self,
         swapcoin: &super::swapcoin::OutgoingSwapCoin,
@@ -1005,7 +1002,6 @@ impl Wallet {
     /// Calculates the total balances of different categories in the wallet.
     /// Includes regular, swap, contract, fidelity, and spendable (regular + swap) utxos.
     /// Optionally takes in a list of UTXOs to reduce rpc call. If None is provided, the full list is fetched from core rpc.
-    #[hotpath::measure]
     pub fn get_balances(&self) -> Result<Balances, WalletError> {
         let regular = self
             .list_descriptor_utxo_spend_info()
@@ -1403,7 +1399,6 @@ impl Wallet {
     /// Returns a list all utxos with their spend info tracked by the wallet.
     /// Optionally takes in an Utxo list to reduce RPC calls. If None is given, the
     /// full list of utxo is fetched from core rpc.
-    #[hotpath::measure]
     pub fn list_all_utxo_spend_info(&self) -> Vec<(ListUnspentResultEntry, UTXOSpendInfo)> {
         let processed_utxos = self
             .store
@@ -1977,7 +1972,6 @@ impl Wallet {
     /// - Fidelity bond UTXOs
     /// - Locked UTXOs
     /// - Unconfirmed UTXOs
-    #[hotpath::measure]
     pub fn coin_select(
         &self,
         amount: Amount,
@@ -2421,12 +2415,10 @@ impl Wallet {
     }
 
     /// Uses internal RPC client to broadcast a transaction
-    #[hotpath::measure]
     pub fn send_tx(&self, tx: &Transaction) -> Result<Txid, WalletError> {
         Ok(self.rpc.send_raw_transaction(tx)?)
     }
     /// Sweeps all completed incoming swap coins.
-    #[hotpath::measure]
     pub fn sweep_incoming_swapcoins(
         &mut self,
         feerate: f64,
@@ -2704,7 +2696,6 @@ impl Wallet {
     /// If a `shutdown` flag is provided, the wait is interrupted when it becomes `true`.
     /// If an `abort_check` is provided, it is polled during the wait; if it returns `true`,
     /// the wait is interrupted.
-    #[hotpath::measure]
     pub fn wait_for_tx_confirmation(
         &self,
         txids: &[Txid],

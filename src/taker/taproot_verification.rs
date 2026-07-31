@@ -17,7 +17,6 @@ use super::{api::Taker, error::TakerError};
 
 impl Taker {
     /// Verify a maker's Taproot contract data response.
-    #[hotpath::measure]
     pub(crate) fn verify_maker_taproot_contract(
         &self,
         contract: &TaprootContractData,

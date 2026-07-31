@@ -298,7 +298,6 @@ fn spawn_nostr_broadcast_thread(
 }
 
 /// Handle a single connection.
-#[hotpath::measure]
 fn handle_connection(maker: Arc<MakerServer>, stream: TcpStream) -> Result<(), MakerError> {
     stream.set_nonblocking(false).map_err(MakerError::IO)?;
     stream
@@ -420,23 +419,7 @@ fn handle_connection(maker: Arc<MakerServer>, stream: TcpStream) -> Result<(), M
                 }
             }
 
-            #[cfg(feature = "hotpath")]
-            {
-                if let Some(run) = crate::hotpath_local::take_process_hotpath_run() {
-                    run.finish_and_print();
-                }
-            }
             break;
-        }
-    }
-
-    // Fallback: if the swap already completed but we exited the loop via some
-    // other break path (e.g. read error after completion), still finalize the
-    // stored process report.
-    #[cfg(feature = "hotpath")]
-    if state.phase == super::handlers::SwapPhase::Completed {
-        if let Some(run) = crate::hotpath_local::take_process_hotpath_run() {
-            run.finish_and_print();
         }
     }
 
@@ -571,7 +554,6 @@ const PREIMAGE_LEN: usize = 32;
 
 /// Check the watch tower for spends on outgoing contract outputs, extract
 /// preimages from hashlock spends, and update incoming swapcoins in the wallet.
-#[hotpath::measure]
 fn check_for_preimage_via_watchtower(
     maker: &MakerServer,
     outgoing_swapcoins: &[crate::wallet::swapcoin::OutgoingSwapCoin],
@@ -680,7 +662,6 @@ fn check_for_preimage_via_watchtower(
 /// Update the Maker swap tracker with the given closure.
 ///
 /// Locks the tracker, applies `f` to the record matching `swap_id`, then flushes.
-#[hotpath::measure]
 fn update_tracker(
     maker: &MakerServer,
     swap_id: &str,
@@ -705,7 +686,6 @@ fn update_tracker(
 ///    We extract it via the watch tower and sweep our incoming swapcoins.
 /// 2. **Timelock** (outgoing swapcoins): After the timelock expires, we reclaim
 ///    our outgoing funds via the timelock spending path.
-#[hotpath::measure]
 fn recover_from_swap(
     maker: Arc<MakerServer>,
     swap_id: String,

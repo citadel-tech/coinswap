@@ -389,7 +389,6 @@ impl Taker {
     ///
     /// Fee formula: `total_fee = base_fee + (amount * amt_pct)/100 + (amount * locktime * time_pct)/100`
     /// TODO: Use fee estimation here
-    #[hotpath::measure]
     pub(crate) fn min_expected_amount_for_hop(&self, maker_idx: usize) -> Option<Amount> {
         let swap = self.swap_state().ok()?;
         let send_amount = swap.params.send_amount;
@@ -742,7 +741,6 @@ impl Taker {
     ///
     /// No funds are committed. The caller reviews the summary and then calls
     /// `start_coinswap` with the returned `swap_id` to execute.
-    #[hotpath::measure]
     pub fn prepare_coinswap(&mut self, params: SwapParams) -> Result<SwapSummary, TakerError> {
         log::info!(
             "Preparing coinswap: amount={}, makers={}, protocol={:?}",
@@ -876,7 +874,6 @@ impl Taker {
     ///
     /// Commits funds on-chain: creates funding transactions, exchanges
     /// contracts with makers, finalizes, and sweeps.
-    #[hotpath::measure]
     pub fn start_coinswap(&mut self, swap_id: &str) -> Result<TakerReport, TakerError> {
         let swap_start_time = Instant::now();
 
@@ -1098,7 +1095,6 @@ impl Taker {
     /// If `preferred_makers` is set in swap params, those addresses are used
     /// directly (no offerbook lookup). Otherwise, makers are auto-selected
     /// from the offerbook.
-    #[hotpath::measure]
     fn discover_makers(&mut self) -> Result<(), TakerError> {
         let swap = self.swap_state()?;
         let maker_count = swap.params.maker_count;
@@ -1247,7 +1243,6 @@ impl Taker {
     }
 
     /// Negotiate swap details with each maker, substituting spare makers on failure.
-    #[hotpath::measure]
     fn negotiate_swap_details(&mut self) -> Result<(), TakerError> {
         log::info!("Negotiating swap details with makers...");
 
@@ -1332,7 +1327,6 @@ impl Taker {
     }
 
     /// Negotiate swap details with a single maker at the given route index.
-    #[hotpath::measure]
     fn negotiate_with_maker(
         &mut self,
         maker_idx: usize,
@@ -1434,7 +1428,6 @@ impl Taker {
     }
 
     /// Validate a maker's offer for fee sanity and size limits.
-    #[hotpath::measure]
     fn validate_offer(
         offer: &Offer,
         maker_idx: usize,
@@ -1503,7 +1496,6 @@ impl Taker {
     /// This is used during exchange when a maker fails mid-protocol. The spare address
     /// is placed at `target_idx`, and the standard negotiation handshake (offer, swap
     /// details, ack) is performed to populate its `tweakable_point` and `offer`.
-    #[hotpath::measure]
     pub(crate) fn substitute_and_negotiate_spare(
         &mut self,
         target_idx: usize,
@@ -1569,7 +1561,6 @@ impl Taker {
     ///
     /// Clears old outgoing swapcoins from the wallet and swap state, then creates
     /// new funding transactions using the new first maker's tweakable point.
-    #[hotpath::measure]
     pub(crate) fn funding_reinitialize(&mut self) -> Result<(), TakerError> {
         log::info!("Re-initializing funding after maker substitution");
 
@@ -1598,7 +1589,6 @@ impl Taker {
     }
 
     /// Initialize swap funding by creating outgoing swapcoins.
-    #[hotpath::measure]
     fn funding_initialize(&mut self) -> Result<(), TakerError> {
         log::info!("Initializing swap funding...");
 
@@ -1726,7 +1716,6 @@ impl Taker {
     }
 
     /// Perform handshake with a maker and verify protocol support.
-    #[hotpath::measure]
     pub(crate) fn net_handshake(
         &self,
         stream: &mut TcpStream,
@@ -1756,7 +1745,6 @@ impl Taker {
     }
 
     /// Connect to a maker using either direct connection or Tor proxy.
-    #[hotpath::measure]
     pub(crate) fn net_connect(&self, address: &str) -> Result<TcpStream, TakerError> {
         log::debug!("Connecting to maker at {}", address);
         let timeout = Duration::from_secs(CONNECT_TIMEOUT_SECS);
@@ -1795,7 +1783,6 @@ impl Taker {
     }
 
     /// Finalize the swap by exchanging private keys with all makers.
-    #[hotpath::measure]
     fn finalize_swap(&mut self) -> Result<(), TakerError> {
         log::info!("Finalizing swap...");
 
@@ -1810,7 +1797,6 @@ impl Taker {
     }
 
     /// Attempt finalization with retries between attempts.
-    #[hotpath::measure]
     fn finalize_with_retry(&mut self) -> Result<(), TakerError> {
         for attempt in 1..=MAX_FINALIZE_RETRIES {
             match self.finalize_swap() {
@@ -1851,7 +1837,6 @@ impl Taker {
     /// Exchange private keys with all makers in forward order.
     /// Each maker receives the privkey for their incoming contract and
     /// responds with their outgoing privkey.
-    #[hotpath::measure]
     fn finalize_exchange_privkeys(&mut self) -> Result<(), TakerError> {
         let swap = self.swap_state()?;
         let num_makers = swap.makers.len();
@@ -1958,7 +1943,6 @@ impl Taker {
 
     /// Persist the taker's incoming swapcoins to the wallet.
     /// Preimage is already stamped at swapcoin creation time.
-    #[hotpath::measure]
     fn finalize_persist_incoming(&mut self) -> Result<(), TakerError> {
         let incoming = self.swap_state()?.incoming_swapcoins.clone();
         let mut wallet = self.write_wallet()?;
@@ -1999,7 +1983,6 @@ impl Taker {
     }
 
     /// Build a `SwapRecord` from the current `OngoingSwapState`.
-    #[hotpath::measure]
     fn persist_build_record(&self, swap: &OngoingSwapState) -> Result<SwapRecord, TakerError> {
         let now = now_secs();
         Ok(SwapRecord {
@@ -2057,7 +2040,6 @@ impl Taker {
     /// Sets the swap phase and rebuilds the full record from `OngoingSwapState`
     /// so that maker progress, txids, and nonces stay up-to-date. Preserves
     /// `created_at` and `recovery` from any existing record.
-    #[hotpath::measure]
     pub(crate) fn persist_swap(&mut self, phase: SwapPhase) -> Result<(), TakerError> {
         let swap = self.swap_state_mut()?;
         swap.phase = phase;
@@ -2391,7 +2373,6 @@ impl Taker {
     ///
     /// All recovery attempts, per-contract outcome tracking, phase transitions,
     /// and wallet cleanup are handled by the `RecoveryLoop`.
-    #[hotpath::measure]
     pub fn recover_active_swap(&mut self) -> Result<(), TakerError> {
         log::warn!("Starting swap recovery...");
 
@@ -2451,7 +2432,6 @@ impl Taker {
     /// - Incoming: `KeyPath` (swept via key-path using maker's privkey)
     /// - Outgoing: `KeyPath` (maker claimed via key-path using our privkey)
     /// - Watchonly: `KeyPath` (makers exchanged privkeys and spent cooperatively)
-    #[hotpath::measure]
     fn populate_success_outcomes(
         &mut self,
         swap_id: &str,

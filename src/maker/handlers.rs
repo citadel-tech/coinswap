@@ -326,7 +326,6 @@ pub struct MakerConfig {
 }
 
 /// Message handler
-#[hotpath::measure]
 pub fn handle_message<M: Maker>(
     maker: &Arc<M>,
     state: &mut ConnectionState,
@@ -394,7 +393,6 @@ pub fn handle_message<M: Maker>(
 }
 
 /// Handle TakerHello message.
-#[hotpath::measure]
 fn handle_taker_hello<M: Maker>(
     maker: &Arc<M>,
     state: &mut ConnectionState,
@@ -422,7 +420,6 @@ fn handle_taker_hello<M: Maker>(
 }
 
 /// Handle GetOffer message.
-#[hotpath::measure]
 fn handle_get_offer<M: Maker>(
     maker: &Arc<M>,
     state: &mut ConnectionState,
@@ -465,7 +462,6 @@ fn handle_get_offer<M: Maker>(
 }
 
 /// Handle SwapDetails message.
-#[hotpath::measure]
 fn handle_swap_details<M: Maker>(
     maker: &Arc<M>,
     state: &mut ConnectionState,
@@ -520,7 +516,6 @@ fn handle_swap_details<M: Maker>(
 }
 
 /// Restore connection state if this is a new/reconnected connection.
-#[hotpath::measure]
 fn restore_state_if_needed<M: Maker>(maker: &Arc<M>, state: &mut ConnectionState, swap_id: &str) {
     if state.swap_amount == Amount::ZERO || state.outgoing_swapcoins.is_empty() {
         if let Some(stored) = maker.get_connection_state(swap_id) {
@@ -566,7 +561,6 @@ fn ensure_negotiated_protocol(
 }
 
 /// Dispatch to Legacy handlers.
-#[hotpath::measure]
 fn handle_legacy_dispatch<M: Maker>(
     maker: &Arc<M>,
     state: &mut ConnectionState,
@@ -588,7 +582,6 @@ fn handle_legacy_dispatch<M: Maker>(
 }
 
 /// Dispatch to Taproot handlers.
-#[hotpath::measure]
 fn handle_taproot_dispatch<M: Maker>(
     maker: &Arc<M>,
     state: &mut ConnectionState,

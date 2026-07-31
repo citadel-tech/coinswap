@@ -280,7 +280,6 @@ impl OfferBookHandle {
     }
 
     /// All current good makers
-    #[hotpath::measure]
     pub fn active_makers(&self, protocol: &MakerProtocol) -> Vec<OfferAndAddress> {
         #[cfg(not(feature = "integration-test"))]
         {
@@ -481,7 +480,6 @@ impl OfferSyncHandle {
     }
 
     /// Trigger an offerbook sync and block until it completes.
-    #[hotpath::measure]
     pub fn sync_and_wait(&self) -> Result<(), TakerError> {
         let (done_tx, done_rx) = mpsc::channel();
         self.cmd_tx.send(SyncCommand::SyncNow(done_tx))?;
@@ -494,7 +492,6 @@ impl OfferSyncHandle {
     /// it is inserted. Returns the maker's final state after the poll, or an error
     /// if a concurrent `remove_maker` evicted the entry before its state could be
     /// captured.
-    #[hotpath::measure]
     pub fn poll_maker(&self, address: MakerAddress) -> Result<MakerOfferCandidate, TakerError> {
         let (done_tx, done_rx) = mpsc::channel();
         let address_str = address.to_string();

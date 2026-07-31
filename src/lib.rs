@@ -13,6 +13,3 @@ pub mod taker;
 pub mod utill;
 pub mod wallet;
 pub mod watch_tower;
-
-#[cfg(feature = "hotpath")]
-pub mod hotpath_local;

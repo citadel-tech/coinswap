@@ -104,7 +104,6 @@ pub(crate) fn connect_nostr_websocket(
 }
 
 /// Broadcasts a fidelity bond announcement over Nostr.
-#[hotpath::measure]
 pub fn broadcast_bond_on_nostr(
     fidelity: FidelityProof,
     relays: &[String],
@@ -209,7 +208,6 @@ pub fn broadcast_bond_on_nostr(
 }
 
 /// Sends a Nostr event to a single relay and waits for confirmation.
-#[hotpath::measure]
 fn broadcast_to_relay(
     relay: &str,
     msg: &ClientMessage,
