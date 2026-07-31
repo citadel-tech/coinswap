@@ -125,7 +125,7 @@ fn encwallet_encbackup_encrestore() {
         root_dir,
     ) = setup("encwallet_encbackup_encrestore".to_string());
 
-    let km = KeyMaterial::new_interactive(None);
+    let km = KeyMaterial::new_from_password(Some("integration-test".to_string()));
 
     let mut wallet =
         coinswap::wallet::Wallet::init(&original_wallet, &rpc_config, km.clone()).unwrap();
@@ -140,8 +140,11 @@ fn encwallet_encbackup_encrestore() {
 
     wallet.sync_and_save().unwrap();
 
-    let (backup, _) =
-        load_sensitive_struct::<WalletBackup, SerdeJson>(&wallet_backup_file, None).unwrap();
+    let (backup, _) = load_sensitive_struct::<WalletBackup, SerdeJson>(
+        &wallet_backup_file,
+        Some("integration-test".to_string()),
+    )
+    .unwrap();
 
     let restored_wallet =
         Wallet::restore(&backup, &restored_wallet_file, &rpc_config, km.clone()).unwrap();
