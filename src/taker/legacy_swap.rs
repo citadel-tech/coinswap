@@ -1,7 +1,7 @@
 //! Legacy (ECDSA) specific swap methods for the Taker.
 
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
     time::{Duration, Instant},
 };
 
@@ -345,15 +345,11 @@ impl Taker {
                     .filter_map(|sc| sc.funding_tx.as_ref().map(|tx| tx.compute_txid()))
                     .collect();
                 let required_confirms = self.swap_state()?.params.required_confirms;
-                prev_confirm_height = {
-                    let wallet = self.read_wallet()?;
-                    wallet.wait_for_tx_confirmation(
-                        &funding_txids,
-                        required_confirms,
-                        None,
-                        None,
-                    )?
-                };
+                prev_confirm_height = self.wait_for_legacy_funding_with_keepalive(
+                    &funding_txids,
+                    required_confirms,
+                    &swap_id,
+                )?;
                 _taker_funding_confirmed = true;
                 self.swap_state_mut()?.makers[maker_idx]
                     .legacy_exchange_mut()?
@@ -658,61 +654,11 @@ impl Taker {
                 .collect();
 
             let required_confirms = self.swap_state()?.params.required_confirms;
-            // Legacy may wait longer than the maker's idle timeout for funding
-            // confirmations. Keep this swap alive so the maker does not mistake
-            // it for a dropped taker and start contract recovery.
-            let mut keepalive_stream = self.net_connect(&maker_address)?;
-            self.net_handshake(&mut keepalive_stream)?;
-            let keepalive_stream = std::cell::RefCell::new(keepalive_stream);
-            let last_keepalive = Cell::new(Instant::now());
-            let keepalive_failed = Cell::new(false);
-            let abort_check = || {
-                if keepalive_failed.get() {
-                    return true;
-                }
-
-                let breached = self
-                    .breach_detector
-                    .as_ref()
-                    .is_some_and(|d| d.is_breached());
-                if !breached && last_keepalive.get().elapsed() >= FUNDING_KEEPALIVE_INTERVAL {
-                    if let Err(error) = send_message(
-                        &mut keepalive_stream.borrow_mut(),
-                        &TakerToMakerMessage::WaitingFundingConfirmation(swap_id.clone()),
-                    ) {
-                        log::error!(
-                            "Maker closed keepalive connection during funding wait: {:?}",
-                            error
-                        );
-                        // Do not mask a confirmation that may already be visible
-                        // in this polling iteration; interrupt on the next check.
-                        keepalive_failed.set(true);
-                        return false;
-                    }
-                    last_keepalive.set(Instant::now());
-                }
-                breached
-            };
-            let maker_confirm_height = {
-                let wallet = self.read_wallet()?;
-                match wallet.wait_for_tx_confirmation(
-                    &maker_funding_txids,
-                    required_confirms,
-                    None,
-                    Some(&abort_check),
-                ) {
-                    Ok(h) => h,
-                    Err(crate::wallet::WalletError::Interrupted(_)) if keepalive_failed.get() => {
-                        return Err(TakerError::General(
-                            "Maker closed keepalive connection during funding wait".to_string(),
-                        ));
-                    }
-                    Err(crate::wallet::WalletError::Interrupted(_)) => {
-                        return Err(TakerError::ContractsBroadcasted(vec![]));
-                    }
-                    Err(e) => return Err(e.into()),
-                }
-            };
+            let maker_confirm_height = self.wait_for_legacy_funding_with_keepalive(
+                &maker_funding_txids,
+                required_confirms,
+                &swap_id,
+            )?;
 
             // Verify that the maker's funding confirmed within a few blocks of the
             // previous hop. For legacy (CSV relative locktime), a large gap between
@@ -876,6 +822,95 @@ impl Taker {
 
         log::info!("Multi-hop Legacy swap contract exchange completed");
         Ok(())
+    }
+
+    /// Wait for Legacy funding while keeping every maker session in the route alive.
+    fn wait_for_legacy_funding_with_keepalive(
+        &self,
+        funding_txids: &[Txid],
+        required_confirms: u32,
+        swap_id: &str,
+    ) -> Result<u32, TakerError> {
+        let maker_addresses: Vec<String> = self
+            .swap_state()?
+            .makers
+            .iter()
+            .map(|maker| maker.address.to_string())
+            .collect();
+        let mut streams = Vec::with_capacity(maker_addresses.len());
+        for (maker_index, maker_address) in maker_addresses.into_iter().enumerate() {
+            let mut stream = self.net_connect(&maker_address)?;
+            self.net_handshake(&mut stream).map_err(|error| {
+                TakerError::General(format!(
+                    "Handshake failed with maker {} ({}): {:?}",
+                    maker_index, maker_address, error
+                ))
+            })?;
+            streams.push((maker_index, stream));
+        }
+
+        let streams = RefCell::new(streams);
+        let last_keepalive = Cell::new(Instant::now());
+        let failed_maker = Cell::new(None);
+        // Missing funding must still trigger maker idle-timeout recovery.
+        let funding_observed = Cell::new(false);
+        let wallet = self.read_wallet()?;
+        let abort_check = || {
+            if failed_maker.get().is_some() {
+                return true;
+            }
+
+            let breached = self
+                .breach_detector
+                .as_ref()
+                .is_some_and(|detector| detector.is_breached());
+            if !funding_observed.get() {
+                funding_observed.set(
+                    funding_txids
+                        .iter()
+                        .all(|txid| wallet.rpc.get_raw_transaction_info(txid, None).is_ok()),
+                );
+            }
+            if !breached
+                && funding_observed.get()
+                && last_keepalive.get().elapsed() >= FUNDING_KEEPALIVE_INTERVAL
+            {
+                let keepalive =
+                    TakerToMakerMessage::WaitingFundingConfirmation(swap_id.to_string());
+                for (maker_index, stream) in streams.borrow_mut().iter_mut() {
+                    if let Err(error) = send_message(stream, &keepalive) {
+                        log::error!(
+                            "Maker {} closed keepalive connection during funding wait: {:?}",
+                            maker_index,
+                            error
+                        );
+                        // Allow the current confirmation poll to complete before
+                        // interrupting so a visible confirmation is not masked.
+                        failed_maker.set(Some(*maker_index));
+                        return false;
+                    }
+                }
+                last_keepalive.set(Instant::now());
+            }
+            breached
+        };
+
+        match wallet.wait_for_tx_confirmation(
+            funding_txids,
+            required_confirms,
+            None,
+            Some(&abort_check),
+        ) {
+            Ok(height) => Ok(height),
+            Err(WalletError::Interrupted(_)) if failed_maker.get().is_some() => {
+                Err(TakerError::General(format!(
+                    "Maker {} closed keepalive connection during funding wait",
+                    failed_maker.get().unwrap_or_default()
+                )))
+            }
+            Err(WalletError::Interrupted(_)) => Err(TakerError::ContractsBroadcasted(vec![])),
+            Err(error) => Err(error.into()),
+        }
     }
 
     /// Request contract signatures for sender from a maker.
