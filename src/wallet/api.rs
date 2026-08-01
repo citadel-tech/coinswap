@@ -20,7 +20,8 @@ use bitcoin::{
     secp256k1,
     secp256k1::{Keypair, Secp256k1, SecretKey},
     sighash::{EcdsaSighashType, Prevouts, SighashCache, TapSighashType},
-    Address, Amount, OutPoint, PublicKey, Script, ScriptBuf, Transaction, TxOut, Txid, Weight,
+    Address, Amount, Network, OutPoint, PublicKey, Script, ScriptBuf, Transaction, TxOut, Txid,
+    Weight,
 };
 use bitcoind::bitcoincore_rpc::{bitcoincore_rpc_json::ListUnspentResultEntry, Client, RpcApi};
 use serde::{Deserialize, Serialize};
@@ -46,10 +47,6 @@ use super::{
 // data in the bitcoin core wallet
 // for example which privkey corresponds to a scriptpubkey is stored in hd paths
 
-/// BIP-84 derivation path for P2WPKH (Native SegWit)
-const HARDENDED_DERIVATION_P2WPKH: &str = "m/84'/1'/0'";
-/// BIP-86 derivation path for P2TR (Taproot key-path)
-const HARDENDED_DERIVATION_P2TR: &str = "m/86'/1'/0'";
 /// P2WSH ECDSA: 2 sigs/sig+preimage + full redeemscript (~149)
 const LEGACY_CONTRACT_SPEND_VSIZE: u64 = 150;
 /// key-path: one 64B Schnorr sig, no script (~111)
@@ -110,7 +107,7 @@ impl PartialEq for Wallet {
     }
 }
 
-/// Specify the keychain derivation path from [`HARDENDED_DERIVATION_P2WPKH`] or [`HARDENDED_DERIVATION_P2TR`]
+/// Specify the keychain derivation path from [`Wallet::get_derivation_path`]
 /// Each kind represents an unhardened index value. Starting with External = 0.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 pub(crate) enum KeychainKind {
@@ -1097,12 +1094,24 @@ impl Wallet {
 
     //pub(crate) fn get_recovery_phrase_from_file()
 
-    /// Returns the derivation path for the given address type
-    fn get_derivation_path(address_type: AddressType) -> &'static str {
-        match address_type {
-            AddressType::P2WPKH => HARDENDED_DERIVATION_P2WPKH,
-            AddressType::P2TR => HARDENDED_DERIVATION_P2TR,
-        }
+    /// Account-level derivation path: `m / purpose' / coin_type' / account'`.
+    ///
+    /// `purpose` 84' (P2WPKH) or 86' (P2TR); `coin_type` 0' mainnet, 1' test networks
+    /// (BIP-44 registered types); `account` always 0'. Callers append `/change/address_index`.
+    fn get_derivation_path(address_type: AddressType, network: Network) -> DerivationPath {
+        let purpose = match address_type {
+            AddressType::P2WPKH => 84,
+            AddressType::P2TR => 86,
+        };
+        let coin_type = match network {
+            Network::Bitcoin => 0,
+            _ => 1,
+        };
+        DerivationPath::from(vec![
+            ChildNumber::Hardened { index: purpose },
+            ChildNumber::Hardened { index: coin_type },
+            ChildNumber::Hardened { index: 0 },
+        ])
     }
 
     /// Wallet descriptors are derivable. Currently only supports two KeychainKind. Internal and External.
@@ -1111,13 +1120,10 @@ impl Wallet {
         address_type: AddressType,
     ) -> Result<HashMap<KeychainKind, String>, WalletError> {
         let secp = Secp256k1::new();
-        let derivation_path = Self::get_derivation_path(address_type);
+        let derivation_path = Self::get_derivation_path(address_type, self.store.network);
         let wallet_xpub = Xpub::from_priv(
             &secp,
-            &self
-                .store
-                .master_key
-                .derive_priv(&secp, &DerivationPath::from_str(derivation_path)?)?,
+            &self.store.master_key.derive_priv(&secp, &derivation_path)?,
         );
 
         // Get descriptors for external and internal keychain. Other chains are not supported yet.
@@ -1341,11 +1347,9 @@ impl Wallet {
                 };
 
                 let secp = Secp256k1::new();
-                let derivation_path = Self::get_derivation_path(address_type);
-                let master_private_key = self
-                    .store
-                    .master_key
-                    .derive_priv(&secp, &DerivationPath::from_str(derivation_path)?)?;
+                let derivation_path = Self::get_derivation_path(address_type, self.store.network);
+                let master_private_key =
+                    self.store.master_key.derive_priv(&secp, &derivation_path)?;
                 if fingerprint == master_private_key.fingerprint(&secp).to_string() {
                     return Ok(Some(UTXOSpendInfo::SeedCoin {
                         path: format!("m/{addr_type}/{index}"),
@@ -1754,14 +1758,12 @@ impl Wallet {
                     address_type,
                     ..
                 } => {
-                    let base_derivation = match address_type {
-                        AddressType::P2WPKH => HARDENDED_DERIVATION_P2WPKH,
-                        AddressType::P2TR => HARDENDED_DERIVATION_P2TR,
-                    };
+                    let base_derivation =
+                        Self::get_derivation_path(*address_type, self.store.network);
                     let master_private_key = self
                         .store
                         .master_key
-                        .derive_priv(&secp, &DerivationPath::from_str(base_derivation).unwrap())
+                        .derive_priv(&secp, &base_derivation)
                         .unwrap();
                     let privkey = master_private_key
                         .derive_priv(&secp, &DerivationPath::from_str(path).unwrap())
@@ -1840,14 +1842,10 @@ impl Wallet {
                     address_type,
                     ..
                 } => {
-                    let base_derivation = match address_type {
-                        AddressType::P2WPKH => HARDENDED_DERIVATION_P2WPKH,
-                        AddressType::P2TR => HARDENDED_DERIVATION_P2TR,
-                    };
-                    let master_private_key = self
-                        .store
-                        .master_key
-                        .derive_priv(&secp, &DerivationPath::from_str(base_derivation)?)?;
+                    let base_derivation =
+                        Self::get_derivation_path(address_type, self.store.network);
+                    let master_private_key =
+                        self.store.master_key.derive_priv(&secp, &base_derivation)?;
                     let privkey = master_private_key
                         .derive_priv(&secp, &DerivationPath::from_str(&path)?)?
                         .private_key;
