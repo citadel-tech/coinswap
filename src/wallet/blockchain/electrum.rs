@@ -31,8 +31,7 @@ use bitcoind::bitcoincore_rpc::json::{
     ListTransactionResult, ListUnspentResultEntry, WalletTxInfo,
 };
 use electrum_client::{
-    Client as ElectrumClient, Config as ClientConfig, ConfigBuilder, ElectrumApi, Param,
-    Socks5Config,
+    Client as ElectrumClient, Config as ClientConfig, ConfigBuilder, ElectrumApi, Socks5Config,
 };
 use serde_json::{json, Value};
 
@@ -405,6 +404,42 @@ impl Electrum {
         }
     }
 
+    /// Mined height of an already-fetched transaction, or `None` while it is
+    /// unconfirmed.
+    ///
+    /// Electrum has no txid→height index, but `scripthash.get_history` reports
+    /// the mined height of every tx touching a script, so any output of this tx
+    /// serves as the lookup key. That height is the server's own answer — no
+    /// arithmetic against a tip that may have moved — and works at any depth,
+    /// for scripts inside or outside our watch set.
+    fn mined_height(&self, tx: &Transaction) -> Result<Option<u64>, WalletError> {
+        let txid = tx.compute_txid();
+        for txout in &tx.output {
+            // Unspendable outputs (OP_RETURN) have no scripthash history.
+            if txout.script_pubkey.is_op_return() {
+                continue;
+            }
+            let Ok(history) = self.call(|c| c.script_get_history(txout.script_pubkey.as_script()))
+            else {
+                continue;
+            };
+            if let Some(entry) = history.iter().find(|e| e.tx_hash == txid) {
+                // `height` is 0 for a mempool tx and -1 for one with unconfirmed
+                // parents; both mean "not mined yet".
+                return Ok((entry.height > 0).then_some(entry.height as u64));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Confirmation count for a mined height against the current tip, and `0`
+    /// for an unconfirmed transaction.
+    fn confirmations_at(&self, height: Option<u64>) -> Result<u32, WalletError> {
+        let Some(height) = height else { return Ok(0) };
+        let tip = self.get_block_count()?;
+        Ok((tip + 1).saturating_sub(height) as u32)
+    }
+
     /// Expand a wallet-emitted descriptor (`wpkh(<xpub>/<chain>/*)` or
     /// `tr(<xpub>/<chain>/*)`) to addresses at indices `start..=end`. Strips an
     /// optional `#checksum` suffix and the BIP-32 `*` wildcard.
@@ -533,28 +568,8 @@ impl Blockchain for Electrum {
     }
 
     fn tx_block_height(&self, txid: &Txid) -> Result<Option<u64>, WalletError> {
-        // Electrum has no txid→height index, but `scripthash.get_history` reports
-        // the mined height of every tx touching a script, so any output of this tx
-        // serves as the lookup key. That height is the server's own answer — no
-        // arithmetic against a tip that may have moved — and works at any depth,
-        // for scripts inside or outside our watch set.
         let tx = self.call(|c| c.transaction_get(txid))?;
-        for txout in &tx.output {
-            // Unspendable outputs (OP_RETURN) have no scripthash history.
-            if txout.script_pubkey.is_op_return() {
-                continue;
-            }
-            let Ok(history) = self.call(|c| c.script_get_history(txout.script_pubkey.as_script()))
-            else {
-                continue;
-            };
-            if let Some(entry) = history.iter().find(|e| e.tx_hash == *txid) {
-                // `height` is 0 for a mempool tx and -1 for one with unconfirmed
-                // parents; both mean "not mined yet".
-                return Ok((entry.height > 0).then_some(entry.height as u64));
-            }
-        }
-        Ok(None)
+        self.mined_height(&tx)
     }
 
     fn get_raw_transaction(
@@ -570,27 +585,21 @@ impl Blockchain for Electrum {
         txid: &Txid,
         _block_hash: Option<&BlockHash>,
     ) -> Result<GetRawTransactionResult, WalletError> {
-        // Ask electrs for the verbose form so we can read `confirmations` directly.
+        // The verbose form of `transaction.get` carries `confirmations` and block
+        // info, but plenty of servers refuse it. Fetch the plain tx every server
+        // serves and derive the rest from its mined height.
         // Only the few fields the wallet actually reads are populated.
-        let value: Value = self.call(|c| {
-            c.raw_call(
-                "blockchain.transaction.get",
-                vec![Param::String(txid.to_string()), Param::Bool(true)],
-            )
-        })?;
-        let confirmations = value
-            .get("confirmations")
-            .and_then(|v| v.as_u64())
-            .map(|n| n as u32);
-        let hex = value.get("hex").and_then(|v| v.as_str()).ok_or_else(|| {
-            electrum_err(format!(
-                "electrum: missing `hex` field for transaction {txid}"
-            ))
-        })?;
-        let bytes: Vec<u8> = <Vec<u8> as bitcoin::hex::FromHex>::from_hex(hex).map_err(|e| {
-            electrum_err(format!("electrum: invalid transaction hex for {txid}: {e}"))
-        })?;
-        let tx: Transaction = bitcoin::consensus::deserialize(&bytes)?;
+        let tx = self.call(|c| c.transaction_get(txid))?;
+        let hex = serialize(&tx).to_lower_hex_string();
+        let height = self.mined_height(&tx)?;
+        let confirmations = self.confirmations_at(height)?;
+        let (blockhash, blocktime) = match height {
+            Some(h) => {
+                let header = self.header_at_height(h)?;
+                (Some(header.block_hash()), Some(header.time as u64))
+            }
+            None => (None, None),
+        };
 
         let vout: Vec<Value> = tx
             .output
@@ -650,10 +659,12 @@ impl Blockchain for Electrum {
             "locktime": tx.lock_time.to_consensus_u32(),
             "vin": vin,
             "vout": vout,
-            "blockhash": value.get("blockhash"),
+            "blockhash": blockhash,
             "confirmations": confirmations,
-            "time": value.get("time"),
-            "blocktime": value.get("blocktime"),
+            // Core reports the block time in both fields once a tx is mined, and
+            // the receive time before that, which no Electrum server tracks.
+            "time": blocktime,
+            "blocktime": blocktime,
         });
         Ok(serde_json::from_value(stub)?)
     }
@@ -667,41 +678,28 @@ impl Blockchain for Electrum {
         // Core's `gettxout` returns `None` once the output is spent — recovery and
         // funding-confirmation logic rely on this transition. Electrum's
         // `transaction.get` always returns the tx, so we confirm liveness via
-        // `scripthash.listunspent`.
-        let value: Value = match self.call(|c| {
-            c.raw_call(
-                "blockchain.transaction.get",
-                vec![Param::String(txid.to_string()), Param::Bool(true)],
-            )
-        }) {
-            Ok(v) => v,
+        // `scripthash.listunspent`, which also hands back the mined height.
+        let tx = match self.call(|c| c.transaction_get(txid)) {
+            Ok(tx) => tx,
             Err(_) => return Ok(None),
         };
-        let hex = value.get("hex").and_then(|v| v.as_str()).unwrap_or("");
-        let bytes: Vec<u8> = <Vec<u8> as bitcoin::hex::FromHex>::from_hex(hex)
-            .map_err(|e| electrum_err(format!("get_tx_out hex decode: {e}")))?;
-        let tx: Transaction = bitcoin::consensus::deserialize(&bytes)?;
         let txout = match tx.output.get(vout as usize) {
             Some(o) => o.clone(),
             None => return Ok(None),
         };
 
         // Is this specific outpoint still unspent at its scriptPubKey?
-        let still_unspent = self
-            .call(|c| c.script_list_unspent(txout.script_pubkey.as_script()))
-            .map(|entries| {
-                entries
-                    .iter()
-                    .any(|e| e.tx_hash == *txid && e.tx_pos as u32 == vout)
-            })?;
-        if !still_unspent {
+        let entries = self.call(|c| c.script_list_unspent(txout.script_pubkey.as_script()))?;
+        let Some(entry) = entries
+            .iter()
+            .find(|e| e.tx_hash == *txid && e.tx_pos as u32 == vout)
+        else {
             return Ok(None);
-        }
+        };
 
-        let confirmations = value
-            .get("confirmations")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as u32;
+        // `height` is 0 while the output sits in the mempool.
+        let height = (entry.height > 0).then_some(entry.height as u64);
+        let confirmations = self.confirmations_at(height)?;
         // with `include_mempool = false`, only confirmed outputs are returned.
         if include_mempool == Some(false) && confirmations == 0 {
             return Ok(None);
