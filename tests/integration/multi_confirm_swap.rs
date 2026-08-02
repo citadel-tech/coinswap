@@ -1,12 +1,19 @@
-//! Standard coinswap test: normal swap between a Taker and 2 Makers.
-//! Nothing goes wrong and the coinswap completes successfully.
-//! Also asserts a 3-hop request is rejected up front when only 2 makers exist.
+//! Swaps that wait for more than one funding confirmation.
+//!
+//! Every other test passes `with_required_confirms(1)`, so the confirmation-wait
+//! loop and the `WaitingFundingConfirmation` keepalive never run. Without the
+//! keepalive a maker would mistake a long funding wait for a dropped taker and
+//! start recovering contracts mid-swap.
+//!
+//! Both protocols are covered: the wait sites differ (`legacy_swap.rs` vs
+//! `taproot_swap.rs`) even though the keepalive message is shared.
 
 use bitcoin::Amount;
 use coinswap::{
     maker::{start_server, MakerBehavior},
     protocol::common_messages::ProtocolVersion,
-    taker::{error::TakerError, SwapParams, TakerBehavior},
+    taker::{SwapParams, TakerBehavior},
+    utill::NO_SHUTDOWN,
     wallet::AddressType,
 };
 
@@ -15,14 +22,28 @@ use super::test_framework::*;
 use log::{info, warn};
 use std::{sync::atomic::Ordering::Relaxed, thread};
 
-/// This test demonstrates a standard coinswap round between a Taker and 2 Makers. Nothing goes wrong
-/// and the coinswap completes successfully.
-#[test]
-fn test_standard_coinswap() {
-    // ---- Setup ----
-    warn!("Running Test: Standard Coinswap Procedure");
+/// Confirmations to wait for on every funding tx.
+///
+/// This has to beat the ~3 blocks mined during `MAKER_BROADCAST_DELAY`, or the
+/// first poll already sees enough confirmations, returns immediately, and the
+/// keepalive never gets sent. At 15 the wait sleeps once (10s) and fires one
+/// keepalive per hop, which is all this test needs.
+const REQUIRED_CONFIRMS: u32 = 15;
 
-    let makers_config_map = vec![(6102, Some(19051)), (16102, Some(19052))];
+#[test]
+fn test_legacy_multi_confirm_swap() {
+    warn!("Running Test: Legacy Swap With required_confirms > 1");
+    run_multi_confirm_swap(ProtocolVersion::Legacy);
+}
+
+#[test]
+fn test_taproot_multi_confirm_swap() {
+    warn!("Running Test: Taproot Swap With required_confirms > 1");
+    run_multi_confirm_swap(ProtocolVersion::Taproot);
+}
+
+fn run_multi_confirm_swap(protocol: ProtocolVersion) {
+    let makers_config_map = vec![(9102, Some(21401)), (19102, Some(21402))];
     let taker_behavior = vec![TakerBehavior::Normal];
     let maker_behaviors = vec![MakerBehavior::Normal, MakerBehavior::Normal];
 
@@ -32,7 +53,6 @@ fn test_standard_coinswap() {
     let bitcoind = &test_framework.bitcoind;
     let taker = takers.get_mut(0).unwrap();
 
-    // Fund the taker with 3 UTXOs of 0.05 BTC each
     let taker_original_balance = fund_taker(
         taker,
         bitcoind,
@@ -40,8 +60,6 @@ fn test_standard_coinswap() {
         Amount::from_btc(0.05).unwrap(),
         AddressType::P2TR,
     );
-
-    // Fund the makers with 4 UTXOs of 0.05 BTC each
     fund_makers(
         &makers,
         bitcoind,
@@ -50,9 +68,7 @@ fn test_standard_coinswap() {
         AddressType::P2TR,
     );
 
-    // Start the maker server threads
-    log::info!("Initiating Maker servers");
-
+    info!("Starting Maker servers...");
     let maker_threads = makers
         .iter()
         .map(|maker| {
@@ -63,41 +79,22 @@ fn test_standard_coinswap() {
         })
         .collect::<Vec<_>>();
 
-    // Wait for makers to complete setup
     wait_for_makers_setup(&makers, 120);
 
-    // Sync wallets after setup
     for maker in &makers {
         maker
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&NO_SHUTDOWN)
             .unwrap();
     }
 
     let maker_spendable_balance = verify_maker_pre_swap_balances(&makers);
 
-    // Only 2 makers are running, so a 3-hop route must fail at discovery
-    // before any funds are committed.
-    let too_many_hops = SwapParams::new(ProtocolVersion::Legacy, Amount::from_sat(500000), 3)
+    let swap_params = SwapParams::new(protocol, Amount::from_sat(500000), 2)
         .with_tx_count(3)
-        .with_required_confirms(1);
-    let err = taker
-        .prepare_coinswap(too_many_hops)
-        .expect_err("prepare_coinswap must fail with only 2 makers for a 3-hop swap");
-    assert!(
-        matches!(err, TakerError::NotEnoughMakersInOfferBook),
-        "Expected NotEnoughMakersInOfferBook, got: {:?}",
-        err
-    );
-
-    // Initiate Coinswap
-    info!("Initiating coinswap protocol");
-
-    let swap_params = SwapParams::new(ProtocolVersion::Legacy, Amount::from_sat(500000), 2)
-        .with_tx_count(3)
-        .with_required_confirms(1);
+        .with_required_confirms(REQUIRED_CONFIRMS);
 
     generate_blocks(bitcoind, 1);
 
@@ -106,33 +103,43 @@ fn test_standard_coinswap() {
         .expect("Failed to prepare coinswap");
     taker
         .start_coinswap(&summary.swap_id)
-        .expect("Coinswap should complete successfully");
+        .expect("Coinswap should complete successfully despite the longer funding wait");
 
-    info!("All coinswaps processed successfully. Transaction complete.");
+    info!("Coinswap completed with required_confirms = {REQUIRED_CONFIRMS}");
 
-    // Sync wallets
+    makers
+        .iter()
+        .for_each(|maker| maker.shutdown.store(true, Relaxed));
+    maker_threads
+        .into_iter()
+        .for_each(|thread| thread.join().unwrap());
+
     taker
         .get_wallet()
         .write()
         .unwrap()
-        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .sync_and_save(&NO_SHUTDOWN)
         .unwrap();
-
     generate_blocks(bitcoind, 1);
-
     for maker in &makers {
         maker
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&NO_SHUTDOWN)
             .unwrap();
     }
 
-    // Verify taker balances
-    info!("Verifying swap results");
-    let taker_balances = taker.get_wallet().read().unwrap().get_balances().unwrap();
+    // The swap succeeding is not enough: without these two lines it could have
+    // taken the single-confirmation path and proved nothing.
+    let log_path = format!("{}/taker/debug.log", test_framework.temp_dir.display());
+    test_framework.assert_log(
+        &format!("Waiting for {REQUIRED_CONFIRMS} confirmation(s)"),
+        &log_path,
+    );
+    test_framework.assert_log("Taker is waiting for funding confirmation", &log_path);
 
+    let taker_balances = taker.get_wallet().read().unwrap().get_balances().unwrap();
     info!(
         "Taker balances: Regular: {}, Swap: {}, Contract: {}, Spendable: {}",
         taker_balances.regular,
@@ -141,14 +148,19 @@ fn test_standard_coinswap() {
         taker_balances.spendable,
     );
 
+    let expected_taker_regular = 14499076;
+    let expected_taker_swap = match protocol {
+        ProtocolVersion::Legacy => 494587,
+        ProtocolVersion::Taproot => 494815,
+    };
     assert_eq!(
         taker_balances.regular.to_sat(),
-        14499076,
+        expected_taker_regular,
         "Taker regular balance mismatch"
     );
     assert_eq!(
         taker_balances.swap.to_sat(),
-        494587,
+        expected_taker_swap,
         "Taker swap balance mismatch"
     );
     assert_eq!(
@@ -158,28 +170,33 @@ fn test_standard_coinswap() {
     );
     assert_eq!(taker_balances.fidelity, Amount::ZERO);
 
+    // Waiting longer must not change what the swap costs.
     let balance_diff = taker_original_balance
         .checked_sub(taker_balances.spendable)
         .unwrap();
-
     info!("Taker fees paid: {} sats", balance_diff.to_sat());
-
+    let expected_diff = match protocol {
+        ProtocolVersion::Legacy => 6337,
+        ProtocolVersion::Taproot => 6109,
+    };
     assert_eq!(
         balance_diff.to_sat(),
-        6337,
+        expected_diff,
         "Taker spendable balance change mismatch"
     );
 
-    // Verify maker balances
-    for (i, (maker, original)) in makers.iter().zip(maker_spendable_balance).enumerate() {
-        maker
-            .wallet
-            .write()
-            .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
-            .unwrap();
-        let balances = maker.wallet.read().unwrap().get_balances().unwrap();
+    let expected_regular = [14500865u64, 14503103];
+    let expected_swap = match protocol {
+        ProtocolVersion::Legacy => [499100u64, 496825],
+        ProtocolVersion::Taproot => [499328u64, 497053],
+    };
+    let expected_fee = match protocol {
+        ProtocolVersion::Legacy => [451u64, 414],
+        ProtocolVersion::Taproot => [679u64, 642],
+    };
 
+    for (i, (maker, original)) in makers.iter().zip(maker_spendable_balance).enumerate() {
+        let balances = maker.wallet.read().unwrap().get_balances().unwrap();
         info!(
             "Maker {} balances: Regular: {}, Swap: {}, Contract: {}, Fidelity: {}, Spendable: {}",
             i,
@@ -190,17 +207,15 @@ fn test_standard_coinswap() {
             balances.spendable,
         );
 
-        let expected_regular = [14500865u64, 14503103][i];
-        let expected_swap = [499100u64, 496825][i];
         assert_eq!(
             balances.regular.to_sat(),
-            expected_regular,
+            expected_regular[i],
             "Maker {} regular balance mismatch",
             i
         );
         assert_eq!(
             balances.swap.to_sat(),
-            expected_swap,
+            expected_swap[i],
             "Maker {} swap balance mismatch",
             i
         );
@@ -216,50 +231,16 @@ fn test_standard_coinswap() {
             .spendable
             .checked_sub(original)
             .unwrap_or(Amount::ZERO);
-
         info!("Maker {} fee earned: {} sats", i, maker_fee.to_sat());
-
-        let expected_fee = [451u64, 414][i];
         assert_eq!(
             maker_fee.to_sat(),
-            expected_fee,
+            expected_fee[i],
             "Maker {} fee earned mismatch",
             i
         );
     }
 
-    info!("Standard coinswap test completed successfully!");
-
-    let temp_dir = makers[0]
-        .data_dir
-        .parent()
-        .expect("maker data dir should live under test temp dir");
-    let taker_report_path = temp_dir
-        .join("taker1")
-        .join("wallets")
-        .join("taker1_swap_report.json");
-    assert_report_has_deniability_proofs(&taker_report_path, "taker", bitcoind, 1);
-
-    for (i, maker) in makers.iter().enumerate() {
-        let maker_report_path = maker
-            .data_dir
-            .join("wallets")
-            .join(format!("{}_swap_report.json", maker.config.wallet_name));
-        assert_report_has_deniability_proofs(
-            &maker_report_path,
-            &format!("maker {i}"),
-            bitcoind,
-            1,
-        );
-    }
-
-    drop(takers);
-    makers
-        .iter()
-        .for_each(|maker| maker.shutdown.store(true, Relaxed));
-    maker_threads
-        .into_iter()
-        .for_each(|thread| thread.join().unwrap());
+    info!("Multi-confirmation swap test completed successfully!");
 
     test_framework.stop();
     block_generation_handle.join().unwrap();

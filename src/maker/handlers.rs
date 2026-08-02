@@ -614,9 +614,13 @@ fn handle_swap_details<M: Maker>(
     // An admission rejection must reach the taker as a message, not a dropped
     // connection, or it waits out a timeout before trying the next maker.
     match maker.store_connection_state(&details.id, state, true) {
-        // A param mismatch means the id already belongs to a live swap; both
+        // A param mismatch means the id already belongs to a live swap; all
         // arms are terminal rejections and get the same reset.
-        Err(MakerError::TooManySwaps | MakerError::SwapParamMismatch) => {
+        Err(
+            MakerError::TooManySwaps
+            | MakerError::SwapParamMismatch
+            | MakerError::InsufficientLiquidity { .. },
+        ) => {
             // A rejected admission must leave no live phase: with AwaitingContractData
             // still set, the taker could send ContractData and drive funding for a
             // swap we refused. Nothing was stored, so restore_state_if_needed stays a no-op.

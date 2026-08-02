@@ -145,7 +145,7 @@ fn taker_refuses_swap_before_funding_after_watcher_exit() {
 
 #[test]
 fn funded_maker_restarts_recovery_only_without_watcher() {
-    super::taproot_reboot_recovery::run_reboot_recovery_without_watcher::<BitcoindBackend>();
+    super::reboot_recovery::run_reboot_recovery_without_watcher::<BitcoindBackend>();
 }
 
 #[test]

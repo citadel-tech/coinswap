@@ -212,6 +212,9 @@ fn test_concurrent_takers_taproot() {
     assert!(success_count >= 1, "At least one taker should succeed");
     let log_path = format!("{}/taker/debug.log", test_framework.temp_dir.display());
     test_framework.assert_log("Rejecting swap ", &log_path);
+    // The losing taker must get the rejection as a message and fail fast,
+    // not sit out a timeout on a dropped connection.
+    test_framework.assert_log("rejected swap", &log_path);
     assert_eq!(
         completed_count, 2,
         "Both takers should have completed (success or failure)"

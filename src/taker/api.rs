@@ -1523,7 +1523,17 @@ impl Taker {
             refund_locktime_offset,
         };
 
-        send_message(&mut stream, &TakerToMakerMessage::SwapDetails(swap_details))?;
+        #[cfg(feature = "integration-test")]
+        let mut swap_details = swap_details;
+        #[cfg(feature = "integration-test")]
+        if let TakerBehavior::ForgeBounds(amount) = self.behavior {
+            swap_details.amount = amount;
+        }
+
+        send_message(
+            &mut stream,
+            &TakerToMakerMessage::SwapDetails(swap_details.clone()),
+        )?;
 
         let msg_bytes = read_message(&mut stream)?;
         let msg: MakerToTakerMessage = serde_cbor::from_slice(&msg_bytes)?;
@@ -1536,6 +1546,28 @@ impl Taker {
                     swap.makers[maker_idx].protocol = negotiated_protocol;
                     swap.makers[maker_idx].negotiated_timelock = timelock;
                     log::info!("Maker {} accepted swap with tweakable point", maker_idx);
+
+                    #[cfg(feature = "integration-test")]
+                    if self.behavior == TakerBehavior::ResendMutatedDetails {
+                        let identical = self.resend_swap_details(&maker_address, &swap_details)?;
+                        if !matches!(identical, MakerToTakerMessage::AckSwapDetails(ref ack) if ack.tweakable_point.is_some())
+                        {
+                            return Err(TakerError::General(
+                                "Maker rejected identical resent SwapDetails".to_string(),
+                            ));
+                        }
+                        swap_details.amount += Amount::from_sat(1);
+                        let mutated = self.resend_swap_details(&maker_address, &swap_details)?;
+                        if matches!(mutated, MakerToTakerMessage::AckSwapDetails(ref ack) if ack.tweakable_point.is_none())
+                        {
+                            return Err(TakerError::General(
+                                "Maker rejected mutated resent SwapDetails".to_string(),
+                            ));
+                        }
+                        return Err(TakerError::General(
+                            "Maker accepted mutated resent SwapDetails".to_string(),
+                        ));
+                    }
 
                     #[cfg(feature = "integration-test")]
                     if self.behavior == TakerBehavior::CloseAtAckResponse {
@@ -1561,6 +1593,23 @@ impl Taker {
                 maker_idx
             ))),
         }
+    }
+
+    #[cfg(feature = "integration-test")]
+    fn resend_swap_details(
+        &self,
+        maker_address: &str,
+        details: &SwapDetails,
+    ) -> Result<MakerToTakerMessage, TakerError> {
+        let mut stream = self.net_connect(maker_address)?;
+        self.net_handshake(&mut stream)?;
+        send_message(&mut stream, &TakerToMakerMessage::GetOffer(GetOffer))?;
+        read_message(&mut stream)?;
+        send_message(
+            &mut stream,
+            &TakerToMakerMessage::SwapDetails(details.clone()),
+        )?;
+        Ok(serde_cbor::from_slice(&read_message(&mut stream)?)?)
     }
 
     /// Validate a maker's offer for fee sanity and size limits.
@@ -2763,6 +2812,10 @@ pub enum TakerBehavior {
     StopWatcherBeforeSwap,
     /// Stop the watcher after Legacy breach sentinels are armed.
     StopWatcherAfterSentinels,
+    /// Replace the validated amount before sending SwapDetails.
+    ForgeBounds(Amount),
+    /// Re-send identical then mutated SwapDetails after admission.
+    ResendMutatedDetails,
     /// Close connection early (after maker selection).
     CloseEarly,
     /// Drop after funds/contracts are broadcast but before finalization.

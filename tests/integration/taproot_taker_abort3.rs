@@ -1,12 +1,18 @@
-//! Taproot taker abort test 3: Taker closes after receiving maker's contract response.
+//! Taproot taker aborts at and after the contract-data exchange.
 //!
-//! Scenario:
-//! 1. Taker initiates a Taproot coinswap with 2 makers.
-//! 2. Taker drops after receiving the maker's contract data response
-//!    (CloseAtSendersContractFromMaker behavior).
-//! 3. Funding transactions have been broadcast at this point.
-//! 4. Recovery is needed -- taker and makers recover via timelock.
-//! 5. Verify: all parties recovered funds (contract == 0, small fee loss).
+//! Two drop points, one recovery flow:
+//! 1. `abort3`: the taker drops on receiving a maker's contract data response,
+//!    mid-setup (CloseAtSendersContractFromMaker) — funding is on-chain but
+//!    the incoming coin set is incomplete, so timelock recovery runs on a
+//!    partial set.
+//! 2. Full setup: the taker drops after every contract is verified, before
+//!    the private-key handover (BroadcastContractAfterFullSetup) — the full
+//!    coin set is on disk, so the taker eats the whole swap amount plus fees
+//!    while both makers recover whole. In taproot the funding tx IS the
+//!    contract tx, so this hook's re-broadcast is a no-op; the drop point and
+//!    its persisted state are the difference that matters.
+//!
+//! Both cases force timelock recovery for every party and share one runner.
 
 use bitcoin::Amount;
 use coinswap::{
@@ -28,16 +34,54 @@ use std::{
 /// Test: Taker aborts after receiving maker's contract response (Taproot).
 ///
 /// The taker drops the connection after receiving the maker's contract data
-/// response. This is similar to abort2 but occurs one step later -- after
-/// the Maker has sent its contract data back. Funding transactions are
-/// already on-chain, so timelock recovery is required.
+/// response. Funding transactions are already on-chain, so timelock recovery
+/// is required.
 #[test]
 fn test_taproot_taker_abort3() {
-    // ---- Setup ----
-    warn!("Running Test: Taproot Taker Abort3 - Close at Sender's Contract From Maker");
+    run_taproot_taker_abort(
+        "close at maker's contract data response",
+        TakerBehavior::CloseAtSendersContractFromMaker,
+        vec![(7002, Some(20001)), (17002, Some(20002))],
+        [14997750, 14999514],
+        [1764, 0],
+        14998236,
+        1764,
+    );
+}
 
-    let makers_config_map = vec![(7002, Some(20001)), (17002, Some(20002))];
-    let taker_behavior = vec![TakerBehavior::CloseAtSendersContractFromMaker];
+/// Test: Taker drops after full setup, before the private-key handover.
+///
+/// Recovery starts from the complete outgoing + incoming coin set: both
+/// makers timelock-refund whole, and the taker absorbs the swap amount plus
+/// every funding fee.
+#[test]
+fn test_taproot_taker_abort_after_full_setup() {
+    run_taproot_taker_abort(
+        "drop after full setup",
+        TakerBehavior::BroadcastContractAfterFullSetup,
+        vec![(8502, Some(21101)), (18502, Some(21102))],
+        [14997750, 14997750],
+        [1764, 1764],
+        14499076,
+        500924,
+    );
+}
+
+/// Drives one taker-drop case through timelock recovery and asserts the
+/// golden balances that pin how that drop point settles.
+fn run_taproot_taker_abort(
+    case: &str,
+    behavior: TakerBehavior,
+    makers_config_map: Vec<(u16, Option<u16>)>,
+    expected_maker_regular: [u64; 2],
+    expected_maker_diff: [u64; 2],
+    expected_taker_regular: u64,
+    expected_taker_diff: u64,
+) {
+    // ---- Setup ----
+    warn!("Running Test: Taproot Taker Abort - {case}");
+
+    let taker_behavior = vec![behavior];
     let maker_behaviors = vec![MakerBehavior::Normal, MakerBehavior::Normal];
 
     let (test_framework, mut takers, makers, block_generation_handle) =
@@ -46,7 +90,6 @@ fn test_taproot_taker_abort3() {
     let bitcoind = &test_framework.bitcoind;
     let taker = takers.get_mut(0).unwrap();
 
-    // Fund the taker with 3 UTXOs of 0.05 BTC each (P2TR for Taproot)
     let taker_original_balance = fund_taker(
         taker,
         bitcoind,
@@ -54,8 +97,6 @@ fn test_taproot_taker_abort3() {
         Amount::from_btc(0.05).unwrap(),
         AddressType::P2TR,
     );
-
-    // Fund the makers with 4 UTXOs of 0.05 BTC each
     fund_makers(
         &makers,
         bitcoind,
@@ -64,9 +105,7 @@ fn test_taproot_taker_abort3() {
         AddressType::P2TR,
     );
 
-    // Start the maker server threads
-    log::info!("Starting Maker servers...");
-
+    info!("Starting Maker servers...");
     let maker_threads = makers
         .iter()
         .map(|maker| {
@@ -77,10 +116,8 @@ fn test_taproot_taker_abort3() {
         })
         .collect::<Vec<_>>();
 
-    // Wait for makers to complete setup
     wait_for_makers_setup(&makers, 120);
 
-    // Sync wallets after setup
     for maker in &makers {
         maker
             .wallet
@@ -90,30 +127,28 @@ fn test_taproot_taker_abort3() {
             .unwrap();
     }
 
-    let _maker_spendable_balance = verify_maker_pre_swap_balances(&makers);
-    log::info!("Starting taproot taker abort3 test...");
+    let maker_spendable_balance = verify_maker_pre_swap_balances(&makers);
 
-    // Start periodic swap tracker logging (every 10s)
     let tracker_logger = spawn_tracker_logger(
         test_framework.temp_dir.join("taker1"),
         Duration::from_secs(10),
     );
 
-    // Swap params for coinswap (Taproot)
     let swap_params = SwapParams::new(ProtocolVersion::Taproot, Amount::from_sat(500000), 2)
         .with_tx_count(3)
         .with_required_confirms(1);
 
     generate_blocks(bitcoind, 1);
 
-    // Prepare should succeed; execution should fail after receiving maker's contract data
+    // Prepare should succeed; execution should fail at the case's drop point.
     let summary = taker
         .prepare_coinswap(swap_params)
         .expect("Prepare should succeed");
     let swap_result = taker.start_coinswap(&summary.swap_id);
     assert!(
         swap_result.is_err(),
-        "Swap should fail due to CloseAtSendersContractFromMaker behavior"
+        "Swap should fail due to {:?} behavior",
+        behavior
     );
     info!("Swap failed as expected: {:?}", swap_result.err().unwrap());
     taker.log_tracker_state();
@@ -124,7 +159,8 @@ fn test_taproot_taker_abort3() {
     info!("Waiting for makers to timeout and blocks to mature timelocks...");
     thread::sleep(Duration::from_secs(300));
 
-    // Verify maker balances -- makers should have recovered their outgoing funds via timelock
+    // Verify maker balances -- makers should have recovered their outgoing
+    // funds via timelock.
     for (i, maker) in makers.iter().enumerate() {
         maker
             .wallet
@@ -141,10 +177,9 @@ fn test_taproot_taker_abort3() {
             maker_balances.contract,
             maker_balances.spendable,
         );
-        let expected_regular = [14997750, 14999514];
         assert_eq!(
             maker_balances.regular.to_sat(),
-            expected_regular[i],
+            expected_maker_regular[i],
             "Maker {} regular balance mismatch",
             i
         );
@@ -161,9 +196,18 @@ fn test_taproot_taker_abort3() {
             i
         );
         assert_eq!(maker_balances.fidelity, Amount::from_btc(0.05).unwrap());
-    }
 
-    info!("Makers shut down. Waiting for background recovery loop to complete...");
+        let maker_diff = maker_spendable_balance[i]
+            .checked_sub(maker_balances.spendable)
+            .unwrap_or(Amount::ZERO);
+        info!("Maker {} lost {} sats to recovery", i, maker_diff.to_sat());
+        assert_eq!(
+            maker_diff.to_sat(),
+            expected_maker_diff[i],
+            "Maker {} spendable balance change mismatch",
+            i
+        );
+    }
 
     // The background recovery loop (spawned by recover_active_swap) periodically
     // retries hashlock sweeps and timelock recovery. Wait for it to finish.
@@ -186,9 +230,7 @@ fn test_taproot_taker_abort3() {
         .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
         .unwrap();
 
-    // Verify taker balance
     let taker_balances = taker.get_wallet().read().unwrap().get_balances().unwrap();
-
     info!(
         "Taker balances after recovery: Regular: {}, Swap: {}, Contract: {}, Spendable: {}",
         taker_balances.regular,
@@ -199,7 +241,7 @@ fn test_taproot_taker_abort3() {
 
     assert_eq!(
         taker_balances.regular.to_sat(),
-        14998236,
+        expected_taker_regular,
         "Taker regular balance mismatch"
     );
     assert_eq!(
@@ -217,22 +259,20 @@ fn test_taproot_taker_abort3() {
     let balance_diff = taker_original_balance
         .checked_sub(taker_balances.spendable)
         .unwrap_or(Amount::ZERO);
-
     info!(
         "Taker balance diff: {} sats (original: {}, current: {})",
         balance_diff.to_sat(),
         taker_original_balance,
         taker_balances.spendable,
     );
-
     assert_eq!(
         balance_diff.to_sat(),
-        1764,
+        expected_taker_diff,
         "Taker spendable balance change mismatch"
     );
 
     taker.log_tracker_state();
-    info!("Taproot taker abort3 test completed successfully!");
+    info!("Taproot taker abort ({case}) completed successfully!");
 
     makers
         .iter()
