@@ -382,13 +382,13 @@ impl Taker {
 
                     // Verify contract data before creating swapcoins
                     let expected_locktime = self.swap_state()?.makers[i].negotiated_timelock;
-                    let min_expected = self.min_expected_amount_for_hop(i);
+                    let expected_amount = self.expected_amount_for_hop(i);
                     self.verify_maker_taproot_contract(
                         &maker_contract,
                         i,
                         next_hop_point,
                         expected_locktime,
-                        min_expected,
+                        expected_amount,
                     )?;
 
                     // Verify hashlock pubkey matches expected key
@@ -778,29 +778,32 @@ impl Taker {
                 return Err(TakerError::ContractsBroadcasted(vec![]));
             }
 
-            let funding_info = {
+            let (all_confirmed, any_missing) = {
                 let wallet = self.read_wallet()?;
-                contract_txids.iter().all(|txid| {
-                    wallet
-                        .blockchain
-                        .get_raw_transaction_info(txid, None)
-                        .ok()
-                        .and_then(|info| info.confirmations)
-                        .is_some_and(|c| c >= required_confirms)
-                })
+                let mut all_confirmed = true;
+                let mut any_missing = false;
+                for txid in contract_txids {
+                    match wallet.blockchain.get_raw_transaction_info(txid, None) {
+                        Ok(info) => {
+                            if info.confirmations.unwrap_or(0) < required_confirms {
+                                all_confirmed = false;
+                            }
+                        }
+                        Err(_) => {
+                            any_missing = true;
+                            all_confirmed = false;
+                        }
+                    }
+                }
+                (all_confirmed, any_missing)
             };
 
-            if funding_info.iter().all(|info| {
-                info.as_ref()
-                    .ok()
-                    .and_then(|info| info.confirmations)
-                    .is_some_and(|confirms| confirms >= required_confirms)
-            }) {
+            if all_confirmed {
                 return Ok(());
             }
 
             // Missing funding must still trigger maker idle-timeout recovery.
-            if funding_info.iter().any(Result::is_err) {
+            if any_missing {
                 std::thread::sleep(FUNDING_KEEPALIVE_INTERVAL);
                 continue;
             }

@@ -31,6 +31,11 @@
 //! `tor` must be listening on `TOR_CONTROL_PORT` / `TOR_SOCKS_PORT` and be fully
 //! bootstrapped. Set `COINSWAP_TOR_PASSWORD` if the control port needs one.
 //!
+//! Ignored does not mean dead: no hermetic suite can reach the Tor network, so
+//! these stay opt-in by design. They are kept because `tor_reboot_recovery` is
+//! the only coverage of the watcher's re-subscribe-on-reboot path, and they run
+//! before every release.
+//!
 //! Note the onion services are created with `Flags=Detach`, so they outlive the
 //! test process. That is deliberate — the CI job's tor is ephemeral and drops
 //! them on restart.

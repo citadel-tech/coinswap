@@ -79,9 +79,9 @@ fn main() -> Result<(), MakerError> {
 
     setup_maker_logger(log::LevelFilter::Info, args.data_directory.clone());
 
-    let data_dir = args
-        .data_directory
-        .unwrap_or_else(coinswap::utill::get_maker_dir);
+    let data_dir = args.data_directory.unwrap_or_else(|| {
+        coinswap::utill::get_maker_dir().expect("could not determine maker data directory")
+    });
 
     // Load static settings from config file (auto-creates defaults if missing)
     let config_path = data_dir.join("config.toml");

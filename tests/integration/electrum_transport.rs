@@ -275,18 +275,3 @@ fn unreachable_server_reports_exhausted_attempts() {
     drop(electrum);
     cleanup(&s.root_dir);
 }
-
-/// Tor's SOCKS port reaches a clearnet server through an exit node, so using a
-/// proxy does not mean the URL has to be an onion address.
-#[test]
-#[ignore = "requires a bootstrapped tor and network access"]
-fn proxied_clearnet_server_connects() {
-    let cfg = ElectrumConfig {
-        url: "ssl://electrum.blockstream.info:50002".to_string(),
-        socks5: Some("127.0.0.1:9050".to_string()),
-        ..Default::default()
-    };
-    let electrum = Electrum::new(&cfg).expect("clearnet electrum through tor socks");
-    let tip = electrum.get_block_count().expect("tip");
-    assert!(tip > 800_000, "unexpected mainnet tip {}", tip);
-}

@@ -10,7 +10,9 @@ use bitcoin::{
     Block, Transaction, Txid,
 };
 
-use crate::watch_tower::{registry_storage::FileRegistry, watcher::Role};
+use crate::watch_tower::{
+    registry_storage::FileRegistry, watcher::Role, watcher_error::WatcherError,
+};
 
 /// Maximum number of txids to track for cache.
 const MAX_SEEN_TXIDS: usize = 5_000;
@@ -130,24 +132,32 @@ pub fn process_fidelity(tx: &Transaction) -> Option<FidelityAnnouncement> {
 }
 
 /// Processes each transaction in a block, updating watch entries and recording fidelity data.
-pub fn process_block<R: Role>(block: Block, registry: &mut FileRegistry) {
+pub fn process_block<R: Role>(
+    block: Block,
+    registry: &mut FileRegistry,
+) -> Result<(), WatcherError> {
     for tx in block.txdata.iter() {
-        process_transaction(tx, registry, true);
+        process_transaction(tx, registry, true)?;
         if R::RUN_DISCOVERY {
             let fidelity_announcement = process_fidelity(tx);
             if let Some(fidelity_announcement) = fidelity_announcement {
                 let txid = tx.compute_txid();
-                if registry.insert_fidelity(txid, fidelity_announcement) {
+                if registry.insert_fidelity(txid, fidelity_announcement)? {
                     log::info!("Stored verified fidelity via blockchain: {}", txid);
                 }
             }
         }
     }
+    Ok(())
 }
 
 /// Updates the registry for a transaction by clearing spent fidelities and marking watched spends.
-pub fn process_transaction(tx: &Transaction, registry: &mut FileRegistry, in_block: bool) {
-    let watch_requests = registry.list_watches();
+pub fn process_transaction(
+    tx: &Transaction,
+    registry: &mut FileRegistry,
+    in_block: bool,
+) -> Result<(), WatcherError> {
+    let watch_requests = registry.list_watches()?;
     for input in &tx.input {
         let outpoint = input.previous_output;
         for watch_request in &watch_requests {
@@ -155,7 +165,7 @@ pub fn process_transaction(tx: &Transaction, registry: &mut FileRegistry, in_blo
                 let mut watch_request = watch_request.clone();
                 watch_request.spent_tx = Some(tx.clone());
                 watch_request.in_block = in_block;
-                registry.upsert_watch(&watch_request);
+                registry.upsert_watch(&watch_request)?;
                 #[cfg(debug_assertions)]
                 log::debug!(
                     "[WATCH_STATE] Source: watch_tower::utils::process_transaction | Action: watched_outpoint_spent | Outpoint: {} | SpendingTxid: {} | Confirmed: {}",
@@ -166,6 +176,7 @@ pub fn process_transaction(tx: &Transaction, registry: &mut FileRegistry, in_blo
             }
         }
     }
+    Ok(())
 }
 
 pub(crate) fn parse_fidelity_event(event: &nostr::Event) -> Option<(Txid, u32)> {
@@ -371,12 +382,13 @@ mod tests {
             script_pubkey: Some(ScriptBuf::new()),
             in_block: false,
             spent_tx: None,
-        });
+        })
+        .unwrap();
 
         let spending = tx(0, vec![watched], vec![]);
-        process_transaction(&spending, &mut reg, false);
+        process_transaction(&spending, &mut reg, false).unwrap();
 
-        let w = reg.list_watches().pop().unwrap();
+        let w = reg.list_watches().unwrap().pop().unwrap();
         assert!(!w.in_block);
     }
     #[test]

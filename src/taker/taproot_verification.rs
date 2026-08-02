@@ -24,7 +24,7 @@ impl Taker {
         maker_idx: usize,
         expected_next_hop_pubkey: PublicKey,
         expected_locktime: u32,
-        min_expected_amount: Option<bitcoin::Amount>,
+        expected_amount: Option<bitcoin::Amount>,
     ) -> Result<(), TakerError> {
         // Must have at least one contract tx
         if contract.contract_txs.is_empty() {
@@ -325,14 +325,15 @@ impl Taker {
             }
         }
 
-        // Verify total amount is consistent with expected amount after fees
-        if let Some(min_amount) = min_expected_amount {
+        // The maker deducts a fee we can compute exactly from its advertised
+        // schedule, so the total must match, not just clear a minimum.
+        if let Some(expected) = expected_amount {
             let total_amount: bitcoin::Amount = contract.amounts.iter().copied().sum();
-            if total_amount < min_amount {
+            if total_amount != expected {
                 return Err(TakerError::General(format!(
-                    "Maker {} Taproot contract total amount {} is below expected minimum {} \
+                    "Maker {} Taproot contract total amount {} does not match expected {} \
                      (based on maker's advertised fee schedule)",
-                    maker_idx, total_amount, min_amount
+                    maker_idx, total_amount, expected
                 )));
             }
         }

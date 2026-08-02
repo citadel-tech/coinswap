@@ -128,7 +128,7 @@ pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
                         }
                     })
                     .map_err(MakerError::IO)?;
-                maker.thread_pool.add_thread(handle);
+                maker.thread_pool.add_thread(handle)?;
             }
         }
     }
@@ -167,7 +167,7 @@ pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
             }
         })
         .map_err(MakerError::IO)?;
-    maker.thread_pool.add_thread(rpc_handle);
+    maker.thread_pool.add_thread(rpc_handle)?;
 
     // Spawn idle state checker thread for recovery
     let maker_clone = Arc::clone(&maker);
@@ -179,7 +179,7 @@ pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
             }
         })
         .map_err(MakerError::IO)?;
-    maker.thread_pool.add_thread(idle_handle);
+    maker.thread_pool.add_thread(idle_handle)?;
 
     // Spawn fidelity bond renewal thread
     let maker_fidelity = Arc::clone(&maker);
@@ -192,7 +192,7 @@ pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
             }
         })
         .map_err(MakerError::IO)?;
-    maker.thread_pool.add_thread(fidelity_handle);
+    maker.thread_pool.add_thread(fidelity_handle)?;
 
     while !maker.is_shutdown() {
         match listener.accept() {
@@ -292,7 +292,7 @@ fn spawn_nostr_broadcast_thread(
         })
         .map_err(MakerError::IO)?;
 
-    maker.thread_pool.add_thread(handle);
+    maker.thread_pool.add_thread(handle)?;
 
     Ok(())
 }
@@ -375,7 +375,7 @@ fn handle_connection(maker: Arc<MakerServer>, stream: TcpStream) -> Result<(), M
             // Otherwise the idle checker can race the sweep and launch recovery for
             // a swap that has already completed successfully.
             if let Some(ref swap_id) = state.swap_id {
-                maker.remove_connection_state(swap_id);
+                maker.remove_connection_state(swap_id)?;
             }
 
             log::info!(
@@ -446,7 +446,7 @@ fn check_for_idle_states(maker: Arc<MakerServer>) -> Result<(), MakerError> {
             break;
         }
 
-        let idle_swaps = maker.drain_idle_swaps(IDLE_CONNECTION_TIMEOUT);
+        let idle_swaps = maker.drain_idle_swaps(IDLE_CONNECTION_TIMEOUT)?;
 
         for idle in idle_swaps {
             log::error!(
@@ -470,7 +470,12 @@ fn check_for_idle_states(maker: Arc<MakerServer>) -> Result<(), MakerError> {
                 updated_at: now,
             };
 
-            if let Err(e) = maker.swap_tracker.lock().unwrap().save_record(&record) {
+            if let Err(e) = maker
+                .swap_tracker
+                .lock()
+                .map_err(|_| MakerError::MutexPossion)?
+                .save_record(&record)
+            {
                 log::error!("Failed to save swap tracker record: {:?}", e);
             }
 
@@ -489,7 +494,7 @@ fn check_for_idle_states(maker: Arc<MakerServer>) -> Result<(), MakerError> {
                     }
                 })
                 .map_err(MakerError::IO)?;
-            maker.thread_pool.add_thread(handle);
+            maker.thread_pool.add_thread(handle)?;
         }
 
         sleep(HEART_BEAT_INTERVAL);
@@ -515,7 +520,7 @@ fn fidelity_renewal_loop(maker: Arc<MakerServer>, maker_address: &str) -> Result
         elapsed = Duration::ZERO;
 
         // Skip renewal check if a swap is in progress
-        if maker.has_ongoing_swaps() {
+        if maker.has_ongoing_swaps()? {
             continue;
         }
 
@@ -584,6 +589,9 @@ fn check_for_preimage_via_watchtower(
                 log::error!("watch request for {outpoint} failed (watcher gone): {e}");
             }
 
+            // Blocking on purpose: the watcher answers every request immediately,
+            // and we need this pass's fresh answer before choosing timelock over
+            // hashlock — a stale miss refunds while a preimage spend already exists.
             if let Some(crate::watch_tower::watcher::WatcherEvent::UtxoSpent {
                 spending_tx: Some(spending_tx),
                 ..
@@ -676,7 +684,13 @@ fn update_tracker(
     swap_id: &str,
     f: impl FnOnce(&mut super::swap_tracker::MakerSwapRecord),
 ) {
-    let mut tracker = maker.swap_tracker.lock().unwrap();
+    let mut tracker = match maker.swap_tracker.lock() {
+        Ok(tracker) => tracker,
+        Err(_) => {
+            log::error!("Swap tracker lock poisoned, skipping update for {swap_id}");
+            return;
+        }
+    };
     if let Some(record) = tracker.get_record_mut(swap_id) {
         f(record);
         record.updated_at = super::swap_tracker::now_secs();
@@ -760,7 +774,7 @@ fn recover_from_swap(
         let funding_broadcast = maker
             .swap_tracker
             .lock()
-            .unwrap()
+            .map_err(|_| MakerError::MutexPossion)?
             .get_record(&swap_id)
             .map(|r| r.funding_broadcast);
 
@@ -962,7 +976,17 @@ fn recover_from_swap(
                     r.recovery.outgoing_recovered = timelock_recovery_txids.clone();
                     r.recovery.phase = MakerRecoveryPhase::TimelockRecovered;
                 });
-                if all_swap_contracts_resolved()? {
+                // A backend that cannot answer says nothing about the contracts;
+                // ask again next pass rather than declaring the swap finished.
+                let resolved = all_swap_contracts_resolved().unwrap_or_else(|e| {
+                    log::warn!(
+                        "[{}] Could not check contract outputs: {:?}",
+                        maker.config.network_port,
+                        e
+                    );
+                    false
+                });
+                if resolved {
                     update_tracker(&maker, &swap_id, |r| {
                         r.phase = MakerSwapPhase::Recovered;
                         r.recovery.phase = MakerRecoveryPhase::CleanedUp;

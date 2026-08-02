@@ -140,7 +140,7 @@ fn connect_and_run_once(
 ) -> Result<(), WatcherError> {
     let mut socket = connect_nostr_websocket(relay_url, nostr_tor_config.0, nostr_tor_config.1)?;
 
-    let since = registry.load_nostr_cursor(relay_url).map(Timestamp::from);
+    let since = registry.load_nostr_cursor(relay_url)?.map(Timestamp::from);
 
     let mut filter = Filter::new().kind(kind);
     if let Some(since) = since {
@@ -310,7 +310,7 @@ fn handle_relay_message(
             // concurrent relay sessions don't repeat the fetch and validation.
             if !seen_txid.lock()?.claim(txid) {
                 log::info!("Skipping already-seen txid {txid} via {relay_url}");
-                registry.save_nostr_cursor(relay_url, event.created_at.as_secs());
+                registry.save_nostr_cursor(relay_url, event.created_at.as_secs())?;
                 return Ok(false);
             }
 
@@ -333,7 +333,7 @@ fn handle_relay_message(
                 Some(fidelity) => {
                     let maker_address = fidelity.onion.clone();
                     let expires_at_height = fidelity.expires_at_height;
-                    if registry.insert_fidelity(txid, fidelity) {
+                    if registry.insert_fidelity(txid, fidelity)? {
                         log::info!(
                                 "Stored verified fidelity | relay={} | event_id={} | txid={} | vout={} | maker_address={} | expires_at_height={}",
                                 relay_url,
@@ -355,7 +355,7 @@ fn handle_relay_message(
                     );
                 }
             }
-            registry.save_nostr_cursor(relay_url, event.created_at.as_secs());
+            registry.save_nostr_cursor(relay_url, event.created_at.as_secs())?;
         }
 
         RelayMessage::EndOfStoredEvents(sub_id) => {

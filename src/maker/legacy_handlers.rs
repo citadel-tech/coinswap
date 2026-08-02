@@ -308,7 +308,7 @@ fn process_proof_of_funding<M: Maker>(
         .collect();
 
     // Reserve UTXOs for this swap to prevent double-spending across concurrent swaps.
-    let excluded_utxos = maker.collect_excluded_utxos(&pof.id);
+    let excluded_utxos = maker.collect_excluded_utxos(&pof.id)?;
     if !excluded_utxos.is_empty() {
         log::info!(
             "[{}] Excluding {} UTXOs from other active swaps",
@@ -609,10 +609,18 @@ fn process_resp_contract_sigs_for_recvr_and_sender<M: Maker>(
                 maker.network_port()
             );
             for outgoing in &state.outgoing_swapcoins {
-                let _ = maker.broadcast_transaction(&outgoing.contract_tx);
+                // The raw contract_tx is unsigned; a broadcast only relays with
+                // both multisig sigs applied. Fail loudly — a silent reject
+                // makes breach tests pass on nothing.
+                let signed = outgoing
+                    .create_signed_contract_tx()
+                    .expect("test: contract sigs must be stored by now");
+                maker
+                    .broadcast_transaction(&signed)
+                    .expect("test: malicious contract broadcast must succeed");
             }
             // Remove stored state so taker can't reconnect and complete the swap
-            maker.remove_connection_state(&resp.id);
+            maker.remove_connection_state(&resp.id)?;
             return Err(MakerError::General("Test: broadcast contract after setup"));
         }
     }

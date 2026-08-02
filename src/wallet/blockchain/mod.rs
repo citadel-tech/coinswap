@@ -26,7 +26,8 @@ pub use electrum::{Electrum, ElectrumConfig};
 use std::fmt::Debug;
 
 use bitcoin::{
-    address::NetworkUnchecked, block::Header, Address, BlockHash, Script, Transaction, Txid,
+    address::NetworkUnchecked, block::Header, Address, BlockHash, OutPoint, Script, Transaction,
+    Txid,
 };
 use bitcoind::bitcoincore_rpc::json::{
     EstimateMode, EstimateSmartFeeResult, GetAddressInfoResult, GetBlockchainInfoResult,
@@ -130,6 +131,15 @@ pub trait Blockchain: Send + Sync + 'static {
     /// Height of the block that mined `txid`, or `None` if it is unconfirmed or
     /// unknown to the backend.
     fn tx_block_height(&self, txid: &Txid) -> Result<Option<u64>, WalletError>;
+    /// True only when the spend of `outpoint` is confirmed on chain.
+    ///
+    /// Recovery uses this to discard a swapcoin: deleting on a mempool-only
+    /// spend is a fund-loss bug, since such a spend can still be evicted.
+    /// `script` is the outpoint's scriptPubKey — Electrum answers from the
+    /// script's history (a second confirmed tx touching it), Core from its
+    /// mempool-blind UTXO set.
+    fn is_confirmed_spend(&self, outpoint: &OutPoint, script: &Script)
+        -> Result<bool, WalletError>;
     /// Fetch a raw transaction by txid.
     fn get_raw_transaction(
         &self,
@@ -361,6 +371,16 @@ impl Blockchain for AnyBlockchain {
         match self {
             AnyBlockchain::CoreRPC(b) => b.tx_block_height(txid),
             AnyBlockchain::Electrum(b) => b.tx_block_height(txid),
+        }
+    }
+    fn is_confirmed_spend(
+        &self,
+        outpoint: &OutPoint,
+        script: &Script,
+    ) -> Result<bool, WalletError> {
+        match self {
+            AnyBlockchain::CoreRPC(b) => b.is_confirmed_spend(outpoint, script),
+            AnyBlockchain::Electrum(b) => b.is_confirmed_spend(outpoint, script),
         }
     }
     fn get_raw_transaction(

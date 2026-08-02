@@ -328,7 +328,7 @@ impl Wallet {
             .fidelity_bond
             .iter()
             .enumerate()
-            .map(|(index, bond)| {
+            .map(|(index, bond)| -> Result<serde_json::Value, WalletError> {
                 let mut bond_info = serde_json::json!({
                         "index": index,
                         "outpoint": bond.outpoint.to_string(),
@@ -337,15 +337,13 @@ impl Wallet {
                 });
 
                 if !bond.is_spent {
-                    let bond_value = self
-                        .calculate_bond_value(bond, tip_height, tip_time)
-                        .expect("Bond value calculation must not fail for valid bonds.");
+                    let bond_value = self.calculate_bond_value(bond, tip_height, tip_time)?;
                     bond_info["bond_value"] = serde_json::json!(bond_value);
                 }
 
-                bond_info
+                Ok(bond_info)
             })
-            .collect::<Vec<serde_json::Value>>();
+            .collect::<Result<Vec<serde_json::Value>, _>>()?;
 
         serde_json::to_string_pretty(&serialized).map_err(|e| WalletError::General(e.to_string()))
     }

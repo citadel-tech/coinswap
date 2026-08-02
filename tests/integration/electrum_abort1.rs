@@ -65,7 +65,8 @@ pub(crate) const TAPROOT_EXPECTED: ExpectedBalances = ExpectedBalances {
 };
 
 /// Run the abort1 scenario (taker drops after funds broadcast) with the given
-/// protocol and assert the exact recovery balances.
+/// protocol and assert recovery balances (taproot goldens allow a small margin;
+/// see [`assert_taproot_balance_near`]).
 ///
 /// Generic over the backend so `electrum_tor.rs` can run the identical body over
 /// Tor and assert the same balances.
@@ -222,10 +223,10 @@ pub(crate) fn run_abort1<B: TestBackend>(protocol: ProtocolVersion, expected: &E
         expected.taker_regular,
         "Taker regular balance mismatch"
     );
-    assert_eq!(
+    assert_taproot_balance_near(
         taker_balances.swap.to_sat(),
         expected.taker_swap,
-        "Taker swap balance mismatch"
+        "Taker swap balance",
     );
     assert_eq!(
         taker_balances.contract.to_sat(),
@@ -245,10 +246,10 @@ pub(crate) fn run_abort1<B: TestBackend>(protocol: ProtocolVersion, expected: &E
         taker_balances.spendable,
     );
 
-    assert_eq!(
+    assert_taproot_balance_near(
         balance_diff.to_sat(),
         expected.taker_spendable_diff,
-        "Taker spendable balance change mismatch"
+        "Taker spendable balance change",
     );
 
     // Verify maker balances - makers should have recovered via timelock
@@ -266,17 +267,15 @@ pub(crate) fn run_abort1<B: TestBackend>(protocol: ProtocolVersion, expected: &E
             maker_balances.spendable,
         );
 
-        assert_eq!(
+        assert_taproot_balance_near(
             maker_balances.regular.to_sat(),
             expected.maker_regular[i],
-            "Maker {} regular balance mismatch",
-            i
+            &format!("Maker {i} regular balance"),
         );
-        assert_eq!(
+        assert_taproot_balance_near(
             maker_balances.swap.to_sat(),
             expected.maker_swap[i],
-            "Maker {} swap balance mismatch",
-            i
+            &format!("Maker {i} swap balance"),
         );
         assert_eq!(
             maker_balances.contract.to_sat(),
@@ -286,11 +285,10 @@ pub(crate) fn run_abort1<B: TestBackend>(protocol: ProtocolVersion, expected: &E
         );
         assert_eq!(maker_balances.fidelity, Amount::from_btc(0.05).unwrap());
 
-        assert_eq!(
+        assert_taproot_balance_near(
             maker_balances.spendable.to_sat(),
             expected.maker_spendable[i],
-            "Maker {} spendable balance mismatch",
-            i,
+            &format!("Maker {i} spendable balance"),
         );
     }
 
@@ -306,4 +304,210 @@ pub(crate) fn run_abort1<B: TestBackend>(protocol: ProtocolVersion, expected: &E
 fn electrum_taker_abort1() {
     run_abort1::<ElectrumBackend>(ProtocolVersion::Taproot, &TAPROOT_EXPECTED);
     run_abort1::<ElectrumBackend>(ProtocolVersion::Legacy, &LEGACY_EXPECTED);
+}
+
+/// A breached taker recovers all its incoming coins once the contracts
+/// confirm; recovery never blocks on an unconfirmed contract.
+///
+/// The last maker broadcasts the taker's incoming contract txs and closes.
+/// Recovery skips each contract while it is unconfirmed and sweeps it on a
+/// later cycle, well inside the timelock window. This test asserts the
+/// outcome — every incoming coin swept, no hang.
+#[test]
+fn electrum_sweeps_after_breach() {
+    let makers_config_map = vec![(6102, None), (16102, None)];
+    let taker_behavior = vec![TakerBehavior::Normal];
+    let maker_behaviors = vec![
+        MakerBehavior::Normal,
+        MakerBehavior::BroadcastContractAfterSetup,
+    ];
+
+    let (test_framework, mut takers, makers, block_generation_handle) =
+        TestFramework::init::<ElectrumBackend>(makers_config_map, taker_behavior, maker_behaviors);
+
+    let bitcoind = &test_framework.bitcoind;
+    let taker = takers.get_mut(0).unwrap();
+
+    fund_taker(
+        taker,
+        bitcoind,
+        3,
+        Amount::from_btc(0.05).unwrap(),
+        AddressType::P2TR,
+    );
+    fund_makers(
+        &makers,
+        bitcoind,
+        4,
+        Amount::from_btc(0.05).unwrap(),
+        AddressType::P2TR,
+    );
+
+    let maker_threads = makers
+        .iter()
+        .map(|maker| {
+            let maker = maker.clone();
+            thread::spawn(move || start_server(maker).unwrap())
+        })
+        .collect::<Vec<_>>();
+
+    wait_for_makers_setup(&makers, 120);
+    for maker in &makers {
+        maker.wallet.write().unwrap().sync_and_save().unwrap();
+    }
+
+    let swap_params = SwapParams::new(ProtocolVersion::Legacy, Amount::from_sat(500000), 2)
+        .with_tx_count(3)
+        // Zero confirms: the taker hits the closed connection at once instead
+        // of sitting in a confirmation wait while the contract mines.
+        .with_required_confirms(0);
+
+    generate_blocks(bitcoind, 1);
+
+    let log_path = format!("{}/taker/debug.log", test_framework.temp_dir.display());
+    let summary = taker
+        .prepare_coinswap(swap_params)
+        .expect("Prepare should succeed");
+
+    let swap_result = taker.start_coinswap(&summary.swap_id);
+    assert!(
+        swap_result.is_err(),
+        "Swap should fail once the last maker closes"
+    );
+
+    // Three incoming contracts, all swept: the loop tallies them in one line.
+    wait_for_log(
+        &log_path,
+        "Recovery loop: swept 3 incoming swapcoins",
+        Duration::from_secs(180),
+    );
+
+    makers
+        .iter()
+        .for_each(|maker| maker.shutdown.store(true, Relaxed));
+    maker_threads
+        .into_iter()
+        .for_each(|thread| thread.join().unwrap());
+
+    drop(takers);
+    test_framework.stop();
+    block_generation_handle.join().unwrap();
+}
+
+/// Plan A4: a swapcoin whose contract output is spent only in the mempool
+/// must survive recovery; once that spend confirms, the coin is discarded.
+///
+/// The abort1 cascade makes maker 0 sweep the taker's outgoing contracts
+/// with the hashlock preimage. Mining is paused while that sweep is a
+/// mempool tx: the taker's recovery must keep its outgoing coins (a mempool
+/// spend can be evicted). After the sweep confirms, they are discarded.
+#[test]
+fn electrum_discards_only_on_confirmed_spend() {
+    let makers_config_map = vec![(6102, None), (16102, None)];
+    let taker_behavior = vec![TakerBehavior::DropAfterFundsBroadcast];
+    let maker_behaviors = vec![MakerBehavior::Normal, MakerBehavior::Normal];
+
+    let (test_framework, mut takers, makers, block_generation_handle) =
+        TestFramework::init::<ElectrumBackend>(makers_config_map, taker_behavior, maker_behaviors);
+
+    let bitcoind = &test_framework.bitcoind;
+    let taker = takers.get_mut(0).unwrap();
+
+    fund_taker(
+        taker,
+        bitcoind,
+        3,
+        Amount::from_btc(0.05).unwrap(),
+        AddressType::P2TR,
+    );
+    fund_makers(
+        &makers,
+        bitcoind,
+        4,
+        Amount::from_btc(0.05).unwrap(),
+        AddressType::P2TR,
+    );
+
+    let maker_threads = makers
+        .iter()
+        .map(|maker| {
+            let maker = maker.clone();
+            thread::spawn(move || start_server(maker).unwrap())
+        })
+        .collect::<Vec<_>>();
+
+    wait_for_makers_setup(&makers, 120);
+    for maker in &makers {
+        maker.wallet.write().unwrap().sync_and_save().unwrap();
+    }
+
+    let swap_params = SwapParams::new(ProtocolVersion::Legacy, Amount::from_sat(500000), 2)
+        .with_tx_count(3)
+        .with_required_confirms(0);
+
+    generate_blocks(bitcoind, 1);
+
+    let log_path = format!("{}/taker/debug.log", test_framework.temp_dir.display());
+    let summary = taker
+        .prepare_coinswap(swap_params)
+        .expect("Prepare should succeed");
+
+    let swap_result = taker.start_coinswap(&summary.swap_id);
+    assert!(
+        swap_result.is_err(),
+        "Swap should fail once the last maker closes"
+    );
+
+    // The cascade: taker sweeps its incoming, maker 1 extracts the preimage
+    // and sweeps its incoming, then maker 0 announces it will sweep too.
+    wait_for_log(
+        &log_path,
+        "All preimages known, recovering via hashlock path",
+        Duration::from_secs(300),
+    );
+
+    // Hold the chain still: maker 0's hashlock sweep of the taker's outgoing
+    // contracts now sits in the mempool as an unconfirmed spend.
+    test_framework.set_block_gen_paused(true);
+    thread::sleep(Duration::from_secs(10));
+
+    let surviving = taker
+        .get_wallet()
+        .read()
+        .unwrap()
+        .get_outgoing_swapcoins_count();
+    assert_eq!(
+        surviving, 3,
+        "Outgoing swapcoins must survive a mempool-only spend of their contracts"
+    );
+
+    // Let the sweep confirm; the next recovery cycles must discard the coins.
+    test_framework.set_block_gen_paused(false);
+    let deadline = Instant::now() + Duration::from_secs(120);
+    loop {
+        let remaining = taker
+            .get_wallet()
+            .read()
+            .unwrap()
+            .get_outgoing_swapcoins_count();
+        if remaining == 0 {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "Outgoing swapcoins were not discarded after the spend confirmed"
+        );
+        thread::sleep(Duration::from_secs(5));
+    }
+
+    makers
+        .iter()
+        .for_each(|maker| maker.shutdown.store(true, Relaxed));
+    maker_threads
+        .into_iter()
+        .for_each(|thread| thread.join().unwrap());
+
+    drop(takers);
+    test_framework.stop();
+    block_generation_handle.join().unwrap();
 }

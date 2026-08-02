@@ -115,7 +115,7 @@ impl Wallet {
         //a' <-- t - b - c -...          |
         *output_values.first_mut().expect("value expected") =
             total_amount.to_sat() - output_values.iter().skip(1).sum::<u64>();
-        assert_eq!(output_values.iter().sum::<u64>(), total_amount.to_sat());
+        debug_assert_eq!(output_values.iter().sum::<u64>(), total_amount.to_sat());
 
         Ok(output_values)
     }

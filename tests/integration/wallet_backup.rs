@@ -273,7 +273,7 @@ fn plainwallet_plainbackup_plainrestore_electrum() {
 fn encwallet_encbackup_encrestore_electrum() {
     let mut s = setup_electrum("encwallet_encbackup_encrestore_electrum");
 
-    let km = KeyMaterial::new_interactive(None);
+    let km = KeyMaterial::new_from_password(Some("integration-test".to_string()));
 
     let mut wallet = Wallet::init(
         &s.original_wallet,
@@ -294,8 +294,11 @@ fn encwallet_encbackup_encrestore_electrum() {
 
     wallet.sync_and_save().unwrap();
 
-    let (backup, _) =
-        load_sensitive_struct::<WalletBackup, SerdeJson>(&s.backup_file, None).unwrap();
+    let (backup, _) = load_sensitive_struct::<WalletBackup, SerdeJson>(
+        &s.backup_file,
+        Some("integration-test".to_string()),
+    )
+    .unwrap();
 
     let restored_wallet = Wallet::restore(
         &backup,

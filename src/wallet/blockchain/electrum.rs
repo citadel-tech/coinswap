@@ -23,7 +23,8 @@ use bitcoin::{
     consensus::encode::serialize,
     hashes::Hash,
     hex::DisplayHex,
-    Address, BlockHash, CompressedPublicKey, Script, ScriptBuf, SignedAmount, Transaction, Txid,
+    Address, BlockHash, CompressedPublicKey, OutPoint, Script, ScriptBuf, SignedAmount,
+    Transaction, Txid,
 };
 use bitcoind::bitcoincore_rpc::json::{
     Bip125Replaceable, GetBlockchainInfoResult, GetRawTransactionResult,
@@ -419,10 +420,9 @@ impl Electrum {
             if txout.script_pubkey.is_op_return() {
                 continue;
             }
-            let Ok(history) = self.call(|c| c.script_get_history(txout.script_pubkey.as_script()))
-            else {
-                continue;
-            };
+            // A missing entry is a legitimate "not mined"; a failed read is a
+            // server problem and must not be collapsed into that answer.
+            let history = self.call(|c| c.script_get_history(txout.script_pubkey.as_script()))?;
             if let Some(entry) = history.iter().find(|e| e.tx_hash == txid) {
                 // `height` is 0 for a mempool tx and -1 for one with unconfirmed
                 // parents; both mean "not mined yet".
@@ -479,7 +479,7 @@ impl Electrum {
             .map_err(|_| bad("xpub parse".to_string()))?;
 
         let secp = crate::utill::global_secp();
-        let mut out = Vec::with_capacity((end - start + 1) as usize);
+        let mut out = Vec::new();
         for i in start..=end {
             let path = [
                 ChildNumber::Normal { index: chain_idx },
@@ -568,8 +568,28 @@ impl Blockchain for Electrum {
     }
 
     fn tx_block_height(&self, txid: &Txid) -> Result<Option<u64>, WalletError> {
-        let tx = self.call(|c| c.transaction_get(txid))?;
+        // A txid the server does not know cannot be mined; that is the
+        // routine answer for a contract nobody broadcast, not a failure.
+        let tx = match self.call(|c| c.transaction_get(txid)) {
+            Ok(tx) => tx,
+            Err(WalletError::Electrum(electrum_client::Error::Protocol(_))) => return Ok(None),
+            Err(e) => return Err(e),
+        };
         self.mined_height(&tx)
+    }
+
+    fn is_confirmed_spend(
+        &self,
+        outpoint: &OutPoint,
+        script: &Script,
+    ) -> Result<bool, WalletError> {
+        // listunspent folds mempool spends in, so a missing output alone is
+        // ambiguous. The script's history is not: a second confirmed tx
+        // touching it means the spend is mined.
+        let history = self.call(|c| c.script_get_history(script))?;
+        Ok(history
+            .iter()
+            .any(|e| e.tx_hash != outpoint.txid && e.height > 0))
     }
 
     fn get_raw_transaction(
@@ -679,9 +699,13 @@ impl Blockchain for Electrum {
         // funding-confirmation logic rely on this transition. Electrum's
         // `transaction.get` always returns the tx, so we confirm liveness via
         // `scripthash.listunspent`, which also hands back the mined height.
+        // The server answering "no such transaction" is a real absence, like Core.
+        // Any other failure must surface: `Ok(None)` reads as "spent", the
+        // fail-dangerous answer for those callers.
         let tx = match self.call(|c| c.transaction_get(txid)) {
             Ok(tx) => tx,
-            Err(_) => return Ok(None),
+            Err(WalletError::Electrum(electrum_client::Error::Protocol(_))) => return Ok(None),
+            Err(e) => return Err(e),
         };
         let txout = match tx.output.get(vout as usize) {
             Some(o) => o.clone(),
@@ -896,12 +920,9 @@ impl Blockchain for Electrum {
             for (vout, txout) in tx.output.iter().enumerate() {
                 let ours = watched_set.contains(&txout.script_pubkey);
                 let category = if ours {
-                    // Change coming back from our own spend is not a payment to
-                    // us, and Core leaves it out of the history too.
-                    let is_change = self
-                        .hd_origin_for_script(&txout.script_pubkey)
-                        .is_some_and(|hd| hd.keychain_idx == 1);
-                    if is_send && is_change {
+                    // Paying ourselves on a send is not a payment to us, and
+                    // Core leaves such outputs out of the history too.
+                    if is_send {
                         continue;
                     }
                     GetTransactionResultDetailCategory::Receive
@@ -1019,6 +1040,12 @@ impl Blockchain for Electrum {
                     self.needs_rearm.store(true, Ordering::SeqCst);
                 }
                 state.dirty.insert(spk);
+            }
+            // The rebuilt socket lost the header subscription too; without it
+            // `block_headers_pop` stays empty and tip updates silently stop.
+            if let Err(e) = self.call(|c| c.block_headers_subscribe().map(|_| ())) {
+                log::warn!("re-arm header subscription after reconnect failed: {e:?}");
+                self.needs_rearm.store(true, Ordering::SeqCst);
             }
         }
 

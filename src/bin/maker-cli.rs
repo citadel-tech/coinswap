@@ -83,7 +83,7 @@ fn main() -> Result<(), MakerError> {
     let cli = App::parse();
     let rpc_cookie = fs::read_to_string(
         cli.data_directory
-            .unwrap_or_else(get_maker_dir)
+            .unwrap_or_else(|| get_maker_dir().expect("could not determine maker data directory"))
             .join("rpc_cookie"),
     )?
     .trim()

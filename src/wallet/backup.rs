@@ -66,7 +66,9 @@ impl Wallet {
 
         let backup_file_content = match backup_enc_material {
             Some(key_material) => {
-                let encrypted = encrypt_struct(backup, &key_material).unwrap();
+                let encrypted = encrypt_struct(backup, &key_material).map_err(|e| {
+                    WalletError::General(format!("wallet backup encryption failed: {e:?}"))
+                })?;
                 serde_json::to_string_pretty(&encrypted)?
             }
             None => {
@@ -104,7 +106,11 @@ impl Wallet {
             .file_name()
             .unwrap_or(OsStr::new(&wallet_backup.file_name)) // If no name filename for the restored one is provided use the previous one
             .to_str()
-            .unwrap()
+            .ok_or_else(|| {
+                WalletError::General(
+                    "restored wallet path has no valid UTF-8 file name".to_string(),
+                )
+            })?
             .to_string();
 
         // For the Core backend, rebind the node wallet name to the restored
@@ -202,9 +208,15 @@ impl Wallet {
                     return;
                 }
             };
-        let restore_enc_material = KeyMaterial::new_interactive(Some(
+        let restore_enc_material = match KeyMaterial::new_interactive(Some(
             "Enter restored walled encryption passphrase(empty for no encryption): ".to_string(),
-        ));
+        )) {
+            Ok(material) => material,
+            Err(err) => {
+                log::error!("Encryption passphrase prompt failed: {err}");
+                return;
+            }
+        };
 
         // Attempt to restore the wallet.
         // Since this is an interactive, one-shot restore, the program will exit after this,
@@ -235,11 +247,22 @@ impl Wallet {
             backup_name
         );
 
-        let working_directory: PathBuf =
-            env::current_dir().expect("Failed to get current directory");
+        let working_directory: PathBuf = match env::current_dir() {
+            Ok(dir) => dir,
+            Err(err) => {
+                log::error!("Failed to get current directory: {err}");
+                return;
+            }
+        };
 
         let backup_enc_material = if encrypt {
-            KeyMaterial::new_interactive(None)
+            match KeyMaterial::new_interactive(None) {
+                Ok(material) => material,
+                Err(err) => {
+                    log::error!("Encryption passphrase prompt failed: {err}");
+                    return;
+                }
+            }
         } else {
             None
         };

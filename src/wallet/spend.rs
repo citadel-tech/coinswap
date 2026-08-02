@@ -5,8 +5,8 @@
 //! parsing mechanisms for transaction inputs and outputs.
 
 use bitcoin::{
-    absolute::LockTime, script::PushBytesBuf, transaction::Version, Address, Amount, OutPoint,
-    ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
+    absolute::LockTime, script::PushBytesBuf, transaction::Version, Address, Amount, FeeRate,
+    OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
 };
 use bitcoind::bitcoincore_rpc::json::ListUnspentResultEntry;
 
@@ -220,10 +220,14 @@ impl Wallet {
                 } => {
                     let outgoing_swap_coin = self
                         .find_outgoing_swapcoin_by_multisig(swapcoin_multisig_redeemscript)
-                        .expect("Cannot find Outgoing Swap Coin");
-                    let timelock = outgoing_swap_coin
-                        .get_timelock()
-                        .expect("Cannot get timelock from Outgoing Swap Coin");
+                        .ok_or_else(|| {
+                            WalletError::General(
+                                "outgoing swapcoin not found in wallet store".to_string(),
+                            )
+                        })?;
+                    let timelock = outgoing_swap_coin.get_timelock().ok_or_else(|| {
+                        WalletError::General("outgoing swapcoin has no timelock".to_string())
+                    })?;
                     tx.input.push(TxIn {
                         previous_output: OutPoint {
                             txid: outgoing_swap_coin.contract_tx.compute_txid(),
@@ -242,7 +246,11 @@ impl Wallet {
                 } => {
                     let incoming_swap_coin = self
                         .find_incoming_swapcoin_by_multisig(swapcoin_multisig_redeemscript)
-                        .expect("Cannot find Incoming Swap Coin");
+                        .ok_or_else(|| {
+                            WalletError::General(
+                                "incoming swapcoin not found in wallet store".to_string(),
+                            )
+                        })?;
                     tx.input.push(TxIn {
                         previous_output: OutPoint {
                             txid: incoming_swap_coin.contract_tx.compute_txid(),
@@ -269,7 +277,18 @@ impl Wallet {
                 let base_size = tx.base_size();
                 let vsize = (base_size * 4 + total_witness_size + 2).div_ceil(4); // base * 4 + witness size + marker + flag
 
-                let fee = Amount::from_sat(calculate_fee_sats(vsize as u64));
+                // Honor the caller's feerate; Sweep used to ignore it and always
+                // pay MIN_FEE_RATE, which made RBF replacements impossible.
+                // An absurdly high feerate overflows the fee amount, so both
+                // conversions fail instead of panicking.
+                let rate = FeeRate::from_sat_per_vb(feerate as u64).ok_or_else(|| {
+                    WalletError::General(format!("feerate {feerate} sat/vB is out of range"))
+                })?;
+                let fee = rate.fee_vb(vsize as u64).ok_or_else(|| {
+                    WalletError::General(format!(
+                        "fee at {feerate} sat/vB overflows for a {vsize} vB transaction"
+                    ))
+                })?;
 
                 // I don't know if this case is even possible?
                 if fee > total_input_value {

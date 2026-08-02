@@ -205,7 +205,7 @@ pub trait Maker: Send + Sync {
     /// Get maker configuration values.
     fn get_config(&self) -> MakerConfig;
 
-    /// Validate swap parameters and return how many blocks the funds stay locked.
+    /// Validate swap parameters.
     fn validate_swap_parameters(&self, details: &SwapDetails) -> Result<u16, MakerError>;
 
     /// Calculate the swap fee.
@@ -257,10 +257,10 @@ pub trait Maker: Send + Sync {
     ) -> Result<(), MakerError>;
 
     /// Retrieve stored connection state.
-    fn get_connection_state(&self, swap_id: &str) -> Option<ConnectionState>;
+    fn get_connection_state(&self, swap_id: &str) -> Result<Option<ConnectionState>, MakerError>;
 
     /// Remove connection state for a completed swap.
-    fn remove_connection_state(&self, swap_id: &str);
+    fn remove_connection_state(&self, swap_id: &str) -> Result<(), MakerError>;
 
     /// Get the data directory path for saving reports.
     fn data_dir(&self) -> &std::path::Path;
@@ -269,7 +269,10 @@ pub trait Maker: Send + Sync {
     fn wallet_name(&self) -> &str;
 
     /// Collect reserved UTXOs from all other active swaps (for concurrent double-spend prevention).
-    fn collect_excluded_utxos(&self, current_swap_id: &str) -> Vec<bitcoin::OutPoint>;
+    fn collect_excluded_utxos(
+        &self,
+        current_swap_id: &str,
+    ) -> Result<Vec<bitcoin::OutPoint>, MakerError>;
 
     /// Get the current block height from the Bitcoin node.
     fn get_current_height(&self) -> Result<u32, MakerError>;
@@ -398,7 +401,7 @@ pub fn handle_message<M: Maker>(
                 maker.network_port(),
                 id
             );
-            if let Some(stored_state) = maker.get_connection_state(id) {
+            if let Some(stored_state) = maker.get_connection_state(id)? {
                 maker.store_connection_state(id, &stored_state)?;
             }
             state.touch();
@@ -531,9 +534,13 @@ fn handle_swap_details<M: Maker>(
 }
 
 /// Restore connection state if this is a new/reconnected connection.
-fn restore_state_if_needed<M: Maker>(maker: &Arc<M>, state: &mut ConnectionState, swap_id: &str) {
+fn restore_state_if_needed<M: Maker>(
+    maker: &Arc<M>,
+    state: &mut ConnectionState,
+    swap_id: &str,
+) -> Result<(), MakerError> {
     if state.swap_amount == Amount::ZERO || state.outgoing_swapcoins.is_empty() {
-        if let Some(stored) = maker.get_connection_state(swap_id) {
+        if let Some(stored) = maker.get_connection_state(swap_id)? {
             log::info!(
                 "[{}] Restored state for {}: amount={}, timelock={}, phase={:?}, outgoing_count={}",
                 maker.network_port(),
@@ -558,6 +565,7 @@ fn restore_state_if_needed<M: Maker>(maker: &Arc<M>, state: &mut ConnectionState
             state.refund_locktime_offset = stored.refund_locktime_offset;
         }
     }
+    Ok(())
 }
 
 /// Ensure a protocol-specific message matches the protocol negotiated for this swap.
@@ -590,7 +598,7 @@ fn handle_legacy_dispatch<M: Maker>(
         swap_id
     );
 
-    restore_state_if_needed(maker, state, &swap_id);
+    restore_state_if_needed(maker, state, &swap_id)?;
     ensure_negotiated_protocol(state, ProtocolVersion::Legacy)?;
 
     super::legacy_handlers::handle_legacy_message(maker, state, legacy_msg)
@@ -611,7 +619,7 @@ fn handle_taproot_dispatch<M: Maker>(
         swap_id
     );
 
-    restore_state_if_needed(maker, state, &swap_id);
+    restore_state_if_needed(maker, state, &swap_id)?;
     ensure_negotiated_protocol(state, ProtocolVersion::Taproot)?;
 
     super::taproot_handlers::handle_taproot_message(maker, state, taproot_msg)

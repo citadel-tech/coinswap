@@ -80,7 +80,10 @@ fn handle_request<M: MakerRpc>(
         _ => {
             log::warn!(
                 "Rejected unauthenticated RPC request from {}",
-                socket.peer_addr().unwrap()
+                socket
+                    .peer_addr()
+                    .map(|a| a.to_string())
+                    .unwrap_or_else(|_| "<unknown>".into())
             );
             send_message(socket, &RpcMsgResp::ServerError("unauthorized".to_string()))?;
             return Ok(());

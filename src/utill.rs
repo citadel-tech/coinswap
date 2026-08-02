@@ -66,6 +66,12 @@ const CHECKSUM_FINAL_XOR_VALUE: u64 = 1;
 /// Global heartbeat interval used during waiting periods in critical situations.
 pub(crate) const HEART_BEAT_INTERVAL: Duration = Duration::from_secs(3);
 
+/// How long to wait for a peer's tx to reach our mempool. Covers relay propagation
+/// and backend lag only - once we can see the tx, confirmations are waited for
+/// without a deadline. Sized above a full Electrum reconnect cycle so a transport
+/// blip does not fail an honest swap.
+pub const TX_BROADCAST_TIMEOUT: Duration = Duration::from_secs(120);
+
 /// Number of confirmation required funding transaction.
 pub const REQUIRED_CONFIRMS: u32 = 1;
 
@@ -79,27 +85,29 @@ pub const MAX_RPC_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
 
 /// Get the system specific home directory.
 /// Uses "/tmp" directory for integration tests
-fn get_home_dir() -> PathBuf {
+fn get_home_dir() -> io::Result<PathBuf> {
     if cfg!(test) {
-        env::temp_dir()
+        Ok(env::temp_dir())
     } else {
-        dirs::home_dir().expect("home directory expected")
+        dirs::home_dir().ok_or_else(|| {
+            io::Error::new(ErrorKind::NotFound, "could not determine home directory")
+        })
     }
 }
 
 /// Get the default data directory. `~/.coinswap`.
-fn get_data_dir() -> PathBuf {
-    get_home_dir().join(".coinswap")
+fn get_data_dir() -> io::Result<PathBuf> {
+    Ok(get_home_dir()?.join(".coinswap"))
 }
 
 /// Get the Maker Directory
-pub fn get_maker_dir() -> PathBuf {
-    get_data_dir().join("maker")
+pub fn get_maker_dir() -> io::Result<PathBuf> {
+    Ok(get_data_dir()?.join("maker"))
 }
 
 /// Get the Taker Directory
-pub fn get_taker_dir() -> PathBuf {
-    get_data_dir().join("taker")
+pub fn get_taker_dir() -> io::Result<PathBuf> {
+    Ok(get_data_dir()?.join("taker"))
 }
 
 /// Creates a FeeRate from the global MIN_FEE_RATE constant
@@ -134,34 +142,51 @@ pub fn estimate_funding_tx_fee_sats() -> u64 {
 /// of log verbosity.
 pub fn setup_taker_logger(filter: LevelFilter, is_stdout: bool, datadir: Option<PathBuf>) {
     LOGGER.get_or_init(|| {
-        let log_dir = datadir.unwrap_or_else(get_taker_dir).join("debug.log");
-
-        let file_appender = FileAppender::builder().build(log_dir).unwrap();
+        // File logging is best-effort: without a data dir or a writable log
+        // file we still want stdout logging, not a panic.
+        let file_appender = match datadir.map(Ok).unwrap_or_else(get_taker_dir) {
+            Ok(dir) => {
+                let log_path = dir.join("debug.log");
+                match FileAppender::builder().build(&log_path) {
+                    Ok(appender) => Some(appender),
+                    Err(e) => {
+                        eprintln!(
+                            "failed to open log file {}: {e}; logging without file appender",
+                            log_path.display()
+                        );
+                        None
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("{e}; logging without file appender");
+                None
+            }
+        };
+        let has_file = file_appender.is_some();
         let stdout = ConsoleAppender::builder().build();
 
-        let config =
-            Config::builder().appender(Appender::builder().build("file", Box::new(file_appender)));
+        let mut config = Config::builder();
+        if let Some(file_appender) = file_appender {
+            config = config.appender(Appender::builder().build("file", Box::new(file_appender)));
+        }
+        if is_stdout {
+            config = config.appender(Appender::builder().build("stdout", Box::new(stdout)));
+        }
 
-        let config = if is_stdout {
-            config.appender(Appender::builder().build("stdout", Box::new(stdout)))
-            //.logger(Logger::builder().appender("stdout").build("stdout", filter))
-        } else {
-            config
-        };
-
-        // Add appenders to the root logger
-        let root_logger = if is_stdout {
-            Root::builder()
-                .appender("file")
-                .appender("stdout")
-                .build(filter)
-        } else {
-            Root::builder().appender("file").build(filter)
-        };
+        // Reference only appenders registered above, so config build stays
+        // infallible when the file appender is missing.
+        let mut root = Root::builder();
+        if has_file {
+            root = root.appender("file");
+        }
+        if is_stdout {
+            root = root.appender("stdout");
+        }
 
         let config = config
             .logger(Logger::builder().build("bitcoincore_rpc", LevelFilter::Off))
-            .build(root_logger)
+            .build(root.build(filter))
             .unwrap();
         match log4rs::init_config(config) {
             Ok(_) => log::info!("✅ Logger initialized successfully"),
@@ -178,20 +203,43 @@ pub fn setup_taker_logger(filter: LevelFilter, is_stdout: bool, datadir: Option<
 /// of log verbosity.
 pub fn setup_maker_logger(filter: LevelFilter, data_dir: Option<PathBuf>) {
     LOGGER.get_or_init(|| {
-        let log_dir = data_dir.unwrap_or_else(get_maker_dir).join("debug.log");
-
+        // File logging is best-effort: without a data dir or a writable log
+        // file we still want stdout logging, not a panic.
+        let file_appender = match data_dir.map(Ok).unwrap_or_else(get_maker_dir) {
+            Ok(dir) => {
+                let log_path = dir.join("debug.log");
+                match FileAppender::builder().build(&log_path) {
+                    Ok(appender) => Some(appender),
+                    Err(e) => {
+                        eprintln!(
+                            "failed to open log file {}: {e}; logging without file appender",
+                            log_path.display()
+                        );
+                        None
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("{e}; logging without file appender");
+                None
+            }
+        };
+        let has_file = file_appender.is_some();
         let stdout = ConsoleAppender::builder().build();
-        let file_appender = FileAppender::builder().build(log_dir).unwrap();
 
-        let config = Config::builder()
-            .appender(Appender::builder().build("stdout", Box::new(stdout)))
-            .appender(Appender::builder().build("file", Box::new(file_appender)))
+        let mut config =
+            Config::builder().appender(Appender::builder().build("stdout", Box::new(stdout)));
+        if let Some(file_appender) = file_appender {
+            config = config.appender(Appender::builder().build("file", Box::new(file_appender)));
+        }
+
+        // Maker logs land on stdout when the file appender is missing, so they
+        // are not silently dropped.
+        let maker_logger = Logger::builder().appender(if has_file { "file" } else { "stdout" });
+
+        let config = config
             .logger(Logger::builder().build("bitcoincore_rpc", LevelFilter::Off))
-            .logger(
-                Logger::builder()
-                    .appender("file")
-                    .build("coinswap::maker", filter),
-            )
+            .logger(maker_logger.build("coinswap::maker", filter))
             .build(Root::builder().appender("stdout").build(filter))
             .unwrap();
 
@@ -731,7 +779,11 @@ pub(crate) fn get_tor_hostname(
                 Some(hostname_data.trim_end_matches(".onion")),
             )?;
 
-            assert_eq!(hostname, hostname_data);
+            if hostname != hostname_data {
+                return Err(TorError::General(
+                    "tor hostname mismatch between stored key and ADD_ONION response".to_string(),
+                ));
+            }
 
             log::info!("Generated existing Tor Hidden Service Hostname: {hostname}");
 

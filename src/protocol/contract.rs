@@ -288,11 +288,16 @@ pub(crate) fn read_hashvalue_from_contract(
         return Err(ProtocolError::General("Contract redeemscript too short!"));
     }
     let mut instrs = redeemscript.instructions().skip(2);
-    // Unwrap Safety: length is checked
-    let Instruction::Op(opcodes::all::OP_HASH160) = instrs.next().expect("opcode expected")? else {
+    let Instruction::Op(opcodes::all::OP_HASH160) = instrs
+        .next()
+        .ok_or(ProtocolError::General("contract redeemscript too short"))??
+    else {
         return Err(ProtocolError::General("Hash is not present!"));
     };
-    let Instruction::PushBytes(hash_b) = instrs.next().expect("opcode expected")? else {
+    let Instruction::PushBytes(hash_b) = instrs
+        .next()
+        .ok_or(ProtocolError::General("contract redeemscript too short"))??
+    else {
         return Err(ProtocolError::General("Invalid script!"));
     };
 
@@ -324,7 +329,7 @@ pub(crate) fn read_contract_locktime(redeemscript: &Script) -> Result<u16, Proto
     match redeemscript
         .instructions()
         .nth(12)
-        .expect("Instructions expected")?
+        .ok_or(ProtocolError::General("contract redeemscript too short"))??
     {
         Instruction::PushBytes(locktime_bytes) => match locktime_bytes.len() {
             1 => Ok(locktime_bytes[0] as u16),

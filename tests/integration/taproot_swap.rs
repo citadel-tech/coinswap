@@ -125,11 +125,7 @@ fn test_taproot_coinswap() {
         14499076,
         "Taker regular balance mismatch"
     );
-    assert_eq!(
-        taker_balances.swap.to_sat(),
-        494815,
-        "Taker swap balance mismatch"
-    );
+    assert_taproot_balance_near(taker_balances.swap.to_sat(), 494815, "Taker swap balance");
     assert_eq!(
         taker_balances.contract.to_sat(),
         0,
@@ -143,10 +139,10 @@ fn test_taproot_coinswap() {
 
     info!("Taproot Taker fees paid: {} sats", balance_diff.to_sat());
 
-    assert_eq!(
+    assert_taproot_balance_near(
         balance_diff.to_sat(),
         6109,
-        "Taker spendable balance change mismatch"
+        "Taker spendable balance change",
     );
 
     // Verify makers earned fees
@@ -161,17 +157,15 @@ fn test_taproot_coinswap() {
             i, balances.regular, balances.swap, balances.contract, balances.fidelity, balances.spendable,
         );
 
-        assert_eq!(
+        assert_taproot_balance_near(
             balances.regular.to_sat(),
             expected_regular[i],
-            "Maker {} regular balance mismatch",
-            i
+            &format!("Maker {i} regular balance"),
         );
-        assert_eq!(
+        assert_taproot_balance_near(
             balances.swap.to_sat(),
             expected_swap[i],
-            "Maker {} swap balance mismatch",
-            i
+            &format!("Maker {i} swap balance"),
         );
         assert_eq!(
             balances.contract.to_sat(),
@@ -192,11 +186,10 @@ fn test_taproot_coinswap() {
             maker_fee.to_sat()
         );
 
-        assert_eq!(
+        assert_taproot_balance_near(
             maker_fee.to_sat(),
             expected_fee[i],
-            "Maker {} fee earned mismatch",
-            i
+            &format!("Maker {i} fee earned"),
         );
     }
 

@@ -150,7 +150,7 @@ pub fn broadcast_bond_on_nostr(
         )))
         .build(keys.public_key)
         .sign_with_keys(&keys)
-        .expect("Event should be signed");
+        .map_err(|_| MakerError::General("failed to sign nostr event"))?;
 
     log::debug!(
         "Nostr event built | event_id={} pubkey={} kind={} created_at={} tags={:?}",

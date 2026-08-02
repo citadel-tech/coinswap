@@ -608,6 +608,28 @@ const BLOCKS_PER_TICK: u64 = 5;
 /// outlast the wall-clock recovery delays exercised by the abort tests.
 const BLOCK_TICK_INTERVAL: Duration = Duration::from_secs(3);
 
+/// How far a golden taproot balance may sit from the live value.
+///
+/// Taproot prices the time fee as `timelock − funded_at` (confirmation height).
+/// The test miner adds [`BLOCKS_PER_TICK`] blocks every [`BLOCK_TICK_INTERVAL`],
+/// so that height — and the fee — moves between runs. Production has no margin:
+/// maker and taker both derive the fee from the same confirmed height.
+pub const TAPROOT_BALANCE_TEST_MARGIN_SATS: u64 = 100;
+
+/// Assert `actual` is within [`TAPROOT_BALANCE_TEST_MARGIN_SATS`] of `expected`.
+pub fn assert_taproot_balance_near(actual: u64, expected: u64, what: &str) {
+    let delta = actual.abs_diff(expected);
+    assert!(
+        delta <= TAPROOT_BALANCE_TEST_MARGIN_SATS,
+        "{}: {} is {} sats from golden {} (margin {})",
+        what,
+        actual,
+        delta,
+        expected,
+        TAPROOT_BALANCE_TEST_MARGIN_SATS
+    );
+}
+
 /// The Test Framework.
 ///
 /// Handles initializing, operating and cleaning up of all backend processes. Bitcoind, Taker and Makers.
@@ -620,6 +642,7 @@ pub struct TestFramework {
     pub(super) temp_dir: PathBuf,
     pub(super) nostr_relay_url: String,
     shutdown: AtomicBool,
+    block_gen_paused: AtomicBool,
     nostr_relay: Mutex<Option<Child>>,
 }
 
@@ -760,6 +783,7 @@ impl TestFramework {
             temp_dir: temp_dir.clone(),
             nostr_relay_url: nostr_relay_url.clone(),
             shutdown: AtomicBool::new(false),
+            block_gen_paused: AtomicBool::new(false),
             nostr_relay: Mutex::new(Some(nostr_relay)),
         });
         log::info!(
@@ -778,9 +802,11 @@ impl TestFramework {
                 log::info!("🔚 Ending block generation thread");
                 return;
             }
-            generate_blocks(&tf.bitcoind, BLOCKS_PER_TICK);
-            if let Some(elec) = tf.electrsd.as_ref() {
-                let _ = elec.trigger();
+            if !tf.block_gen_paused.load(Relaxed) {
+                generate_blocks(&tf.bitcoind, BLOCKS_PER_TICK);
+                if let Some(elec) = tf.electrsd.as_ref() {
+                    let _ = elec.trigger();
+                }
             }
         });
         log::info!("✅ Test Framework initialization complete");
@@ -798,6 +824,12 @@ impl TestFramework {
             };
             wait_for_electrs_tip(&self.bitcoind, electrsd, &cfg);
         }
+    }
+
+    /// Pause or resume the periodic mining loop, e.g. to hold a mempool tx
+    /// unconfirmed while a test asserts on that state.
+    pub fn set_block_gen_paused(&self, paused: bool) {
+        self.block_gen_paused.store(paused, Relaxed);
     }
 
     /// Terminate the per-test nostr relay child process, if still running.
@@ -830,6 +862,27 @@ impl Drop for TestFramework {
         if self.temp_dir.exists() {
             let _ = fs::remove_dir_all(&self.temp_dir);
         }
+    }
+}
+
+/// Poll a log file until `expected` appears; panics after `timeout`.
+#[allow(dead_code)]
+pub(crate) fn wait_for_log(log_path: &str, expected: &str, timeout: Duration) {
+    let start = Instant::now();
+    loop {
+        if let Ok(contents) = fs::read_to_string(log_path) {
+            if contents.contains(expected) {
+                log::info!("✅ Found expected log message: '{expected}'");
+                return;
+            }
+        }
+        assert!(
+            start.elapsed() <= timeout,
+            "Timed out waiting for log message '{}' in {}",
+            expected,
+            log_path
+        );
+        thread::sleep(Duration::from_secs(2));
     }
 }
 

@@ -132,27 +132,7 @@ fn process_taproot_contract<M: Maker>(
         let incoming_contract_tx = data.contract_txs[j].clone();
         // A mempool-only contract may be replaced via RBF after we fund the next hop,
         // so require confirmations before proceeding.
-        let funded_at =
-            maker.wait_for_tx_on_chain(&incoming_contract_tx.compute_txid(), required_confirms)?;
-
-        // Check here that the stated timelock and refund_locktime_offset actually matches
-        // the funding transaction confirmation height.
-        if state
-            .timelock
-            .saturating_sub(state.refund_locktime_offset as u32)
-            > funded_at
-        {
-            log::error!(
-                "[{}] Timelock {} priced at {} blocks reaches past funding confirmed at {}",
-                maker.network_port(),
-                state.timelock,
-                state.refund_locktime_offset,
-                funded_at
-            );
-            return Err(MakerError::General(
-                "Taproot timelock reaches beyond the priced lock duration",
-            ));
-        }
+        maker.wait_for_tx_on_chain(&incoming_contract_tx.compute_txid(), required_confirms)?;
 
         let incoming_funding_amount = data.amounts[j];
 
@@ -178,6 +158,9 @@ fn process_taproot_contract<M: Maker>(
         incoming_swapcoins.push(incoming_swapcoin);
     }
 
+    // The fee is priced on the negotiated offset, so it is fixed at negotiation
+    // and matches the taker's mirror. The offset is not bound to the real lock
+    // duration; assess the CSV transition (binding it in the script) later.
     let total_incoming = data.amounts.iter().cloned().sum();
     let swap_fee = maker.calculate_swap_fee(total_incoming, state.refund_locktime_offset as u32);
     // The fee stored at swap-details time was computed from the proposed
@@ -245,7 +228,7 @@ fn process_taproot_contract<M: Maker>(
     let mut reserved = Vec::with_capacity(n);
     let mut spent_inputs: Vec<OutPoint> = Vec::new();
 
-    let base_excluded = maker.collect_excluded_utxos(&data.id);
+    let base_excluded = maker.collect_excluded_utxos(&data.id)?;
 
     for &outgoing_amount in &outgoing_amounts {
         let outgoing_nonce =

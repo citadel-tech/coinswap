@@ -15,6 +15,7 @@ use crate::{
             create_contract_redeemscript, create_multisig_redeemscript, create_senders_contract_tx,
             read_pubkeys_from_multisig_redeemscript, sign_contract_tx,
         },
+        error::ProtocolError,
         legacy_messages::{
             ContractTxInfoForRecvr, ContractTxInfoForSender, FundingTxInfo, NextHopInfo,
             ProofOfFunding, ReqContractSigsForRecvr, ReqContractSigsForSender,
@@ -24,7 +25,7 @@ use crate::{
     utill::{generate_keypair, generate_maker_keys, read_message, send_message, MIN_FEE_RATE},
     wallet::{
         swapcoin::{IncomingSwapCoin, OutgoingSwapCoin, WatchOnlySwapCoin},
-        Wallet,
+        Blockchain, Wallet,
     },
 };
 
@@ -150,7 +151,7 @@ impl Taker {
         // Background thread monitors funding outpoints for adversarial contract broadcasts.
         self.breach_detector = Some(super::background_services::BreachDetector::start(
             self.watch_service.clone(),
-        ));
+        )?);
 
         // Flags to skip already-completed steps when retrying a maker iteration
         // after spare substitution (e.g., taker's funding is already on-chain).
@@ -595,7 +596,9 @@ impl Taker {
                     &prev_maker_address,
                     &swap_id,
                     &receivers_contract_txs,
-                    prev_senders_info.as_ref().unwrap(),
+                    prev_senders_info
+                        .as_ref()
+                        .ok_or(ProtocolError::General("missing previous hop sender info"))?,
                 )?
             };
             self.swap_state_mut()?.makers[maker_idx]
@@ -899,23 +902,22 @@ impl Taker {
                 let mut max_confirm_height = 0_u32;
 
                 for txid in funding_txids {
-                    match wallet.rpc.get_raw_transaction_info(txid, None) {
+                    match wallet.blockchain.get_raw_transaction_info(txid, None) {
                         Ok(tx_info) => {
                             let confirmations = tx_info.confirmations.unwrap_or(0);
                             if confirmations < required_confirms {
                                 all_confirmed = false;
                             } else {
-                                let block_hash = tx_info.blockhash.ok_or_else(|| {
-                                    WalletError::General(format!(
-                                        "Confirmed transaction {txid} has no block hash"
-                                    ))
-                                })?;
+                                // Ask the backend for the mined height directly;
+                                // tip-height arithmetic can race a newly mined block.
                                 let confirmation_height = wallet
-                                    .rpc
-                                    .get_block_header_info(&block_hash)
-                                    .map_err(WalletError::Rpc)?
-                                    .height
-                                    as u32;
+                                    .blockchain
+                                    .tx_block_height(txid)?
+                                    .ok_or_else(|| {
+                                        TakerError::General(format!(
+                                            "Confirmed transaction {txid} has no block height"
+                                        ))
+                                    })? as u32;
                                 max_confirm_height = max_confirm_height.max(confirmation_height);
                             }
                         }
@@ -956,7 +958,7 @@ impl Taker {
                     let wallet = self.read_wallet()?;
                     funding_observed = funding_txids
                         .iter()
-                        .all(|txid| wallet.rpc.get_raw_transaction_info(txid, None).is_ok());
+                        .all(|txid| wallet.blockchain.get_raw_transaction_info(txid, None).is_ok());
                 }
 
                 if funding_observed && last_keepalive.elapsed() >= FUNDING_KEEPALIVE_INTERVAL {
@@ -1065,6 +1067,50 @@ impl Taker {
         }
     }
 
+    /// Test-only: claim our own funding output through the contract path and wait for
+    /// that spend to be mined, so the ProofOfFunding sent next names an outpoint that
+    /// no longer exists.
+    #[cfg(feature = "integration-test")]
+    fn spend_funding_outpoint_before_proof(&self) -> Result<(), TakerError> {
+        use crate::wallet::Blockchain;
+
+        log::warn!("Test behavior: spending the funding outpoint before ProofOfFunding");
+
+        let swapcoin = self
+            .swap_state()?
+            .outgoing_swapcoins
+            .first()
+            .cloned()
+            .ok_or_else(|| TakerError::General("No outgoing swapcoin to spend".to_string()))?;
+        let funding_outpoint = swapcoin
+            .contract_tx
+            .input
+            .first()
+            .ok_or_else(|| TakerError::General("Contract tx has no inputs".to_string()))?
+            .previous_output;
+        let contract_tx = swapcoin.create_signed_contract_tx()?;
+
+        let wallet = self.read_wallet()?;
+        wallet.send_tx(&contract_tx)?;
+
+        // Bitcoin Core still reports an output spent only in the mempool as live, so the
+        // maker sees the replayed outpoint as spent only once this contract tx is mined.
+        let deadline = Instant::now() + Duration::from_secs(120);
+        while wallet
+            .blockchain
+            .get_tx_out(&funding_outpoint.txid, funding_outpoint.vout, Some(false))?
+            .is_some()
+        {
+            if Instant::now() > deadline {
+                return Err(TakerError::General(
+                    "Funding outpoint was not spent on-chain in time".to_string(),
+                ));
+            }
+            std::thread::sleep(Duration::from_secs(2));
+        }
+        Ok(())
+    }
+
     /// Send proof of funding and receive ReqContractSigsAsRecvrAndSender.
     #[allow(clippy::type_complexity)]
     #[allow(clippy::too_many_arguments)]
@@ -1108,6 +1154,12 @@ impl Taker {
                 )
                 .collect::<Result<Vec<_>, TakerError>>()?
         };
+
+        #[cfg(feature = "integration-test")]
+        if maker_idx == 0 && self.behavior == super::api::TakerBehavior::ReplaySpentFundingOutpoint
+        {
+            self.spend_funding_outpoint_before_proof()?;
+        }
 
         #[cfg(feature = "integration-test")]
         let mut confirmed_funding_txes = confirmed_funding_txes;
@@ -1161,13 +1213,13 @@ impl Taker {
                     req.senders_contract_txs_info.len()
                 );
                 // Verify the maker's sender contracts (structure, hashvalue, locktime, pubkeys, amounts)
-                let min_expected = self.min_expected_amount_for_hop(maker_idx);
+                let expected_amount = self.expected_amount_for_hop(maker_idx);
                 self.verify_maker_sender_contracts(
                     &req.senders_contract_txs_info,
                     next_multisig_pubkeys,
                     next_hashlock_pubkeys,
                     refund_locktime,
-                    min_expected,
+                    expected_amount,
                 )?;
                 // Verify the maker's receiver contract txs (structure, funding reference, scriptpubkey, amounts)
                 self.verify_maker_receiver_contracts(

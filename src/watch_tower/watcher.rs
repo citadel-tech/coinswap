@@ -143,7 +143,7 @@ impl<R: Role> Watcher<R> {
         }
         // Electrum: re-subscribe to all the watched scripts.
         if self.blockchain.is_electrum() {
-            for mut watch in self.registry.list_watches() {
+            for mut watch in self.registry.list_watches()? {
                 if watch.spent_tx.is_some() {
                     continue;
                 }
@@ -158,7 +158,7 @@ impl<R: Role> Watcher<R> {
                                 let spk = txout.script_pubkey.clone();
                                 // rewrite old watch request for restarts. Critical for the electrum path.
                                 watch.script_pubkey = Some(spk.clone());
-                                self.registry.upsert_watch(&watch);
+                                self.registry.upsert_watch(&watch)?;
                                 spk
                             }
                             None => {
@@ -192,8 +192,8 @@ impl<R: Role> Watcher<R> {
         log::debug!(
             "[WATCH_STATE] Source: watch_tower::watcher::run | Action: watcher_ready | Network: {} | ActiveWatches: {} | Checkpoint: {:?} | Discovery: {}",
             network,
-            self.registry.list_watches().len(),
-            self.registry.load_checkpoint().map(|cp| cp.height),
+            self.registry.list_watches()?.len(),
+            self.registry.load_checkpoint()?.map(|cp| cp.height),
             R::RUN_DISCOVERY
         );
 
@@ -241,11 +241,13 @@ impl<R: Role> Watcher<R> {
                 if let Some(event) = self.blockchain.poll_event() {
                     self.handle_event(event);
                 } else {
-                    self.retry_subscribes();
                     // Avoid busy-looping when there are no commands and no events.
                     // Loop at system's heartbeat.
                     std::thread::sleep(HEART_BEAT_INTERVAL);
                 }
+                // A failed script-subscribe retries on every pass, not just
+                // idle ticks; with an empty queue this is a no-op.
+                self.retry_subscribes();
             }
 
             // Stop and join the discovery thread on exit path.
@@ -280,7 +282,9 @@ impl<R: Role> Watcher<R> {
                     in_block: false,
                     spent_tx: None,
                 };
-                self.registry.upsert_watch(&req);
+                if let Err(e) = self.registry.upsert_watch(&req) {
+                    log::error!("registry lock poisoned, watch not stored: {e:?}");
+                }
                 if let Err(e) = self.blockchain.subscribe_script(&script_pubkey) {
                     log::error!("electrum script-subscribe failed for {outpoint}: {e}");
                     self.pending_subscribes.push((outpoint, script_pubkey));
@@ -288,7 +292,13 @@ impl<R: Role> Watcher<R> {
             }
             WatcherCommand::WatchRequest { outpoint } => {
                 log::info!("Intercepted watch request: {outpoint}");
-                let watches = self.registry.list_watches();
+                let watches = match self.registry.list_watches() {
+                    Ok(watches) => watches,
+                    Err(e) => {
+                        log::error!("registry lock poisoned, cannot answer watch request: {e:?}");
+                        return true;
+                    }
+                };
                 let mut spent = false;
                 for watch in watches {
                     if watch.outpoint == outpoint {
@@ -308,7 +318,9 @@ impl<R: Role> Watcher<R> {
                 script_pubkey,
             } => {
                 log::info!("Intercepted unwatch request : {outpoint}");
-                self.registry.remove_watch(outpoint);
+                if let Err(e) = self.registry.remove_watch(outpoint) {
+                    log::error!("registry lock poisoned, watch not removed: {e:?}");
+                }
                 self.pending_subscribes.retain(|(o, _)| *o != outpoint);
                 // Drop the Electrum subscription.
                 if let Err(e) = self.blockchain.unsubscribe_script(&script_pubkey) {
@@ -358,7 +370,7 @@ impl<R: Role> Watcher<R> {
                     continue;
                 }
             };
-            process_transaction(&tx, &mut self.registry, false);
+            process_transaction(&tx, &mut self.registry, false)?;
         }
         Ok(())
     }
@@ -368,7 +380,9 @@ impl<R: Role> Watcher<R> {
         match ev {
             WatchEvent::TxSeen { raw_tx } => {
                 if let Ok(tx) = deserialize::<Transaction>(&raw_tx) {
-                    process_transaction(&tx, &mut self.registry, false);
+                    if let Err(e) = process_transaction(&tx, &mut self.registry, false) {
+                        log::error!("registry update failed for mempool tx: {e:?}");
+                    }
                 }
             }
             WatchEvent::BlockConnected(b) => {
@@ -376,18 +390,24 @@ impl<R: Role> Watcher<R> {
                 if b.hash.len() == 32 {
                     let mut bytes = [0u8; 32];
                     bytes.copy_from_slice(&b.hash);
-                    self.registry.save_checkpoint(Checkpoint {
+                    if let Err(e) = self.registry.save_checkpoint(Checkpoint {
                         height: b.height,
                         hash: BlockHash::from_byte_array(bytes),
-                    });
+                    }) {
+                        log::error!("registry lock poisoned, checkpoint not saved: {e:?}");
+                    }
                 } else if let Ok(block) = deserialize::<Block>(&b.hash) {
                     if let Ok(height) = block.bip34_block_height() {
-                        self.registry.save_checkpoint(Checkpoint {
+                        if let Err(e) = self.registry.save_checkpoint(Checkpoint {
                             height,
                             hash: block.block_hash(),
-                        });
+                        }) {
+                            log::error!("registry lock poisoned, checkpoint not saved: {e:?}");
+                        }
                     }
-                    process_block::<R>(block, &mut self.registry);
+                    if let Err(e) = process_block::<R>(block, &mut self.registry) {
+                        log::error!("registry update failed for connected block: {e:?}");
+                    }
                 }
             }
         }

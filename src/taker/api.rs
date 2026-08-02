@@ -123,11 +123,6 @@ pub(crate) const CONFIRMATION_HEIGHT_TOLERANCE: u32 = 6;
 #[cfg(feature = "integration-test")]
 pub(crate) const CONFIRMATION_HEIGHT_TOLERANCE: u32 = 50;
 
-/// Margin multiplier applied to the computed maker fee when verifying amounts.
-/// Accounts for mining transaction fees and rounding. For example, 1.5 means the
-/// actual deduction may be up to 50% more than the advertised maker fee.
-pub(crate) const FEE_VERIFICATION_MARGIN: f64 = 1.5;
-
 /// Taker configuration.
 #[derive(Debug, Clone)]
 pub struct TakerInitConfig {
@@ -362,40 +357,47 @@ impl MakerConnection {
 }
 
 impl Taker {
-    /// Compute the minimum expected output amount for a specific maker hop.
+    /// Compute the exact expected output amount for a specific maker hop.
     ///
     /// Accounts for cumulative fees from all previous hops so that each maker's
     /// output is compared against the correct input amount (not the original
-    /// `send_amount`).
+    /// `send_amount`). Taproot hops are priced on the negotiated locktime offset,
+    /// matching the maker's fee.
     ///
     /// Returns `None` if any maker along the route (up to and including `maker_idx`)
     /// has no stored offer.
     ///
     /// Fee formula: `total_fee = base_fee + (amount * amt_pct)/100 + (amount * locktime * time_pct)/100`
     /// TODO: Use fee estimation here
-    pub(crate) fn min_expected_amount_for_hop(&self, maker_idx: usize) -> Option<Amount> {
+    pub(crate) fn expected_amount_for_hop(&self, maker_idx: usize) -> Option<Amount> {
         let swap = self.swap_state().ok()?;
         let send_amount = swap.params.send_amount;
         let maker_count = swap.makers.len();
 
         // TODO : Have the makers derive the fee & a smart messaging layer to send the estimated target to the taker sequentially.
-        let per_hop_mining_fee =
-            (estimate_funding_tx_fee_sats() * swap.params.tx_count as u64) as f64;
+        let per_hop_mining_fee = estimate_funding_tx_fee_sats() * swap.params.tx_count as u64;
 
-        // Iteratively compute the amount reaching each hop after deducting fees.
-        let mut amount_sats = send_amount.to_sat() as f64;
+        // Replay each hop's deduction exactly as the maker computes it. Any
+        // slack here is room for a cheating maker to underpay the next hop.
+        let mut amount_sats = send_amount.to_sat();
         for i in 0..=maker_idx {
-            let offer = swap.makers[i].offer.as_ref()?;
-            let locktime =
-                REFUND_LOCKTIME_BASE + REFUND_LOCKTIME_STEP * (maker_count - i - 1) as u16;
-            let fee = offer.base_fee as f64
-                + (amount_sats * offer.amount_relative_fee_pct) / 100.0
-                + (amount_sats * locktime as f64 * offer.time_relative_fee_pct) / 100.0;
-            let fee_with_margin = fee * FEE_VERIFICATION_MARGIN;
-            amount_sats = (amount_sats - fee_with_margin - per_hop_mining_fee).max(0.0);
+            let maker = &swap.makers[i];
+            let offer = maker.offer.as_ref()?;
+            let locktime = match maker.protocol {
+                ProtocolVersion::Legacy => maker.negotiated_timelock,
+                ProtocolVersion::Taproot => {
+                    (REFUND_LOCKTIME_BASE + REFUND_LOCKTIME_STEP * (maker_count - i - 1) as u16)
+                        as u32
+                }
+            };
+            let fee = (offer.base_fee as f64
+                + (amount_sats as f64 * offer.amount_relative_fee_pct) / 100.0
+                + (amount_sats as f64 * locktime as f64 * offer.time_relative_fee_pct) / 100.0)
+                .ceil() as u64;
+            amount_sats = amount_sats.saturating_sub(fee + per_hop_mining_fee);
         }
 
-        Some(Amount::from_sat(amount_sats as u64))
+        Some(Amount::from_sat(amount_sats))
     }
 }
 
@@ -430,7 +432,10 @@ impl Drop for Taker {
         // Flush any pending swap state before shutdown
         if let Some(swap) = &self.ongoing_swap {
             if let Ok(record) = self.persist_build_record(swap) {
-                if let Err(e) = self.swap_tracker.lock().unwrap().save_record(&record) {
+                // Drop can't propagate; a poisoned tracker must not abort the
+                // process while we're already unwinding.
+                let mut tracker = self.swap_tracker.lock().unwrap_or_else(|e| e.into_inner());
+                if let Err(e) = tracker.save_record(&record) {
                     log::error!("Failed to flush swap tracker on shutdown: {:?}", e);
                 }
             }
@@ -506,7 +511,11 @@ impl Taker {
         if let BackendConfig::CoreRpc(cfg) = &mut backend {
             cfg.wallet_name = wallet_name.clone();
         }
-        let data_dir = config.data_dir.clone().unwrap_or_else(get_taker_dir);
+        let data_dir = config
+            .data_dir
+            .clone()
+            .map(Ok)
+            .unwrap_or_else(get_taker_dir)?;
         std::fs::create_dir_all(&data_dir)?;
         let wallet_path = data_dir.join("wallets").join(&wallet_name);
         let blockchain = AnyBlockchain::from_config(&backend)?;
@@ -527,7 +536,10 @@ impl Taker {
             initial_sync_complete,
         )?;
         let swap_tracker = Arc::new(Mutex::new(SwapTracker::load_or_create(&data_dir)?));
-        swap_tracker.lock().unwrap().cleanup_incomplete();
+        swap_tracker
+            .lock()
+            .map_err(|_| TakerError::General("swap tracker lock poisoned".into()))?
+            .cleanup_incomplete();
 
         let mut taker = Taker {
             config,
@@ -592,12 +604,24 @@ impl Taker {
         };
 
         if has_remaining {
-            let data_dir = self.config.data_dir.clone().unwrap_or_else(get_taker_dir);
-            self.recovery_loop = Some(RecoveryLoop::start(
-                self.wallet.clone(),
-                self.swap_tracker.clone(),
-                data_dir,
-            ));
+            let data_dir = match self
+                .config
+                .data_dir
+                .clone()
+                .map(Ok)
+                .unwrap_or_else(get_taker_dir)
+            {
+                Ok(dir) => dir,
+                Err(e) => {
+                    log::warn!("Startup recovery: {e}; skipping recovery loop");
+                    return;
+                }
+            };
+            match RecoveryLoop::start(self.wallet.clone(), self.swap_tracker.clone(), data_dir) {
+                Ok(rl) => self.recovery_loop = Some(rl),
+                // Without the loop, remaining contracts are never swept.
+                Err(e) => log::error!("Failed to spawn recovery loop: {e}"),
+            }
         }
     }
 
@@ -682,14 +706,14 @@ impl Taker {
         chain: Arc<AnyBlockchain>,
         initial_sync_complete: Arc<AtomicBool>,
     ) -> Result<OfferSyncHandle, TakerError> {
-        Ok(OfferSyncService::new(
+        OfferSyncService::new(
             offerbook.clone(),
             registry,
             socks_port,
             chain,
             initial_sync_complete,
         )
-        .start())
+        .start()
     }
 
     /// Get reference to the wallet.
@@ -699,7 +723,12 @@ impl Taker {
 
     /// Log the current swap tracker state at INFO level.
     pub fn log_tracker_state(&self) {
-        self.swap_tracker.lock().unwrap().log_state();
+        // Info-only path; a poisoned tracker should not kill the caller.
+        let Ok(tracker) = self.swap_tracker.lock() else {
+            log::error!("swap tracker lock poisoned; skipping tracker state log");
+            return;
+        };
+        tracker.log_state();
     }
 
     /// Check whether the background recovery loop has completed.
@@ -929,9 +958,15 @@ impl Taker {
                             }
                         } else {
                             log::info!("No funds on-chain — safe to abort");
-                            let _ = self.swap_tracker.lock().unwrap().remove_record(
-                                &self.swap_state().map(|s| s.id.clone()).unwrap_or_default(),
-                            );
+                            let _ = self
+                                .swap_tracker
+                                .lock()
+                                .map_err(|_| {
+                                    TakerError::General("swap tracker lock poisoned".into())
+                                })?
+                                .remove_record(
+                                    &self.swap_state().map(|s| s.id.clone()).unwrap_or_default(),
+                                );
                             self.ongoing_swap = None;
                         }
                         return Err(e);
@@ -955,9 +990,13 @@ impl Taker {
                         }
                     } else {
                         log::info!("No funds on-chain — safe to abort");
-                        let _ = self.swap_tracker.lock().unwrap().remove_record(
-                            &self.swap_state().map(|s| s.id.clone()).unwrap_or_default(),
-                        );
+                        let _ = self
+                            .swap_tracker
+                            .lock()
+                            .map_err(|_| TakerError::General("swap tracker lock poisoned".into()))?
+                            .remove_record(
+                                &self.swap_state().map(|s| s.id.clone()).unwrap_or_default(),
+                            );
                         self.ongoing_swap = None;
                     }
                     return Err(e);
@@ -1135,7 +1174,7 @@ impl Taker {
                 ProtocolVersion::Taproot => MakerProtocol::Taproot,
             };
 
-            let available_makers = self.offerbook.active_makers(&maker_protocol);
+            let available_makers = self.offerbook.active_makers(&maker_protocol)?;
 
             if available_makers.is_empty() {
                 return Err(TakerError::NotEnoughMakersInOfferBook);
@@ -1649,21 +1688,22 @@ impl Taker {
                 network,
                 manually_selected_outpoints,
             )?,
-            ProtocolVersion::Taproot => Self::funding_create_taproot(
-                &mut wallet,
-                &vec![tweakable_point; swap_tx_count],
-                &vec![
-                    taproot_hashlock_pubkey.expect("taproot hashlock pubkey must be set");
-                    swap_tx_count
-                ],
-                preimage,
-                refund_locktime_offset,
-                send_amount,
-                &swap_id,
-                network,
-                manually_selected_outpoints,
-                reference_height,
-            )?,
+            ProtocolVersion::Taproot => {
+                let hashlock_pubkey = taproot_hashlock_pubkey
+                    .ok_or_else(|| TakerError::General("taproot hashlock pubkey not set".into()))?;
+                Self::funding_create_taproot(
+                    &mut wallet,
+                    &vec![tweakable_point; swap_tx_count],
+                    &vec![hashlock_pubkey; swap_tx_count],
+                    preimage,
+                    refund_locktime_offset,
+                    send_amount,
+                    &swap_id,
+                    network,
+                    manually_selected_outpoints,
+                    reference_height,
+                )?
+            }
         };
 
         for swapcoin in &swapcoins {
@@ -1777,6 +1817,9 @@ impl Taker {
 
     /// Attempt finalization with retries between attempts.
     fn finalize_with_retry(&mut self) -> Result<(), TakerError> {
+        // The loop runs at least once, so falling through means the last
+        // attempt failed and `last_error` is set.
+        let mut last_error = None;
         for attempt in 1..=MAX_FINALIZE_RETRIES {
             match self.finalize_swap() {
                 Ok(()) => return Ok(()),
@@ -1804,13 +1847,14 @@ impl Taker {
                     if attempt < MAX_FINALIZE_RETRIES {
                         log::info!("Retrying in {:?}...", FINALIZE_RETRY_DELAY);
                         thread::sleep(FINALIZE_RETRY_DELAY);
-                    } else {
-                        return Err(e);
                     }
+                    last_error = Some(e);
                 }
             }
         }
-        unreachable!()
+        Err(last_error.unwrap_or_else(|| {
+            TakerError::General("finalization failed with no recorded error".into())
+        }))
     }
 
     /// Exchange private keys with all makers in forward order.
@@ -2025,7 +2069,10 @@ impl Taker {
 
         // Snapshot preserved fields from any existing record.
         let swap_id = self.swap_state()?.id.clone();
-        let tracker_guard = self.swap_tracker.lock().unwrap();
+        let tracker_guard = self
+            .swap_tracker
+            .lock()
+            .map_err(|_| TakerError::General("swap tracker lock poisoned".into()))?;
         let existing = tracker_guard.get_record(&swap_id);
         let created_at = existing.map(|r| r.created_at);
         let recovery = existing.map(|r| r.recovery.clone());
@@ -2051,7 +2098,10 @@ impl Taker {
             record.failure_reason = Some(reason);
         }
 
-        self.swap_tracker.lock().unwrap().save_record(&record)
+        self.swap_tracker
+            .lock()
+            .map_err(|_| TakerError::General("swap tracker lock poisoned".into()))?
+            .save_record(&record)
     }
 
     /// Flush the current swap state to disk without changing the phase.
@@ -2068,13 +2118,19 @@ impl Taker {
                 record.phase = SwapPhase::Failed;
                 record.failed_at_phase = Some(failed_at);
                 record.failure_reason = Some(format!("{:?}", error));
+                record.updated_at = now_secs();
+                // The failure was already reported to the caller; a poisoned
+                // tracker here is no reason to panic.
+                let Ok(mut tracker) = self.swap_tracker.lock() else {
+                    log::error!("swap tracker lock poisoned; skipping failure persist");
+                    return;
+                };
                 // Preserve existing recovery state if resuming
-                if let Some(existing) = self.swap_tracker.lock().unwrap().get_record(&swap_id) {
+                if let Some(existing) = tracker.get_record(&swap_id) {
                     record.recovery = existing.recovery.clone();
                     record.created_at = existing.created_at;
                 }
-                record.updated_at = now_secs();
-                if let Err(e) = self.swap_tracker.lock().unwrap().save_record(&record) {
+                if let Err(e) = tracker.save_record(&record) {
                     log::error!("Failed to persist swap failure: {:?}", e);
                 }
             }
@@ -2322,7 +2378,12 @@ impl Taker {
         );
 
         report.print();
-        let data_dir = self.config.data_dir.clone().unwrap_or_else(get_taker_dir);
+        let data_dir = self
+            .config
+            .data_dir
+            .clone()
+            .map(Ok)
+            .unwrap_or_else(get_taker_dir)?;
         if let Err(e) = report.save_for_wallet(&data_dir, Some(&wallet_file_name)) {
             log::warn!("Failed to save taker swap report: {:?}", e);
         }
@@ -2382,7 +2443,7 @@ impl Taker {
 
         self.swap_tracker
             .lock()
-            .unwrap()
+            .map_err(|_| TakerError::General("swap tracker lock poisoned".into()))?
             .update_and_save(&swap_id, |record| {
                 record.phase = SwapPhase::Failed;
             })?;
@@ -2395,12 +2456,17 @@ impl Taker {
         self.ongoing_swap = None;
 
         log::info!("Spawning recovery loop for swap {}", swap_id);
-        let data_dir = self.config.data_dir.clone().unwrap_or_else(get_taker_dir);
+        let data_dir = self
+            .config
+            .data_dir
+            .clone()
+            .map(Ok)
+            .unwrap_or_else(get_taker_dir)?;
         self.recovery_loop = Some(RecoveryLoop::start(
             self.wallet.clone(),
             self.swap_tracker.clone(),
             data_dir,
-        ));
+        )?);
 
         Ok(())
     }
@@ -2449,7 +2515,7 @@ impl Taker {
 
         self.swap_tracker
             .lock()
-            .unwrap()
+            .map_err(|_| TakerError::General("swap tracker lock poisoned".into()))?
             .update_and_save(swap_id, |r| {
                 r.recovery.incoming = incoming_outcomes;
                 r.recovery.outgoing = outgoing_outcomes;
@@ -2471,7 +2537,7 @@ impl Taker {
 
     /// Returns the current offerbook snapshot.
     pub fn fetch_offers(&self) -> Result<OfferBook, TakerError> {
-        Ok(self.offerbook.snapshot())
+        self.offerbook.snapshot()
     }
 
     /// Triggers a manual offerbook sync and blocks until it completes.
@@ -2515,10 +2581,13 @@ impl Taker {
         let backup_file_path = PathBuf::from(backup_file);
         let restored_wallet_filename = wallet_file_name.unwrap_or_default();
 
-        let restored_wallet_path = data_dir
-            .unwrap_or_else(get_taker_dir)
-            .join("wallets")
-            .join(restored_wallet_filename);
+        let restored_wallet_path = match data_dir.map(Ok).unwrap_or_else(get_taker_dir) {
+            Ok(dir) => dir.join("wallets").join(restored_wallet_filename),
+            Err(e) => {
+                log::error!("Wallet restore failed: {e}");
+                return;
+            }
+        };
 
         Wallet::restore_interactive(&backup_file_path, &backend, &restored_wallet_path);
     }
@@ -2551,4 +2620,7 @@ pub enum TakerBehavior {
     /// Skip the Legacy sender-signature request, broadcast real funding, and
     /// send ProofOfFunding directly (maker_rejects_proof_of_funding_with_missing_contract_cache).
     SkipSenderContractSigs,
+    /// Spend the funding output through the contract path, then still name that
+    /// outpoint in ProofOfFunding (maker_rejects_spent_funding_outpoint).
+    ReplaySpentFundingOutpoint,
 }

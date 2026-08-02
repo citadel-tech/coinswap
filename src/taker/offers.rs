@@ -269,59 +269,98 @@ impl OfferBookHandle {
     }
 
     /// Gets the current snapshot of whole offerbook
-    pub fn snapshot(&self) -> OfferBook {
-        self.inner.read().unwrap().clone()
+    pub fn snapshot(&self) -> Result<OfferBook, TakerError> {
+        Ok(self
+            .inner
+            .read()
+            .map_err(|_| TakerError::General("offerbook lock poisoned".into()))?
+            .clone())
     }
 
     /// Tag a maker as bad
-    pub fn add_bad_maker(&self, maker: &OfferAndAddress) {
+    pub fn add_bad_maker(&self, maker: &OfferAndAddress) -> Result<(), TakerError> {
         log::info!("Bad Maker added: {}", maker.address);
-        self.inner.write().unwrap().mark_bad(&maker.address);
+        self.inner
+            .write()
+            .map_err(|_| TakerError::General("offerbook lock poisoned".into()))?
+            .mark_bad(&maker.address);
+        Ok(())
     }
 
     /// All current good makers
-    pub fn active_makers(&self, protocol: &MakerProtocol) -> Vec<OfferAndAddress> {
-        self.inner.read().unwrap().active_makers(protocol)
+    pub fn active_makers(
+        &self,
+        protocol: &MakerProtocol,
+    ) -> Result<Vec<OfferAndAddress>, TakerError> {
+        Ok(self
+            .inner
+            .read()
+            .map_err(|_| TakerError::General("offerbook lock poisoned".into()))?
+            .active_makers(protocol))
     }
 
     /// Fetch all good makers
-    pub fn good_makers(&self) -> Vec<OfferAndAddress> {
-        self.inner.read().unwrap().good_makers()
+    pub fn good_makers(&self) -> Result<Vec<OfferAndAddress>, TakerError> {
+        Ok(self
+            .inner
+            .read()
+            .map_err(|_| TakerError::General("offerbook lock poisoned".into()))?
+            .good_makers())
     }
 
     /// All bad makers
-    pub fn get_bad_makers(&self, protocol: &MakerProtocol) -> Vec<OfferAndAddress> {
-        self.inner.read().unwrap().get_bad_makers(protocol)
+    pub fn get_bad_makers(
+        &self,
+        protocol: &MakerProtocol,
+    ) -> Result<Vec<OfferAndAddress>, TakerError> {
+        Ok(self
+            .inner
+            .read()
+            .map_err(|_| TakerError::General("offerbook lock poisoned".into()))?
+            .get_bad_makers(protocol))
     }
 
     /// Fetch all makers good, bad, and unresponsive
-    pub fn all_makers(&self) -> Vec<MakerOfferCandidate> {
-        self.inner.read().unwrap().all_makers()
+    pub fn all_makers(&self) -> Result<Vec<MakerOfferCandidate>, TakerError> {
+        Ok(self
+            .inner
+            .read()
+            .map_err(|_| TakerError::General("offerbook lock poisoned".into()))?
+            .all_makers())
     }
 
     /// Checks if an address is bad or not
-    pub fn is_bad_maker(&self, offer_and_address: &OfferAndAddress) -> bool {
-        let offerbook = self.inner.read().unwrap();
+    pub fn is_bad_maker(&self, offer_and_address: &OfferAndAddress) -> Result<bool, TakerError> {
+        let offerbook = self
+            .inner
+            .read()
+            .map_err(|_| TakerError::General("offerbook lock poisoned".into()))?;
         let value = offerbook
             .makers
             .iter()
             .find(|offer| offer.address == offer_and_address.address);
 
         if let Some(offer) = value {
-            return offer.state == MakerState::Bad;
+            return Ok(offer.state == MakerState::Bad);
         }
-        true
+        Ok(true)
     }
 
     /// Persist offerbook on disk
     pub fn persist(&self) -> Result<(), TakerError> {
-        self.inner.read().unwrap().write_to_disk(&self.path)
+        self.inner
+            .read()
+            .map_err(|_| TakerError::General("offerbook lock poisoned".into()))?
+            .write_to_disk(&self.path)
     }
 
     /// Remove a maker from the offerbook by address.
     /// Returns `true` if an entry was removed, `false` if no matching address was found.
     pub fn remove(&self, address: &MakerAddress) -> Result<bool, TakerError> {
-        let mut book = self.inner.write().unwrap();
+        let mut book = self
+            .inner
+            .write()
+            .map_err(|_| TakerError::General("offerbook lock poisoned".into()))?;
         let before = book.makers.len();
         book.makers.retain(|m| &m.address != address);
         let removed = book.makers.len() < before;
@@ -515,9 +554,13 @@ impl OfferSyncService {
                 0
             }
         };
-        let fidelities = self.registry.list_fidelity(height);
+        let fidelities = self.registry.list_fidelity(height)?;
         {
-            let mut book = self.offerbook.inner.write().unwrap();
+            let mut book = self
+                .offerbook
+                .inner
+                .write()
+                .map_err(|_| TakerError::General("offerbook lock poisoned".into()))?;
             for fidelity in fidelities {
                 match MakerAddress::try_from(fidelity.onion_address) {
                     Ok(parsed) => book.upsert_address(parsed, Some(fidelity.txid)),
@@ -528,10 +571,15 @@ impl OfferSyncService {
             }
         }
 
-        let to_poll = self.offerbook.inner.read().unwrap().makers_to_poll(now);
+        let to_poll = self
+            .offerbook
+            .inner
+            .read()
+            .map_err(|_| TakerError::General("offerbook lock poisoned".into()))?
+            .makers_to_poll(now);
 
         if !to_poll.is_empty() {
-            let handles = self.spawn_offer_workers(to_poll);
+            let handles = self.spawn_offer_workers(to_poll)?;
             for h in handles {
                 let _ = h.join();
             }
@@ -563,7 +611,15 @@ impl OfferSyncService {
         now: u64,
     ) -> Option<MakerOfferCandidate> {
         let downloaded = addr.clone().download_offer_with_retries(socks_port);
-        let mut book = offerbook.write().unwrap();
+        // Poison means a worker panicked mid-update; skip this maker instead
+        // of panicking the whole worker pool.
+        let mut book = match offerbook.write() {
+            Ok(book) => book,
+            Err(_) => {
+                log::error!("offerbook lock poisoned; skipping maker {addr}");
+                return None;
+            }
+        };
         match downloaded {
             Some(oa) => {
                 match verify_fidelity_with_backend(
@@ -606,11 +662,14 @@ impl OfferSyncService {
             .as_secs();
 
         // Ensure the maker is present in the offerbook before polling.
-        self.offerbook
-            .inner
-            .write()
-            .unwrap()
-            .upsert_address(address.clone(), None);
+        // Same poison policy as fetch_and_record_one: skip this poll.
+        match self.offerbook.inner.write() {
+            Ok(mut book) => book.upsert_address(address.clone(), None),
+            Err(_) => {
+                log::error!("offerbook lock poisoned; skipping poll of {address}");
+                return None;
+            }
+        }
 
         Self::fetch_and_record_one(
             address,
@@ -624,7 +683,10 @@ impl OfferSyncService {
 
     /// Spawns worker threads that fetch offers from makers and update the offerbook
     /// as each result arrives. Returns join handles.
-    fn spawn_offer_workers(&self, makers: Vec<MakerAddress>) -> Vec<JoinHandle<()>> {
+    fn spawn_offer_workers(
+        &self,
+        makers: Vec<MakerAddress>,
+    ) -> Result<Vec<JoinHandle<()>>, TakerError> {
         let workers = std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(4)
@@ -667,16 +729,17 @@ impl OfferSyncService {
                         now,
                     );
                 })
-                .expect("failed to spawn offer-fetch-worker");
+                .map_err(|e| {
+                    TakerError::General(format!("failed to spawn offer-fetch-worker: {e}"))
+                })?;
 
             handles.push(handle);
         }
 
-        handles
+        Ok(handles)
     }
-
     /// Starts the offerbook service
-    pub fn start(self) -> OfferSyncHandle {
+    pub fn start(self) -> Result<OfferSyncHandle, TakerError> {
         let shutdown = Arc::new(AtomicBool::new(false));
         let shutdown_flag = shutdown.clone();
         let (cmd_tx, cmd_rx) = mpsc::channel::<SyncCommand>();
@@ -720,13 +783,13 @@ impl OfferSyncService {
 
                 log::debug!("Offer sync service stopped");
             })
-            .expect("failed to spawn offer sync service");
+            .map_err(|e| TakerError::General(format!("failed to spawn offer sync service: {e}")))?;
 
-        OfferSyncHandle {
+        Ok(OfferSyncHandle {
             shutdown,
             join: Some(join),
             cmd_tx,
-        }
+        })
     }
 
     /// Waits up to DISCOVERY_WAIT_MAX for initial Nostr EOSE before running a manual sync.

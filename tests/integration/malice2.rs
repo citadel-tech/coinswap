@@ -5,8 +5,16 @@
 //! 2. Maker[1] (second maker) broadcasts its outgoing contract txs after setup
 //!    and closes the connection (BroadcastContractAfterSetup behavior).
 //! 3. Taker detects the failure and triggers recovery (recover_active_swap).
-//! 4. After timelocks mature, all parties recover their funds.
-//! 5. Verify: taker and makers recovered funds (contract == 0, small fee loss).
+//! 4. The taker sweeps its incoming contract with the swap preimage — its right,
+//!    the contract pays it — and later timelock-refunds its own outgoing when no
+//!    hashlock claim arrives. Ending up with both is the intended deterrence:
+//!    the double cost lands on the maker that broadcast and vanished.
+//! 5. The honest maker timelock-refunds and stays whole; the faulty maker's
+//!    funds stay locked until it returns.
+//!
+//! Missing coverage, to be added later: a broadcaster that stays online and
+//! relays the cascade (settlement instead of refund), and a middle maker that
+//! broadcasts then dies.
 
 use bitcoin::Amount;
 use coinswap::{
@@ -28,9 +36,10 @@ use std::{
 /// Test: Maker maliciously broadcasts contract txs after setup.
 ///
 /// Maker[1] completes the contract exchange, then broadcasts its outgoing
-/// contract transactions and closes the connection. The taker detects the
-/// failure and all parties recover via timelock.
-/// Generic over the backend so `electrum_tor.rs` can reuse the body over Tor.
+/// contract transactions and closes the connection. The taker sweeps its
+/// incoming contract via the preimage and timelock-refunds its outgoing;
+/// the faulty maker's funds stay locked. Generic over the backend so
+/// `electrum_tor.rs` can reuse the body over Tor.
 /// This is the only scenario driving the taker's breach detector.
 pub(crate) fn run_malice2<B: TestBackend>() {
     // ---- Setup ----
@@ -201,7 +210,7 @@ pub(crate) fn run_malice2<B: TestBackend>() {
     );
     assert_eq!(
         taker_balances.swap.to_sat(),
-        0,
+        497087,
         "Taker swap balance mismatch"
     );
     assert_eq!(
@@ -211,21 +220,17 @@ pub(crate) fn run_malice2<B: TestBackend>() {
     );
     assert_eq!(taker_balances.fidelity, Amount::ZERO);
 
-    let balance_diff = taker_original_balance
-        .checked_sub(taker_balances.spendable)
-        .unwrap_or(Amount::ZERO);
-
+    // The taker swept its incoming AND refunded its outgoing, so it ends the
+    // failed swap ahead of where it started — the dark maker pays the difference.
     info!(
-        "Taker balance diff: {} sats (original: {}, current: {})",
-        balance_diff.to_sat(),
+        "Taker spendable after recovery: {} sats (original: {})",
+        taker_balances.spendable.to_sat(),
         taker_original_balance,
-        taker_balances.spendable,
     );
-
     assert_eq!(
-        balance_diff.to_sat(),
-        892,
-        "Taker spendable balance change mismatch"
+        taker_balances.spendable.to_sat(),
+        15496195,
+        "Taker spendable balance mismatch"
     );
 
     taker.log_tracker_state();

@@ -9,7 +9,7 @@ use std::{
 use bitcoin::{BlockHash, OutPoint, ScriptBuf, Transaction, Txid};
 use serde::{Deserialize, Serialize};
 
-use crate::watch_tower::utils::FidelityAnnouncement;
+use crate::watch_tower::{utils::FidelityAnnouncement, watcher_error::WatcherError};
 
 /// Represents a UTXO being watched and records when it gets spent.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -148,7 +148,7 @@ impl FileRegistry {
 
 impl FileRegistry {
     /// Inserts a watch request and flushes the registry to disk.
-    pub fn upsert_watch(&mut self, req: &WatchRequest) {
+    pub fn upsert_watch(&mut self, req: &WatchRequest) -> Result<(), WatcherError> {
         self.with_data(
             |data| match data.watches.insert(req.outpoint, req.clone()) {
                 #[cfg(debug_assertions)]
@@ -159,12 +159,13 @@ impl FileRegistry {
                 ),
                 _ => {}
             },
-        );
+        )?;
         self.flush();
+        Ok(())
     }
 
     /// Removes a watch request for the given outpoint and flushes the registry to disk.
-    pub fn remove_watch(&mut self, outpoint: OutPoint) {
+    pub fn remove_watch(&mut self, outpoint: OutPoint) -> Result<(), WatcherError> {
         self.with_data(|data| match data.watches.remove(&outpoint) {
             #[cfg(debug_assertions)]
             Some(_) => log::debug!(
@@ -173,17 +174,18 @@ impl FileRegistry {
                 data.watches.len()
             ),
             _ => {}
-        });
+        })?;
         self.flush();
+        Ok(())
     }
 
     /// Returns all current watch requests.
-    pub fn list_watches(&self) -> Vec<WatchRequest> {
+    pub fn list_watches(&self) -> Result<Vec<WatchRequest>, WatcherError> {
         self.with_data(|data| data.watches.values().cloned().collect())
     }
 
     /// Returns all stored maker fidelity records.
-    pub fn list_fidelity(&self, height: u32) -> HashSet<Fidelity> {
+    pub fn list_fidelity(&self, height: u32) -> Result<HashSet<Fidelity>, WatcherError> {
         self.with_data(|data| {
             data.fidelity = data
                 .fidelity
@@ -196,47 +198,57 @@ impl FileRegistry {
     }
 
     /// Inserts a new fidelity record.
-    pub fn insert_fidelity(&self, txid: Txid, fidelity_announcement: FidelityAnnouncement) -> bool {
+    pub fn insert_fidelity(
+        &self,
+        txid: Txid,
+        fidelity_announcement: FidelityAnnouncement,
+    ) -> Result<bool, WatcherError> {
         let fidelity = Fidelity {
             txid,
             onion_address: fidelity_announcement.onion,
             expire_height: fidelity_announcement.expires_at_height,
         };
-        let is_in = self.with_data(|data| data.fidelity.insert(fidelity));
+        let is_in = self.with_data(|data| data.fidelity.insert(fidelity))?;
         self.flush();
-        is_in
+        Ok(is_in)
     }
 
     /// Removes fidelity records matching the given txid.
-    pub fn remove_fidelity(&mut self, txid: Txid) {
-        self.with_data(|data| data.fidelity.retain(|f| f.txid != txid));
+    pub fn remove_fidelity(&mut self, txid: Txid) -> Result<(), WatcherError> {
+        self.with_data(|data| data.fidelity.retain(|f| f.txid != txid))?;
         self.flush();
+        Ok(())
     }
 
     /// Persists the latest processed checkpoint to disk.
-    pub fn save_checkpoint(&mut self, cp: Checkpoint) {
-        self.with_data(|data| data.checkpoint = Some(cp));
+    pub fn save_checkpoint(&mut self, cp: Checkpoint) -> Result<(), WatcherError> {
+        self.with_data(|data| data.checkpoint = Some(cp))?;
         self.flush();
+        Ok(())
     }
 
     /// Loads the most recently saved checkpoint, if any.
-    pub fn load_checkpoint(&self) -> Option<Checkpoint> {
-        self.data.lock().unwrap().checkpoint.clone()
+    pub fn load_checkpoint(&self) -> Result<Option<Checkpoint>, WatcherError> {
+        Ok(self.data.lock()?.checkpoint.clone())
     }
 
     /// Loads the latest processed Nostr event timestamp for a relay.
-    pub fn load_nostr_cursor(&self, relay_url: &str) -> Option<u64> {
-        let cursor = self.with_data(|data| data.nostr_cursors.get(relay_url).copied());
+    pub fn load_nostr_cursor(&self, relay_url: &str) -> Result<Option<u64>, WatcherError> {
+        let cursor = self.with_data(|data| data.nostr_cursors.get(relay_url).copied())?;
         log::debug!(
             "Nostr cursor load | relay={} | cursor={:?}",
             relay_url,
             cursor
         );
-        cursor
+        Ok(cursor)
     }
 
     /// Persists the latest processed Nostr event timestamp for a relay.
-    pub fn save_nostr_cursor(&self, relay_url: &str, created_at_secs: u64) {
+    pub fn save_nostr_cursor(
+        &self,
+        relay_url: &str,
+        created_at_secs: u64,
+    ) -> Result<(), WatcherError> {
         let (prev, next, updated) = self.with_data(|data| {
             let entry = data.nostr_cursors.entry(relay_url.to_string()).or_insert(0);
             let prev = *entry;
@@ -245,7 +257,7 @@ impl FileRegistry {
             }
             let next = *entry;
             (prev, next, next != prev)
-        });
+        })?;
         log::debug!(
             "Nostr cursor save | relay={} | incoming={} | previous={} | stored={} | advanced={}",
             relay_url,
@@ -255,14 +267,15 @@ impl FileRegistry {
             updated
         );
         self.flush();
+        Ok(())
     }
 
-    fn with_data<F, T>(&self, f: F) -> T
+    fn with_data<F, T>(&self, f: F) -> Result<T, WatcherError>
     where
         F: FnOnce(&mut RegistryData) -> T,
     {
-        let mut data = self.data.lock().unwrap();
-        f(&mut data)
+        let mut data = self.data.lock()?;
+        Ok(f(&mut data))
     }
 }
 
@@ -319,10 +332,10 @@ mod tests {
             in_block: false,
             spent_tx: None,
         };
-        reg.upsert_watch(&req);
+        reg.upsert_watch(&req).unwrap();
 
         let reg2 = FileRegistry::load(&path);
-        let watches = reg2.list_watches();
+        let watches = reg2.list_watches().unwrap();
 
         assert_eq!(watches.len(), 1);
         assert_eq!(watches[0].outpoint, outpoint);
@@ -343,11 +356,11 @@ mod tests {
             in_block: true,
             spent_tx: None,
         };
-        reg.upsert_watch(&req);
-        reg.remove_watch(outpoint);
+        reg.upsert_watch(&req).unwrap();
+        reg.remove_watch(outpoint).unwrap();
 
         let reg2 = FileRegistry::load(&path);
-        assert!(reg2.list_watches().is_empty());
+        assert!(reg2.list_watches().unwrap().is_empty());
     }
 
     #[test]
@@ -370,15 +383,15 @@ mod tests {
             expires_at_height: 232,
         };
 
-        reg.insert_fidelity(txid1, fidelity_announcement_1);
-        reg.insert_fidelity(txid2, fidelity_announcement_2);
+        reg.insert_fidelity(txid1, fidelity_announcement_1).unwrap();
+        reg.insert_fidelity(txid2, fidelity_announcement_2).unwrap();
 
-        let list = reg.list_fidelity(0);
+        let list = reg.list_fidelity(0).unwrap();
         assert_eq!(list.len(), 2);
 
-        reg.remove_fidelity(txid1);
+        reg.remove_fidelity(txid1).unwrap();
 
-        let list2 = reg.list_fidelity(0);
+        let list2 = reg.list_fidelity(0).unwrap();
         assert_eq!(list2.len(), 0);
     }
 
@@ -390,10 +403,10 @@ mod tests {
         let mut reg = FileRegistry::load(&path);
 
         let cp = dummy_checkpoint(100);
-        reg.save_checkpoint(cp.clone());
+        reg.save_checkpoint(cp.clone()).unwrap();
 
         let reg2 = FileRegistry::load(&path);
 
-        assert_eq!(reg2.load_checkpoint().unwrap(), cp);
+        assert_eq!(reg2.load_checkpoint().unwrap().unwrap(), cp);
     }
 }

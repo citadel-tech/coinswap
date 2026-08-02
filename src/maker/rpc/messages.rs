@@ -129,7 +129,7 @@ impl Display for RpcMsgResp {
                         "fidelity": balances.fidelity.to_sat(),
                         "spendable": balances.spendable.to_sat(),
                     }))
-                    .unwrap()
+                    .map_err(|_| std::fmt::Error)?
                 )
             }
             Self::UtxoResp { utxos }
@@ -139,7 +139,7 @@ impl Display for RpcMsgResp {
                 write!(
                     f,
                     "{}",
-                    serde_json::to_string_pretty(utxos).expect("UTXO JSON serialization failed")
+                    serde_json::to_string_pretty(utxos).map_err(|_| std::fmt::Error)?
                 )
             }
             Self::SendToAddressResp(tx_hex) => write!(f, "{tx_hex}"),

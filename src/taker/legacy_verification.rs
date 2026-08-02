@@ -174,7 +174,7 @@ impl Taker {
         next_multisig_pubkeys: &[PublicKey],
         next_hashlock_pubkeys: &[PublicKey],
         refund_locktime: u16,
-        min_expected_amount: Option<Amount>,
+        expected_amount: Option<Amount>,
     ) -> Result<(), TakerError> {
         let expected_hashvalue = Hash160::hash(&self.swap_state()?.preimage);
 
@@ -310,15 +310,15 @@ impl Taker {
             }
         }
 
-        // Verify total funding amount is consistent with expected amount after fees.
-        // This uses the maker's advertised fee schedule from the offer.
-        if let Some(min_amount) = min_expected_amount {
+        // The maker deducts a fee we can compute exactly from its advertised
+        // schedule, so the total must match, not just clear a minimum.
+        if let Some(expected) = expected_amount {
             let total_funding: Amount = senders_info.iter().map(|info| info.funding_amount).sum();
-            if total_funding < min_amount {
+            if total_funding != expected {
                 return Err(TakerError::General(format!(
-                    "Maker sender contracts total funding {} is below expected minimum {} \
+                    "Maker sender contracts total funding {} does not match expected {} \
                      (based on maker's advertised fee schedule)",
-                    total_funding, min_amount
+                    total_funding, expected
                 )));
             }
         }

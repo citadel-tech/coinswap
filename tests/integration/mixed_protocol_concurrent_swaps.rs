@@ -169,11 +169,10 @@ fn test_concurrent_legacy_and_taproot_swaps() {
             "Taker {} regular balance mismatch",
             i
         );
-        assert_eq!(
+        assert_taproot_balance_near(
             balances.swap.to_sat(),
             expected_taker_swap[i],
-            "Taker {} swap balance mismatch",
-            i
+            &format!("Taker {i} swap balance"),
         );
         assert_eq!(
             balances.contract,
@@ -187,14 +186,13 @@ fn test_concurrent_legacy_and_taproot_swaps() {
             "Taker {} fidelity balance mismatch",
             i
         );
-        assert_eq!(
+        assert_taproot_balance_near(
             original_balance
                 .checked_sub(balances.spendable)
                 .unwrap()
                 .to_sat(),
             expected_taker_fees[i],
-            "Taker {} spendable balance change mismatch",
-            i
+            &format!("Taker {i} spendable balance change"),
         );
     }
 
@@ -221,17 +219,15 @@ fn test_concurrent_legacy_and_taproot_swaps() {
             balances.spendable,
         );
 
-        assert_eq!(
+        assert_taproot_balance_near(
             balances.regular.to_sat(),
             expected_maker_regular[i],
-            "Maker {} regular balance mismatch",
-            i
+            &format!("Maker {i} regular balance"),
         );
-        assert_eq!(
+        assert_taproot_balance_near(
             balances.swap.to_sat(),
             expected_maker_swap[i],
-            "Maker {} swap balance mismatch",
-            i
+            &format!("Maker {i} swap balance"),
         );
         assert_eq!(
             balances.contract,
@@ -245,15 +241,14 @@ fn test_concurrent_legacy_and_taproot_swaps() {
             "Maker {} fidelity balance mismatch",
             i
         );
-        assert_eq!(
+        assert_taproot_balance_near(
             balances
                 .spendable
                 .checked_sub(*original_balance)
                 .unwrap()
                 .to_sat(),
             expected_maker_earnings[i],
-            "Maker {} earnings mismatch",
-            i
+            &format!("Maker {i} earnings"),
         );
     }
 

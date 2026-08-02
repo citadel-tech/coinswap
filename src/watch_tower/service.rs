@@ -75,11 +75,6 @@ impl WatchService {
         })
     }
 
-    /// Attempts a non-blocking receive; returns `None` if no event is pending.
-    pub fn poll_event(&self) -> Option<WatcherEvent> {
-        self.rx.try_recv().ok()
-    }
-
     /// Blocks until the next watcher event arrives.
     pub fn wait_for_event(&self) -> Option<WatcherEvent> {
         self.rx.recv().ok()

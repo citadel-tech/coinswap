@@ -165,7 +165,7 @@ fn test_nostr_cursor_persisted_for_local_relay() {
     let timeout = Duration::from_secs(60);
     while start.elapsed() < timeout {
         let reg = FileRegistry::load(registry_path.clone());
-        if reg.load_nostr_cursor(relay_url).is_some() {
+        if reg.load_nostr_cursor(relay_url).unwrap().is_some() {
             break;
         }
         thread::sleep(Duration::from_millis(300));
@@ -174,6 +174,7 @@ fn test_nostr_cursor_persisted_for_local_relay() {
     let reg = FileRegistry::load(registry_path);
     let cursor = reg
         .load_nostr_cursor(relay_url)
+        .unwrap()
         .expect("cursor for local relay should be present");
     log::info!("Loaded Nostr cursor for {relay_url}: {cursor}");
     assert!(
@@ -231,17 +232,22 @@ fn test_nostr_cursor_is_monotonic_for_local_relay() {
     let reg = FileRegistry::load(registry_path);
     let first = reg
         .load_nostr_cursor(&relay_url)
+        .unwrap()
         .expect("cursor for local relay should be present");
 
-    reg.save_nostr_cursor(&relay_url, first.saturating_sub(1));
+    reg.save_nostr_cursor(&relay_url, first.saturating_sub(1))
+        .unwrap();
     let after_lower = reg
         .load_nostr_cursor(&relay_url)
+        .unwrap()
         .expect("cursor should remain present");
     assert_eq!(after_lower, first, "cursor must not move backwards");
 
-    reg.save_nostr_cursor(&relay_url, first.saturating_add(10));
+    reg.save_nostr_cursor(&relay_url, first.saturating_add(10))
+        .unwrap();
     let after_higher = reg
         .load_nostr_cursor(&relay_url)
+        .unwrap()
         .expect("cursor should remain present");
     assert_eq!(
         after_higher,

@@ -18,7 +18,10 @@ use crate::{
     nostr_coinswap::NOSTR_RELAYS,
     protocol::common_messages::{FidelityProof, ProtocolVersion, SwapDetails},
     taker::api::REFUND_LOCKTIME_STEP,
-    utill::{get_maker_dir, parse_field, parse_toml, HEART_BEAT_INTERVAL, MIN_FEE_RATE},
+    utill::{
+        get_maker_dir, parse_field, parse_toml, HEART_BEAT_INTERVAL, MIN_FEE_RATE,
+        TX_BROADCAST_TIMEOUT,
+    },
     wallet::{
         swapcoin::{IncomingSwapCoin, OutgoingSwapCoin},
         AddressType, AnyBlockchain, BackendConfig, Blockchain, CoreRpcConfig, FidelityError,
@@ -39,12 +42,6 @@ use super::{
 
 /// Minimum swap amount in satoshis.
 pub const MIN_SWAP_AMOUNT: u64 = 10_000;
-
-/// How long to wait for a peer's tx to reach our mempool. Covers relay propagation
-/// and backend lag only - once we can see the tx, confirmations are waited for
-/// without a deadline. Sized above a full Electrum reconnect cycle so a transport
-/// blip does not fail an honest swap.
-const TX_BROADCAST_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Swap state tracked per swap_id (persisted across connections).
 #[derive(Debug, Clone)]
@@ -76,8 +73,8 @@ struct SwapState {
     last_activity: Instant,
     /// Time when this swap was accepted by the maker.
     swap_start_time: Instant,
-    /// How many blocks the funds stay locked, derived from `timelock` when the swap was
-    /// accepted. This value is persisted across connection so swap fee calculation remains consistent.
+    /// How many blocks the funds stay locked, fixed when the swap is accepted.
+    /// Persisted so a fee recomputed on a later message comes out the same.
     refund_locktime_offset: u16,
 }
 
@@ -178,7 +175,7 @@ impl MakerServerConfig {
     /// If the file doesn't exist or is empty, a default config file is created.
     /// Fields missing from the file fall back to defaults.
     pub fn new(config_path: Option<&Path>) -> Result<Self, WalletError> {
-        let default_config_path = get_maker_dir().join("config.toml");
+        let default_config_path = get_maker_dir()?.join("config.toml");
         let config_path = config_path.unwrap_or(&default_config_path);
         let default_config = Self::default();
 
@@ -316,7 +313,12 @@ required_confirms = {}
             self.required_confirms,
         );
 
-        std::fs::create_dir_all(path.parent().expect("Config path should not be root"))?;
+        std::fs::create_dir_all(path.parent().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "config path has no parent directory",
+            )
+        })?)?;
         let mut file = std::fs::File::create(path)?;
         file.write_all(toml_data.as_bytes())?;
         file.flush()?;
@@ -340,9 +342,13 @@ impl ThreadPool {
     }
 
     /// Add a thread to the pool.
-    pub fn add_thread(&self, handle: JoinHandle<()>) {
-        let mut threads = self.threads.lock().unwrap();
+    pub fn add_thread(&self, handle: JoinHandle<()>) -> Result<(), MakerError> {
+        let mut threads = self
+            .threads
+            .lock()
+            .map_err(|_| MakerError::General("thread pool lock poisoned"))?;
         threads.push(handle);
+        Ok(())
     }
 
     /// Join all threads in the pool.
@@ -513,7 +519,7 @@ impl MakerServer {
                 .store
                 .fidelity_bond
                 .get(i as usize)
-                .unwrap()
+                .ok_or(MakerError::General("fidelity bond index stale"))?
                 .clone();
             let (current_height, tip_time) = wallet_read.chain_tip().map_err(MakerError::Wallet)?;
             let bond_value = wallet_read
@@ -737,8 +743,11 @@ impl MakerServer {
     /// Atomically find and remove stale entries from `ongoing_swaps`.
     /// Returns swap data for each idle swap.
     /// Only drains entries where `outgoing_swapcoins` is non-empty (otherwise nothing to recover).
-    pub fn drain_idle_swaps(&self, timeout: Duration) -> Vec<IdleSwapData> {
-        let mut swaps = self.ongoing_swaps.lock().unwrap();
+    pub fn drain_idle_swaps(&self, timeout: Duration) -> Result<Vec<IdleSwapData>, MakerError> {
+        let mut swaps = self
+            .ongoing_swaps
+            .lock()
+            .map_err(|_| MakerError::MutexPossion)?;
         let mut idle = Vec::new();
 
         let stale_ids: Vec<String> = swaps
@@ -762,18 +771,26 @@ impl MakerServer {
             }
         }
 
-        idle
+        Ok(idle)
     }
 
     /// Remove a completed swap's entry from `ongoing_swaps`.
-    pub fn remove_swap_state(&self, swap_id: &str) {
-        let mut swaps = self.ongoing_swaps.lock().unwrap();
+    pub fn remove_swap_state(&self, swap_id: &str) -> Result<(), MakerError> {
+        let mut swaps = self
+            .ongoing_swaps
+            .lock()
+            .map_err(|_| MakerError::MutexPossion)?;
         swaps.remove(swap_id);
+        Ok(())
     }
 
     /// Check if any swaps are currently in progress.
-    pub fn has_ongoing_swaps(&self) -> bool {
-        !self.ongoing_swaps.lock().unwrap().is_empty()
+    pub fn has_ongoing_swaps(&self) -> Result<bool, MakerError> {
+        Ok(!self
+            .ongoing_swaps
+            .lock()
+            .map_err(|_| MakerError::MutexPossion)?
+            .is_empty())
     }
 
     /// Verify the deniability proof for a specific swap.
@@ -889,9 +906,9 @@ impl MakerTrait for MakerServer {
                     "Taproot timelock leaves too little contract reaction time",
                 ));
             }
-            // Price off the offset, not `timelock - current_height`. Our own tip moves
-            // while we negotiate, and that would make the same swap cost a different
-            // amount every run.
+            // Price off the offset, not `timelock - current_height`: our own tip moves
+            // while we negotiate, which would price the same swap differently each run.
+            // The offset is not bound to the real lock duration; assess the CSV transition later.
             details.refund_locktime_offset as u32
         };
 
@@ -962,11 +979,10 @@ impl MakerTrait for MakerServer {
             .map_err(MakerError::Wallet)
     }
 
-    /// Two different bounds apply. Waiting for the tx to reach our mempool is bounded
-    /// by `TX_BROADCAST_TIMEOUT` - if it never arrives, the peer never broadcast it
-    /// and there is nothing to wait for. Once we can see it, block intervals are
-    /// random and no deadline is meaningful, so confirmations are waited for until
-    /// they arrive or we shut down. The wallet lock is released between polls.
+    /// Waiting for a tx to reach our mempool is bounded by `TX_BROADCAST_TIMEOUT`;
+    /// the bound re-arms once if a seen tx vanishes (mempool eviction). A visible
+    /// tx's confirmations are waited for — block intervals are random, and shutdown
+    /// still breaks the wait. The wallet lock is released between polls.
     fn wait_for_tx_on_chain(
         &self,
         txid: &bitcoin::Txid,
@@ -983,6 +999,7 @@ impl MakerTrait for MakerServer {
 
         let started = Instant::now();
         let mut seen = false;
+        let mut disappeared_at: Option<Instant> = None;
 
         // Wait for confirmation or system shutdown
         while !self.shutdown.load(Ordering::Relaxed) {
@@ -997,6 +1014,7 @@ impl MakerTrait for MakerServer {
                 // Both backends error while it is still unknown to us.
                 if let Ok(info) = wallet.blockchain.get_raw_transaction_info(txid, None) {
                     seen = true;
+                    disappeared_at = None;
                     log::info!("Tx seen in mempool. Waiting for confirmation.");
                     if info.confirmations.unwrap_or(0) >= required_confirms {
                         // Ask the backend for the mined height rather than deriving it
@@ -1009,12 +1027,32 @@ impl MakerTrait for MakerServer {
                             return Ok(height as u32);
                         }
                     }
+                } else if seen && disappeared_at.is_none() {
+                    disappeared_at = Some(Instant::now());
+                    log::warn!(
+                        "[{}] Tx {} vanished from our mempool after we saw it",
+                        self.config.network_port,
+                        txid
+                    );
                 }
             }
             // Wait until timeout till the transaction reaches mempool
             if !seen && started.elapsed() > TX_BROADCAST_TIMEOUT {
                 log::error!(
                     "[{}] Tx {} never reached our mempool within {}s",
+                    self.config.network_port,
+                    txid,
+                    TX_BROADCAST_TIMEOUT.as_secs()
+                );
+                return Err(MakerError::General(
+                    "Tx did not reach our mempool before the broadcast timeout",
+                ));
+            }
+            // An evicted tx gets one fresh window to reappear, then the same
+            // error path as a tx that never arrived.
+            if disappeared_at.is_some_and(|at| at.elapsed() > TX_BROADCAST_TIMEOUT) {
+                log::error!(
+                    "[{}] Tx {} vanished from our mempool and did not reappear within {}s",
                     self.config.network_port,
                     txid,
                     TX_BROADCAST_TIMEOUT.as_secs()
@@ -1223,9 +1261,12 @@ impl MakerTrait for MakerServer {
         Ok(())
     }
 
-    fn get_connection_state(&self, swap_id: &str) -> Option<ConnectionState> {
-        let swaps = self.ongoing_swaps.lock().unwrap();
-        swaps.get(swap_id).map(|s| {
+    fn get_connection_state(&self, swap_id: &str) -> Result<Option<ConnectionState>, MakerError> {
+        let swaps = self
+            .ongoing_swaps
+            .lock()
+            .map_err(|_| MakerError::MutexPossion)?;
+        Ok(swaps.get(swap_id).map(|s| {
             let mut state = ConnectionState::new(s.protocol);
             state.swap_id = Some(swap_id.to_string());
             state.swap_amount = s.swap_amount;
@@ -1241,11 +1282,11 @@ impl MakerTrait for MakerServer {
             state.swap_start_time = s.swap_start_time;
             state.refund_locktime_offset = s.refund_locktime_offset;
             state
-        })
+        }))
     }
 
-    fn remove_connection_state(&self, swap_id: &str) {
-        self.remove_swap_state(swap_id);
+    fn remove_connection_state(&self, swap_id: &str) -> Result<(), MakerError> {
+        self.remove_swap_state(swap_id)
     }
 
     fn data_dir(&self) -> &std::path::Path {
@@ -1256,13 +1297,16 @@ impl MakerTrait for MakerServer {
         &self.config.wallet_name
     }
 
-    fn collect_excluded_utxos(&self, current_swap_id: &str) -> Vec<OutPoint> {
-        let swaps = self.ongoing_swaps.lock().unwrap();
-        swaps
+    fn collect_excluded_utxos(&self, current_swap_id: &str) -> Result<Vec<OutPoint>, MakerError> {
+        let swaps = self
+            .ongoing_swaps
+            .lock()
+            .map_err(|_| MakerError::MutexPossion)?;
+        Ok(swaps
             .iter()
             .filter(|(id, _)| id.as_str() != current_swap_id)
             .flat_map(|(_, state)| state.reserve_utxo.clone())
-            .collect()
+            .collect())
     }
 
     fn verify_and_sign_sender_contract_txs(
@@ -1401,6 +1445,18 @@ impl MakerTrait for MakerServer {
                 .wallet
                 .read()
                 .map_err(|_| MakerError::General("Failed to lock wallet"))?;
+
+            // A confirmed txid says nothing about its outputs. Without this the taker
+            // can prove funding with an outpoint it has already spent, and the maker
+            // funds the next hop against value it can never claim.
+            if wallet_read
+                .blockchain
+                .get_tx_out(&funding_txid, funding_output_index, Some(false))
+                .map_err(MakerError::Wallet)?
+                .is_none()
+            {
+                return Err(MakerError::General("Funding output already spent"));
+            }
 
             check_reedemscript_is_multisig(&funding_info.multisig_redeemscript)?;
 

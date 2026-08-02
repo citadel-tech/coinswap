@@ -50,7 +50,7 @@ impl RecoveryLoop {
         wallet: Arc<RwLock<Wallet>>,
         swap_tracker: Arc<Mutex<SwapTracker>>,
         data_dir: PathBuf,
-    ) -> Self {
+    ) -> std::io::Result<Self> {
         let shutdown = Arc::new(AtomicBool::new(false));
         let complete = Arc::new(AtomicBool::new(false));
 
@@ -129,11 +129,19 @@ impl RecoveryLoop {
                                 true
                             } else {
                                 outgoing.iter().chain(incoming.iter()).all(|op| {
-                                    // Explicitly match that the contract transactions are spent.
-                                    matches!(
-                                        w.blockchain.get_tx_out(&op.txid, op.vout, None),
-                                        Ok(None)
-                                    )
+                                    // Only a backend that answers can prove a contract
+                                    // is spent; a failed lookup keeps us watching.
+                                    match w.blockchain.get_tx_out(&op.txid, op.vout, None) {
+                                        Ok(spent) => spent.is_none(),
+                                        Err(e) => {
+                                            log::warn!(
+                                                "Recovery loop: could not check {}: {:?}",
+                                                op,
+                                                e
+                                            );
+                                            false
+                                        }
+                                    }
                                 })
                             }
                         }
@@ -225,14 +233,13 @@ impl RecoveryLoop {
                     thread::sleep(RECOVERY_LOOP_INTERVAL);
                 }
                 log::info!("Recovery loop shut down");
-            })
-            .expect("failed to spawn recovery loop thread");
+            })?;
 
-        Self {
+        Ok(Self {
             shutdown,
             complete,
             handle: Some(handle),
-        }
+        })
     }
 
     /// Match resolved contract txids against tracker records and update outcomes.
@@ -388,7 +395,7 @@ pub(crate) struct BreachDetector {
 
 impl BreachDetector {
     /// Spawn a background thread that polls the WatchService for sentinel spends.
-    pub(crate) fn start(watch_service: WatchService) -> Self {
+    pub(crate) fn start(watch_service: WatchService) -> std::io::Result<Self> {
         let breached = Arc::new(AtomicBool::new(false));
         let sentinels: Arc<Mutex<Vec<(OutPoint, Txid)>>> = Arc::new(Mutex::new(Vec::new()));
         let shutdown = Arc::new(AtomicBool::new(false));
@@ -440,15 +447,14 @@ impl BreachDetector {
                         }
                     }
                 }
-            })
-            .expect("failed to spawn breach detector thread");
+            })?;
 
-        Self {
+        Ok(Self {
             breached,
             sentinels,
             shutdown,
             handle: Some(handle),
-        }
+        })
     }
 
     /// Register funding outpoints as sentinels with the WatchService.

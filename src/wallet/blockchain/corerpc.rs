@@ -3,14 +3,17 @@
 
 use std::sync::Mutex;
 
-use bitcoin::{address::NetworkUnchecked, block::Header, Address, BlockHash, Transaction, Txid};
+use bitcoin::{
+    address::NetworkUnchecked, block::Header, Address, BlockHash, OutPoint, Script, Transaction,
+    Txid,
+};
 use bitcoind::bitcoincore_rpc::{
     json::{
         EstimateMode, EstimateSmartFeeResult, GetAddressInfoResult, GetBlockchainInfoResult,
         GetRawTransactionResult, GetTxOutResult, ListTransactionResult, ListUnspentResultEntry,
         ScanningDetails,
     },
-    Auth, Client, RpcApi,
+    jsonrpc, Auth, Client, Error as CoreRpcError, RpcApi,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -225,10 +228,31 @@ impl Blockchain for CoreRPC {
     }
 
     fn tx_block_height(&self, txid: &Txid) -> Result<Option<u64>, WalletError> {
-        match self.rpc.get_raw_transaction_info(txid, None)?.blockhash {
+        let info = match self.rpc.get_raw_transaction_info(txid, None) {
+            Ok(info) => info,
+            // An unknown txid is "not mined" per the trait contract, not an error.
+            Err(CoreRpcError::JsonRpc(jsonrpc::Error::Rpc(ref e))) if e.code == -5 => {
+                return Ok(None)
+            }
+            Err(e) => return Err(e.into()),
+        };
+        match info.blockhash {
             Some(hash) => Ok(Some(self.rpc.get_block_header_info(&hash)?.height as u64)),
             None => Ok(None),
         }
+    }
+
+    fn is_confirmed_spend(
+        &self,
+        outpoint: &OutPoint,
+        _script: &Script,
+    ) -> Result<bool, WalletError> {
+        // Core's UTXO set ignores mempool spends: a mined tx whose output is
+        // missing from the confirmed view was spent by a mined transaction.
+        Ok(self.tx_block_height(&outpoint.txid)?.is_some()
+            && self
+                .get_tx_out(&outpoint.txid, outpoint.vout, Some(false))?
+                .is_none())
     }
 
     fn get_raw_transaction(
