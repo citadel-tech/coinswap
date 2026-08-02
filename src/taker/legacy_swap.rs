@@ -1,9 +1,6 @@
 //! Legacy (ECDSA) specific swap methods for the Taker.
 
-use std::{
-    cell::{Cell, RefCell},
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 use bitcoin::{
     hashes::{hash160::Hash as Hash160, Hash},
@@ -831,6 +828,10 @@ impl Taker {
         required_confirms: u32,
         swap_id: &str,
     ) -> Result<u32, TakerError> {
+        if required_confirms == 0 || funding_txids.is_empty() {
+            return Ok(0);
+        }
+
         let maker_addresses: Vec<String> = self
             .swap_state()?
             .makers
@@ -849,67 +850,112 @@ impl Taker {
             streams.push((maker_index, stream));
         }
 
-        let streams = RefCell::new(streams);
-        let last_keepalive = Cell::new(Instant::now());
-        let failed_maker = Cell::new(None);
+        let mut last_keepalive = Instant::now();
         // Missing funding must still trigger maker idle-timeout recovery.
-        let funding_observed = Cell::new(false);
-        let wallet = self.read_wallet()?;
-        let abort_check = || {
-            if failed_maker.get().is_some() {
-                return true;
-            }
+        let mut funding_observed = false;
+        let mut attempt = 0_u64;
 
-            let breached = self
+        log::info!(
+            "Waiting for {} confirmation(s) on {} transaction(s)...",
+            required_confirms,
+            funding_txids.len()
+        );
+
+        loop {
+            if self
                 .breach_detector
                 .as_ref()
-                .is_some_and(|detector| detector.is_breached());
-            if !funding_observed.get() {
-                funding_observed.set(
-                    funding_txids
-                        .iter()
-                        .all(|txid| wallet.rpc.get_raw_transaction_info(txid, None).is_ok()),
-                );
-            }
-            if !breached
-                && funding_observed.get()
-                && last_keepalive.get().elapsed() >= FUNDING_KEEPALIVE_INTERVAL
+                .is_some_and(|detector| detector.is_breached())
             {
-                let keepalive =
-                    TakerToMakerMessage::WaitingFundingConfirmation(swap_id.to_string());
-                for (maker_index, stream) in streams.borrow_mut().iter_mut() {
-                    if let Err(error) = send_message(stream, &keepalive) {
-                        log::error!(
-                            "Maker {} closed keepalive connection during funding wait: {:?}",
-                            maker_index,
-                            error
-                        );
-                        // Allow the current confirmation poll to complete before
-                        // interrupting so a visible confirmation is not masked.
-                        failed_maker.set(Some(*maker_index));
-                        return false;
+                return Err(TakerError::ContractsBroadcasted(vec![]));
+            }
+
+            attempt = attempt.saturating_add(1);
+            let (all_observed, all_confirmed, max_confirm_height) = {
+                // Keep the wallet read lock only for this RPC polling pass so
+                // recovery and sync writers can run while this loop sleeps.
+                let wallet = self.read_wallet()?;
+                let mut all_observed = true;
+                let mut all_confirmed = true;
+                let mut max_confirm_height = 0_u32;
+
+                for txid in funding_txids {
+                    match wallet.rpc.get_raw_transaction_info(txid, None) {
+                        Ok(tx_info) => {
+                            let confirmations = tx_info.confirmations.unwrap_or(0);
+                            if confirmations < required_confirms {
+                                all_confirmed = false;
+                            } else {
+                                let block_hash = tx_info.blockhash.ok_or_else(|| {
+                                    WalletError::General(format!(
+                                        "Confirmed transaction {txid} has no block hash"
+                                    ))
+                                })?;
+                                let confirmation_height = wallet
+                                    .rpc
+                                    .get_block_header_info(&block_hash)
+                                    .map_err(WalletError::Rpc)?
+                                    .height
+                                    as u32;
+                                max_confirm_height = max_confirm_height.max(confirmation_height);
+                            }
+                        }
+                        Err(error) => {
+                            log::debug!("Error getting tx info for {}: {:?}", txid, error);
+                            all_observed = false;
+                            all_confirmed = false;
+                        }
                     }
                 }
-                last_keepalive.set(Instant::now());
-            }
-            breached
-        };
+                (all_observed, all_confirmed, max_confirm_height)
+            };
 
-        match wallet.wait_for_tx_confirmation(
-            funding_txids,
-            required_confirms,
-            None,
-            Some(&abort_check),
-        ) {
-            Ok(height) => Ok(height),
-            Err(WalletError::Interrupted(_)) if failed_maker.get().is_some() => {
-                Err(TakerError::General(format!(
-                    "Maker {} closed keepalive connection during funding wait",
-                    failed_maker.get().unwrap_or_default()
-                )))
+            funding_observed |= all_observed;
+            if all_confirmed {
+                log::info!(
+                    "All transactions confirmed (latest at height {})",
+                    max_confirm_height
+                );
+                return Ok(max_confirm_height);
             }
-            Err(WalletError::Interrupted(_)) => Err(TakerError::ContractsBroadcasted(vec![])),
-            Err(error) => Err(error.into()),
+
+            let total_sleep = 10_u64.saturating_mul(attempt).min(600);
+            log::info!("Next sync in {} secs", total_sleep);
+
+            // Sleep in one-second increments to preserve prompt breach checks
+            // and keepalive delivery without retaining the wallet read guard.
+            for _ in 0..total_sleep {
+                if self
+                    .breach_detector
+                    .as_ref()
+                    .is_some_and(|detector| detector.is_breached())
+                {
+                    return Err(TakerError::ContractsBroadcasted(vec![]));
+                }
+
+                if !funding_observed {
+                    let wallet = self.read_wallet()?;
+                    funding_observed = funding_txids
+                        .iter()
+                        .all(|txid| wallet.rpc.get_raw_transaction_info(txid, None).is_ok());
+                }
+
+                if funding_observed && last_keepalive.elapsed() >= FUNDING_KEEPALIVE_INTERVAL {
+                    let keepalive =
+                        TakerToMakerMessage::WaitingFundingConfirmation(swap_id.to_string());
+                    for (maker_index, stream) in &mut streams {
+                        if let Err(error) = send_message(stream, &keepalive) {
+                            return Err(TakerError::General(format!(
+                                "Maker {} closed keepalive connection during funding wait: {:?}",
+                                maker_index, error
+                            )));
+                        }
+                    }
+                    last_keepalive = Instant::now();
+                }
+
+                std::thread::sleep(Duration::from_secs(1));
+            }
         }
     }
 
