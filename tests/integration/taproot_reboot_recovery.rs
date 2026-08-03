@@ -146,9 +146,21 @@ pub(crate) fn run_reboot_recovery<B: TestBackend>() {
     let log_path = format!("{}/taker/debug.log", test_framework.temp_dir.display());
     // Recovery takes longer under parallel load; wait for the markers instead
     // of asserting at a fixed wall-clock point.
-    wait_for_log(&log_path, "Incomplete swaps detected on startup", Duration::from_secs(120));
-    wait_for_log(&log_path, "recover_from_swap started", Duration::from_secs(120));
-    wait_for_log(&log_path, "Removed outgoing swapcoin", Duration::from_secs(120));
+    wait_for_log(
+        &log_path,
+        "Incomplete swaps detected on startup",
+        Duration::from_secs(120),
+    );
+    wait_for_log(
+        &log_path,
+        "recover_from_swap started",
+        Duration::from_secs(120),
+    );
+    wait_for_log(
+        &log_path,
+        "Removed outgoing swapcoin",
+        Duration::from_secs(120),
+    );
     let log_contents = std::fs::read_to_string(&log_path).unwrap();
     assert!(
         !log_contents.contains("Funding was never broadcast for swap"),

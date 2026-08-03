@@ -1,9 +1,12 @@
 #!/bin/sh
 
-# Check Rust formatting and automatically correct it
-echo "Auto-correcting code style with rustfmt..."
+# Check Rust formatting
+echo "Checking code style with rustfmt..."
 rustup override set nightly
-cargo fmt --all -- --check
+if ! cargo fmt --all -- --check; then
+    echo "Formatting issues detected. Run 'cargo fmt --all' before committing."
+    exit 1
+fi
 
 # Check Clippy lints
 echo "Checking code quality with Clippy..."

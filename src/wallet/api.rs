@@ -3,7 +3,14 @@
 //! Currently, wallet synchronization is exclusively performed through RPC for makers.
 //! In the future, takers might adopt alternative synchronization methods, such as lightweight wallet solutions.
 
-use std::{cmp::max, fmt::Display, path::PathBuf, str::FromStr, thread, time::{Duration, Instant}};
+use std::{
+    cmp::max,
+    fmt::Display,
+    path::PathBuf,
+    str::FromStr,
+    thread,
+    time::{Duration, Instant},
+};
 
 use std::collections::{HashMap, HashSet};
 

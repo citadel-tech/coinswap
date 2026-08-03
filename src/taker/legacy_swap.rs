@@ -910,10 +910,8 @@ impl Taker {
                             } else {
                                 // Ask the backend for the mined height directly;
                                 // tip-height arithmetic can race a newly mined block.
-                                let confirmation_height = wallet
-                                    .blockchain
-                                    .tx_block_height(txid)?
-                                    .ok_or_else(|| {
+                                let confirmation_height =
+                                    wallet.blockchain.tx_block_height(txid)?.ok_or_else(|| {
                                         TakerError::General(format!(
                                             "Confirmed transaction {txid} has no block height"
                                         ))
@@ -956,9 +954,12 @@ impl Taker {
 
                 if !funding_observed {
                     let wallet = self.read_wallet()?;
-                    funding_observed = funding_txids
-                        .iter()
-                        .all(|txid| wallet.blockchain.get_raw_transaction_info(txid, None).is_ok());
+                    funding_observed = funding_txids.iter().all(|txid| {
+                        wallet
+                            .blockchain
+                            .get_raw_transaction_info(txid, None)
+                            .is_ok()
+                    });
                 }
 
                 if funding_observed && last_keepalive.elapsed() >= FUNDING_KEEPALIVE_INTERVAL {
