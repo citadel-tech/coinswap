@@ -1372,10 +1372,13 @@ mod tests {
         // to error-on-malformed is a conscious, reviewed decision.
         assert_eq!(parse_field::<u32>(Some(&malformed), 7), 7);
 
-        // The same silent fallback holds for other FromStr types.
+        // The same silent fallback holds for other FromStr types. The malformed
+        // and missing cases use `true` - a non-default for `bool` - so the
+        // assertions pin "returns the caller's default" specifically: a
+        // regression to `unwrap_or_default()` would yield `false` and fail here.
         let not_a_bool = "yes".to_string();
-        assert!(parse_field::<bool>(Some(&"true".to_string()), false));
-        assert!(!parse_field::<bool>(Some(&not_a_bool), false));
-        assert!(parse_field::<bool>(None, true));
+        assert!(!parse_field::<bool>(Some(&"false".to_string()), true)); // valid parse wins over the default
+        assert!(parse_field::<bool>(Some(&not_a_bool), true)); // malformed -> caller default, not type default
+        assert!(parse_field::<bool>(None, true)); // missing -> caller default
     }
 }
