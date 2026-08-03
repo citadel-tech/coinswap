@@ -7,6 +7,7 @@ use bitcoin::{
     opcodes::all::{OP_CHECKSIG, OP_CLTV, OP_DROP, OP_EQUALVERIFY, OP_SHA256},
     script::Instruction,
     secp256k1::Secp256k1,
+    PublicKey,
 };
 
 use crate::protocol::{
@@ -21,6 +22,7 @@ impl Taker {
         &self,
         contract: &TaprootContractData,
         maker_idx: usize,
+        expected_next_hop_pubkey: PublicKey,
         expected_locktime: u32,
         min_expected_amount: Option<bitcoin::Amount>,
     ) -> Result<(), TakerError> {
@@ -108,6 +110,7 @@ impl Taker {
 
         // Per-contract vectors must all line up with contract_txs.
         if contract.timelock_scripts.len() != contract.contract_txs.len()
+            || contract.pubkeys.len() != contract.contract_txs.len()
             || contract.internal_keys.len() != contract.contract_txs.len()
             || contract.tap_tweaks.len() != contract.contract_txs.len()
         {
@@ -123,6 +126,26 @@ impl Taker {
         // so verify the timelock template, locktime value and P2TR output per contract.
         for (i, tx) in contract.contract_txs.iter().enumerate() {
             let timelock_script = &contract.timelock_scripts[i];
+            let mut ordered_pubkeys = [&contract.pubkeys[i], &expected_next_hop_pubkey];
+            ordered_pubkeys.sort_by_key(|pk| pk.inner.serialize());
+            let expected_internal_key =
+                crate::protocol::musig_interface::get_aggregated_pubkey_compat(
+                    ordered_pubkeys[0].inner,
+                    ordered_pubkeys[1].inner,
+                )
+                .map_err(|e| {
+                    TakerError::General(format!(
+                        "Maker {} Taproot internal key {} aggregation failed: {:?}",
+                        maker_idx, i, e
+                    ))
+                })?;
+
+            if contract.internal_keys[i] != expected_internal_key {
+                return Err(TakerError::General(format!(
+                    "Maker {} Taproot internal key {} does not match the expected MuSig2 aggregate",
+                    maker_idx, i
+                )));
+            }
 
             // Verify timelock script has expected format (5 instructions):
             // <locktime> OP_CLTV OP_DROP <pubkey> OP_CHECKSIG

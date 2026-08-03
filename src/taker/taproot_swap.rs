@@ -388,6 +388,7 @@ impl Taker {
                     self.verify_maker_taproot_contract(
                         &maker_contract,
                         i,
+                        next_hop_point,
                         expected_locktime,
                         min_expected,
                     )?;
