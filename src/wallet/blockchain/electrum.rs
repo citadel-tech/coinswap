@@ -260,7 +260,24 @@ impl Electrum {
     fn connect(cfg: &ElectrumConfig) -> Result<(ElectrumClient, [u8; 32], i64), WalletError> {
         let once = || -> Result<(ElectrumClient, [u8; 32], i64), electrum_client::Error> {
             let inner = ElectrumClient::from_config(&cfg.url, client_config(cfg))?;
-            let genesis = inner.server_features()?.genesis_hash;
+            // Some servers do not implement `server.features` (-32601 is the
+            // JSON-RPC "method not found" code). Read the genesis header
+            // instead, which every server answers.
+            let genesis = match inner.server_features() {
+                Ok(features) => features.genesis_hash,
+                Err(electrum_client::Error::Protocol(ref value))
+                    if value.get("code").and_then(Value::as_i64) == Some(-32601) =>
+                {
+                    let mut genesis = inner
+                        .block_header(0)?
+                        .block_hash()
+                        .to_raw_hash()
+                        .to_byte_array();
+                    genesis.reverse();
+                    genesis
+                }
+                Err(e) => return Err(e),
+            };
             // Arm the header subscription so the watchtower's `poll_event` sees
             // tip updates; harmless for the wallet's instance, which never polls.
             let last_height = inner.block_headers_subscribe()?.height as i64;

@@ -18,7 +18,7 @@ use std::{path::PathBuf, str::FromStr};
 ///
 /// The app works as a regular Bitcoin wallet with the added capability to perform coinswaps.
 /// It can talk to either a Bitcoin Core node (over RPC + ZMQ — the default) or an
-/// Electrum-protocol server (via `--electrum-url`). Both paths support the full swap flow
+/// Electrum-protocol server (via `--electrum`). Both paths support the full swap flow
 /// and the `restore` subcommand. It currently only runs on Testnet4.
 /// Suggested faucet for getting Signet coins (tor browser required): <http://s2ncekhezyo2tkwtftti3aiukfpqmxidatjrdqmwie6xnf2dfggyscad.onion/>
 ///
@@ -33,7 +33,7 @@ struct Cli {
     #[clap(long, short = 'd')]
     data_directory: Option<PathBuf>,
 
-    /// Bitcoin Core RPC address:port value. Ignored when `--electrum-url` is set.
+    /// Bitcoin Core RPC address:port value. Ignored when `--electrum` is set.
     #[clap(
         name = "ADDRESS:PORT",
         long,
@@ -42,7 +42,7 @@ struct Cli {
     )]
     pub rpc: String,
 
-    /// Bitcoin Core ZMQ address:port value. Ignored when `--electrum-url` is set.
+    /// Bitcoin Core ZMQ address:port value. Ignored when `--electrum` is set.
     #[clap(
         name = "ZMQ",
         long,
@@ -52,7 +52,7 @@ struct Cli {
     pub zmq: String,
 
     /// Bitcoin Core RPC authentication string. Ex: username:password.
-    /// Ignored when `--electrum-url` is set.
+    /// Ignored when `--electrum` is set.
     #[clap(name="USER:PASSWORD",short='a',long, value_parser = parse_proxy_auth, default_value = "user:password")]
     pub auth: (String, String),
     #[clap(long, short = 't')]
@@ -60,7 +60,7 @@ struct Cli {
 
     /// Electrum server URL (e.g. `tcp://localhost:50001`). When set, the wallet
     /// is initialised against an Electrum backend instead of Bitcoin Core.
-    #[clap(name = "ELECTRUM_URL", long)]
+    #[clap(name = "ELECTRUM_URL", long = "electrum")]
     pub electrum_url: Option<String>,
 
     /// Route the Electrum backend through the Tor SOCKS proxy on `socks_port`.
@@ -325,7 +325,7 @@ fn main() -> Result<(), TakerError> {
         .clone()
         .unwrap_or_else(|| "taker-wallet".to_string());
     // Build the unified taker config (also used by the Restore branch).
-    // `--electrum-url` selects the Electrum backend; otherwise Bitcoin Core.
+    // `--electrum` selects the Electrum backend; otherwise Bitcoin Core.
     //
     // The backend is needed by the Restore branch below, before `TakerInitConfig`
     // exists, so read the socks port from the same default the config uses.

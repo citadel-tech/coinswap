@@ -28,7 +28,7 @@ struct Cli {
     #[clap(long, short = 'd')]
     data_directory: Option<PathBuf>,
     /// Bitcoin Core RPC network address.
-    /// Ignored when `--electrum-url` is set.
+    /// Ignored when `--electrum` is set.
     #[clap(
         name = "ADDRESS:PORT",
         long,
@@ -37,7 +37,7 @@ struct Cli {
     )]
     pub rpc: String,
     /// Bitcoin Core ZMQ address:port value
-    /// Ignored when `--electrum-url` is set.
+    /// Ignored when `--electrum` is set.
     #[clap(
         name = "ZMQ",
         long,
@@ -46,7 +46,7 @@ struct Cli {
     )]
     pub zmq: String,
     /// Bitcoin Core RPC authentication string (username, password).
-    /// Ignored when `--electrum-url` is set.
+    /// Ignored when `--electrum` is set.
     #[clap(
         name = "USER:PASSWORD",
         short = 'a',
@@ -57,7 +57,7 @@ struct Cli {
     pub auth: (String, String),
     /// Electrum server URL (e.g. `tcp://localhost:50001`). When set, the wallet
     /// is initialised against an Electrum backend instead of Bitcoin Core.
-    #[clap(name = "ELECTRUM_URL", long)]
+    #[clap(name = "ELECTRUM_URL", long = "electrum")]
     pub electrum_url: Option<String>,
     /// Route the Electrum backend through the Tor SOCKS proxy on `socks_port`.
     /// Works with an onion or a clearnet server; an onion URL needs it.
@@ -98,7 +98,7 @@ fn main() -> Result<(), MakerError> {
         config.tor_auth_password = tor_auth;
     }
 
-    // Set backend from CLI flags: --electrum-url takes precedence; otherwise Bitcoin Core.
+    // Set backend from CLI flags: --electrum takes precedence; otherwise Bitcoin Core.
     config.backend = match args.electrum_url {
         Some(url) => BackendConfig::Electrum(ElectrumConfig {
             url,
