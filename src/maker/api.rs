@@ -740,35 +740,50 @@ impl MakerServer {
         Ok(())
     }
 
-    /// Atomically find and remove stale entries from `ongoing_swaps`.
-    /// Returns swap data for each idle swap.
-    /// Only drains entries where `outgoing_swapcoins` is non-empty (otherwise nothing to recover).
+    /// Atomically release stale unfunded reservations and drain swaps requiring recovery.
+    /// Returns swap data only for entries with on-chain recovery material.
     pub fn drain_idle_swaps(&self, timeout: Duration) -> Result<Vec<IdleSwapData>, MakerError> {
         let mut swaps = self
             .ongoing_swaps
             .lock()
             .map_err(|_| MakerError::MutexPossion)?;
-        let mut idle = Vec::new();
-
         let stale_ids: Vec<String> = swaps
             .iter()
             .filter(|(_, state)| {
-                state.last_activity.elapsed() > timeout && !state.outgoing_swapcoins.is_empty()
+                let unfunded_reservation = state.phase == SwapPhase::AwaitingContractData
+                    && state.incoming_swapcoins.is_empty()
+                    && state.outgoing_swapcoins.is_empty()
+                    && state.pending_funding_txes.is_empty()
+                    && !state.funding_broadcast;
+                state.last_activity.elapsed() > timeout
+                    && (unfunded_reservation || !state.outgoing_swapcoins.is_empty())
             })
             .map(|(id, _)| id.clone())
             .collect();
 
-        for id in stale_ids {
-            if let Some(state) = swaps.remove(&id) {
-                idle.push(IdleSwapData {
-                    swap_id: id,
-                    protocol: state.protocol,
-                    swap_amount_sat: state.swap_amount.to_sat(),
-                    incoming_swapcoins: state.incoming_swapcoins,
-                    outgoing_swapcoins: state.outgoing_swapcoins,
-                    funding_broadcast: state.funding_broadcast,
-                });
+        let mut idle = Vec::new();
+        for swap_id in stale_ids {
+            let Some(state) = swaps.remove(&swap_id) else {
+                continue;
+            };
+
+            if state.outgoing_swapcoins.is_empty() {
+                log::info!(
+                    "[{}] Released idle unfunded reservation for swap {}",
+                    self.config.network_port,
+                    swap_id
+                );
+                continue;
             }
+
+            idle.push(IdleSwapData {
+                swap_id,
+                protocol: state.protocol,
+                swap_amount_sat: state.swap_amount.to_sat(),
+                incoming_swapcoins: state.incoming_swapcoins,
+                outgoing_swapcoins: state.outgoing_swapcoins,
+                funding_broadcast: state.funding_broadcast,
+            });
         }
 
         Ok(idle)

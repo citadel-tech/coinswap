@@ -19,7 +19,7 @@ use coinswap::{
 use super::test_framework::*;
 
 use log::{info, warn};
-use std::{sync::atomic::Ordering::Relaxed, thread};
+use std::{sync::atomic::Ordering::Relaxed, thread, time::Duration};
 
 /// Test: Taker aborts at AckSwapDetails response (Taproot).
 ///
@@ -102,6 +102,20 @@ fn test_taproot_taker_abort1() {
         prepare_result.err().unwrap()
     );
     taker.log_tracker_state();
+
+    // The accepted-but-unfunded reservation must expire without requiring a restart.
+    let log_path = format!("{}/taker/debug.log", test_framework.temp_dir.display());
+    wait_for_log(
+        &log_path,
+        "Released idle unfunded reservation",
+        Duration::from_secs(45),
+    );
+    assert!(
+        makers
+            .iter()
+            .all(|maker| !maker.has_ongoing_swaps().unwrap()),
+        "Early-abort reservations should be released after the idle timeout"
+    );
 
     // No recovery needed -- this is an early abort before any funding broadcast.
     // Shut down makers.
