@@ -1,6 +1,6 @@
 //! Legacy (ECDSA) specific swap methods for the Taker.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use bitcoin::{
     hashes::{hash160::Hash as Hash160, Hash},
@@ -29,10 +29,7 @@ use crate::{
     },
 };
 
-use super::{
-    api::{Taker, FUNDING_KEEPALIVE_INTERVAL},
-    error::TakerError,
-};
+use super::{api::Taker, error::TakerError};
 
 /// Delay to allow the Maker to broadcast its funding transactions before we poll.
 const MAKER_BROADCAST_DELAY: Duration = Duration::from_secs(2);
@@ -140,6 +137,10 @@ impl Taker {
         let swap_id = swap.id.clone();
         let maker_count = swap.makers.len();
         let tx_count = swap.params.tx_count;
+
+        // Ping every maker for the life of the march: while we negotiate one
+        // hop, the others must not read our silence as a dropped swap.
+        let _heartbeat = self.start_route_heartbeat(&swap_id);
 
         let mut prev_senders_info: Option<Vec<SenderContractTxInfo>> = None;
         // Taker's own keys for the last hop (set during last iteration)
@@ -341,11 +342,8 @@ impl Taker {
                     .filter_map(|sc| sc.funding_tx.as_ref().map(|tx| tx.compute_txid()))
                     .collect();
                 let required_confirms = self.swap_state()?.params.required_confirms;
-                prev_confirm_height = self.wait_for_legacy_funding_with_keepalive(
-                    &funding_txids,
-                    required_confirms,
-                    &swap_id,
-                )?;
+                prev_confirm_height =
+                    self.wait_for_legacy_funding_confirmation(&funding_txids, required_confirms)?;
                 _taker_funding_confirmed = true;
                 self.swap_state_mut()?.makers[maker_idx]
                     .legacy_exchange_mut()?
@@ -669,11 +667,8 @@ impl Taker {
                 .collect();
 
             let required_confirms = self.swap_state()?.params.required_confirms;
-            let maker_confirm_height = self.wait_for_legacy_funding_with_keepalive(
-                &maker_funding_txids,
-                required_confirms,
-                &swap_id,
-            )?;
+            let maker_confirm_height =
+                self.wait_for_legacy_funding_confirmation(&maker_funding_txids, required_confirms)?;
 
             // Verify that the maker's funding confirmed within a few blocks of the
             // previous hop. For legacy (CSV relative locktime), a large gap between
@@ -843,38 +838,17 @@ impl Taker {
         Ok(())
     }
 
-    /// Wait for Legacy funding while keeping every maker session in the route alive.
-    fn wait_for_legacy_funding_with_keepalive(
+    /// Wait for Legacy funding to reach `required_confirms`.
+    /// The route heartbeat keeps every maker warm, so this loop only polls.
+    fn wait_for_legacy_funding_confirmation(
         &self,
         funding_txids: &[Txid],
         required_confirms: u32,
-        swap_id: &str,
     ) -> Result<u32, TakerError> {
         if required_confirms == 0 || funding_txids.is_empty() {
             return Ok(0);
         }
 
-        let maker_addresses: Vec<String> = self
-            .swap_state()?
-            .makers
-            .iter()
-            .map(|maker| maker.address.to_string())
-            .collect();
-        let mut streams = Vec::with_capacity(maker_addresses.len());
-        for (maker_index, maker_address) in maker_addresses.into_iter().enumerate() {
-            let mut stream = self.net_connect(&maker_address)?;
-            self.net_handshake(&mut stream).map_err(|error| {
-                TakerError::General(format!(
-                    "Handshake failed with maker {} ({}): {:?}",
-                    maker_index, maker_address, error
-                ))
-            })?;
-            streams.push((maker_index, stream));
-        }
-
-        let mut last_keepalive = Instant::now();
-        // Missing funding must still trigger maker idle-timeout recovery.
-        let mut funding_observed = false;
         let mut attempt = 0_u64;
 
         log::info!(
@@ -893,11 +867,10 @@ impl Taker {
             }
 
             attempt = attempt.saturating_add(1);
-            let (all_observed, all_confirmed, max_confirm_height) = {
+            let (all_confirmed, max_confirm_height) = {
                 // Keep the wallet read lock only for this RPC polling pass so
                 // recovery and sync writers can run while this loop sleeps.
                 let wallet = self.read_wallet()?;
-                let mut all_observed = true;
                 let mut all_confirmed = true;
                 let mut max_confirm_height = 0_u32;
 
@@ -921,15 +894,13 @@ impl Taker {
                         }
                         Err(error) => {
                             log::debug!("Error getting tx info for {}: {:?}", txid, error);
-                            all_observed = false;
                             all_confirmed = false;
                         }
                     }
                 }
-                (all_observed, all_confirmed, max_confirm_height)
+                (all_confirmed, max_confirm_height)
             };
 
-            funding_observed |= all_observed;
             if all_confirmed {
                 log::info!(
                     "All transactions confirmed (latest at height {})",
@@ -942,7 +913,7 @@ impl Taker {
             log::info!("Next sync in {} secs", total_sleep);
 
             // Sleep in one-second increments to preserve prompt breach checks
-            // and keepalive delivery without retaining the wallet read guard.
+            // without retaining the wallet read guard.
             for _ in 0..total_sleep {
                 if self
                     .breach_detector
@@ -950,30 +921,6 @@ impl Taker {
                     .is_some_and(|detector| detector.is_breached())
                 {
                     return Err(TakerError::ContractsBroadcasted(vec![]));
-                }
-
-                if !funding_observed {
-                    let wallet = self.read_wallet()?;
-                    funding_observed = funding_txids.iter().all(|txid| {
-                        wallet
-                            .blockchain
-                            .get_raw_transaction_info(txid, None)
-                            .is_ok()
-                    });
-                }
-
-                if funding_observed && last_keepalive.elapsed() >= FUNDING_KEEPALIVE_INTERVAL {
-                    let keepalive =
-                        TakerToMakerMessage::WaitingFundingConfirmation(swap_id.to_string());
-                    for (maker_index, stream) in &mut streams {
-                        if let Err(error) = send_message(stream, &keepalive) {
-                            return Err(TakerError::General(format!(
-                                "Maker {} closed keepalive connection during funding wait: {:?}",
-                                maker_index, error
-                            )));
-                        }
-                    }
-                    last_keepalive = Instant::now();
                 }
 
                 std::thread::sleep(Duration::from_secs(1));
@@ -1096,13 +1043,13 @@ impl Taker {
 
         // Bitcoin Core still reports an output spent only in the mempool as live, so the
         // maker sees the replayed outpoint as spent only once this contract tx is mined.
-        let deadline = Instant::now() + Duration::from_secs(120);
+        let deadline = std::time::Instant::now() + Duration::from_secs(120);
         while wallet
             .blockchain
             .get_tx_out(&funding_outpoint.txid, funding_outpoint.vout, Some(false))?
             .is_some()
         {
-            if Instant::now() > deadline {
+            if std::time::Instant::now() > deadline {
                 return Err(TakerError::General(
                     "Funding outpoint was not spent on-chain in time".to_string(),
                 ));

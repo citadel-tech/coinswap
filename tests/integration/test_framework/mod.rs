@@ -432,6 +432,13 @@ pub trait TestBackend {
         zmq_addr: &str,
         ensure_electrum_url: &mut dyn FnMut() -> String,
     ) -> BackendConfig;
+
+    /// Block cadence for the background miner: blocks per tick and tick interval.
+    /// Protocol steps take far longer over Tor than clearnet, so a backend can
+    /// slow the miner to keep block-denominated timelocks ahead of wall-clock delays.
+    fn block_cadence() -> (u64, Duration) {
+        (BLOCKS_PER_TICK, BLOCK_TICK_INTERVAL)
+    }
 }
 
 /// Marker selecting the Bitcoin Core backend in tests.
@@ -502,6 +509,12 @@ impl TestBackend for ElectrumBackend {
 }
 
 impl TestBackend for TorElectrumBackend {
+    /// ~0.67 blocks/s instead of ~1.67: the 150-block refund locktime base must
+    /// outlast Tor-paced setup plus recovery, which the default cadence does not allow.
+    fn block_cadence() -> (u64, Duration) {
+        (2, BLOCK_TICK_INTERVAL)
+    }
+
     fn make_backend_config(
         _rpc_config: &CoreRpcConfig,
         _zmq_addr: &str,
@@ -607,6 +620,14 @@ const BLOCKS_PER_TICK: u64 = 5;
 /// this yields ~1.67 blocks/s, slow enough that block-denominated timelocks
 /// outlast the wall-clock recovery delays exercised by the abort tests.
 const BLOCK_TICK_INTERVAL: Duration = Duration::from_secs(3);
+
+/// How long abort tests must sleep for makers to detect a drop and for the
+/// outer-hop timelock (225 blocks) to mature, at backend `B`'s block cadence.
+pub(crate) fn timelock_recovery_wait<B: TestBackend>() -> Duration {
+    let (per_tick, tick) = B::block_cadence();
+    // 10s idle timeout + 225 blocks + scheduling margin.
+    Duration::from_secs(175) + tick * (225u64.div_ceil(per_tick)) as u32
+}
 
 /// How far a golden taproot balance may sit from the live value.
 ///
@@ -786,12 +807,13 @@ impl TestFramework {
             block_gen_paused: AtomicBool::new(false),
             nostr_relay: Mutex::new(Some(nostr_relay)),
         });
+        let (blocks_per_tick, block_tick_interval) = B::block_cadence();
         log::info!(
-            "⛏️ Spawning block generation thread ({BLOCKS_PER_TICK} blocks / {BLOCK_TICK_INTERVAL:?})"
+            "⛏️ Spawning block generation thread ({blocks_per_tick} blocks / {block_tick_interval:?})"
         );
         let tf_weak = Arc::downgrade(&framework);
         let generate_blocks_handle = thread::spawn(move || loop {
-            thread::sleep(BLOCK_TICK_INTERVAL);
+            thread::sleep(block_tick_interval);
 
             let Some(tf) = tf_weak.upgrade() else {
                 log::info!("🔚 Test framework dropped, ending block generation thread");
@@ -803,7 +825,7 @@ impl TestFramework {
                 return;
             }
             if !tf.block_gen_paused.load(Relaxed) {
-                generate_blocks(&tf.bitcoind, BLOCKS_PER_TICK);
+                generate_blocks(&tf.bitcoind, blocks_per_tick);
                 if let Some(elec) = tf.electrsd.as_ref() {
                     let _ = elec.trigger();
                 }

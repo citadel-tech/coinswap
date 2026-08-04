@@ -75,9 +75,11 @@ impl WatchService {
         })
     }
 
-    /// Blocks until the next watcher event arrives.
+    /// Waits for the next watcher event, returning `None` after a heartbeat
+    /// interval with no event. Bounded so callers re-check their own shutdown
+    /// flags even when the watcher is wedged and never answers.
     pub fn wait_for_event(&self) -> Option<WatcherEvent> {
-        self.rx.recv().ok()
+        self.rx.recv_timeout(crate::utill::HEART_BEAT_INTERVAL).ok()
     }
 
     /// Signals the watcher to shut down gracefully.

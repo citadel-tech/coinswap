@@ -30,9 +30,19 @@ use super::{
 #[cfg(not(feature = "integration-test"))]
 pub const IDLE_CONNECTION_TIMEOUT: Duration = Duration::from_secs(900);
 
-/// Idle connection timeout (testing).
+/// Idle connection timeout (testing). Must sit above a single slow electrum
+/// call (~10s over Tor) since keepalives can only land between RPCs; the slow
+/// test miner keeps the refund locktime margin regardless of wall clock.
 #[cfg(feature = "integration-test")]
-pub const IDLE_CONNECTION_TIMEOUT: Duration = Duration::from_secs(60);
+pub const IDLE_CONNECTION_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Socket read timeout for swap connections, kept separate from
+/// `IDLE_CONNECTION_TIMEOUT`. Sized for the quiet phases of a healthy swap —
+/// contract confirmation waits are block-bound, not message-bound.
+#[cfg(not(feature = "integration-test"))]
+const CONNECTION_READ_TIMEOUT: Duration = Duration::from_secs(1800);
+#[cfg(feature = "integration-test")]
+const CONNECTION_READ_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Fidelity bond update interval (testing): 30 seconds.
 #[cfg(feature = "integration-test")]
@@ -301,7 +311,7 @@ fn spawn_nostr_broadcast_thread(
 fn handle_connection(maker: Arc<MakerServer>, stream: TcpStream) -> Result<(), MakerError> {
     stream.set_nonblocking(false).map_err(MakerError::IO)?;
     stream
-        .set_read_timeout(Some(IDLE_CONNECTION_TIMEOUT))
+        .set_read_timeout(Some(CONNECTION_READ_TIMEOUT))
         .map_err(MakerError::IO)?;
 
     let mut state = ConnectionState::default();
@@ -329,6 +339,12 @@ fn handle_connection(maker: Arc<MakerServer>, stream: TcpStream) -> Result<(), M
         let message = match read_message(&stream) {
             Ok(msg) => msg,
             Err(e) => {
+                // A read timeout is only a wakeup: keepalives arrive on separate
+                // connections and refresh the shared swap activity. Break only
+                // when the swap has gone quiet everywhere, not just this socket.
+                if is_read_timeout(&e) && !swap_is_quiet(&maker, &state) {
+                    continue;
+                }
                 log::debug!(
                     "[{}] Read error (may be normal disconnect): {:?}",
                     maker.config.network_port,
@@ -352,6 +368,11 @@ fn handle_connection(maker: Arc<MakerServer>, stream: TcpStream) -> Result<(), M
                 break;
             }
         };
+
+        // Handling can block for minutes on contract confirmation waits.
+        // Count the work itself as activity, or the loop-top idle check kills
+        // the connection right after a long productive call.
+        state.touch();
 
         if let Some(response) = response {
             log::debug!(
@@ -435,6 +456,24 @@ fn handle_connection(maker: Arc<MakerServer>, stream: TcpStream) -> Result<(), M
     );
 
     Ok(())
+}
+
+/// True when the error is the socket read timeout firing, not a real IO failure.
+fn is_read_timeout(e: &MakerError) -> bool {
+    matches!(e, MakerError::IO(io) if io.kind() == ErrorKind::WouldBlock)
+}
+
+/// A swap is quiet when neither this connection nor any keepalive connection
+/// has shown activity within the idle timeout.
+fn swap_is_quiet(maker: &Arc<MakerServer>, state: &ConnectionState) -> bool {
+    let timeout = IDLE_CONNECTION_TIMEOUT.as_secs();
+    match state.swap_id {
+        Some(ref id) => match maker.get_connection_state(id) {
+            Ok(Some(stored)) => stored.is_timed_out(timeout),
+            _ => state.is_timed_out(timeout),
+        },
+        None => state.is_timed_out(timeout),
+    }
 }
 
 /// Background thread that checks for idle swap states and spawns recovery.

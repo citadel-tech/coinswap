@@ -80,9 +80,17 @@ pub enum ConnectionType {
 /// Timeout for connecting to makers.
 pub const CONNECT_TIMEOUT_SECS: u64 = 30;
 
+/// How long the taker waits for a maker's response. A maker can take minutes
+/// to answer contract data — it waits for our contracts to confirm first, and
+/// that wait is block-bound, not message-bound.
+#[cfg(not(feature = "integration-test"))]
+const MAKER_RESPONSE_TIMEOUT_SECS: u64 = 1800;
+#[cfg(feature = "integration-test")]
+const MAKER_RESPONSE_TIMEOUT_SECS: u64 = 60;
+
 /// Keep active funding waits comfortably below the maker's idle timeout.
 #[cfg(feature = "integration-test")]
-pub(crate) const FUNDING_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(10);
+pub(crate) const FUNDING_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(5);
 #[cfg(not(feature = "integration-test"))]
 pub(crate) const FUNDING_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(60);
 
@@ -117,11 +125,12 @@ const FINALIZE_RETRY_DELAY: Duration = Duration::from_secs(5);
 /// Maximum number of blocks between consecutive hop confirmations.
 /// If a maker's funding confirms more than this many blocks after the previous
 /// hop, the relative timelock staggering may be compromised (legacy CSV only).
-/// In integration tests, blocks are mined in rapid batches so the gap is larger.
+/// In integration tests, blocks are mined in rapid batches so the gap is larger;
+/// over Tor a single hop step takes ~90s, which is ~60 blocks at the slow cadence.
 #[cfg(not(feature = "integration-test"))]
 pub(crate) const CONFIRMATION_HEIGHT_TOLERANCE: u32 = 6;
 #[cfg(feature = "integration-test")]
-pub(crate) const CONFIRMATION_HEIGHT_TOLERANCE: u32 = 50;
+pub(crate) const CONFIRMATION_HEIGHT_TOLERANCE: u32 = 150;
 
 /// Taker configuration.
 #[derive(Debug, Clone)]
@@ -1793,12 +1802,50 @@ impl Taker {
             }
         };
 
+        // Reads can block for minutes: a maker answers contract data only after
+        // our contracts confirm, and that wait is block-bound, not message-bound.
         socket
-            .set_read_timeout(Some(timeout))
+            .set_read_timeout(Some(Duration::from_secs(MAKER_RESPONSE_TIMEOUT_SECS)))
             .and_then(|_| socket.set_write_timeout(Some(timeout)))
             .map_err(|e| TakerError::General(format!("Failed to set socket timeout: {}", e)))?;
 
         Ok(socket)
+    }
+
+    /// Connect to every maker in the route and start the heartbeat that keeps
+    /// their idle timers warm while we negotiate each hop. Connection failures
+    /// are logged and skipped — the protocol's own reads report a dead maker.
+    pub(crate) fn start_route_heartbeat(
+        &self,
+        swap_id: &str,
+    ) -> Option<super::background_services::RouteHeartbeat> {
+        let addresses: Vec<String> = self
+            .swap_state()
+            .ok()?
+            .makers
+            .iter()
+            .map(|maker| maker.address.to_string())
+            .collect();
+        let mut streams = Vec::with_capacity(addresses.len());
+        for address in addresses {
+            match self.net_connect(&address) {
+                Ok(mut stream) => {
+                    if let Err(e) = self.net_handshake(&mut stream) {
+                        log::warn!("route heartbeat: handshake with {address} failed: {e:?}");
+                        continue;
+                    }
+                    streams.push(stream);
+                }
+                Err(e) => log::warn!("route heartbeat: connect to {address} failed: {e:?}"),
+            }
+        }
+        match super::background_services::RouteHeartbeat::start(swap_id, streams) {
+            Ok(heartbeat) => Some(heartbeat),
+            Err(e) => {
+                log::warn!("route heartbeat failed to start: {e:?}");
+                None
+            }
+        }
     }
 
     /// Finalize the swap by exchanging private keys with all makers.

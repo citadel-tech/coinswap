@@ -508,3 +508,48 @@ impl Drop for BreachDetector {
         }
     }
 }
+
+/// Heartbeat that pings every maker in the route for the life of a swap.
+///
+/// The maker's idle timer only sees messages; while the taker negotiates one
+/// hop, the other makers hear nothing and can read a live swap as dropped.
+/// Send failures are ignored — a dead maker fails the protocol's own reads
+/// soon enough, and the heartbeat must not become a failure path of its own.
+pub(crate) struct RouteHeartbeat {
+    stop: Arc<AtomicBool>,
+}
+
+impl RouteHeartbeat {
+    /// Spawn the heartbeat thread over pre-connected, handshaked streams.
+    pub(crate) fn start(swap_id: &str, streams: Vec<std::net::TcpStream>) -> std::io::Result<Self> {
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_thread = stop.clone();
+        let keepalive =
+            crate::protocol::common_messages::TakerToMakerMessage::WaitingFundingConfirmation(
+                swap_id.to_string(),
+            );
+        // The handle is dropped on purpose: joining on Drop could stall the
+        // caller for a whole write timeout on a dead maker. The thread exits
+        // after one cycle once `stop` is set.
+        thread::Builder::new()
+            .name("Route heartbeat".to_string())
+            .spawn(move || {
+                let mut streams = streams;
+                while !stop_thread.load(Relaxed) {
+                    for stream in streams.iter_mut() {
+                        let _ = crate::utill::send_message(stream, &keepalive);
+                    }
+                    thread::sleep(super::api::FUNDING_KEEPALIVE_INTERVAL);
+                }
+            })?;
+        Ok(Self { stop })
+    }
+}
+
+impl Drop for RouteHeartbeat {
+    fn drop(&mut self) {
+        // No join: a send blocked on a dead maker would stall the caller for
+        // the whole write timeout. The thread exits after one cycle on its own.
+        self.stop.store(true, Relaxed);
+    }
+}

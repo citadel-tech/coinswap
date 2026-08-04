@@ -1281,6 +1281,7 @@ impl MakerTrait for MakerServer {
             state.reserve_utxo = s.reserve_utxo.clone();
             state.swap_start_time = s.swap_start_time;
             state.refund_locktime_offset = s.refund_locktime_offset;
+            state.last_activity = s.last_activity;
             state
         }))
     }
