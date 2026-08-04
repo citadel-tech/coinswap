@@ -99,9 +99,9 @@ impl WalletStore {
         };
 
         std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;
-        // write: overwrites existing file.
-        // create: creates new file if doesn't exist.
-        File::create(path)?;
+        // Exclusive create: fails with `AlreadyExists` instead of truncating a
+        // wallet that appeared since the caller checked the path.
+        File::create_new(path)?;
 
         store.write_to_disk(path, store_enc_material)?;
 
