@@ -20,7 +20,8 @@ use bitcoin::{
     secp256k1,
     secp256k1::{Keypair, Secp256k1, SecretKey},
     sighash::{EcdsaSighashType, Prevouts, SighashCache, TapSighashType},
-    Address, Amount, OutPoint, PublicKey, Script, ScriptBuf, Transaction, TxOut, Txid, Weight,
+    Address, Amount, Network, OutPoint, PublicKey, Script, ScriptBuf, Transaction, TxOut, Txid,
+    Weight,
 };
 use bitcoind::bitcoincore_rpc::{bitcoincore_rpc_json::ListUnspentResultEntry, Client, RpcApi};
 use serde::{Deserialize, Serialize};
@@ -61,8 +62,18 @@ const LEGACY_TIMELOCK_VSIZE: u64 = 142;
 /// ≈138 + 2 (growing block-height)
 const TAPROOT_TIMELOCK_VSIZE: u64 = 140;
 
+/// A BIP39 seed phrase for one-time display.No `Debug`/`Display`;
+/// [`SecretMnemonic::words`] is the only reader.
+pub struct SecretMnemonic(Mnemonic);
+
+impl SecretMnemonic {
+    /// Callers must not log or persist the result.
+    pub fn words(&self) -> String {
+        self.0.to_string()
+    }
+}
+
 /// Represents a Bitcoin wallet with associated functionality and data.
-#[derive(Debug)]
 pub struct Wallet {
     pub(crate) rpc: Client,
     pub(crate) wallet_file_path: PathBuf,
@@ -71,7 +82,11 @@ pub struct Wallet {
     /// If present, wallet data will be encrypted/decrypted using AES-GCM.
     /// The original passphrase is never stored—only the derived key is kept in memory.
     pub(crate) store_enc_material: Option<KeyMaterial>,
+    /// Transient: seed phrase of a wallet created by
+    /// [`Wallet::init`]. Read once via [`Wallet::take_new_mnemonic`].
+    pub(super) new_mnemonic: Option<SecretMnemonic>,
 }
+
 /// Compares two wallets for cryptographic equivalence.
 ///
 /// This comparison checks fields relevant to the cryptographic and functional
@@ -317,11 +332,8 @@ impl Wallet {
         let network = rpc.get_blockchain_info()?.chain;
 
         // Generate Master key
-        let master_key = {
-            let mnemonic = Mnemonic::generate(12)?;
-            let seed = mnemonic.to_entropy();
-            Xpriv::new_master(network, &seed)?
-        };
+        let mnemonic = Mnemonic::generate(12)?;
+        let master_key = Self::master_key_from_mnemonic(&mnemonic, network)?;
 
         // Initialise wallet
         let file_name = path
@@ -356,7 +368,21 @@ impl Wallet {
             wallet_file_path: path.to_path_buf(),
             store,
             store_enc_material,
+            new_mnemonic: Some(SecretMnemonic(mnemonic)),
         })
+    }
+
+    /// BIP39 seed to BIP32 master key, without the optional BIP39 passphrase
+    pub(super) fn master_key_from_mnemonic(
+        mnemonic: &Mnemonic,
+        network: Network,
+    ) -> Result<Xpriv, WalletError> {
+        Ok(Xpriv::new_master(network, &mnemonic.to_seed(""))?)
+    }
+
+    /// `Some` at most once; always `None` for loaded or restored wallets.
+    pub fn take_new_mnemonic(&mut self) -> Option<SecretMnemonic> {
+        self.new_mnemonic.take()
     }
     /// Get the wallet name
     pub fn get_name(&self) -> &str {
@@ -420,6 +446,7 @@ impl Wallet {
             wallet_file_path: path.to_path_buf(),
             store,
             store_enc_material,
+            new_mnemonic: None,
         })
     }
 
@@ -2812,7 +2839,27 @@ mod prevout_contract_tests {
             wallet_file_path: path.to_path_buf(),
             store,
             store_enc_material: None,
+            new_mnemonic: None,
         }
+    }
+
+    #[test]
+    fn new_mnemonic_is_yielded_once_then_dropped() {
+        const TEST_PHRASE: &str = "abandon abandon abandon abandon abandon abandon \
+                                   abandon abandon abandon abandon abandon about";
+
+        let temp_dir = tempdir().unwrap();
+        let mut wallet = test_wallet(&temp_dir.path().join("wallet.cbor"));
+        wallet.new_mnemonic = Some(SecretMnemonic(Mnemonic::parse(TEST_PHRASE).unwrap()));
+
+        assert_eq!(
+            wallet.take_new_mnemonic().map(|m| m.words()).as_deref(),
+            Some(TEST_PHRASE)
+        );
+        assert!(
+            wallet.take_new_mnemonic().is_none(),
+            "the phrase must be dropped from the wallet after the first take"
+        );
     }
 
     #[test]

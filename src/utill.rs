@@ -42,7 +42,7 @@ static LOGGER: OnceLock<()> = OnceLock::new();
 use crate::{
     error::NetError,
     protocol::{contract::derive_maker_pubkey_and_nonce, error::ProtocolError},
-    wallet::{UTXOSpendInfo, WalletError},
+    wallet::{SecretMnemonic, UTXOSpendInfo, WalletError},
 };
 
 const INPUT_CHARSET: &str =
@@ -637,6 +637,19 @@ pub fn prompt_password(message: String) -> io::Result<String> {
 
     println!(); // move to next line after input
     Ok(password.trim_end().to_string())
+}
+
+/// Writes a new wallet's seed phrase to stdout, shown once at wallet creation.
+/// Returns write errors instead of panicking like `println!`.
+pub fn print_new_wallet_seed(mnemonic: &SecretMnemonic) -> io::Result<()> {
+    let mut out = io::stdout().lock();
+    writeln!(out, "\n========== New Wallet Seed Phrase ==========")?;
+    writeln!(out, "{}", mnemonic.words())?;
+    writeln!(
+        out,
+        "\nWrite these words down and store them offline. They will not be shown again."
+    )?;
+    out.flush()
 }
 
 #[cfg(not(feature = "integration-test"))]

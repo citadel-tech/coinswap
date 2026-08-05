@@ -107,7 +107,10 @@ fn plainwallet_plainbackup_plainrestore() {
     let restored_wallet =
         Wallet::restore(&backup, &restored_wallet_file, &rpc_config, None).unwrap();
 
-    assert_eq!(wallet, restored_wallet); // only compares .store!
+    assert!(
+        wallet == restored_wallet, // only compares .store!
+        "restored wallet does not match the original"
+    );
 
     cleanup(&mut bitcoind, &root_dir);
 
@@ -149,7 +152,10 @@ fn encwallet_encbackup_encrestore() {
     let restored_wallet =
         Wallet::restore(&backup, &restored_wallet_file, &rpc_config, km.clone()).unwrap();
 
-    assert_eq!(wallet, restored_wallet); // only compares .store!
+    assert!(
+        wallet == restored_wallet, // only compares .store!
+        "restored wallet does not match the original"
+    );
 
     cleanup(&mut bitcoind, &root_dir);
 }

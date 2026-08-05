@@ -7,7 +7,7 @@ use coinswap::{
         error::TakerError, format_state, MakerOfferCandidate, MakerState, SwapParams, Taker,
         TakerInitConfig,
     },
-    utill::{parse_proxy_auth, setup_taker_logger, UTXO},
+    utill::{parse_proxy_auth, print_new_wallet_seed, setup_taker_logger, UTXO},
     wallet::{AddressType, RPCConfig, Wallet},
 };
 use log::LevelFilter;
@@ -329,6 +329,16 @@ fn main() -> Result<(), TakerError> {
     };
 
     let mut taker = Taker::init(config)?;
+
+    // Display and consume the mnemonic phrase. On failure, create a new wallet to get a new phrase.
+    if let Some(mnemonic) = taker.get_wallet().write().unwrap().take_new_mnemonic() {
+        print_new_wallet_seed(&mnemonic).inspect_err(|e| {
+            log::error!(
+                "Failed to display new wallet seed phrase: {e}. \
+                 Delete the wallet and re-create it to get a new phrase."
+            );
+        })?;
+    }
 
     // Sync wallet after initialization
     taker.get_wallet().write().unwrap().sync_and_save()?;
