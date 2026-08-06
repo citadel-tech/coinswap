@@ -382,6 +382,24 @@ impl Taker {
                         ));
                     }
 
+                    // The number of contracts this maker builds must equal the outgoing
+                    // split the taker agreed for this hop (tx_counts[i + 1]). Rejecting a
+                    // wrong count here — before the taker signs anything — is what makes
+                    // per-hop splitting safe: a maker that over- or under-splits aborts the
+                    // swap instead of silently reshaping the route. Because maker i's
+                    // outgoing count is maker i+1's incoming count by construction of
+                    // tx_counts, this also chain-checks consecutive hops.
+                    let expected_outgoing =
+                        self.swap_state()?.params.resolved_tx_counts()[i + 1] as usize;
+                    if maker_contract.contract_txs.len() != expected_outgoing {
+                        return Err(TakerError::General(format!(
+                            "Maker {} returned {} contract txs but the agreed outgoing split for this hop is {}",
+                            i,
+                            maker_contract.contract_txs.len(),
+                            expected_outgoing
+                        )));
+                    }
+
                     // Verify contract data before creating swapcoins
                     let expected_locktime = self.swap_state()?.makers[i].negotiated_timelock;
                     let min_expected = self.min_expected_amount_for_hop(i);

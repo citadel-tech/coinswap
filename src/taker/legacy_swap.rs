@@ -140,7 +140,9 @@ impl Taker {
         let swap = self.swap_state()?;
         let swap_id = swap.id.clone();
         let maker_count = swap.makers.len();
-        let tx_count = swap.params.tx_count;
+        // Legacy uses a single uniform split count; every hop mirrors it. Read index 0
+        // of the resolved per-hop counts (all entries are equal on the Legacy path).
+        let tx_count = swap.params.resolved_tx_counts()[0];
 
         let mut prev_senders_info: Option<Vec<SenderContractTxInfo>> = None;
         // Taker's own keys for the last hop (set during last iteration)

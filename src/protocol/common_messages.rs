@@ -79,6 +79,16 @@ pub struct Offer {
     pub fidelity: FidelityProof,
     /// Chain code for deterministic derivation of swap addresses from the tweakable point.
     pub tweak_chain_code: ChainCode,
+    /// Maximum number of outgoing contract splits this maker will build for a single
+    /// hop (Taproot per-hop splitting).
+    ///
+    /// `None` means the maker predates the per-hop-splitting feature. A taker that
+    /// wants uneven splits must route those hops around such makers (or downgrade the
+    /// whole route to uniform counts); it must never send an `outgoing_tx_count` other
+    /// than the incoming count to a `None` maker, since an old maker silently mirrors
+    /// its incoming count regardless.
+    #[serde(default)]
+    pub max_tx_splits: Option<u32>,
 }
 
 /// Swap details from Taker to Maker.
@@ -90,8 +100,20 @@ pub struct SwapDetails {
     pub protocol_version: ProtocolVersion,
     /// Amount to swap in satoshis.
     pub amount: Amount,
-    /// Number of contract transactions.
+    /// Number of contract transactions the taker funds *into this maker* (this hop's
+    /// incoming count). Kept for backward compatibility; a maker that does not read
+    /// `outgoing_tx_count` mirrors this count on its outgoing side.
     pub tx_count: u32,
+    /// Number of outgoing contracts the taker is asking this maker to build for this
+    /// hop (Taproot per-hop splitting).
+    ///
+    /// `None` (the wire default) preserves legacy behavior: the maker mirrors its
+    /// incoming count. Old makers ignore this unknown field entirely, and old takers
+    /// never send it, so the field's presence is what activates per-hop splitting and
+    /// requires no protocol version bump. The taker only sends a value other than the
+    /// incoming count to makers that advertised `max_tx_splits`.
+    #[serde(default)]
+    pub outgoing_tx_count: Option<u32>,
     /// Timelock value.
     /// - Legacy: relative block count (CSV).
     /// - Taproot: absolute block height (CLTV).

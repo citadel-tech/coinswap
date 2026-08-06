@@ -28,4 +28,6 @@ pub use report::{
 };
 pub use rpc::RPCConfig;
 pub use spend::Destination;
+pub(crate) use split_utxos::vary_amounts;
+pub use split_utxos::MAX_SPLITS;
 pub use storage::AddressType;

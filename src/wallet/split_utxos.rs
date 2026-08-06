@@ -13,12 +13,82 @@ struct FeeOptimizationResult {
 }
 
 const MIN_TARGET_CHUNKS: usize = 2;
+/// Maximum number of transaction splits allowed for a single hop, both for UTXO
+/// splitting and for per-hop coinswap contract fan-out. This is the global ceiling
+/// that bounds `outgoing_tx_count` regardless of what a maker advertises.
 pub const MAX_SPLITS: usize = 5;
 
 /// Minimum viable change chunk size (in sats).
 /// Change chunks below this will likely fall under dust after fee subtraction and randomized variance.
 /// Derived from: P2WPKH dust (294) + estimated max per-chunk fee (~300) = ~594, rounded up.
 const MIN_CHANGE_CHUNK: u64 = 600;
+
+/// Splits `total` into `num_chunks` amounts with multiplicative variation, keeping
+/// the sum exact. The variation makes chunk sizes look organic rather than a
+/// proportional copy of some upstream amount, which is what makes per-hop splitting
+/// useful for privacy.
+///
+/// reference :- (ε, δ)-indistinguishable Mixing for Cryptocurrencies
+/// <https://eprint.iacr.org/2021/1197.pdf>
+///
+/// Returns `vec![total]` (a single chunk) with a warning if `num_chunks` exceeds
+/// [`MAX_SPLITS`]. Callers that must reject oversized counts have to check the count
+/// themselves before calling — this function never errors.
+pub(crate) fn vary_amounts(total: u64, num_chunks: usize) -> Vec<u64> {
+    let mut rng = thread_rng();
+
+    match num_chunks {
+        0 => vec![],
+        1 => vec![total],
+        2..=MAX_SPLITS => {
+            let ratios = match num_chunks {
+                2 => vec![1.05, 0.95],
+                3 => vec![1.0, 1.05, 0.95],
+                4 => vec![1.1, 0.9, 1.05, 0.95],
+                5 => vec![1.0, 1.1, 0.9, 1.05, 0.95],
+                _ => unreachable!(), // This line is safe because of the match guard
+            };
+
+            // Apply randomness (±5% of each ratio)
+            let randomized: Vec<f64> = ratios
+                .iter()
+                .map(|&r| r * rng.gen_range(0.95..1.05))
+                .collect();
+
+            // Normalize to maintain total
+            let sum: f64 = randomized.iter().sum();
+            let normalized: Vec<u64> = randomized
+                .iter()
+                .map(|&r| (total as f64 * r / sum).round() as u64)
+                .collect();
+
+            // Fix rounding errors
+            let mut sum_check: i64 = normalized.iter().sum::<u64>() as i64;
+            let mut adjusted = normalized.clone();
+
+            while sum_check != total as i64 {
+                let idx = rng.gen_range(0..adjusted.len());
+                let delta = if sum_check < total as i64 { 1 } else { -1 };
+                adjusted[idx] = (adjusted[idx] as i64 + delta) as u64;
+                sum_check += delta;
+            }
+
+            // Random output ordering
+            for i in 0..adjusted.len() {
+                let swap_with = rng.gen_range(0..adjusted.len());
+                adjusted.swap(i, swap_with);
+            }
+
+            adjusted
+        }
+        _ => {
+            log::warn!(
+                "vary_amounts: num_chunks={num_chunks} exceeds maximum of {MAX_SPLITS}, returning single chunk",
+            );
+            vec![total]
+        }
+    }
+}
 
 impl Wallet {
     /// Performs simple fee optimization based on the number of selected inputs and target chunks, change chunks
@@ -51,66 +121,6 @@ impl Wallet {
         selected_inputs.len() as f64 * INPUT_W
             + target_chunks.len() as f64 * OUTPUT_TARGET_W
             + change_chunks.len() as f64 * OUTPUT_CHANGE_W
-    }
-
-    // Adds multiplicative variation for randomness while maintaining approximate ratio structure
-    // reference :- (ε, δ)-indistinguishable Mixing for Cryptocurrencies
-    // https://eprint.iacr.org/2021/1197.pdf
-    // Returns [total] with warning if num_chunks > 5
-    fn vary_amounts(&self, total: u64, num_chunks: usize) -> Vec<u64> {
-        let mut rng = thread_rng();
-
-        match num_chunks {
-            0 => vec![],
-            1 => vec![total],
-            2..=5 => {
-                let ratios = match num_chunks {
-                    2 => vec![1.05, 0.95],
-                    3 => vec![1.0, 1.05, 0.95],
-                    4 => vec![1.1, 0.9, 1.05, 0.95],
-                    5 => vec![1.0, 1.1, 0.9, 1.05, 0.95],
-                    _ => unreachable!(), // This line is safe because of the match guard
-                };
-
-                // Apply randomness (±5% of each ratio)
-                let randomized: Vec<f64> = ratios
-                    .iter()
-                    .map(|&r| r * rng.gen_range(0.95..1.05))
-                    .collect();
-
-                // Normalize to maintain total
-                let sum: f64 = randomized.iter().sum();
-                let normalized: Vec<u64> = randomized
-                    .iter()
-                    .map(|&r| (total as f64 * r / sum).round() as u64)
-                    .collect();
-
-                // Fix rounding errors
-                let mut sum_check: i64 = normalized.iter().sum::<u64>() as i64;
-                let mut adjusted = normalized.clone();
-
-                while sum_check != total as i64 {
-                    let idx = rng.gen_range(0..adjusted.len());
-                    let delta = if sum_check < total as i64 { 1 } else { -1 };
-                    adjusted[idx] = (adjusted[idx] as i64 + delta) as u64;
-                    sum_check += delta;
-                }
-
-                // Random output ordering
-                for i in 0..adjusted.len() {
-                    let swap_with = rng.gen_range(0..adjusted.len());
-                    adjusted.swap(i, swap_with);
-                }
-
-                adjusted
-            }
-            _ => {
-                log::warn!(
-                    "vary_amounts: num_chunks={num_chunks} exceeds maximum of 5, returning single chunk",
-                );
-                vec![total]
-            }
-        }
     }
 
     /// Tries to find the best way to split a target amount and change amount into chunks by iterating through
@@ -172,14 +182,11 @@ impl Wallet {
         // Else such utxo splitting may give way to a signature(tiny change/target utxo) for chain analysis.
         if resulting_splits.4 <= 0.15 {
             // Apply variability patterns
-            let varied_targets = self.vary_amounts(target, resulting_splits.0);
-            let varied_changes = self.vary_amounts(target_change, resulting_splits.1);
+            let varied_targets = vary_amounts(target, resulting_splits.0);
+            let varied_changes = vary_amounts(target_change, resulting_splits.1);
             (varied_targets, varied_changes)
         } else {
-            (
-                self.vary_amounts(target, MIN_TARGET_CHUNKS),
-                vec![target_change],
-            )
+            (vary_amounts(target, MIN_TARGET_CHUNKS), vec![target_change])
         }
     }
 
@@ -236,8 +243,8 @@ impl Wallet {
         if (target_lb..=target_ub).contains(&target_change) {
             return (
                 selected_inputs,
-                self.vary_amounts(target, 2),
-                self.vary_amounts(target_change, 2),
+                vary_amounts(target, 2),
+                vary_amounts(target_change, 2),
             );
         }
 
@@ -271,7 +278,7 @@ impl Wallet {
             //     {
             //         return (
             //             selected_inputs,
-            //             self.vary_amounts(target, 2),
+            //             vary_amounts(target, 2),
             //             vec![target_change + Amount::to_sat(delta_input_sum)],
             //         );
             //     }
@@ -281,8 +288,8 @@ impl Wallet {
             //     {
             //         return (
             //             selected_inputs,
-            //             self.vary_amounts(target, 2),
-            //             self.vary_amounts(target_change + delta_input_sum.to_sat(), 2),
+            //             vary_amounts(target, 2),
+            //             vary_amounts(target_change + delta_input_sum.to_sat(), 2),
             //         );
             //     } else {
             //         let outpoints = delta_inputs
@@ -336,8 +343,8 @@ impl Wallet {
             {
                 return (
                     [&selected_inputs[..], &delta_inputs[..]].concat(),
-                    self.vary_amounts(target, 2),
-                    self.vary_amounts(target_change + delta_input_sum.to_sat(), 2),
+                    vary_amounts(target, 2),
+                    vary_amounts(target_change + delta_input_sum.to_sat(), 2),
                 );
             }
             // If delta_cc is too massive, it will leave a trail output behind, so we go here instead
@@ -409,7 +416,7 @@ impl Wallet {
         // Fallback to simple transaction if no good split found
         (
             selected_inputs,
-            self.vary_amounts(target, MIN_TARGET_CHUNKS),
+            vary_amounts(target, MIN_TARGET_CHUNKS),
             vec![total_selected.to_sat() - target],
         )
     }
