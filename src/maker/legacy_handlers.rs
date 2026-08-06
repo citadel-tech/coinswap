@@ -7,7 +7,7 @@ use bitcoind::bitcoincore_rpc::{jsonrpc::error::Error as JsonRpcError, Error as 
 
 use super::{
     error::MakerError,
-    handlers::{ConnectionState, Maker, SwapPhase},
+    handlers::{incoming_within_swap_amount, ConnectionState, Maker, SwapPhase},
 };
 use crate::{
     protocol::{
@@ -86,6 +86,20 @@ fn process_req_contract_sigs_for_sender<M: Maker>(
         }
     }
 
+    // The contracts we sign here must use the locktime we agreed in SwapDetails;
+    // anything else is a taker rewriting the deal after we priced it.
+    if req.locktime as u32 != state.timelock {
+        log::error!(
+            "[{}] ReqContractSigsForSender locktime {} does not match negotiated timelock {}",
+            maker.network_port(),
+            req.locktime,
+            state.timelock
+        );
+        return Err(MakerError::General(
+            "Sender contract locktime does not match the negotiated timelock",
+        ));
+    }
+
     log::info!(
         "[{}] Processing ReqContractSigsForSender for swap {} with {} contracts",
         maker.network_port(),
@@ -161,6 +175,46 @@ fn process_proof_of_funding<M: Maker>(
         pof.id,
         pof.confirmed_funding_txes.len()
     );
+
+    // Contract count was agreed in SwapDetails and drives how many outgoing
+    // contracts we fund, so the taker must not change it here.
+    if pof.confirmed_funding_txes.len() != state.tx_count as usize {
+        log::error!(
+            "[{}] ProofOfFunding tx count {} does not match negotiated {}",
+            maker.network_port(),
+            pof.confirmed_funding_txes.len(),
+            state.tx_count
+        );
+        return Err(MakerError::General(
+            "ProofOfFunding tx count does not match the negotiated tx count",
+        ));
+    }
+
+    // Checked before the confirmation wait so a bad proof costs us no time.
+    // Amounts are peer-supplied, so sum them without panicking.
+    let mut declared_incoming = bitcoin::Amount::ZERO;
+    for funding_info in &pof.confirmed_funding_txes {
+        let funding_output_index = find_funding_output_index(funding_info)?;
+        let funding_output = funding_info
+            .funding_tx
+            .output
+            .get(funding_output_index as usize)
+            .ok_or(MakerError::General("Funding output not found"))?;
+        declared_incoming = declared_incoming
+            .checked_add(funding_output.value)
+            .ok_or(MakerError::General("Funding output amounts overflow"))?;
+    }
+    if !incoming_within_swap_amount(declared_incoming, state.swap_amount) {
+        log::error!(
+            "[{}] ProofOfFunding incoming amount {} exceeds negotiated swap amount {}",
+            maker.network_port(),
+            declared_incoming,
+            state.swap_amount
+        );
+        return Err(MakerError::General(
+            "ProofOfFunding incoming amount exceeds the negotiated swap amount",
+        ));
+    }
 
     let hashvalue = maker.verify_proof_of_funding(&pof)?;
     #[cfg(debug_assertions)]
@@ -240,11 +294,14 @@ fn process_proof_of_funding<M: Maker>(
     // if the taker broadcasts the maker's incoming contract tx.
     for incoming in &state.incoming_swapcoins {
         let txid = incoming.contract_tx.compute_txid();
-        for (vout, _) in incoming.contract_tx.output.iter().enumerate() {
-            maker.register_watch_outpoint(bitcoin::OutPoint {
-                txid,
-                vout: vout as u32,
-            });
+        for (vout, txout) in incoming.contract_tx.output.iter().enumerate() {
+            maker.register_watch_outpoint(
+                bitcoin::OutPoint {
+                    txid,
+                    vout: vout as u32,
+                },
+                txout.script_pubkey.clone(),
+            )?;
         }
     }
 
@@ -256,6 +313,10 @@ fn process_proof_of_funding<M: Maker>(
     );
 
     let swap_fee = maker.calculate_swap_fee(incoming_amount, pof.refund_locktime as u32);
+    // The fee stored at swap-details time was computed from the proposed
+    // amount; overwrite with the fee on the actual incoming amount so
+    // success reports match what was really earned.
+    state.service_fee_sats = swap_fee.to_sat();
     let mining_fee =
         Amount::from_sat(estimate_funding_tx_fee_sats() * pof.next_coinswap_info.len() as u64);
     let outgoing_amount = incoming_amount
@@ -301,7 +362,7 @@ fn process_proof_of_funding<M: Maker>(
         .collect();
 
     // Reserve UTXOs for this swap to prevent double-spending across concurrent swaps.
-    let excluded_utxos = maker.collect_excluded_utxos(&pof.id);
+    let excluded_utxos = maker.collect_excluded_utxos(&pof.id)?;
     if !excluded_utxos.is_empty() {
         log::info!(
             "[{}] Excluding {} UTXOs from other active swaps",
@@ -509,6 +570,22 @@ fn process_resp_contract_sigs_for_recvr_and_sender<M: Maker>(
         }
     }
 
+    // Arm the watches before anything is committed. Failing here aborts with
+    // nothing on-chain; failing after a broadcast would leave funding txs live
+    // while recovery still reads `funding_broadcast == false` and discards them.
+    for outgoing in &state.outgoing_swapcoins {
+        let contract_txid = outgoing.contract_tx.compute_txid();
+        for (vout, txout) in outgoing.contract_tx.output.iter().enumerate() {
+            maker.register_watch_outpoint(
+                bitcoin::OutPoint {
+                    txid: contract_txid,
+                    vout: vout as u32,
+                },
+                txout.script_pubkey.clone(),
+            )?;
+        }
+    }
+
     // Persist swapcoins (now carrying contract signatures) to the wallet
     // store BEFORE broadcasting funding txs. Without this, a crash after
     // broadcast leaves the wallet with no record of these swapcoins,
@@ -553,25 +630,28 @@ fn process_resp_contract_sigs_for_recvr_and_sender<M: Maker>(
                     resp.id,
                 );
             }
-            Err(e) => return Err(e),
+            Err(e) => {
+                // This captures the Electrum counterpart of the rebroadcast error.
+                // Electrum doesn't throw a reliable error. So we manually check if the transaction
+                // is already broadcasted. An error here means the backend connection is down.
+                let txid = funding_tx.compute_txid();
+                if maker.is_transaction_known(&txid) {
+                    log::info!(
+                        "[{}] Legacy funding tx {} for swap {} was already broadcast",
+                        maker.network_port(),
+                        txid,
+                        resp.id,
+                    );
+                } else {
+                    return Err(e);
+                }
+            }
         }
     }
 
     state.pending_funding_txes.clear();
     state.funding_broadcast = true;
     state.phase = SwapPhase::AwaitingPrivateKeyHandover;
-
-    for outgoing in &state.outgoing_swapcoins {
-        // Register outgoing contract output with watchtower EARLY so it can
-        // detect hashlock spends by the taker before recovery starts.
-        let contract_txid = outgoing.contract_tx.compute_txid();
-        for (vout, _) in outgoing.contract_tx.output.iter().enumerate() {
-            maker.register_watch_outpoint(bitcoin::OutPoint {
-                txid: contract_txid,
-                vout: vout as u32,
-            });
-        }
-    }
 
     maker.store_connection_state(&resp.id, state)?;
 
@@ -584,10 +664,18 @@ fn process_resp_contract_sigs_for_recvr_and_sender<M: Maker>(
                 maker.network_port()
             );
             for outgoing in &state.outgoing_swapcoins {
-                let _ = maker.broadcast_transaction(&outgoing.contract_tx);
+                // The raw contract_tx is unsigned; a broadcast only relays with
+                // both multisig sigs applied. Fail loudly — a silent reject
+                // makes breach tests pass on nothing.
+                let signed = outgoing
+                    .create_signed_contract_tx()
+                    .expect("test: contract sigs must be stored by now");
+                maker
+                    .broadcast_transaction(&signed)
+                    .expect("test: malicious contract broadcast must succeed");
             }
             // Remove stored state so taker can't reconnect and complete the swap
-            maker.remove_connection_state(&resp.id);
+            maker.remove_connection_state(&resp.id)?;
             return Err(MakerError::General("Test: broadcast contract after setup"));
         }
     }
@@ -787,6 +875,24 @@ fn process_legacy_handover<M: Maker>(
 
     // Generate and save maker success report
     emit_maker_success_report(maker, state, &handover.id);
+
+    #[cfg(feature = "integration-test")]
+    {
+        use super::handlers::MakerBehavior;
+        if maker.behavior() == MakerBehavior::CloseAfterSweep {
+            // Sweep here rather than letting the error skip the server loop's
+            // sweep block, or the preimage only reaches the chain 30s later via
+            // idle recovery and the behavior's name is a lie.
+            if let Err(e) = maker.sweep_incoming_swapcoins() {
+                log::error!("[{}] Test sweep failed: {e:?}", maker.network_port());
+            }
+            log::warn!(
+                "[{}] Test behavior: swept, now closing before handover",
+                maker.network_port()
+            );
+            return Err(MakerError::General("Test: closing after sweep"));
+        }
+    }
 
     log::info!(
         "[{}] Legacy swap {} completed successfully, returning {} private key(s)",

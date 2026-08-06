@@ -1,27 +1,28 @@
 //! Public watchtower service for sending commands to and receiving events from the watcher.
 
-use bitcoin::OutPoint;
-use crossbeam_channel::{unbounded, Receiver as CbReceiver};
+use bitcoin::{OutPoint, ScriptBuf};
+use crossbeam_channel::unbounded;
 use std::{
-    path::Path,
     sync::{
-        atomic::AtomicBool,
-        mpsc::{self, Sender as StdSender},
-        Arc,
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, SendError, Sender as StdSender},
+        Arc, Mutex,
     },
-    thread,
+    thread::{self, JoinHandle},
 };
 
 use crate::{
-    wallet::RPCConfig,
+    wallet::{AnyBlockchain, BackendConfig},
     watch_tower::{
         registry_storage::FileRegistry,
-        rest_backend::BitcoinRest,
         watcher::{Role, Watcher, WatcherCommand, WatcherEvent},
         watcher_error::WatcherError,
-        zmq_backend::ZmqBackend,
     },
 };
+
+/// Watcher thread handle, shared because [`WatchService`] is `Clone`.
+/// The `Option` is taken by whichever clone shuts down first.
+type WatcherHandle = Arc<Mutex<Option<JoinHandle<Result<(), WatcherError>>>>>;
 
 /// Marker type for the Maker role in the watchtower.
 pub struct MakerRole;
@@ -34,80 +35,130 @@ impl Role for MakerRole {
 #[derive(Clone)]
 pub struct WatchService {
     tx: StdSender<WatcherCommand>,
-    rx: CbReceiver<WatcherEvent>,
+    /// Watcher thread handle, joined on shutdown so its exit result is not lost.
+    handle: WatcherHandle,
+    /// Backend flag aborting in-flight Electrum retry backoffs on shutdown.
+    backend_shutdown: Option<Arc<AtomicBool>>,
+    /// Watcher's own flag, checked per iteration by its long scan loops.
+    watcher_shutdown: Arc<AtomicBool>,
 }
 
 impl WatchService {
-    /// Creates a new service from the given command sender and event receiver.
-    pub fn new(tx: StdSender<WatcherCommand>, rx: CbReceiver<WatcherEvent>) -> Self {
-        Self { tx, rx }
+    /// Creates a new service from the command sender, the watcher thread
+    /// handle, and the backend's shutdown flag (if any).
+    pub fn new(
+        tx: StdSender<WatcherCommand>,
+        handle: JoinHandle<Result<(), WatcherError>>,
+        backend_shutdown: Option<Arc<AtomicBool>>,
+        watcher_shutdown: Arc<AtomicBool>,
+    ) -> Self {
+        Self {
+            tx,
+            handle: Arc::new(Mutex::new(Some(handle))),
+            backend_shutdown,
+            watcher_shutdown,
+        }
     }
 
     /// Registers an outpoint to be monitored for future spends.
-    pub fn register_watch_request(&self, outpoint: OutPoint) {
-        let _ = self
-            .tx
-            .send(WatcherCommand::RegisterWatchRequest { outpoint });
+    /// Errs if the watcher thread is gone.
+    pub fn register_watch_request(
+        &self,
+        outpoint: OutPoint,
+        script_pubkey: ScriptBuf,
+    ) -> Result<(), SendError<WatcherCommand>> {
+        self.tx.send(WatcherCommand::RegisterWatchRequest {
+            outpoint,
+            script_pubkey,
+        })
     }
 
-    /// Queries whether a previously registered outpoint has been spent.
-    pub fn watch_request(&self, outpoint: OutPoint) {
-        let _ = self.tx.send(WatcherCommand::WatchRequest { outpoint });
+    /// Re-arms the watches for every live contract in the wallet. The registry
+    /// is memory-only, so a restart begins with nothing watched.
+    /// Errs if the watcher thread is gone.
+    pub fn rebuild_watches(
+        &self,
+        watches: Vec<(OutPoint, ScriptBuf)>,
+    ) -> Result<(), SendError<WatcherCommand>> {
+        self.tx.send(WatcherCommand::RebuildWatches { watches })
     }
 
-    /// Stops monitoring an outpoint by removing its watch entry from the registry.
-    pub fn unwatch(&self, outpoint: OutPoint) {
-        let _ = self.tx.send(WatcherCommand::Unwatch { outpoint });
+    /// Queries whether a previously registered outpoint has been spent and
+    /// waits for this query's own reply. The private channel is what stops
+    /// concurrent callers from consuming each other's answers.
+    /// `None` means the watcher did not answer within a heartbeat, so callers
+    /// keep re-checking their shutdown flags when it is wedged.
+    /// Errs if the watcher thread is gone.
+    pub fn watch_request(
+        &self,
+        outpoint: OutPoint,
+    ) -> Result<Option<WatcherEvent>, SendError<WatcherCommand>> {
+        let (reply_tx, reply_rx) = unbounded();
+        self.tx.send(WatcherCommand::WatchRequest {
+            outpoint,
+            reply: reply_tx,
+        })?;
+        Ok(reply_rx
+            .recv_timeout(crate::utill::HEART_BEAT_INTERVAL)
+            .ok())
     }
 
-    /// Attempts a non-blocking receive; returns `None` if no event is pending.
-    pub fn poll_event(&self) -> Option<WatcherEvent> {
-        self.rx.try_recv().ok()
+    /// Stops monitoring an outpoint by removing its watch entry from the
+    /// registry. The `scriptPubKey` lets the watcher drop the Electrum
+    /// subscription too without re-resolving it from the network.
+    /// Errs if the watcher thread is gone.
+    pub fn unwatch(
+        &self,
+        outpoint: OutPoint,
+        script_pubkey: ScriptBuf,
+    ) -> Result<(), SendError<WatcherCommand>> {
+        self.tx.send(WatcherCommand::Unwatch {
+            outpoint,
+            script_pubkey,
+        })
     }
 
-    /// Blocks until the next watcher event arrives.
-    pub fn wait_for_event(&self) -> Option<WatcherEvent> {
-        self.rx.recv().ok()
-    }
-
-    /// Signals the watcher to shut down gracefully.
+    /// Signals the watcher to shut down gracefully and joins its thread,
+    /// aborting any Electrum retry backoff it may be stuck in.
     pub fn shutdown(&self) {
         let _ = self.tx.send(WatcherCommand::Shutdown);
+        self.watcher_shutdown.store(true, Ordering::Relaxed);
+        if let Some(flag) = &self.backend_shutdown {
+            flag.store(true, Ordering::Relaxed);
+        }
+        let handle = self.handle.lock().ok().and_then(|mut h| h.take());
+        if let Some(handle) = handle {
+            log::info!("Watch service: joining watcher thread");
+            match handle.join() {
+                Ok(Ok(())) => log::info!("Watch service: watcher thread joined"),
+                Ok(Err(e)) => log::error!("watcher thread exited with error: {e:?}"),
+                Err(_) => log::error!("watcher thread panicked"),
+            }
+        }
     }
 }
 
 /// Starts the Maker Watch Service
-pub fn start_maker_watch_service(
-    zmq_addr: &str,
-    rpc_config: &RPCConfig,
-    data_dir: &Path,
-    network_port: u16,
-) -> Result<WatchService, WatcherError> {
-    // Backends
-    let backend = ZmqBackend::new(zmq_addr);
-    let rpc_backend = BitcoinRest::new(rpc_config.clone())?;
-    let blockchain_info = rpc_backend.get_blockchain_info()?;
-
-    // Registry
-    let file_registry = data_dir
-        .join(format!(".maker_{}_watcher", network_port))
-        .join(blockchain_info.chain.to_string());
-    let registry = FileRegistry::load(file_registry);
+pub fn start_maker_watch_service(backend: &BackendConfig) -> Result<WatchService, WatcherError> {
+    let blockchain = AnyBlockchain::from_config(&backend.for_watcher())?;
+    let backend_shutdown = blockchain.shutdown_flag();
+    let registry = FileRegistry::new();
 
     // Channels
     let (tx_requests, rx_requests) = mpsc::channel();
-    let (tx_events, rx_responses) = unbounded();
-
-    // Watcher
-    let rpc_config_watcher = rpc_config.clone();
     let mut watcher =
-        Watcher::<MakerRole>::new(backend, registry, rx_requests, tx_events, Vec::new(), None);
+        Watcher::<MakerRole>::new(blockchain, registry, rx_requests, Vec::new(), None);
+    let watcher_shutdown = watcher.shutdown_flag();
 
     // Makers don't run discovery, so pass an already-complete flag.
-    thread::Builder::new()
+    let handle = thread::Builder::new()
         .name("Watcher thread".to_string())
-        .spawn(move || watcher.run(rpc_config_watcher, Arc::new(AtomicBool::new(true))))
-        .expect("failed to spawn watcher thread");
+        .spawn(move || watcher.run(Arc::new(AtomicBool::new(true))))?;
 
-    Ok(WatchService::new(tx_requests, rx_responses))
+    Ok(WatchService::new(
+        tx_requests,
+        handle,
+        backend_shutdown,
+        watcher_shutdown,
+    ))
 }

@@ -3,7 +3,7 @@ use clap::Parser;
 use coinswap::{
     maker::{bind_port_retry, start_server, MakerError, MakerServer, MakerServerConfig},
     utill::{parse_proxy_auth, print_new_wallet_seed, setup_maker_logger},
-    wallet::RPCConfig,
+    wallet::{BackendConfig, CoreRpcConfig, ElectrumConfig},
 };
 use std::{path::PathBuf, sync::Arc};
 
@@ -28,6 +28,7 @@ struct Cli {
     #[clap(long, short = 'd')]
     data_directory: Option<PathBuf>,
     /// Bitcoin Core RPC network address.
+    /// Conflicts with `--electrum`.
     #[clap(
         name = "ADDRESS:PORT",
         long,
@@ -35,15 +36,11 @@ struct Cli {
         default_value = "127.0.0.1:38332"
     )]
     pub rpc: String,
-    /// Bitcoin Core ZMQ address:port value
-    #[clap(
-        name = "ZMQ",
-        long,
-        short = 'z',
-        default_value = "tcp://127.0.0.1:28332"
-    )]
-    pub zmq: String,
+    /// Bitcoin Core ZMQ address:port value. Defaults to the RPC host on port 28332.
+    #[clap(name = "ZMQ", long, short = 'z')]
+    pub zmq: Option<String>,
     /// Bitcoin Core RPC authentication string (username, password).
+    /// Conflicts with `--electrum`.
     #[clap(
         name = "USER:PASSWORD",
         short = 'a',
@@ -52,9 +49,23 @@ struct Cli {
         default_value = "user:password",
     )]
     pub auth: (String, String),
+    /// Electrum server URL (e.g. `tcp://localhost:50001`). When set, the wallet
+    /// is initialised against an Electrum backend instead of Bitcoin Core.
+    /// Mutually exclusive with the Bitcoin Core flags (--rpc/--zmq/--auth).
+    #[clap(
+        name = "ELECTRUM_URL",
+        long = "electrum",
+        conflicts_with_all = ["ADDRESS:PORT", "ZMQ", "USER:PASSWORD"]
+    )]
+    pub electrum_url: Option<String>,
+    /// Route the Electrum backend through the Tor SOCKS proxy on `socks_port`.
+    /// Works with an onion or a clearnet server; an onion URL needs it.
+    /// Peer-to-peer Tor is unaffected either way.
+    #[clap(long, requires = "ELECTRUM_URL")]
+    pub electrum_tor: bool,
     #[clap(long, short = 't')]
     pub tor_auth: Option<String>,
-    /// Optional wallet name. If the wallet exists, load the wallet, else create a new wallet with the given name. Default: maker-wallet
+    /// Optional wallet name. If the wallet exists, load the wallet, else create a new wallet with the given name. Default: maker
     #[clap(name = "WALLET", long, short = 'w')]
     pub(crate) wallet_name: Option<String>,
     /// Optional Password for the encryption of the wallet.
@@ -67,9 +78,10 @@ fn main() -> Result<(), MakerError> {
 
     setup_maker_logger(log::LevelFilter::Info, args.data_directory.clone());
 
-    let data_dir = args
-        .data_directory
-        .unwrap_or_else(coinswap::utill::get_maker_dir);
+    let data_dir = match args.data_directory {
+        Some(dir) => dir,
+        None => coinswap::utill::get_maker_dir()?,
+    };
 
     // Load static settings from config file (auto-creates defaults if missing)
     let config_path = data_dir.join("config.toml");
@@ -77,19 +89,34 @@ fn main() -> Result<(), MakerError> {
 
     // Override with CLI / runtime args
     config.data_dir = data_dir;
-    config.wallet_name = args
-        .wallet_name
-        .unwrap_or_else(|| "maker-wallet".to_string());
-    config.rpc_config = RPCConfig {
-        url: args.rpc,
-        auth: Auth::UserPass(args.auth.0, args.auth.1),
-        wallet_name: "random".to_string(), // updated during init
-    };
-    config.zmq_addr = args.zmq;
+    // "maker" predates this branch; changing it would strand an upgrading
+    // operator's wallet and fidelity bond.
+    let wallet_name = args.wallet_name.unwrap_or_else(|| "maker".to_string());
+    config.wallet_name = wallet_name.clone();
     config.password = args.password;
     if let Some(tor_auth) = args.tor_auth {
         config.tor_auth_password = tor_auth;
     }
+
+    // Set backend from CLI flags: --electrum takes precedence; otherwise Bitcoin Core.
+    config.backend = match args.electrum_url {
+        Some(url) => BackendConfig::Electrum(ElectrumConfig {
+            url,
+            socks5: args
+                .electrum_tor
+                .then(|| format!("127.0.0.1:{}", config.socks_port)),
+            ..Default::default()
+        }),
+        None => BackendConfig::CoreRpc(CoreRpcConfig {
+            zmq_addr: match args.zmq {
+                Some(addr) => addr,
+                None => CoreRpcConfig::default_zmq_addr(&args.rpc),
+            },
+            url: args.rpc,
+            auth: Auth::UserPass(args.auth.0, args.auth.1),
+            wallet_name,
+        }),
+    };
 
     // First run: discover available port and save to config
     const DEFAULT_NETWORK_PORT: u16 = 6102;

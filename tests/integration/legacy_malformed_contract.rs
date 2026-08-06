@@ -25,7 +25,7 @@ fn test_legacy_taker_rejects_malformed_maker_funding_output() {
     ];
 
     let (test_framework, mut takers, makers, block_generation_handle) =
-        TestFramework::init(makers_config_map, taker_behavior, maker_behaviors);
+        TestFramework::init::<BitcoindBackend>(makers_config_map, taker_behavior, maker_behaviors);
 
     let bitcoind = &test_framework.bitcoind;
     let taker = takers.get_mut(0).unwrap();
@@ -55,7 +55,12 @@ fn test_legacy_taker_rejects_malformed_maker_funding_output() {
 
     wait_for_makers_setup(&makers, 120);
     for maker in &makers {
-        maker.wallet.write().unwrap().sync_and_save().unwrap();
+        maker
+            .wallet
+            .write()
+            .unwrap()
+            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .unwrap();
     }
 
     let swap_params = SwapParams::new(ProtocolVersion::Legacy, Amount::from_sat(500_000), 2)

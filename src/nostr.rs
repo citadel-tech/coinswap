@@ -25,18 +25,23 @@ use tungstenite::{stream::MaybeTlsStream, Message};
 
 use crate::{
     nostr_coinswap::{coinswap_kind, connect_nostr_websocket, EXPIRATION_SECS},
+    wallet::{AnyBlockchain, Blockchain},
     watch_tower::{
         registry_storage::FileRegistry,
-        rest_backend::BitcoinRest,
         utils::{parse_fidelity_event, process_fidelity, SeenTxids},
         watcher_error::WatcherError,
     },
 };
 
+/// Max seconds an event's `created_at` may sit ahead of our clock. Covers
+/// clock skew only; anything further would poison the saved cursor.
+const MAX_FUTURE_SKEW_SECS: u64 = 300;
+
 // ## TODO: Instead of looping over relay's have a connection Pool.
 /// Runs the main discovery routine for maker's fidelity bonds by subscribing to network-specific Nostr events.
+/// Blocks until every relay session exits (normally at shutdown).
 pub fn run_discovery(
-    bitcoin_rpc: BitcoinRest,
+    blockchain: AnyBlockchain,
     network: Network,
     registry: FileRegistry,
     shutdown: Arc<AtomicBool>,
@@ -54,18 +59,19 @@ pub fn run_discovery(
 
     let seen_txid = Arc::new(Mutex::new(SeenTxids::new()));
     let registry = Arc::new(registry);
-    let bitcoin_rpc = Arc::new(bitcoin_rpc);
+    let blockchain = Arc::new(blockchain);
 
+    let mut sessions = Vec::with_capacity(relays.len());
     for relay in relays {
         let relay = relay.to_string();
         let shutdown = shutdown.clone();
         let registry = Arc::clone(&registry);
-        let bitcoin_rpc = Arc::clone(&bitcoin_rpc);
+        let blockchain = Arc::clone(&blockchain);
         let seen_txid = Arc::clone(&seen_txid);
         let initial_sync_complete = initial_sync_complete.clone();
         let nostr_tor_config = nostr_tor_config.clone();
 
-        std::thread::Builder::new()
+        let handle = std::thread::Builder::new()
             .name(format!("nostr-session-{}", relay))
             .spawn(move || {
                 run_nostr_session_for_relay(
@@ -73,13 +79,27 @@ pub fn run_discovery(
                     kind,
                     registry,
                     shutdown,
-                    bitcoin_rpc,
+                    blockchain,
                     &seen_txid,
                     &initial_sync_complete,
                     (nostr_tor_config.0, nostr_tor_config.1.as_str()),
                 );
             })?;
+        sessions.push(handle);
     }
+
+    // Joining here surfaces a panicked session to the watcher's join,
+    // instead of losing it in a detached thread.
+    log::info!(
+        "Nostr discovery: joining {} relay session(s)",
+        sessions.len()
+    );
+    for session in sessions {
+        if let Err(payload) = session.join() {
+            std::panic::resume_unwind(payload);
+        }
+    }
+    log::info!("Nostr discovery: all relay sessions joined");
 
     Ok(())
 }
@@ -92,7 +112,7 @@ fn run_nostr_session_for_relay(
     kind: Kind,
     registry: Arc<FileRegistry>,
     shutdown: Arc<AtomicBool>,
-    bitcoin_rpc: Arc<BitcoinRest>,
+    blockchain: Arc<AnyBlockchain>,
     seen_txid: &Arc<Mutex<SeenTxids>>,
     initial_sync_complete: &Arc<AtomicBool>,
     nostr_tor_config: (u16, &str),
@@ -105,7 +125,7 @@ fn run_nostr_session_for_relay(
             kind,
             registry.clone(),
             shutdown.clone(),
-            bitcoin_rpc.clone(),
+            blockchain.clone(),
             seen_txid,
             initial_sync_complete,
             nostr_tor_config,
@@ -133,14 +153,14 @@ fn connect_and_run_once(
     kind: Kind,
     registry: Arc<FileRegistry>,
     shutdown: Arc<AtomicBool>,
-    bitcoin_rpc: Arc<BitcoinRest>,
+    blockchain: Arc<AnyBlockchain>,
     seen_txid: &Arc<Mutex<SeenTxids>>,
     initial_sync_complete: &Arc<AtomicBool>,
     nostr_tor_config: (u16, &str),
 ) -> Result<(), WatcherError> {
     let mut socket = connect_nostr_websocket(relay_url, nostr_tor_config.0, nostr_tor_config.1)?;
 
-    let since = registry.load_nostr_cursor(relay_url).map(Timestamp::from);
+    let since = registry.load_nostr_cursor(relay_url)?.map(Timestamp::from);
 
     let mut filter = Filter::new().kind(kind);
     if let Some(since) = since {
@@ -171,7 +191,7 @@ fn connect_and_run_once(
         registry,
         socket,
         shutdown,
-        bitcoin_rpc,
+        blockchain,
         relay_url,
         kind,
         seen_txid,
@@ -185,7 +205,7 @@ fn read_event_loop(
     registry: Arc<FileRegistry>,
     mut socket: tungstenite::WebSocket<MaybeTlsStream<TcpStream>>,
     shutdown: Arc<AtomicBool>,
-    bitcoin_rpc: Arc<BitcoinRest>,
+    blockchain: Arc<AnyBlockchain>,
     relay_url: &str,
     kind: Kind,
     seen_txid: &Arc<Mutex<SeenTxids>>,
@@ -213,25 +233,15 @@ fn read_event_loop(
             Err(e) => return Err(e.into()),
         };
 
-        let text = match msg {
-            Message::Text(t) => t,
-            Message::Binary(b) => String::from_utf8(b.to_vec())?.into(),
-            _ => continue,
+        // Relays are untrusted; a corrupt frame is skipped, not fatal.
+        let Some(relay_msg) = decode_relay_frame(msg, relay_url) else {
+            continue;
         };
-
-        log::debug!(
-            "Nostr relay message received | relay={} | bytes={} | payload={}",
-            relay_url,
-            text.len(),
-            text
-        );
-
-        let relay_msg = RelayMessage::from_json(&text)?;
 
         let is_eose = handle_relay_message(
             registry.clone(),
             relay_msg,
-            bitcoin_rpc.clone(),
+            blockchain.clone(),
             relay_url,
             kind,
             seen_txid,
@@ -246,11 +256,49 @@ fn read_event_loop(
     Ok(())
 }
 
+/// Decodes one websocket frame into a relay message. `None` means the frame
+/// is unusable (non-text, bad UTF-8, bad JSON) and the session skips it.
+fn decode_relay_frame(msg: Message, relay_url: &str) -> Option<RelayMessage<'static>> {
+    let text = match msg {
+        Message::Text(t) => t,
+        Message::Binary(b) => match String::from_utf8(b.to_vec()) {
+            Ok(t) => t.into(),
+            Err(e) => {
+                log::warn!("Ignoring non-UTF8 relay frame | relay={relay_url} | error={e}");
+                return None;
+            }
+        },
+        _ => return None,
+    };
+
+    log::debug!(
+        "Nostr relay message received | relay={} | bytes={} | payload={}",
+        relay_url,
+        text.len(),
+        text
+    );
+
+    match RelayMessage::from_json(&text) {
+        Ok(msg) => Some(msg),
+        Err(e) => {
+            log::warn!("Ignoring malformed relay frame | relay={relay_url} | error={e}");
+            None
+        }
+    }
+}
+
+/// Cursor an event may advance the relay to, or `None` if it is dated past the
+/// skew we allow. The staleness check reads a far-future date as fresh, so
+/// without this a single poisoned timestamp blinds the relay forever.
+fn cursor_for(created_at: u64, now: u64) -> Option<u64> {
+    (created_at <= now.saturating_add(MAX_FUTURE_SKEW_SECS)).then_some(created_at.min(now))
+}
+
 /// Processes a single relay message. Returns `Ok(true)` when EOSE is received.
 fn handle_relay_message(
     registry: Arc<FileRegistry>,
     msg: RelayMessage,
-    bitcoin_rpc: Arc<BitcoinRest>,
+    blockchain: Arc<AnyBlockchain>,
     relay_url: &str,
     kind: Kind,
     seen_txid: &Arc<Mutex<SeenTxids>>,
@@ -272,11 +320,19 @@ fn handle_relay_message(
                 return Ok(false);
             }
 
-            if Timestamp::now()
-                .as_secs()
-                .saturating_sub(event.created_at.as_secs())
-                > EXPIRATION_SECS
-            {
+            let now = Timestamp::now().as_secs();
+
+            let Some(cursor) = cursor_for(event.created_at.as_secs(), now) else {
+                log::warn!(
+                    "Rejecting future-dated Nostr event | relay={} | event_id={} | created_at={}",
+                    relay_url,
+                    event.id,
+                    event.created_at
+                );
+                return Ok(false);
+            };
+
+            if now.saturating_sub(event.created_at.as_secs()) > EXPIRATION_SECS {
                 log::debug!(
                     "Skipping stale Nostr event | relay={} | event_id={} | created_at={} | max_age_hours={}",
                     relay_url,
@@ -306,28 +362,34 @@ fn handle_relay_message(
                 event.created_at
             );
 
-            // Check the seen-cache before any RPC work to avoid wasted
-            // `get_raw_tx` calls on duplicate events.
-            if !seen_txid.lock()?.insert(txid) {
+            // Claim the txid before any RPC work, so duplicate events and
+            // concurrent relay sessions don't repeat the fetch and validation.
+            if !seen_txid.lock()?.claim(txid) {
                 log::info!("Skipping already-seen txid {txid} via {relay_url}");
-                registry.save_nostr_cursor(relay_url, event.created_at.as_secs());
+                registry.save_nostr_cursor(relay_url, cursor)?;
                 return Ok(false);
             }
 
-            let tx = match bitcoin_rpc.get_raw_tx(&txid) {
+            let tx = match blockchain.get_raw_transaction(&txid, None) {
                 Ok(tx) => tx,
                 Err(e) => {
                     log::warn!("Failed to fetch raw tx {txid:?} via {relay_url}: {e}");
+                    // A transient fetch failure leaves the txid eligible for retry.
+                    seen_txid.lock()?.release(&txid);
                     return Ok(false);
                 }
             };
 
+            // The txid is marked seen once fetched (regardless of validation outcome) so a relay
+            // replaying an invalid txid can't force re-validation every time;
+            seen_txid.lock()?.insert(txid);
             log::info!("Added txid to Nostr discovery cache: {txid}");
+
             match process_fidelity(&tx) {
                 Some(fidelity) => {
                     let maker_address = fidelity.onion.clone();
                     let expires_at_height = fidelity.expires_at_height;
-                    if registry.insert_fidelity(txid, fidelity) {
+                    if registry.insert_fidelity(txid, fidelity)? {
                         log::info!(
                                 "Stored verified fidelity | relay={} | event_id={} | txid={} | vout={} | maker_address={} | expires_at_height={}",
                                 relay_url,
@@ -349,7 +411,7 @@ fn handle_relay_message(
                     );
                 }
             }
-            registry.save_nostr_cursor(relay_url, event.created_at.as_secs());
+            registry.save_nostr_cursor(relay_url, cursor)?;
         }
 
         RelayMessage::EndOfStoredEvents(sub_id) => {
@@ -361,4 +423,35 @@ fn handle_relay_message(
     }
 
     Ok(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn future_dated_event_never_moves_the_cursor() {
+        let now = 1_700_000_000u64;
+
+        // A year ahead: rejected outright, so nothing is saved.
+        assert_eq!(cursor_for(now + 365 * 24 * 3600, now), None);
+        assert_eq!(cursor_for(now + MAX_FUTURE_SKEW_SECS + 1, now), None);
+
+        // Inside the skew margin the event is kept, but the cursor stays at now.
+        assert_eq!(cursor_for(now + MAX_FUTURE_SKEW_SECS, now), Some(now));
+        assert_eq!(cursor_for(now, now), Some(now));
+        assert_eq!(cursor_for(now - 60, now), Some(now - 60));
+    }
+
+    #[test]
+    fn garbage_frame_is_skipped_not_fatal() {
+        let relay = "wss://relay.example";
+
+        assert!(decode_relay_frame(Message::Text("not json".into()), relay).is_none());
+        assert!(decode_relay_frame(Message::Text(r#"["NOPE"]"#.into()), relay).is_none());
+        assert!(decode_relay_frame(Message::Binary(vec![0xff, 0xfe].into()), relay).is_none());
+
+        // A well-formed frame still decodes, so the skip is not swallowing everything.
+        assert!(decode_relay_frame(Message::Text(r#"["EOSE","sub1"]"#.into()), relay).is_some());
+    }
 }

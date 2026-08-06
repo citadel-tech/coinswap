@@ -5,10 +5,10 @@ use coinswap::{
     protocol::ProtocolVersion,
     taker::{
         error::TakerError, format_state, MakerOfferCandidate, MakerState, SwapParams, Taker,
-        TakerInitConfig,
+        TakerConfig, TakerInitConfig,
     },
     utill::{parse_proxy_auth, print_new_wallet_seed, setup_taker_logger, UTXO},
-    wallet::{AddressType, RPCConfig, Wallet},
+    wallet::{AddressType, CoreRpcConfig, Wallet},
 };
 use log::LevelFilter;
 use serde_json::{json, to_string_pretty};
@@ -16,8 +16,10 @@ use std::{path::PathBuf, str::FromStr};
 
 /// A simple command line app to operate as coinswap client.
 ///
-/// The app works as a regular Bitcoin wallet with the added capability to perform coinswaps. The app
-/// requires a running Bitcoin Core node with RPC access. It currently only runs on Testnet4.
+/// The app works as a regular Bitcoin wallet with the added capability to perform coinswaps.
+/// It can talk to either a Bitcoin Core node (over RPC + ZMQ — the default) or an
+/// Electrum-protocol server (via `--electrum`). Both paths support the full swap flow
+/// and the `restore` subcommand. It currently only runs on Testnet4.
 /// Suggested faucet for getting Signet coins (tor browser required): <http://s2ncekhezyo2tkwtftti3aiukfpqmxidatjrdqmwie6xnf2dfggyscad.onion/>
 ///
 /// For more detailed usage information, please refer: <https://github.com/citadel-tech/coinswap/blob/master/docs/taker.md>
@@ -31,7 +33,7 @@ struct Cli {
     #[clap(long, short = 'd')]
     data_directory: Option<PathBuf>,
 
-    /// Bitcoin Core RPC address:port value
+    /// Bitcoin Core RPC address:port value. Conflicts with `--electrum`.
     #[clap(
         name = "ADDRESS:PORT",
         long,
@@ -40,20 +42,34 @@ struct Cli {
     )]
     pub rpc: String,
 
-    /// Bitcoin Core ZMQ address:port value
-    #[clap(
-        name = "ZMQ",
-        long,
-        short = 'z',
-        default_value = "tcp://127.0.0.1:28332"
-    )]
-    pub zmq: String,
+    /// Bitcoin Core ZMQ address:port value. Defaults to the RPC host on port 28332.
+    #[clap(name = "ZMQ", long, short = 'z')]
+    pub zmq: Option<String>,
 
-    /// Bitcoin Core RPC authentication string. Ex: username:password
+    /// Bitcoin Core RPC authentication string. Ex: username:password.
+    /// Conflicts with `--electrum`.
     #[clap(name="USER:PASSWORD",short='a',long, value_parser = parse_proxy_auth, default_value = "user:password")]
     pub auth: (String, String),
     #[clap(long, short = 't')]
     pub tor_auth: Option<String>,
+
+    /// Electrum server URL (e.g. `tcp://localhost:50001`). When set, the wallet
+    /// is initialised against an Electrum backend instead of Bitcoin Core.
+    /// Mutually exclusive with the Bitcoin Core flags (--rpc/--zmq/--auth).
+    /// Electrum servers do not serve full blocks, so chain-based fidelity-bond
+    /// discovery is unavailable — maker discovery relies on nostr relays only.
+    #[clap(
+        name = "ELECTRUM_URL",
+        long = "electrum",
+        conflicts_with_all = ["ADDRESS:PORT", "ZMQ", "USER:PASSWORD"]
+    )]
+    pub electrum_url: Option<String>,
+
+    /// Route the Electrum backend through the Tor SOCKS proxy on `socks_port`.
+    /// Works with an onion or a clearnet server; an onion URL needs it.
+    /// Peer-to-peer Tor is unaffected either way.
+    #[clap(long, requires = "ELECTRUM_URL")]
+    pub electrum_tor: bool,
 
     /// Sets the taker wallet's name. If the wallet file already exists, it will load that wallet. Default: taker-wallet
     #[clap(name = "WALLET", long, short = 'w')]
@@ -205,13 +221,14 @@ fn display_makers_with_summary(
     makers: &[MakerOfferCandidate],
 ) -> Result<(), TakerError> {
     let (mut good, mut bad, mut unresponsive) = (0, 0, 0);
+    let (tip_height, tip_time) = wallet.chain_tip()?;
     for maker in makers {
         match maker.state {
             MakerState::Good => good += 1,
             MakerState::Bad => bad += 1,
             MakerState::Unresponsive { .. } => unresponsive += 1,
         }
-        println!("{}", display_offer(wallet, maker)?);
+        println!("{}", display_offer(wallet, maker, tip_height, tip_time)?);
     }
     println!(
         "\nOfferbook summary → good: {}, bad: {}, unresponsive: {} (total: {})",
@@ -224,7 +241,12 @@ fn display_makers_with_summary(
 }
 
 /// Format a maker offer candidate as a human-readable string.
-fn display_offer(wallet: &Wallet, candidate: &MakerOfferCandidate) -> Result<String, TakerError> {
+fn display_offer(
+    wallet: &Wallet,
+    candidate: &MakerOfferCandidate,
+    tip_height: u64,
+    tip_time: u64,
+) -> Result<String, TakerError> {
     let header = format!(
         r#"
     Maker
@@ -247,7 +269,7 @@ fn display_offer(wallet: &Wallet, candidate: &MakerOfferCandidate) -> Result<Str
     };
 
     let bond = &offer.fidelity.bond;
-    let bond_value = wallet.calculate_bond_value(bond)?;
+    let bond_value = wallet.calculate_bond_value(bond, tip_height, tip_time)?;
 
     Ok(format!(
         r#"{header}
@@ -300,33 +322,64 @@ fn main() -> Result<(), TakerError> {
         args.data_directory.clone(), // default path handled inside the function.
     );
 
-    let rpc_config = RPCConfig {
-        url: args.rpc,
-        auth: Auth::UserPass(args.auth.0, args.auth.1),
-        wallet_name: "random_1".to_string(), // updated during init
+    let wallet_name = args
+        .wallet_name
+        .clone()
+        .unwrap_or_else(|| "taker-wallet".to_string());
+
+    let data_dir = match args.data_directory.clone() {
+        Some(dir) => dir,
+        None => coinswap::utill::get_taker_dir()?,
+    };
+    // Static settings live in the file (auto-created with defaults if missing).
+    // Read it here, before the backend bakes the proxy address in, so a
+    // non-default `socks_port` reaches Tor instead of being silently ignored.
+    let file_config = TakerConfig::new(Some(&data_dir.join("config.toml")))?;
+
+    // Build the unified taker config (also used by the Restore branch).
+    // `--electrum` selects the Electrum backend; otherwise Bitcoin Core.
+    let backend = match args.electrum_url.as_ref() {
+        Some(url) => coinswap::wallet::BackendConfig::Electrum(coinswap::wallet::ElectrumConfig {
+            url: url.clone(),
+            socks5: args
+                .electrum_tor
+                .then(|| format!("127.0.0.1:{}", file_config.socks_port)),
+            ..Default::default()
+        }),
+        None => coinswap::wallet::BackendConfig::CoreRpc(CoreRpcConfig {
+            url: args.rpc.clone(),
+            auth: Auth::UserPass(args.auth.0.clone(), args.auth.1.clone()),
+            wallet_name: wallet_name.clone(),
+            zmq_addr: args
+                .zmq
+                .clone()
+                .unwrap_or_else(|| CoreRpcConfig::default_zmq_addr(&args.rpc)),
+        }),
     };
 
-    // Handle Restore before taker init (wallet may not exist yet)
     if let Commands::Restore { ref backup_file } = args.command {
-        Taker::restore_wallet(
+        coinswap::taker::Taker::restore_wallet(
             args.data_directory,
-            args.wallet_name,
-            Some(rpc_config),
+            Some(wallet_name), // Use the actual translated wallet name here.
+            backend,
             backup_file,
         );
         return Ok(());
     }
 
-    // Build unified taker config
+    // CLI wins where a flag exists; the file fills in the rest.
     let config = TakerInitConfig {
-        data_dir: args.data_directory.clone(),
-        wallet_file_name: args.wallet_name,
-        rpc_config: Some(rpc_config),
-        tor_auth_password: args.tor_auth,
-        zmq_addr: args.zmq,
-        password: args.password,
+        data_dir: Some(data_dir),
+        socks_port: file_config.socks_port,
+        control_port: Some(file_config.control_port),
+        tor_auth_password: args.tor_auth.clone().or_else(|| {
+            (!file_config.tor_auth_password.is_empty()).then_some(file_config.tor_auth_password)
+        }),
+        password: args.password.clone(),
+        wallet_name: wallet_name.clone(),
         ..TakerInitConfig::default()
-    };
+    }
+    .with_backend(backend.clone());
 
     let mut taker = Taker::init(config)?;
 
@@ -341,7 +394,11 @@ fn main() -> Result<(), TakerError> {
     }
 
     // Sync wallet after initialization
-    taker.get_wallet().write().unwrap().sync_and_save()?;
+    taker
+        .get_wallet()
+        .write()
+        .unwrap()
+        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)?;
 
     match &args.command {
         Commands::ListUtxo => {
@@ -467,7 +524,8 @@ fn main() -> Result<(), TakerError> {
         Commands::PollMaker { address } => {
             let result = taker.poll_maker(address.clone())?;
             let wallet = taker.get_wallet().read().unwrap();
-            println!("{}", display_offer(&wallet, &result)?);
+            let (tip_height, tip_time) = wallet.chain_tip()?;
+            println!("{}", display_offer(&wallet, &result, tip_height, tip_time)?);
         }
         Commands::RemoveMaker { address } => {
             let removed = taker.remove_maker(address.clone())?;

@@ -7,7 +7,9 @@ use bitcoind::bitcoincore_rpc::{jsonrpc::error::Error as JsonRpcError, Error as 
 
 use super::{
     error::MakerError,
-    handlers::{ConnectionState, Maker, SwapPhase, MIN_CONTRACT_REACTION_TIME},
+    handlers::{
+        incoming_within_swap_amount, ConnectionState, Maker, SwapPhase, MIN_CONTRACT_REACTION_TIME,
+    },
 };
 use crate::{
     protocol::{
@@ -46,6 +48,27 @@ pub fn handle_taproot_message<M: Maker>(
             process_taproot_handover(maker, state, handover)
         }
     }
+}
+
+/// We can only sweep our incoming contract until `timelock + REFUND_LOCKTIME_STEP`.
+/// The taker controls when it sends contract data and how fast its funding confirms,
+/// so re-check before every commitment: too little left and we fund the next hop underwater.
+fn check_sweep_margin<M: Maker>(maker: &Arc<M>, timelock: u32) -> Result<(), MakerError> {
+    let current_height = maker.get_current_height()?;
+    if timelock.saturating_add(REFUND_LOCKTIME_STEP as u32)
+        < current_height.saturating_add(MIN_CONTRACT_REACTION_TIME as u32)
+    {
+        log::warn!(
+            "[{}] Too little time left to sweep safely: timelock {} at height {}",
+            maker.network_port(),
+            timelock,
+            current_height
+        );
+        return Err(MakerError::General(
+            "Taproot contract data arrived too late to sweep safely",
+        ));
+    }
+    Ok(())
 }
 
 /// Process Taproot contract data.
@@ -99,23 +122,40 @@ fn process_taproot_contract<M: Maker>(
         maker.network_port(),
     )?;
 
-    // The taker picks when to send this message, so blocks have passed since we agreed the swap.
-    // We can only sweep our incoming contract until `timelock + REFUND_LOCKTIME_STEP`, so
-    // check time is still left - a stalling taker would otherwise strand our funds.
-    let current_height = maker.get_current_height()?;
-    if state.timelock.saturating_add(REFUND_LOCKTIME_STEP as u32)
-        < current_height.saturating_add(MIN_CONTRACT_REACTION_TIME as u32)
-    {
-        log::warn!(
-            "[{}] Contract data arrived too late: timelock {} at height {}",
+    // Contract count was agreed in SwapDetails and drives how many outgoing
+    // contracts we fund, so the taker must not change it here.
+    if data.contract_txs.len() != state.tx_count as usize {
+        log::error!(
+            "[{}] Taproot contract count {} does not match negotiated {}",
             maker.network_port(),
-            state.timelock,
-            current_height
+            data.contract_txs.len(),
+            state.tx_count
         );
         return Err(MakerError::General(
-            "Taproot contract data arrived too late to sweep safely",
+            "Taproot contract count does not match the negotiated tx count",
         ));
     }
+
+    // Amounts are peer-supplied, so sum them without panicking.
+    let mut total_incoming = Amount::ZERO;
+    for amount in &data.amounts {
+        total_incoming = total_incoming
+            .checked_add(*amount)
+            .ok_or(MakerError::General("Taproot contract amounts overflow"))?;
+    }
+    if !incoming_within_swap_amount(total_incoming, state.swap_amount) {
+        log::error!(
+            "[{}] Taproot incoming amount {} exceeds negotiated swap amount {}",
+            maker.network_port(),
+            total_incoming,
+            state.swap_amount
+        );
+        return Err(MakerError::General(
+            "Taproot incoming amount exceeds the negotiated swap amount",
+        ));
+    }
+
+    check_sweep_margin(maker, state.timelock)?;
     #[cfg(debug_assertions)]
     log::debug!(
         "[CONTRACT_STATE] Role: Maker | Protocol: Taproot | SwapID: {} | ContractTxs: {} | Amounts: {} | Timelock: {} | Status: verified",
@@ -127,9 +167,15 @@ fn process_taproot_contract<M: Maker>(
 
     let n = data.contract_txs.len();
     let mut incoming_swapcoins = Vec::with_capacity(n);
+    let required_confirms = maker.get_config().required_confirms;
     for j in 0..n {
         let incoming_contract_tx = data.contract_txs[j].clone();
-        maker.verify_contract_tx_on_chain(&incoming_contract_tx.compute_txid())?;
+        // A mempool-only contract may be replaced via RBF after we fund the next hop,
+        // so require confirmations before proceeding.
+        maker.wait_for_tx_on_chain(&incoming_contract_tx.compute_txid(), required_confirms)?;
+        // Blocks passed while we waited. We have broadcast nothing yet, so aborting
+        // here costs only the reserved UTXOs.
+        check_sweep_margin(maker, state.timelock)?;
 
         let incoming_funding_amount = data.amounts[j];
 
@@ -155,8 +201,14 @@ fn process_taproot_contract<M: Maker>(
         incoming_swapcoins.push(incoming_swapcoin);
     }
 
-    let total_incoming = data.amounts.iter().cloned().sum();
+    // The fee is priced on the negotiated offset, so it is fixed at negotiation
+    // and matches the taker's mirror. The offset is not bound to the real lock
+    // duration; assess the CSV transition (binding it in the script) later.
     let swap_fee = maker.calculate_swap_fee(total_incoming, state.refund_locktime_offset as u32);
+    // The fee stored at swap-details time was computed from the proposed
+    // amount; overwrite with the fee on the actual incoming amount so
+    // success reports match what was really earned.
+    state.service_fee_sats = swap_fee.to_sat();
     let mining_fee = Amount::from_sat(estimate_funding_tx_fee_sats() * n as u64);
     let fee = swap_fee + mining_fee;
     let outgoing_total = total_incoming
@@ -218,7 +270,7 @@ fn process_taproot_contract<M: Maker>(
     let mut reserved = Vec::with_capacity(n);
     let mut spent_inputs: Vec<OutPoint> = Vec::new();
 
-    let base_excluded = maker.collect_excluded_utxos(&data.id);
+    let base_excluded = maker.collect_excluded_utxos(&data.id)?;
 
     for &outgoing_amount in &outgoing_amounts {
         let outgoing_nonce =
@@ -373,6 +425,18 @@ fn process_taproot_contract<M: Maker>(
         }
     }
 
+    // Arm the watches before anything is committed. Failing here aborts with
+    // nothing on-chain; failing after a broadcast would leave contract txs live
+    // while recovery still reads `funding_broadcast == false` and discards them.
+    for (outgoing, contract_outpoint) in outgoing_swapcoins.iter().zip(reserved.iter()) {
+        maker.register_watch_outpoint(
+            *contract_outpoint,
+            outgoing.contract_tx.output[contract_outpoint.vout as usize]
+                .script_pubkey
+                .clone(),
+        )?;
+    }
+
     // Persist swapcoins before broadcasting contract txs. A later broadcast
     // failure can leave earlier Taproot contract txs on-chain, and the wallet
     // needs these records for timelock recovery after a restart.
@@ -383,7 +447,7 @@ fn process_taproot_contract<M: Maker>(
         maker.save_outgoing_swapcoin(outgoing)?;
     }
 
-    for (outgoing, contract_outpoint) in outgoing_swapcoins.iter().zip(reserved.iter()) {
+    for outgoing in &outgoing_swapcoins {
         match maker.broadcast_transaction(&outgoing.contract_tx) {
             Ok(txid) => {
                 log::info!(
@@ -411,9 +475,23 @@ fn process_taproot_contract<M: Maker>(
                     data.id
                 );
             }
-            Err(e) => return Err(e),
+            Err(e) => {
+                // This captures the Electrum counterpart of the rebroadcast error.
+                // Electrum doesn't throw a reliable error. So we manually check if the transaction
+                // is already broadcasted. An error here means the backend connection is down.
+                let txid = outgoing.contract_tx.compute_txid();
+                if maker.is_transaction_known(&txid) {
+                    log::info!(
+                        "[{}] Taproot contract tx {} for swap {} was already broadcast",
+                        maker.network_port(),
+                        txid,
+                        data.id
+                    );
+                } else {
+                    return Err(e);
+                }
+            }
         }
-        maker.register_watch_outpoint(*contract_outpoint);
     }
 
     state.funding_broadcast = true;
@@ -541,8 +619,14 @@ fn process_taproot_handover<M: Maker>(
     {
         use super::handlers::MakerBehavior;
         if maker.behavior() == MakerBehavior::CloseAfterSweep {
+            // Sweep here rather than letting the error skip the server loop's
+            // sweep block, or the preimage only reaches the chain 30s later via
+            // idle recovery and the behavior's name is a lie.
+            if let Err(e) = maker.sweep_incoming_swapcoins() {
+                log::error!("[{}] Test sweep failed: {e:?}", maker.network_port());
+            }
             log::warn!(
-                "[{}] Test behavior: closing after sweep / completing handover",
+                "[{}] Test behavior: swept, now closing before handover",
                 maker.network_port()
             );
             return Err(MakerError::General("Test: closing after sweep"));

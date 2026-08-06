@@ -32,7 +32,7 @@ fn test_taproot_multi_maker_coinswap() {
 
     // Initialize test framework with 1 taker and 4 makers
     let (test_framework, mut takers, makers, block_generation_handle) =
-        TestFramework::init(makers_config_map, taker_behavior, vec![]);
+        TestFramework::init::<BitcoindBackend>(makers_config_map, taker_behavior, vec![]);
 
     let bitcoind = &test_framework.bitcoind;
     let taker = takers.get_mut(0).unwrap();
@@ -74,7 +74,12 @@ fn test_taproot_multi_maker_coinswap() {
 
     // Sync wallets after setup to ensure fidelity bonds are accounted for
     for maker in &makers {
-        maker.wallet.write().unwrap().sync_and_save().unwrap();
+        maker
+            .wallet
+            .write()
+            .unwrap()
+            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .unwrap();
     }
 
     let maker_spendable_balance = verify_maker_pre_swap_balances(&makers);
@@ -118,7 +123,12 @@ fn test_taproot_multi_maker_coinswap() {
     log::info!("All coinswaps processed successfully. Transaction complete.");
 
     // Sync wallets and verify results
-    taker.get_wallet().write().unwrap().sync_and_save().unwrap();
+    taker
+        .get_wallet()
+        .write()
+        .unwrap()
+        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .unwrap();
 
     // Mine a block to confirm the sweep transactions
     generate_blocks(bitcoind, 1);
@@ -126,7 +136,7 @@ fn test_taproot_multi_maker_coinswap() {
     // Synchronize each maker's wallet
     for maker in makers.iter() {
         let mut wallet = maker.wallet.write().unwrap();
-        wallet.sync_and_save().unwrap();
+        wallet.sync_and_save(&coinswap::utill::NO_SHUTDOWN).unwrap();
     }
 
     let taker_balances_after = taker.get_wallet().read().unwrap().get_balances().unwrap();

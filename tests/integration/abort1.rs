@@ -35,7 +35,7 @@ fn taker_abort1() {
     let maker_behaviors = vec![MakerBehavior::Normal, MakerBehavior::Normal];
 
     let (test_framework, mut takers, makers, block_generation_handle) =
-        TestFramework::init(makers_config_map, taker_behavior, maker_behaviors);
+        TestFramework::init::<BitcoindBackend>(makers_config_map, taker_behavior, maker_behaviors);
 
     let bitcoind = &test_framework.bitcoind;
     let taker = takers.get_mut(0).unwrap();
@@ -76,7 +76,12 @@ fn taker_abort1() {
 
     // Sync wallets after setup
     for maker in &makers {
-        maker.wallet.write().unwrap().sync_and_save().unwrap();
+        maker
+            .wallet
+            .write()
+            .unwrap()
+            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .unwrap();
     }
 
     verify_maker_pre_swap_balances(&makers);
@@ -108,9 +113,11 @@ fn taker_abort1() {
     info!("Swap failed as expected: {:?}", swap_result.err().unwrap());
     taker.log_tracker_state();
 
-    // Wait for makers to timeout and broadcast contracts, then blocks mature timelocks.
+    // Sleep budget: 60s maker idle timeout (test builds) + 225-block outer-hop
+    // timelock (REFUND_LOCKTIME_BASE 150 + STEP 75, 2 makers) ≈ 135s at
+    // 5 blocks/3s; remaining ~105s is scheduling margin.
     info!("Waiting for makers to timeout and blocks to mature timelocks...");
-    thread::sleep(Duration::from_secs(150));
+    thread::sleep(Duration::from_secs(300));
 
     // Shut down makers
     makers
@@ -123,7 +130,12 @@ fn taker_abort1() {
 
     // Verify maker balances after recovery
     for (i, maker) in makers.iter().enumerate() {
-        maker.wallet.write().unwrap().sync_and_save().unwrap();
+        maker
+            .wallet
+            .write()
+            .unwrap()
+            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .unwrap();
         let maker_balances = maker.wallet.read().unwrap().get_balances().unwrap();
         info!(
             "Maker {} balances after recovery: Regular: {}, Swap: {}, Contract: {}, Spendable: {}",
@@ -156,7 +168,12 @@ fn taker_abort1() {
 
     // Mine a block to confirm recovery txs, then sync wallet
     generate_blocks(bitcoind, 1);
-    taker.get_wallet().write().unwrap().sync_and_save().unwrap();
+    taker
+        .get_wallet()
+        .write()
+        .unwrap()
+        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .unwrap();
 
     // Verify taker balance
     let taker_balances = taker.get_wallet().read().unwrap().get_balances().unwrap();
@@ -205,7 +222,12 @@ fn taker_abort1() {
 
     // Verify maker balances - makers should have recovered via timelock
     for (i, maker) in makers.iter().enumerate() {
-        maker.wallet.write().unwrap().sync_and_save().unwrap();
+        maker
+            .wallet
+            .write()
+            .unwrap()
+            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .unwrap();
         let maker_balances = maker.wallet.read().unwrap().get_balances().unwrap();
 
         info!(
@@ -253,6 +275,99 @@ fn taker_abort1() {
     info!("Abort1 test completed successfully!");
 
     tracker_logger.stop();
+    test_framework.stop();
+    block_generation_handle.join().unwrap();
+}
+
+/// A taker that never goes quiet must still not outlive the swap's locktime. Here the
+/// taker keeps the route warm with keepalives while the miner pushes the tip past the
+/// maker's refund deadline. The maker must stop honouring the keepalives and recover,
+/// even though the connection was never dropped and the idle timeout never fired.
+///
+/// One maker on purpose: a single hop is funded with the full negotiated amount, so
+/// the swap reaches the maker's outgoing funding without depending on route fees.
+#[test]
+fn maker_recovers_swap_past_refund_deadline() {
+    warn!("Running Test: Maker recovers a swap that outlived its refund deadline");
+
+    let makers_config_map = vec![(8902, Some(21307))];
+    let taker_behavior = vec![TakerBehavior::StallAfterProofOfFunding];
+
+    let (test_framework, mut takers, makers, block_generation_handle) =
+        TestFramework::init::<BitcoindBackend>(
+            makers_config_map,
+            taker_behavior,
+            vec![MakerBehavior::Normal],
+        );
+
+    let bitcoind = &test_framework.bitcoind;
+    let taker = takers.get_mut(0).unwrap();
+
+    fund_taker(
+        taker,
+        bitcoind,
+        3,
+        Amount::from_btc(0.05).unwrap(),
+        AddressType::P2TR,
+    );
+    fund_makers(
+        &makers,
+        bitcoind,
+        4,
+        Amount::from_btc(0.05).unwrap(),
+        AddressType::P2TR,
+    );
+
+    let maker_threads = makers
+        .iter()
+        .map(|maker| {
+            let maker = maker.clone();
+            thread::spawn(move || start_server(maker).unwrap())
+        })
+        .collect::<Vec<_>>();
+
+    wait_for_makers_setup(&makers, 120);
+    for maker in &makers {
+        maker
+            .wallet
+            .write()
+            .unwrap()
+            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .unwrap();
+    }
+    generate_blocks(bitcoind, 1);
+
+    // Legacy so the deadline is counted from the funding confirmation height the
+    // maker records, which is the arm this test exists to prove.
+    let swap_params = SwapParams::new(ProtocolVersion::Legacy, Amount::from_sat(500_000), 1)
+        .with_tx_count(1)
+        .with_required_confirms(1);
+    let summary = taker
+        .prepare_coinswap(swap_params)
+        .expect("Legacy prepare_coinswap should succeed");
+    assert!(
+        taker.start_coinswap(&summary.swap_id).is_err(),
+        "The swap must fail once the maker gives up on it"
+    );
+
+    let log_path = format!("{}/taker/debug.log", test_framework.temp_dir.display());
+    test_framework.assert_log(
+        "Test behavior: stalling 180s so the maker's refund deadline passes",
+        &log_path,
+    );
+    // The deadline, not a dropped connection, is what ended this swap. Keepalives were
+    // still arriving every 5s, so the idle timeout could not have drained it.
+    test_framework.assert_log("reached its refund deadline; recovering now", &log_path);
+    test_framework.assert_log("Recovering from swap", &log_path);
+
+    makers
+        .iter()
+        .for_each(|maker| maker.shutdown.store(true, Relaxed));
+    maker_threads
+        .into_iter()
+        .for_each(|thread| thread.join().unwrap());
+
+    drop(takers);
     test_framework.stop();
     block_generation_handle.join().unwrap();
 }

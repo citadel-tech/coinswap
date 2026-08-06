@@ -15,11 +15,11 @@ use std::{
 };
 
 use bitcoin::{OutPoint, Txid};
-use bitcoind::bitcoincore_rpc::RpcApi;
 
 use crate::{
+    taker::error::TakerError,
     utill::HEART_BEAT_INTERVAL,
-    wallet::{RecoveryReport, Wallet},
+    wallet::{Blockchain, RecoveryReport, Wallet},
     watch_tower::{service::WatchService, watcher::WatcherEvent},
 };
 
@@ -51,7 +51,7 @@ impl RecoveryLoop {
         wallet: Arc<RwLock<Wallet>>,
         swap_tracker: Arc<Mutex<SwapTracker>>,
         data_dir: PathBuf,
-    ) -> Self {
+    ) -> std::io::Result<Self> {
         let shutdown = Arc::new(AtomicBool::new(false));
         let complete = Arc::new(AtomicBool::new(false));
 
@@ -63,16 +63,10 @@ impl RecoveryLoop {
             .spawn(move || {
                 log::info!("Recovery loop started");
                 while !shutdown_clone.load(Relaxed) {
-                    // Sync wallet to refresh chain state
-                    if let Ok(mut w) = wallet.write() {
-                        if let Err(e) = w.sync_and_save() {
-                            log::warn!("Recovery loop: sync failed: {:?}", e);
-                        }
-                    }
-
-                    // Try hashlock sweep (incoming)
-                    let incoming_result = if let Ok(mut w) = wallet.write() {
-                        match w.sweep_incoming_swapcoins(2.0) {
+                    // Try hashlock sweep (incoming). It takes the lock itself and drops
+                    // it across its waits, so a stuck tx cannot wedge the wallet.
+                    let incoming_result =
+                        match Wallet::sweep_incoming_swapcoins(&wallet, 2.0, &shutdown_clone) {
                             Ok(ref swept) if !swept.is_empty() => {
                                 log::info!(
                                     "Recovery loop: swept {} incoming swapcoins",
@@ -85,14 +79,12 @@ impl RecoveryLoop {
                                 None
                             }
                             _ => None,
-                        }
-                    } else {
-                        None
-                    };
+                        };
 
-                    // Try timelock recovery (outgoing)
-                    let outgoing_result = if let Ok(mut w) = wallet.write() {
-                        match w.recover_timelocked_swapcoins(2.0) {
+                    // Try timelock recovery (outgoing). Same deal — it manages the
+                    // lock itself and never holds it across a confirmation wait.
+                    let outgoing_result =
+                        match Wallet::recover_timelocked_swapcoins(&wallet, 2.0, &shutdown_clone) {
                             Ok(ref recovered) if !recovered.is_empty() => {
                                 log::info!(
                                     "Recovery loop: recovered {} timelocked swapcoins",
@@ -105,10 +97,7 @@ impl RecoveryLoop {
                                 None
                             }
                             _ => None,
-                        }
-                    } else {
-                        None
-                    };
+                        };
 
                     // Update tracker outcomes from recovery results
                     if incoming_result.is_some() || outgoing_result.is_some() {
@@ -121,23 +110,38 @@ impl RecoveryLoop {
                         }
                     }
 
-                    // Check if all contract outpoints are resolved
-                    let all_resolved = match wallet.read() {
+                    // Snapshot the outpoints and a connection, then drop the guard:
+                    // the checks below are backend calls and must not hold the wallet.
+                    let snapshot = match wallet.read() {
                         Ok(w) => {
-                            let outgoing = w.outgoing_contract_outpoints();
-                            let incoming = w.incoming_contract_outpoints();
-                            if outgoing.is_empty() && incoming.is_empty() {
-                                true
-                            } else {
-                                outgoing.iter().chain(incoming.iter()).all(|op| {
-                                    !matches!(
-                                        w.rpc.get_tx_out(&op.txid, op.vout, None),
-                                        Ok(Some(_))
-                                    )
-                                })
+                            let mut outpoints = w.outgoing_contract_outpoints();
+                            outpoints.extend(w.incoming_contract_outpoints());
+                            match w.blockchain.new_connection() {
+                                Ok(chain) => Some((outpoints, chain)),
+                                Err(e) => {
+                                    log::warn!("Recovery loop: no connection: {:?}", e);
+                                    None
+                                }
                             }
                         }
-                        Err(_) => false,
+                        Err(_) => None,
+                    };
+
+                    // Check if all contract outpoints are resolved
+                    let all_resolved = match snapshot {
+                        Some((outpoints, chain)) => outpoints.iter().all(|(op, spk)| {
+                            // Only a confirmed spend proves a contract resolved;
+                            // a missing output also means evicted or unknown, and
+                            // a failed lookup keeps us watching.
+                            match chain.is_confirmed_spend(op, spk) {
+                                Ok(spent) => spent,
+                                Err(e) => {
+                                    log::warn!("Recovery loop: could not check {}: {:?}", op, e);
+                                    false
+                                }
+                            }
+                        }),
+                        None => false,
                     };
 
                     if all_resolved {
@@ -222,17 +226,23 @@ impl RecoveryLoop {
                         return;
                     }
 
-                    thread::sleep(RECOVERY_LOOP_INTERVAL);
+                    // Slice the interval so a shutdown lands within a second
+                    // instead of waiting out the full sleep.
+                    let mut remaining = RECOVERY_LOOP_INTERVAL;
+                    while !remaining.is_zero() && !shutdown_clone.load(Relaxed) {
+                        let slice = remaining.min(Duration::from_secs(1));
+                        thread::sleep(slice);
+                        remaining -= slice;
+                    }
                 }
                 log::info!("Recovery loop shut down");
-            })
-            .expect("failed to spawn recovery loop thread");
+            })?;
 
-        Self {
+        Ok(Self {
             shutdown,
             complete,
             handle: Some(handle),
-        }
+        })
     }
 
     /// Match resolved contract txids against tracker records and update outcomes.
@@ -388,7 +398,7 @@ pub(crate) struct BreachDetector {
 
 impl BreachDetector {
     /// Spawn a background thread that polls the WatchService for sentinel spends.
-    pub(crate) fn start(watch_service: WatchService) -> Self {
+    pub(crate) fn start(watch_service: WatchService) -> std::io::Result<Self> {
         let breached = Arc::new(AtomicBool::new(false));
         let sentinels: Arc<Mutex<Vec<(OutPoint, Txid)>>> = Arc::new(Mutex::new(Vec::new()));
         let shutdown = Arc::new(AtomicBool::new(false));
@@ -409,11 +419,20 @@ impl BreachDetector {
                     };
 
                     for (outpoint, expected_contract_txid) in &current_sentinels {
-                        watch_service.watch_request(*outpoint);
+                        // If a watch request fails, log the error, don't panic.
+                        let reply = match watch_service.watch_request(*outpoint) {
+                            Ok(reply) => reply,
+                            Err(e) => {
+                                log::error!(
+                                    "watch request for {outpoint} failed (watcher gone): {e}"
+                                );
+                                continue;
+                            }
+                        };
                         if let Some(WatcherEvent::UtxoSpent {
                             spending_tx: Some(ref tx),
                             ..
-                        }) = watch_service.wait_for_event()
+                        }) = reply
                         {
                             let actual_txid = tx.compute_txid();
                             if actual_txid == *expected_contract_txid {
@@ -436,39 +455,49 @@ impl BreachDetector {
                         }
                     }
                 }
-            })
-            .expect("failed to spawn breach detector thread");
+            })?;
 
-        Self {
+        Ok(Self {
             breached,
             sentinels,
             shutdown,
             handle: Some(handle),
-        }
+        })
     }
 
     /// Register funding outpoints as sentinels with the WatchService.
     ///
-    /// Each sentinel is a `(funding_outpoint, expected_contract_txid)` pair.
-    /// Only a spend matching the contract txid is considered adversarial;
-    /// cooperative spends (after finalization) produce a different txid and are ignored.
+    /// Each sentinel is a `(funding_outpoint, expected_contract_txid,
+    /// funding_script_pubkey)` triple. Only a spend matching the contract
+    /// txid is considered adversarial; cooperative spends (after
+    /// finalization) produce a different txid and are ignored.
     pub(crate) fn add_sentinels(
         &self,
         watch_service: &WatchService,
-        sentinels: &[(OutPoint, Txid)],
-    ) {
-        for (outpoint, _) in sentinels {
-            watch_service.register_watch_request(*outpoint);
+        sentinels: &[(OutPoint, Txid, bitcoin::ScriptBuf)],
+    ) -> Result<(), TakerError> {
+        // A sentinel that failed to register must not be tracked as armed:
+        // fail the swap step instead of pretending breach detection is live.
+        for (outpoint, _, spk) in sentinels {
+            watch_service
+                .register_watch_request(*outpoint, spk.clone())
+                .map_err(|e| {
+                    TakerError::General(format!(
+                        "sentinel registration for {outpoint} failed (watcher gone): {e}"
+                    ))
+                })?;
         }
         if let Ok(mut guard) = self.sentinels.lock() {
-            guard.extend_from_slice(sentinels);
             #[cfg(debug_assertions)]
             log::debug!(
                 "[WATCH_STATE] Source: taker::background_services::add_sentinels | Action: register_breach_sentinels | Added: {} | Total: {}",
                 sentinels.len(),
                 guard.len()
             );
+            let storage: Vec<_> = sentinels.iter().map(|(op, txid, _)| (*op, *txid)).collect();
+            guard.extend_from_slice(&storage);
         }
+        Ok(())
     }
 
     /// Check whether an adversarial spend has been detected.
@@ -491,5 +520,50 @@ impl Drop for BreachDetector {
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }
+    }
+}
+
+/// Heartbeat that pings every maker in the route for the life of a swap.
+///
+/// The maker's idle timer only sees messages; while the taker negotiates one
+/// hop, the other makers hear nothing and can read a live swap as dropped.
+/// Send failures are ignored — a dead maker fails the protocol's own reads
+/// soon enough, and the heartbeat must not become a failure path of its own.
+pub(crate) struct RouteHeartbeat {
+    stop: Arc<AtomicBool>,
+}
+
+impl RouteHeartbeat {
+    /// Spawn the heartbeat thread over pre-connected, handshaked streams.
+    pub(crate) fn start(swap_id: &str, streams: Vec<std::net::TcpStream>) -> std::io::Result<Self> {
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_thread = stop.clone();
+        let keepalive =
+            crate::protocol::common_messages::TakerToMakerMessage::WaitingFundingConfirmation(
+                swap_id.to_string(),
+            );
+        // The handle is dropped on purpose: joining on Drop could stall the
+        // caller for a whole write timeout on a dead maker. The thread exits
+        // after one cycle once `stop` is set.
+        thread::Builder::new()
+            .name("Route heartbeat".to_string())
+            .spawn(move || {
+                let mut streams = streams;
+                while !stop_thread.load(Relaxed) {
+                    for stream in streams.iter_mut() {
+                        let _ = crate::utill::send_message(stream, &keepalive);
+                    }
+                    thread::sleep(super::api::ROUTE_HEARTBEAT_INTERVAL);
+                }
+            })?;
+        Ok(Self { stop })
+    }
+}
+
+impl Drop for RouteHeartbeat {
+    fn drop(&mut self) {
+        // No join: a send blocked on a dead maker would stall the caller for
+        // the whole write timeout. The thread exits after one cycle on its own.
+        self.stop.store(true, Relaxed);
     }
 }

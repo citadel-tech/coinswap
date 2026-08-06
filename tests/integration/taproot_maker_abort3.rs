@@ -40,7 +40,7 @@ fn test_taproot_maker_abort3() {
     ];
 
     let (test_framework, mut takers, makers, block_generation_handle) =
-        TestFramework::init(makers_config_map, taker_behavior, maker_behaviors);
+        TestFramework::init::<BitcoindBackend>(makers_config_map, taker_behavior, maker_behaviors);
 
     let bitcoind = &test_framework.bitcoind;
     let taker = takers.get_mut(0).unwrap();
@@ -81,7 +81,12 @@ fn test_taproot_maker_abort3() {
 
     // Sync wallets after setup to ensure fidelity bonds are accounted for
     for maker in &makers {
-        maker.wallet.write().unwrap().sync_and_save().unwrap();
+        maker
+            .wallet
+            .write()
+            .unwrap()
+            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .unwrap();
     }
 
     let maker_spendable_balance = verify_maker_pre_swap_balances(&makers);
@@ -111,12 +116,22 @@ fn test_taproot_maker_abort3() {
         .for_each(|thread| thread.join().unwrap());
 
     // Sync wallets and verify results
-    taker.get_wallet().write().unwrap().sync_and_save().unwrap();
+    taker
+        .get_wallet()
+        .write()
+        .unwrap()
+        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .unwrap();
 
     generate_blocks(bitcoind, 1);
 
     for maker in &makers {
-        maker.wallet.write().unwrap().sync_and_save().unwrap();
+        maker
+            .wallet
+            .write()
+            .unwrap()
+            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .unwrap();
     }
 
     // Verify taker balance

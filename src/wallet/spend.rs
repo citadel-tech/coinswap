@@ -5,17 +5,14 @@
 //! parsing mechanisms for transaction inputs and outputs.
 
 use bitcoin::{
-    absolute::LockTime, script::PushBytesBuf, transaction::Version, Address, Amount, OutPoint,
-    ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
+    absolute::LockTime, script::PushBytesBuf, transaction::Version, Address, Amount, FeeRate,
+    OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
 };
-use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, RpcApi};
+use bitcoind::bitcoincore_rpc::json::ListUnspentResultEntry;
 
-use crate::{
-    utill::calculate_fee_sats,
-    wallet::{api::UTXOSpendInfo, FidelityError},
-};
+use crate::wallet::{api::UTXOSpendInfo, FidelityError};
 
-use super::{error::WalletError, AddressType, Wallet};
+use super::{error::WalletError, AddressType, Blockchain, Wallet};
 
 /// Represents different destination options for a transaction.
 #[derive(Debug, Clone, PartialEq)]
@@ -31,8 +28,6 @@ pub enum Destination {
         /// Address type for change output (defaults to P2WPKH if None)
         change_address_type: AddressType,
     },
-    /// Send Dynamic Random Amounts to Multiple Addresses
-    MultiDynamic(Amount, Vec<Address>),
 }
 
 impl Wallet {
@@ -163,10 +158,8 @@ impl Wallet {
         feerate: f64,
     ) -> Result<Transaction, WalletError> {
         // Set the Anti-Fee-Snipping locktime
-        let current_height = self.rpc.get_block_count()?;
+        let current_height = self.blockchain.get_block_count()?;
         let lock_time = LockTime::from_height(current_height as u32)?;
-
-        let mut coins = coins.to_vec();
 
         let mut tx = Transaction {
             version: Version::TWO,
@@ -177,7 +170,7 @@ impl Wallet {
 
         let mut total_input_value = Amount::ZERO;
         let mut total_witness_size = 0;
-        for (utxo_data, spend_info) in coins.iter() {
+        for (utxo_data, spend_info) in coins {
             match spend_info {
                 UTXOSpendInfo::SeedCoin { .. } | UTXOSpendInfo::SweptCoin { .. } => {
                     tx.input.push(TxIn {
@@ -224,10 +217,14 @@ impl Wallet {
                 } => {
                     let outgoing_swap_coin = self
                         .find_outgoing_swapcoin_by_multisig(swapcoin_multisig_redeemscript)
-                        .expect("Cannot find Outgoing Swap Coin");
-                    let timelock = outgoing_swap_coin
-                        .get_timelock()
-                        .expect("Cannot get timelock from Outgoing Swap Coin");
+                        .ok_or_else(|| {
+                            WalletError::General(
+                                "outgoing swapcoin not found in wallet store".to_string(),
+                            )
+                        })?;
+                    let timelock = outgoing_swap_coin.get_timelock().ok_or_else(|| {
+                        WalletError::General("outgoing swapcoin has no timelock".to_string())
+                    })?;
                     tx.input.push(TxIn {
                         previous_output: OutPoint {
                             txid: outgoing_swap_coin.contract_tx.compute_txid(),
@@ -246,7 +243,11 @@ impl Wallet {
                 } => {
                     let incoming_swap_coin = self
                         .find_incoming_swapcoin_by_multisig(swapcoin_multisig_redeemscript)
-                        .expect("Cannot find Incoming Swap Coin");
+                        .ok_or_else(|| {
+                            WalletError::General(
+                                "incoming swapcoin not found in wallet store".to_string(),
+                            )
+                        })?;
                     tx.input.push(TxIn {
                         previous_output: OutPoint {
                             txid: incoming_swap_coin.contract_tx.compute_txid(),
@@ -262,6 +263,17 @@ impl Wallet {
             }
         }
 
+        // Reject sub-1 sat/vB up front; `feerate as u64` would truncate it to a
+        // zero rate and build a transaction that never relays.
+        if feerate < 1.0 {
+            return Err(WalletError::General(format!(
+                "feerate {feerate} sat/vB is below the 1 sat/vB minimum"
+            )));
+        }
+        let rate = FeeRate::from_sat_per_vb(feerate as u64).ok_or_else(|| {
+            WalletError::General(format!("feerate {feerate} sat/vB is out of range"))
+        })?;
+
         match destination {
             Destination::Sweep(addr) => {
                 // Send Max Amount case
@@ -273,7 +285,13 @@ impl Wallet {
                 let base_size = tx.base_size();
                 let vsize = (base_size * 4 + total_witness_size + 2).div_ceil(4); // base * 4 + witness size + marker + flag
 
-                let fee = Amount::from_sat(calculate_fee_sats(vsize as u64));
+                // An absurdly high feerate overflows the fee amount, so the
+                // conversion fails instead of panicking.
+                let fee = rate.fee_vb(vsize as u64).ok_or_else(|| {
+                    WalletError::General(format!(
+                        "fee at {feerate} sat/vB overflows for a {vsize} vB transaction"
+                    ))
+                })?;
 
                 // I don't know if this case is even possible?
                 if fee > total_input_value {
@@ -327,7 +345,13 @@ impl Wallet {
                 let base_wchange = tx_wchange.base_size();
                 let vsize_wchange = (base_wchange * 4 + total_witness_size + 2).div_ceil(4); // base * 4 + witness size + marker + flag
 
-                let fee_wchange = Amount::from_sat(calculate_fee_sats(vsize_wchange as u64));
+                // Honor the caller's feerate here too; a fixed MIN_FEE_RATE fee
+                // strands every ordinary send and funding tx in a busy mempool.
+                let fee_wchange = rate.fee_vb(vsize_wchange as u64).ok_or_else(|| {
+                    WalletError::General(format!(
+                        "fee at {feerate} sat/vB overflows for a {vsize_wchange} vB transaction"
+                    ))
+                })?;
 
                 let remaining_wchange =
                     if let Some(diff) = total_input_value.checked_sub(total_output_value) {
@@ -357,93 +381,6 @@ impl Wallet {
                         remaining_wchange.to_sat(),
                         fee_wchange.to_sat()
                     );
-                }
-            }
-
-            // This Destination option facilitates creating txes with dynamic splits for coinswap
-            Destination::MultiDynamic(coinswap_amount, addresses) => {
-                let (selected_inputs, target_chunks, change_chunks) = self.create_dynamic_splits(
-                    coins.to_vec(),
-                    Amount::to_sat(coinswap_amount),
-                    feerate,
-                );
-
-                let new_utxos = selected_inputs
-                    .iter()
-                    .filter(|utxo| !coins.contains(utxo))
-                    .cloned()
-                    .collect::<Vec<_>>();
-
-                if !new_utxos.is_empty() {
-                    total_input_value += new_utxos
-                        .iter()
-                        .map(|(utxo, _)| utxo.amount)
-                        .sum::<Amount>();
-
-                    total_witness_size += new_utxos
-                        .iter()
-                        .map(|(_, spend_info)| spend_info.estimate_witness_size())
-                        .sum::<usize>();
-
-                    coins.extend(new_utxos.clone());
-
-                    for (utxo, _) in new_utxos {
-                        tx.input.push(TxIn {
-                            previous_output: OutPoint::new(utxo.txid, utxo.vout),
-                            sequence: Sequence::ZERO,
-                            witness: Witness::new(),
-                            script_sig: ScriptBuf::new(),
-                        });
-                    }
-                }
-
-                // We are selecting the addresses from the initial vector as per the num of targets required.
-                // There can be more addresses in the vec, which are ignored.
-                for (i, target_chunk) in target_chunks.iter().enumerate() {
-                    let txout = TxOut {
-                        script_pubkey: addresses[i].script_pubkey(),
-                        value: Amount::from_sat(*target_chunk),
-                    };
-                    tx.output.push(txout);
-                }
-
-                let internal_spks = self
-                    .get_next_internal_addresses(change_chunks.len() as u32, AddressType::P2TR)?;
-
-                // Add dummy changes to calculate the final weight of the transactions.
-                let mut tx_wchange = tx.clone();
-                for (i, _) in change_chunks.iter().enumerate() {
-                    tx_wchange.output.push(TxOut {
-                        value: Amount::ZERO, // Adjusted later
-                        script_pubkey: internal_spks[i].script_pubkey(),
-                    });
-                }
-
-                let base_wchange = tx_wchange.base_size();
-                let vsize_wchange = (base_wchange * 4 + total_witness_size + 2).div_ceil(4); // base * 4 + witness size + marker + flag
-
-                let fee_wchange = Amount::from_sat(calculate_fee_sats(vsize_wchange as u64));
-
-                let individual_base_fee = fee_wchange.to_sat() / change_chunks.len() as u64;
-                let remainder = fee_wchange.to_sat() % change_chunks.len() as u64;
-
-                for (i, change_chunk) in change_chunks.iter().enumerate() {
-                    // Distributing the change fee across the individual changes.
-                    let this_fee = individual_base_fee + if (i as u64) < remainder { 1 } else { 0 };
-                    let change = Amount::from_sat(change_chunk.saturating_sub(this_fee));
-                    if change > internal_spks[i].script_pubkey().minimal_non_dust() {
-                        tx.output.push(TxOut {
-                            script_pubkey: internal_spks[i].script_pubkey(),
-                            value: change,
-                        });
-                    } else {
-                        log::info!(
-                            "Remaining change {} sats at index {} is below dust threshold. Skipping change output. (fee: {} sats)",
-                            change.to_sat(),
-                            i,
-                            fee_wchange.to_sat()
-                        );
-                    }
                 }
             }
         }

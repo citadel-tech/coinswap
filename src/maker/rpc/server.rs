@@ -80,7 +80,10 @@ fn handle_request<M: MakerRpc>(
         _ => {
             log::warn!(
                 "Rejected unauthenticated RPC request from {}",
-                socket.peer_addr().unwrap()
+                socket
+                    .peer_addr()
+                    .map(|a| a.to_string())
+                    .unwrap_or_else(|_| "<unknown>".into())
             );
             send_message(socket, &RpcMsgResp::ServerError("unauthorized".to_string()))?;
             return Ok(());
@@ -174,7 +177,7 @@ fn handle_request<M: MakerRpc>(
             let txid = maker.wallet().read()?.send_tx(&tx)?;
 
             log::info!("Sync at:----handle_request----");
-            maker.wallet().write()?.sync_and_save()?;
+            maker.wallet().write()?.sync_and_save(maker.shutdown())?;
 
             RpcMsgResp::SendToAddressResp(txid.to_string())
         }
@@ -202,7 +205,7 @@ fn handle_request<M: MakerRpc>(
         RpcMsgReq::SyncWallet => {
             log::info!("Initializing wallet sync");
             let mut wallet = maker.wallet().write()?;
-            if let Err(e) = wallet.sync_and_save() {
+            if let Err(e) = wallet.sync_and_save(maker.shutdown()) {
                 RpcMsgResp::ServerError(e.to_string())
             } else {
                 log::info!("Completed wallet sync");

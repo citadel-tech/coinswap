@@ -29,7 +29,7 @@ fn fidelity_limit_violation() {
 
     // Initialize test framework
     let (test_framework, mut takers, makers, block_generation_handle) =
-        TestFramework::init(makers_config_map, taker_behavior, maker_behaviors);
+        TestFramework::init::<BitcoindBackend>(makers_config_map, taker_behavior, maker_behaviors);
 
     let bitcoind = &test_framework.bitcoind;
     let taker = takers.get_mut(0).unwrap();
@@ -67,7 +67,12 @@ fn fidelity_limit_violation() {
     wait_for_makers_setup(std::slice::from_ref(maker), 120);
 
     // Sync wallets after setup
-    maker.wallet.write().unwrap().sync_and_save().unwrap();
+    maker
+        .wallet
+        .write()
+        .unwrap()
+        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .unwrap();
 
     info!("Initiating coinswap (Will fail due to invalid fidelity timelock)");
 

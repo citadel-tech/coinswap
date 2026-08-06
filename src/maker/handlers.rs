@@ -14,6 +14,7 @@ use crate::{
         legacy_messages::LegacyTakerMessage,
         taproot_messages::TaprootTakerMessage,
     },
+    taker::api::REFUND_LOCKTIME_STEP,
     wallet::swapcoin::{IncomingSwapCoin, OutgoingSwapCoin},
 };
 
@@ -45,8 +46,14 @@ pub enum MakerBehavior {
     CloseAtPrivateKeyHandover,
     /// Close connection at contract sigs exchange (taproot recovery test).
     CloseAtContractSigsExchange,
-    /// Close connection after sweep (taproot hashlock recovery test).
+    /// Sweep the incoming swapcoins, then close before handing the private key
+    /// over. The sweep puts the preimage on chain, which is what the other side
+    /// needs to recover.
     CloseAfterSweep,
+    /// Never run the idle recovery, the way a crashed process would. Leaves the
+    /// contracts unclaimed so only a restart can settle them
+    /// (restart_rebuilds_watches).
+    CrashBeforeRecovery,
     /// Use an invalid fidelity bond timelock (fidelity timelock violation test).
     InvalidFidelityTimelock,
     /// Point a Legacy sender contract at a funding output that is not the advertised multisig.
@@ -57,6 +64,43 @@ pub enum MakerBehavior {
 
 /// Minimum time required to react to contract broadcasts (in blocks).
 pub const MIN_CONTRACT_REACTION_TIME: u16 = 10;
+
+/// The taker's declared offset is also its claimed reaction window. Too small a
+/// value means neither side can act on the contract.
+pub(crate) fn offset_meets_reaction_time(refund_locktime_offset: u16) -> bool {
+    refund_locktime_offset >= MIN_CONTRACT_REACTION_TIME
+}
+
+/// Upper bound, not equality: each hop's incoming is reduced by the earlier hops'
+/// fees. Funding above the negotiated amount books capital the taker never
+/// reserved, so only that direction is rejected.
+pub(crate) fn incoming_within_swap_amount(total_incoming: Amount, swap_amount: Amount) -> bool {
+    total_incoming <= swap_amount
+}
+
+/// We can only sweep our incoming contract until `timelock + REFUND_LOCKTIME_STEP`.
+/// Past that the sender reclaims it, so a swap this close to the edge has to be
+/// recovered now instead of kept alive by keepalives.
+pub(crate) fn past_refund_deadline(
+    protocol: ProtocolVersion,
+    timelock: u32,
+    funding_confirmation_height: Option<u32>,
+    current_height: u32,
+) -> bool {
+    let incoming_deadline = match protocol {
+        // Taproot's timelock is already an absolute height.
+        ProtocolVersion::Taproot => timelock,
+        // Legacy counts CSV blocks from its funding confirmation. With no height
+        // recorded the deadline does not exist yet, so nothing can be past it.
+        ProtocolVersion::Legacy => match funding_confirmation_height {
+            Some(height) => height.saturating_add(timelock),
+            None => return false,
+        },
+    };
+
+    incoming_deadline.saturating_add(REFUND_LOCKTIME_STEP as u32)
+        < current_height.saturating_add(MIN_CONTRACT_REACTION_TIME as u32)
+}
 
 /// Connection state for protocol handling.
 #[derive(Debug, Clone)]
@@ -69,6 +113,8 @@ pub struct ConnectionState {
     pub swap_id: Option<String>,
     /// Swap amount.
     pub swap_amount: Amount,
+    /// Number of contract transactions agreed at negotiation.
+    pub tx_count: u32,
     /// Timelock value (Legacy: relative CSV, Taproot: absolute CLTV height).
     pub timelock: u32,
     /// Relative locktime offset for deterministic fee calculation.
@@ -119,6 +165,7 @@ impl Default for ConnectionState {
             phase: SwapPhase::AwaitingHello,
             swap_id: None,
             swap_amount: Amount::ZERO,
+            tx_count: 0,
             timelock: 0,
             refund_locktime_offset: 0,
             incoming_swapcoins: Vec::new(),
@@ -205,7 +252,7 @@ pub trait Maker: Send + Sync {
     /// Get maker configuration values.
     fn get_config(&self) -> MakerConfig;
 
-    /// Validate swap parameters and return how many blocks the funds stay locked.
+    /// Validate swap parameters.
     fn validate_swap_parameters(&self, details: &SwapDetails) -> Result<u16, MakerError>;
 
     /// Calculate the swap fee.
@@ -222,17 +269,27 @@ pub trait Maker: Send + Sync {
     /// Broadcast a transaction.
     fn broadcast_transaction(&self, tx: &Transaction) -> Result<bitcoin::Txid, MakerError>;
 
+    /// Whether the backend already knows this transaction (mempool or chain);
+    /// used to tolerate duplicate-broadcast errors. `false` also covers
+    /// "backend down". Core must run with `-txindex=1`.
+    fn is_transaction_known(&self, txid: &bitcoin::Txid) -> bool;
+
     /// Save incoming swapcoin to wallet.
     fn save_incoming_swapcoin(&self, swapcoin: &IncomingSwapCoin) -> Result<(), MakerError>;
 
     /// Save outgoing swapcoin to wallet.
     fn save_outgoing_swapcoin(&self, swapcoin: &OutgoingSwapCoin) -> Result<(), MakerError>;
 
-    /// Register outpoint for watching.
-    fn register_watch_outpoint(&self, outpoint: bitcoin::OutPoint);
+    /// Register outpoint for watching. Errs if the watcher is gone; a swap
+    /// without breach detection must not proceed, so callers abort on failure.
+    fn register_watch_outpoint(
+        &self,
+        outpoint: bitcoin::OutPoint,
+        script_pubkey: bitcoin::ScriptBuf,
+    ) -> Result<(), MakerError>;
 
     /// Unregister outpoint from watching (after swap completion).
-    fn unwatch_outpoint(&self, outpoint: bitcoin::OutPoint);
+    fn unwatch_outpoint(&self, outpoint: bitcoin::OutPoint, script_pubkey: bitcoin::ScriptBuf);
 
     /// Sync wallet with Bitcoin Core and save state to disk.
     fn sync_and_save_wallet(&self) -> Result<(), MakerError>;
@@ -248,10 +305,10 @@ pub trait Maker: Send + Sync {
     ) -> Result<(), MakerError>;
 
     /// Retrieve stored connection state.
-    fn get_connection_state(&self, swap_id: &str) -> Option<ConnectionState>;
+    fn get_connection_state(&self, swap_id: &str) -> Result<Option<ConnectionState>, MakerError>;
 
     /// Remove connection state for a completed swap.
-    fn remove_connection_state(&self, swap_id: &str);
+    fn remove_connection_state(&self, swap_id: &str) -> Result<(), MakerError>;
 
     /// Get the data directory path for saving reports.
     fn data_dir(&self) -> &std::path::Path;
@@ -260,13 +317,26 @@ pub trait Maker: Send + Sync {
     fn wallet_name(&self) -> &str;
 
     /// Collect reserved UTXOs from all other active swaps (for concurrent double-spend prevention).
-    fn collect_excluded_utxos(&self, current_swap_id: &str) -> Vec<bitcoin::OutPoint>;
+    fn collect_excluded_utxos(
+        &self,
+        current_swap_id: &str,
+    ) -> Result<Vec<bitcoin::OutPoint>, MakerError>;
 
     /// Get the current block height from the Bitcoin node.
     fn get_current_height(&self) -> Result<u32, MakerError>;
 
-    /// Verify that a contract transaction has the required on-chain confirmations.
-    fn verify_contract_tx_on_chain(&self, txid: &bitcoin::Txid) -> Result<(), MakerError>;
+    /// Answered from the stored swap state, because the funding confirmation height
+    /// a Legacy deadline needs is recorded there and not on the connection.
+    fn swap_past_refund_deadline(&self, swap_id: &str) -> Result<bool, MakerError>;
+
+    /// Wait until a peer's tx is confirmed to `required_confirms` depth. Both mempool
+    /// arrival and the confirmation itself are bounded, so a peer's unconfirmable tx
+    /// cannot park this thread; shutdown also breaks the wait.
+    fn wait_for_tx_on_chain(
+        &self,
+        txid: &bitcoin::Txid,
+        required_confirms: u32,
+    ) -> Result<(), MakerError>;
 
     /// Verify and sign sender's contract transactions.
     fn verify_and_sign_sender_contract_txs(
@@ -378,12 +448,25 @@ pub fn handle_message<M: Maker>(
             TaprootTakerMessage::PrivateKeyHandover(handover),
         ),
         TakerToMakerMessage::WaitingFundingConfirmation(ref id) => {
+            // This message resets the idle timer that starts recovery, so one
+            // connection must not be able to keep another swap's timer alive.
+            state.check_swap_id(id)?;
+            // Staying alive cannot save a swap whose refund window is closing, and
+            // refreshing the timer here would hold off the recovery that can.
+            if maker.swap_past_refund_deadline(id)? {
+                log::warn!(
+                    "[{}] Swap {} is past its refund deadline; letting it go idle for recovery",
+                    maker.network_port(),
+                    id
+                );
+                return Ok(None);
+            }
             log::info!(
                 "[{}] Taker is waiting for funding confirmation (swap {}). Resetting timer.",
                 maker.network_port(),
                 id
             );
-            if let Some(stored_state) = maker.get_connection_state(id) {
+            if let Some(stored_state) = maker.get_connection_state(id)? {
                 maker.store_connection_state(id, &stored_state)?;
             }
             state.touch();
@@ -483,6 +566,7 @@ fn handle_swap_details<M: Maker>(
 
     state.swap_id = Some(details.id.clone());
     state.swap_amount = details.amount;
+    state.tx_count = details.tx_count;
     state.timelock = details.timelock;
     state.refund_locktime_offset = refund_locktime_offset;
     state.protocol = details.protocol_version;
@@ -516,9 +600,13 @@ fn handle_swap_details<M: Maker>(
 }
 
 /// Restore connection state if this is a new/reconnected connection.
-fn restore_state_if_needed<M: Maker>(maker: &Arc<M>, state: &mut ConnectionState, swap_id: &str) {
+fn restore_state_if_needed<M: Maker>(
+    maker: &Arc<M>,
+    state: &mut ConnectionState,
+    swap_id: &str,
+) -> Result<(), MakerError> {
     if state.swap_amount == Amount::ZERO || state.outgoing_swapcoins.is_empty() {
-        if let Some(stored) = maker.get_connection_state(swap_id) {
+        if let Some(stored) = maker.get_connection_state(swap_id)? {
             log::info!(
                 "[{}] Restored state for {}: amount={}, timelock={}, phase={:?}, outgoing_count={}",
                 maker.network_port(),
@@ -530,6 +618,7 @@ fn restore_state_if_needed<M: Maker>(maker: &Arc<M>, state: &mut ConnectionState
             );
             state.swap_id = Some(swap_id.to_string());
             state.swap_amount = stored.swap_amount;
+            state.tx_count = stored.tx_count;
             state.timelock = stored.timelock;
             state.protocol = stored.protocol;
             state.phase = stored.phase;
@@ -543,6 +632,7 @@ fn restore_state_if_needed<M: Maker>(maker: &Arc<M>, state: &mut ConnectionState
             state.refund_locktime_offset = stored.refund_locktime_offset;
         }
     }
+    Ok(())
 }
 
 /// Ensure a protocol-specific message matches the protocol negotiated for this swap.
@@ -575,7 +665,7 @@ fn handle_legacy_dispatch<M: Maker>(
         swap_id
     );
 
-    restore_state_if_needed(maker, state, &swap_id);
+    restore_state_if_needed(maker, state, &swap_id)?;
     ensure_negotiated_protocol(state, ProtocolVersion::Legacy)?;
 
     super::legacy_handlers::handle_legacy_message(maker, state, legacy_msg)
@@ -596,8 +686,94 @@ fn handle_taproot_dispatch<M: Maker>(
         swap_id
     );
 
-    restore_state_if_needed(maker, state, &swap_id);
+    restore_state_if_needed(maker, state, &swap_id)?;
     ensure_negotiated_protocol(state, ProtocolVersion::Taproot)?;
 
     super::taproot_handlers::handle_taproot_message(maker, state, taproot_msg)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn offset_below_reaction_time_is_rejected() {
+        assert!(!offset_meets_reaction_time(0));
+        assert!(!offset_meets_reaction_time(MIN_CONTRACT_REACTION_TIME - 1));
+        assert!(offset_meets_reaction_time(MIN_CONTRACT_REACTION_TIME));
+        assert!(offset_meets_reaction_time(500));
+    }
+
+    #[test]
+    fn mismatched_swap_id_is_rejected() {
+        let state = ConnectionState {
+            swap_id: Some("swap-abc".to_string()),
+            ..Default::default()
+        };
+
+        assert!(state.check_swap_id("swap-abc").is_ok());
+        assert!(state.check_swap_id("swap-xyz").is_err());
+    }
+
+    #[test]
+    fn incoming_above_negotiated_swap_amount_is_rejected() {
+        let negotiated = Amount::from_sat(500_000);
+
+        assert!(!incoming_within_swap_amount(
+            negotiated + Amount::from_sat(1),
+            negotiated
+        ));
+        assert!(incoming_within_swap_amount(negotiated, negotiated));
+        // Earlier hops take their fee out, so a later hop's incoming is smaller.
+        // This case is why the check is an upper bound and not equality.
+        assert!(incoming_within_swap_amount(
+            negotiated - Amount::from_sat(4_000),
+            negotiated
+        ));
+    }
+
+    /// The last height still inside the window, given an incoming deadline.
+    fn last_safe_height(incoming_deadline: u32) -> u32 {
+        incoming_deadline - MIN_CONTRACT_REACTION_TIME as u32
+    }
+
+    #[test]
+    fn taproot_refund_deadline_is_exact_at_the_boundary() {
+        let timelock = 1_000;
+        let deadline = timelock + REFUND_LOCKTIME_STEP as u32;
+        let safe = last_safe_height(deadline);
+
+        let past = |height| past_refund_deadline(ProtocolVersion::Taproot, timelock, None, height);
+        assert!(!past(safe));
+        assert!(past(safe + 1));
+    }
+
+    #[test]
+    fn legacy_refund_deadline_counts_from_funding_confirmation() {
+        let timelock = 150;
+        let confirmed_at = 800;
+        let deadline = confirmed_at + timelock + REFUND_LOCKTIME_STEP as u32;
+        let safe = last_safe_height(deadline);
+
+        let past = |height| {
+            past_refund_deadline(
+                ProtocolVersion::Legacy,
+                timelock,
+                Some(confirmed_at),
+                height,
+            )
+        };
+        assert!(!past(safe));
+        assert!(past(safe + 1));
+    }
+
+    #[test]
+    fn legacy_without_funding_confirmation_has_no_deadline() {
+        assert!(!past_refund_deadline(
+            ProtocolVersion::Legacy,
+            150,
+            None,
+            u32::MAX
+        ));
+    }
 }

@@ -28,11 +28,12 @@ use std::{
 fn test_concurrent_legacy_and_taproot_swaps() {
     warn!("Running Test: Concurrent Legacy and Taproot swaps through the same makers");
 
-    let (test_framework, mut takers, makers, block_generation_handle) = TestFramework::init(
-        vec![(8002, Some(21001)), (18002, Some(21002))],
-        vec![TakerBehavior::Normal, TakerBehavior::Normal],
-        vec![],
-    );
+    let (test_framework, mut takers, makers, block_generation_handle) =
+        TestFramework::init::<BitcoindBackend>(
+            vec![(8002, Some(21001)), (18002, Some(21002))],
+            vec![TakerBehavior::Normal, TakerBehavior::Normal],
+            vec![],
+        );
     let bitcoind = &test_framework.bitcoind;
 
     let taker_original_balances = takers
@@ -65,7 +66,12 @@ fn test_concurrent_legacy_and_taproot_swaps() {
 
     wait_for_makers_setup(&makers, 120);
     for maker in &makers {
-        maker.wallet.write().unwrap().sync_and_save().unwrap();
+        maker
+            .wallet
+            .write()
+            .unwrap()
+            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .unwrap();
     }
     let maker_original_balances = verify_maker_pre_swap_balances(&makers);
     generate_blocks(bitcoind, 1);
@@ -149,7 +155,12 @@ fn test_concurrent_legacy_and_taproot_swaps() {
         .zip(taker_original_balances.iter())
         .enumerate()
     {
-        taker.get_wallet().write().unwrap().sync_and_save().unwrap();
+        taker
+            .get_wallet()
+            .write()
+            .unwrap()
+            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .unwrap();
         let balances = taker.get_wallet().read().unwrap().get_balances().unwrap();
 
         info!(
@@ -171,8 +182,7 @@ fn test_concurrent_legacy_and_taproot_swaps() {
         assert_eq!(
             balances.swap.to_sat(),
             expected_taker_swap[i],
-            "Taker {} swap balance mismatch",
-            i
+            "Taker {i} swap balance"
         );
         assert_eq!(
             balances.contract,
@@ -192,8 +202,7 @@ fn test_concurrent_legacy_and_taproot_swaps() {
                 .unwrap()
                 .to_sat(),
             expected_taker_fees[i],
-            "Taker {} spendable balance change mismatch",
-            i
+            "Taker {i} spendable balance change"
         );
     }
 
@@ -207,7 +216,12 @@ fn test_concurrent_legacy_and_taproot_swaps() {
         .zip(maker_original_balances.iter())
         .enumerate()
     {
-        maker.wallet.write().unwrap().sync_and_save().unwrap();
+        maker
+            .wallet
+            .write()
+            .unwrap()
+            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .unwrap();
         let balances = maker.wallet.read().unwrap().get_balances().unwrap();
 
         info!(
@@ -223,14 +237,12 @@ fn test_concurrent_legacy_and_taproot_swaps() {
         assert_eq!(
             balances.regular.to_sat(),
             expected_maker_regular[i],
-            "Maker {} regular balance mismatch",
-            i
+            "Maker {i} regular balance"
         );
         assert_eq!(
             balances.swap.to_sat(),
             expected_maker_swap[i],
-            "Maker {} swap balance mismatch",
-            i
+            "Maker {i} swap balance"
         );
         assert_eq!(
             balances.contract,
@@ -251,8 +263,7 @@ fn test_concurrent_legacy_and_taproot_swaps() {
                 .unwrap()
                 .to_sat(),
             expected_maker_earnings[i],
-            "Maker {} earnings mismatch",
-            i
+            "Maker {i} earnings"
         );
     }
 

@@ -27,6 +27,8 @@ $ bitcoind
 
 **Note:** If you don't have `bitcoind` installed or need help setting it up, refer to the [bitcoind demo documentation](./bitcoind.md).
 
+**Electrum backend:** the taker can run against an Electrum server instead of Bitcoin Core via `--electrum <URL>`. Electrum servers do not serve full blocks, so chain-based fidelity-bond discovery is unavailable on this path — maker discovery relies on nostr relays only. An Esplora backend that restores block scanning is future work.
+
 ### Usage
 
 Run the `taker` command to see the list of available commands and options:

@@ -26,7 +26,7 @@ fn test_standard_coinswap() {
     let maker_behaviors = vec![MakerBehavior::Normal, MakerBehavior::Normal];
 
     let (test_framework, mut takers, makers, block_generation_handle) =
-        TestFramework::init(makers_config_map, taker_behavior, maker_behaviors);
+        TestFramework::init::<BitcoindBackend>(makers_config_map, taker_behavior, maker_behaviors);
 
     let bitcoind = &test_framework.bitcoind;
     let taker = takers.get_mut(0).unwrap();
@@ -67,7 +67,12 @@ fn test_standard_coinswap() {
 
     // Sync wallets after setup
     for maker in &makers {
-        maker.wallet.write().unwrap().sync_and_save().unwrap();
+        maker
+            .wallet
+            .write()
+            .unwrap()
+            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .unwrap();
     }
 
     let maker_spendable_balance = verify_maker_pre_swap_balances(&makers);
@@ -100,12 +105,22 @@ fn test_standard_coinswap() {
         .for_each(|thread| thread.join().unwrap());
 
     // Sync wallets
-    taker.get_wallet().write().unwrap().sync_and_save().unwrap();
+    taker
+        .get_wallet()
+        .write()
+        .unwrap()
+        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .unwrap();
 
     generate_blocks(bitcoind, 1);
 
     for maker in &makers {
-        maker.wallet.write().unwrap().sync_and_save().unwrap();
+        maker
+            .wallet
+            .write()
+            .unwrap()
+            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .unwrap();
     }
 
     // Verify taker balances
@@ -151,7 +166,12 @@ fn test_standard_coinswap() {
 
     // Verify maker balances
     for (i, (maker, original)) in makers.iter().zip(maker_spendable_balance).enumerate() {
-        maker.wallet.write().unwrap().sync_and_save().unwrap();
+        maker
+            .wallet
+            .write()
+            .unwrap()
+            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .unwrap();
         let balances = maker.wallet.read().unwrap().get_balances().unwrap();
 
         info!(

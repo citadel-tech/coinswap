@@ -19,7 +19,7 @@ fn test_fidelity_auto_renewal() {
     let taker_behavior = vec![TakerBehavior::Normal];
 
     let (test_framework, _takers, makers, block_generation_handle) =
-        TestFramework::init(makers_config_map, taker_behavior, vec![]);
+        TestFramework::init::<BitcoindBackend>(makers_config_map, taker_behavior, vec![]);
 
     log::info!("Running Test: Fidelity Bond Auto-Renewal ");
 
@@ -44,7 +44,12 @@ fn test_fidelity_auto_renewal() {
 
     // Verify initial bond was created and get its locktime
     let (initial_bond_index, bond_locktime) = {
-        maker.wallet.write().unwrap().sync_and_save().unwrap();
+        maker
+            .wallet
+            .write()
+            .unwrap()
+            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .unwrap();
         let wallet_read = maker.wallet.read().unwrap();
 
         let highest_index = wallet_read.get_highest_fidelity_index().unwrap();
@@ -117,7 +122,12 @@ fn test_fidelity_auto_renewal() {
     for i in 0..18 {
         thread::sleep(Duration::from_secs(5));
 
-        maker.wallet.write().unwrap().sync_and_save().unwrap();
+        maker
+            .wallet
+            .write()
+            .unwrap()
+            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .unwrap();
         let wallet_read = maker.wallet.read().unwrap();
 
         // Check if original bond was redeemed (marked as spent)

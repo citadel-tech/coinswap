@@ -1,21 +1,22 @@
-//! File-backed registry for watch requests, fidelity bonds, and chain checkpoints.
+//! In-memory registry for watch requests and fidelity bonds.
 
 use std::{
     collections::{HashMap, HashSet},
-    path::PathBuf,
     sync::{Arc, Mutex},
 };
 
-use bitcoin::{BlockHash, OutPoint, Transaction, Txid};
-use serde::{Deserialize, Serialize};
+use bitcoin::{OutPoint, ScriptBuf, Transaction, Txid};
 
-use crate::watch_tower::utils::FidelityAnnouncement;
+use crate::watch_tower::{utils::FidelityAnnouncement, watcher_error::WatcherError};
 
 /// Represents a UTXO being watched and records when it gets spent.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct WatchRequest {
     /// UTXO being watched.
     pub outpoint: OutPoint,
+    /// `scriptPubKey` of the watched UTXO, used to arm the Electrum per-script
+    /// subscription and to re-check a recorded spend against the chain.
+    pub script_pubkey: ScriptBuf,
     /// Whether the spend was seen in a block (`true`) or only in the mempool.
     pub in_block: bool,
     /// Optional full transaction that spent the outpoint.
@@ -23,7 +24,7 @@ pub struct WatchRequest {
 }
 
 /// Fidelity records used to discover Makers.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Fidelity {
     /// Transaction ID of the maker's fidelity bond.
     pub txid: Txid,
@@ -33,119 +34,31 @@ pub struct Fidelity {
     pub expire_height: u32,
 }
 
-/// Last processed chain tip so scanning can resume efficiently.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct Checkpoint {
-    /// Block height recorded.
-    pub height: u64,
-    /// Block hash recorded.
-    pub hash: BlockHash,
-}
-
-#[derive(Serialize, Deserialize, Default)]
+/// Nostr cursors and fidelity records are per-boot by design: the relays are the
+/// source of truth and refill both at EOSE, so a stale copy would only make us
+/// skip events we still need.
+#[derive(Default)]
 struct RegistryData {
     watches: HashMap<OutPoint, WatchRequest>,
     fidelity: HashSet<Fidelity>,
-    checkpoint: Option<Checkpoint>,
-    #[serde(default)]
     nostr_cursors: HashMap<String, u64>,
 }
 
-/// Registry used by the watcher.
-#[derive(Clone)]
+/// Registry used by the watcher. Memory-only: watch state is rebuilt from the
+/// wallet at startup, so a crash cannot leave a stale or corrupt copy behind.
+#[derive(Clone, Default)]
 pub struct FileRegistry {
-    path: PathBuf,
     data: Arc<Mutex<RegistryData>>,
 }
 
 impl FileRegistry {
-    /// Loads registry data from disk, creating the file and parent directories if missing.
-    pub fn load<P: Into<PathBuf>>(path: P) -> Self {
-        let path = path.into();
-        let data = if path.exists() {
-            match std::fs::read(&path) {
-                Ok(bytes) => Arc::new(Mutex::new(
-                    serde_cbor::from_slice(&bytes).unwrap_or_default(),
-                )),
-                Err(e) => {
-                    log::error!("Failed to read registry file {:?}: {}", path, e);
-                    Arc::new(Mutex::new(RegistryData::default()))
-                }
-            }
-        } else {
-            let data = Arc::new(Mutex::new(RegistryData::default()));
-            if let Some(parent) = path.parent() {
-                if let Err(e) = std::fs::create_dir_all(parent) {
-                    log::error!("Failed to create registry directory {:?}: {}", parent, e);
-                    return Self { path, data };
-                }
-            }
-
-            match serde_cbor::to_vec(&RegistryData::default()) {
-                Ok(bytes) => {
-                    if let Err(e) = std::fs::write(&path, bytes) {
-                        log::error!("Failed to write initial registry file {:?}: {}", path, e);
-                    }
-                }
-                Err(e) => {
-                    log::error!("Failed to serialize initial registry data: {}", e);
-                }
-            }
-            data
-        };
-
-        #[cfg(debug_assertions)]
-        if let Ok(registry) = data.lock() {
-            log::debug!(
-                "[WATCH_STATE] Source: watch_tower::registry_storage::load | Action: load_registry | Watches: {} | SpentWatches: {} | FidelityRecords: {} | Checkpoint: {:?}",
-                registry.watches.len(),
-                registry
-                    .watches
-                    .values()
-                    .filter(|watch| watch.spent_tx.is_some())
-                    .count(),
-                registry.fidelity.len(),
-                registry.checkpoint.as_ref().map(|cp| cp.height)
-            );
-        }
-
-        Self { path, data }
+    /// Creates an empty registry.
+    pub fn new() -> Self {
+        Self::default()
     }
 
-    /// Flushes the in-memory registry to the persistent CBOR file on disk.
-    fn flush(&self) {
-        let parent = match self.path.parent() {
-            Some(p) => p,
-            None => return,
-        };
-
-        if let Err(e) = std::fs::create_dir_all(parent) {
-            log::error!("Failed to create registry directory {:?}: {}", parent, e);
-            return;
-        }
-
-        let data = match self.data.lock() {
-            Ok(data) => data,
-            Err(_) => return,
-        };
-
-        let bytes = match serde_cbor::to_vec(&*data) {
-            Ok(bytes) => bytes,
-            Err(e) => {
-                log::error!("Failed to serialize registry data: {}", e);
-                return;
-            }
-        };
-
-        if let Err(e) = std::fs::write(&self.path, &bytes) {
-            log::error!("Failed to write registry file {:?}: {}", self.path, e);
-        }
-    }
-}
-
-impl FileRegistry {
-    /// Inserts a watch request and flushes the registry to disk.
-    pub fn upsert_watch(&mut self, req: &WatchRequest) {
+    /// Inserts a watch request, replacing any entry the outpoint already has.
+    pub fn upsert_watch(&mut self, req: &WatchRequest) -> Result<(), WatcherError> {
         self.with_data(
             |data| match data.watches.insert(req.outpoint, req.clone()) {
                 #[cfg(debug_assertions)]
@@ -156,12 +69,32 @@ impl FileRegistry {
                 ),
                 _ => {}
             },
-        );
-        self.flush();
+        )?;
+        Ok(())
     }
 
-    /// Removes a watch request for the given outpoint and flushes the registry to disk.
-    pub fn remove_watch(&mut self, outpoint: OutPoint) {
+    /// Registers a watch, merging into any entry the outpoint already has.
+    /// A re-registration must never wipe a recorded `spent_tx`: it carries the
+    /// preimage, and no second notification ever arrives to record it again.
+    pub fn register_watch(
+        &mut self,
+        outpoint: OutPoint,
+        script_pubkey: ScriptBuf,
+    ) -> Result<(), WatcherError> {
+        self.with_data(|data| {
+            let entry = data.watches.entry(outpoint).or_insert(WatchRequest {
+                outpoint,
+                script_pubkey: script_pubkey.clone(),
+                in_block: false,
+                spent_tx: None,
+            });
+            entry.script_pubkey = script_pubkey;
+        })?;
+        Ok(())
+    }
+
+    /// Removes the watch request for the given outpoint.
+    pub fn remove_watch(&mut self, outpoint: OutPoint) -> Result<(), WatcherError> {
         self.with_data(|data| match data.watches.remove(&outpoint) {
             #[cfg(debug_assertions)]
             Some(_) => log::debug!(
@@ -170,17 +103,17 @@ impl FileRegistry {
                 data.watches.len()
             ),
             _ => {}
-        });
-        self.flush();
+        })?;
+        Ok(())
     }
 
     /// Returns all current watch requests.
-    pub fn list_watches(&self) -> Vec<WatchRequest> {
+    pub fn list_watches(&self) -> Result<Vec<WatchRequest>, WatcherError> {
         self.with_data(|data| data.watches.values().cloned().collect())
     }
 
     /// Returns all stored maker fidelity records.
-    pub fn list_fidelity(&self, height: u32) -> HashSet<Fidelity> {
+    pub fn list_fidelity(&self, height: u32) -> Result<HashSet<Fidelity>, WatcherError> {
         self.with_data(|data| {
             data.fidelity = data
                 .fidelity
@@ -193,47 +126,43 @@ impl FileRegistry {
     }
 
     /// Inserts a new fidelity record.
-    pub fn insert_fidelity(&self, txid: Txid, fidelity_announcement: FidelityAnnouncement) -> bool {
+    pub fn insert_fidelity(
+        &self,
+        txid: Txid,
+        fidelity_announcement: FidelityAnnouncement,
+    ) -> Result<bool, WatcherError> {
         let fidelity = Fidelity {
             txid,
             onion_address: fidelity_announcement.onion,
             expire_height: fidelity_announcement.expires_at_height,
         };
-        let is_in = self.with_data(|data| data.fidelity.insert(fidelity));
-        self.flush();
-        is_in
+        let is_in = self.with_data(|data| data.fidelity.insert(fidelity))?;
+        Ok(is_in)
     }
 
     /// Removes fidelity records matching the given txid.
-    pub fn remove_fidelity(&mut self, txid: Txid) {
-        self.with_data(|data| data.fidelity.retain(|f| f.txid != txid));
-        self.flush();
+    pub fn remove_fidelity(&mut self, txid: Txid) -> Result<(), WatcherError> {
+        self.with_data(|data| data.fidelity.retain(|f| f.txid != txid))?;
+        Ok(())
     }
 
-    /// Persists the latest processed checkpoint to disk.
-    pub fn save_checkpoint(&mut self, cp: Checkpoint) {
-        self.with_data(|data| data.checkpoint = Some(cp));
-        self.flush();
-    }
-
-    /// Loads the most recently saved checkpoint, if any.
-    pub fn load_checkpoint(&self) -> Option<Checkpoint> {
-        self.data.lock().unwrap().checkpoint.clone()
-    }
-
-    /// Loads the latest processed Nostr event timestamp for a relay.
-    pub fn load_nostr_cursor(&self, relay_url: &str) -> Option<u64> {
-        let cursor = self.with_data(|data| data.nostr_cursors.get(relay_url).copied());
+    /// Returns the latest processed Nostr event timestamp for a relay.
+    pub fn load_nostr_cursor(&self, relay_url: &str) -> Result<Option<u64>, WatcherError> {
+        let cursor = self.with_data(|data| data.nostr_cursors.get(relay_url).copied())?;
         log::debug!(
             "Nostr cursor load | relay={} | cursor={:?}",
             relay_url,
             cursor
         );
-        cursor
+        Ok(cursor)
     }
 
-    /// Persists the latest processed Nostr event timestamp for a relay.
-    pub fn save_nostr_cursor(&self, relay_url: &str, created_at_secs: u64) {
+    /// Records the latest processed Nostr event timestamp for a relay.
+    pub fn save_nostr_cursor(
+        &self,
+        relay_url: &str,
+        created_at_secs: u64,
+    ) -> Result<(), WatcherError> {
         let (prev, next, updated) = self.with_data(|data| {
             let entry = data.nostr_cursors.entry(relay_url.to_string()).or_insert(0);
             let prev = *entry;
@@ -242,7 +171,7 @@ impl FileRegistry {
             }
             let next = *entry;
             (prev, next, next != prev)
-        });
+        })?;
         log::debug!(
             "Nostr cursor save | relay={} | incoming={} | previous={} | stored={} | advanced={}",
             relay_url,
@@ -251,15 +180,15 @@ impl FileRegistry {
             next,
             updated
         );
-        self.flush();
+        Ok(())
     }
 
-    fn with_data<F, T>(&self, f: F) -> T
+    fn with_data<F, T>(&self, f: F) -> Result<T, WatcherError>
     where
         F: FnOnce(&mut RegistryData) -> T,
     {
-        let mut data = self.data.lock().unwrap();
-        f(&mut data)
+        let mut data = self.data.lock()?;
+        Ok(f(&mut data))
     }
 }
 
@@ -268,8 +197,7 @@ mod tests {
     use std::str::FromStr;
 
     use super::*;
-    use bitcoin::{BlockHash, OutPoint, Txid};
-    use bitcoind::tempfile::TempDir;
+    use bitcoin::{OutPoint, Txid};
 
     fn dummy_txid(_n: u8) -> Txid {
         Txid::from_str("a6eab3c14ab5272a58a5ba91505ba1a4b6d7a3a9fcbd187b6cd99a7b6d548cb7").unwrap()
@@ -282,74 +210,74 @@ mod tests {
         }
     }
 
-    fn dummy_checkpoint(n: u64) -> Checkpoint {
-        Checkpoint {
-            height: n,
-            hash: BlockHash::from_str(
-                "0000000000000000000000000000000000000000000000000000000000000000",
-            )
-            .unwrap(),
-        }
-    }
-
     #[test]
-    fn test_load_creates_file() {
-        let dir = TempDir::new().unwrap();
-        let path = dir.path().join("registry.cbor");
-
-        assert!(!path.exists());
-        let _reg = FileRegistry::load(&path);
-        assert!(path.exists());
-    }
-
-    #[test]
-    fn test_watch_upsert_and_reload() {
-        let dir = TempDir::new().unwrap();
-        let path = dir.path().join("reg.cbor");
-
-        let mut reg = FileRegistry::load(&path);
+    fn test_watch_upsert_and_list() {
+        let mut reg = FileRegistry::new();
 
         let outpoint = dummy_outpoint(1);
-        let req = WatchRequest {
+        reg.upsert_watch(&WatchRequest {
             outpoint,
+            script_pubkey: ScriptBuf::new(),
             in_block: false,
             spent_tx: None,
-        };
-        reg.upsert_watch(&req);
+        })
+        .unwrap();
 
-        let reg2 = FileRegistry::load(&path);
-        let watches = reg2.list_watches();
-
+        let watches = reg.list_watches().unwrap();
         assert_eq!(watches.len(), 1);
         assert_eq!(watches[0].outpoint, outpoint);
+        assert_eq!(watches[0].script_pubkey, ScriptBuf::new());
     }
 
     #[test]
-    fn test_watch_remove_and_reload() {
-        let dir = TempDir::new().unwrap();
-        let path = dir.path().join("reg.cbor");
-
-        let mut reg = FileRegistry::load(&path);
+    fn test_watch_remove() {
+        let mut reg = FileRegistry::new();
         let outpoint = dummy_outpoint(2);
 
-        let req = WatchRequest {
+        reg.upsert_watch(&WatchRequest {
             outpoint,
+            script_pubkey: ScriptBuf::new(),
             in_block: true,
             spent_tx: None,
-        };
-        reg.upsert_watch(&req);
-        reg.remove_watch(outpoint);
+        })
+        .unwrap();
+        reg.remove_watch(outpoint).unwrap();
 
-        let reg2 = FileRegistry::load(&path);
-        assert!(reg2.list_watches().is_empty());
+        assert!(reg.list_watches().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_register_watch_keeps_recorded_spend() {
+        let mut reg = FileRegistry::new();
+        let outpoint = dummy_outpoint(3);
+        let spending_tx = Transaction {
+            version: bitcoin::transaction::Version::TWO,
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+            input: Vec::new(),
+            output: Vec::new(),
+        };
+
+        reg.register_watch(outpoint, ScriptBuf::new()).unwrap();
+        // The watcher records the spend carrying the preimage.
+        reg.upsert_watch(&WatchRequest {
+            outpoint,
+            script_pubkey: ScriptBuf::new(),
+            in_block: true,
+            spent_tx: Some(spending_tx.clone()),
+        })
+        .unwrap();
+
+        reg.register_watch(outpoint, ScriptBuf::new()).unwrap();
+
+        let watches = reg.list_watches().unwrap();
+        assert_eq!(watches.len(), 1);
+        assert_eq!(watches[0].spent_tx, Some(spending_tx));
+        assert!(watches[0].in_block);
     }
 
     #[test]
     fn test_fidelity_insert_and_remove() {
-        let dir = TempDir::new().unwrap();
-        let path = dir.path().join("reg.cbor");
-
-        let mut reg = FileRegistry::load(&path);
+        let mut reg = FileRegistry::new();
 
         let txid1 = dummy_txid(1);
         let txid2 = dummy_txid(2);
@@ -364,30 +292,33 @@ mod tests {
             expires_at_height: 232,
         };
 
-        reg.insert_fidelity(txid1, fidelity_announcement_1);
-        reg.insert_fidelity(txid2, fidelity_announcement_2);
+        reg.insert_fidelity(txid1, fidelity_announcement_1).unwrap();
+        reg.insert_fidelity(txid2, fidelity_announcement_2).unwrap();
 
-        let list = reg.list_fidelity(0);
+        let list = reg.list_fidelity(0).unwrap();
         assert_eq!(list.len(), 2);
 
-        reg.remove_fidelity(txid1);
+        reg.remove_fidelity(txid1).unwrap();
 
-        let list2 = reg.list_fidelity(0);
+        let list2 = reg.list_fidelity(0).unwrap();
         assert_eq!(list2.len(), 0);
     }
 
     #[test]
-    fn test_checkpoint_save_and_reload() {
-        let dir = TempDir::new().unwrap();
-        let path = dir.path().join("reg.cbor");
+    fn test_nostr_cursor_only_moves_forward() {
+        let reg = FileRegistry::new();
+        let relay = "ws://localhost:7000";
 
-        let mut reg = FileRegistry::load(&path);
+        assert_eq!(reg.load_nostr_cursor(relay).unwrap(), None);
 
-        let cp = dummy_checkpoint(100);
-        reg.save_checkpoint(cp.clone());
+        reg.save_nostr_cursor(relay, 100).unwrap();
+        assert_eq!(reg.load_nostr_cursor(relay).unwrap(), Some(100));
 
-        let reg2 = FileRegistry::load(&path);
+        // A reconnect mid-process must not rewind and replay old events.
+        reg.save_nostr_cursor(relay, 99).unwrap();
+        assert_eq!(reg.load_nostr_cursor(relay).unwrap(), Some(100));
 
-        assert_eq!(reg2.load_checkpoint().unwrap(), cp);
+        reg.save_nostr_cursor(relay, 101).unwrap();
+        assert_eq!(reg.load_nostr_cursor(relay).unwrap(), Some(101));
     }
 }

@@ -19,25 +19,12 @@ pub enum WatcherError {
     IOError(std::io::Error),
     /// RPC error from bitcoind.
     RPCError(bitcoind::bitcoincore_rpc::Error),
-    /// HTTP transport error.
-    HttpError(minreq::Error),
-    /// HTTP endpoint returned a non-success status.
-    HttpStatus {
-        /// HTTP status code.
-        status: i32,
-        /// Response body.
-        body: String,
-    },
-    /// JSON parsing error.
-    JsonError(serde_json::Error),
-    /// Bitcoin consensus encoding/decoding error.
-    BitcoinEncodingError(bitcoin::consensus::encode::Error),
-    /// Serialization/deserialization error for CBOR.
-    SerdeCbor(serde_cbor::Error),
     /// WebSocket error from tungstenite
     WebSocket(tungstenite::Error),
     /// Nostr message parsing error
     NostrParsingError(nostr::message::MessageHandleError),
+    /// Error from the wallet layer.
+    Wallet(crate::wallet::WalletError),
     /// Represents a mutex poisoning error.
     MutexPoison,
     /// Represents a general error with a descriptive message.
@@ -56,33 +43,15 @@ impl From<bitcoind::bitcoincore_rpc::Error> for WatcherError {
     }
 }
 
-impl From<minreq::Error> for WatcherError {
-    fn from(value: minreq::Error) -> Self {
-        WatcherError::HttpError(value)
-    }
-}
-
-impl From<serde_json::Error> for WatcherError {
-    fn from(value: serde_json::Error) -> Self {
-        WatcherError::JsonError(value)
-    }
-}
-
-impl From<bitcoin::consensus::encode::Error> for WatcherError {
-    fn from(value: bitcoin::consensus::encode::Error) -> Self {
-        WatcherError::BitcoinEncodingError(value)
+impl From<crate::wallet::WalletError> for WatcherError {
+    fn from(value: crate::wallet::WalletError) -> Self {
+        WatcherError::Wallet(value)
     }
 }
 
 impl std::fmt::Display for WatcherError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{self:?}")
-    }
-}
-
-impl From<serde_cbor::Error> for WatcherError {
-    fn from(value: serde_cbor::Error) -> Self {
-        Self::SerdeCbor(value)
     }
 }
 
@@ -129,13 +98,9 @@ impl WatcherError {
             WatcherError::SendError => "SendError",
             WatcherError::IOError(_) => "IOError",
             WatcherError::RPCError(_) => "RPCError",
-            WatcherError::HttpError(_) => "HttpError",
-            WatcherError::HttpStatus { .. } => "HttpStatus",
-            WatcherError::JsonError(_) => "JsonError",
-            WatcherError::BitcoinEncodingError(_) => "BitcoinEncodingError",
-            WatcherError::SerdeCbor(_) => "SerdeCbor",
             WatcherError::WebSocket(_) => "WebSocket",
             WatcherError::NostrParsingError(_) => "NostrParsingError",
+            WatcherError::Wallet(_) => "Wallet",
             WatcherError::MutexPoison => "MutexPoison",
             WatcherError::General(_) => "General",
         }

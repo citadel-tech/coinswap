@@ -2,18 +2,19 @@
 
 use std::{
     collections::HashMap,
+    convert::TryFrom,
     io::Write,
+    net::TcpStream,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex, RwLock,
+        Arc, Mutex, RwLock, Weak,
     },
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
 
 use bitcoin::{bip32::ChainCode, Amount, Network, OutPoint, PublicKey, Transaction};
-use bitcoind::bitcoincore_rpc::RpcApi;
 
 use crate::{
     nostr_coinswap::NOSTR_RELAYS,
@@ -22,8 +23,8 @@ use crate::{
     utill::{get_maker_dir, parse_field, parse_toml, MIN_FEE_RATE},
     wallet::{
         swapcoin::{IncomingSwapCoin, OutgoingSwapCoin},
-        AddressType, FidelityError, RPCConfig, Wallet, WalletError, MAX_FIDELITY_TIMELOCK,
-        MIN_FIDELITY_TIMELOCK,
+        AddressType, AnyBlockchain, BackendConfig, Blockchain, CoreRpcConfig, FidelityError,
+        Wallet, WalletError, MAX_FIDELITY_TIMELOCK, MIN_FIDELITY_TIMELOCK,
     },
     watch_tower::service::WatchService,
 };
@@ -33,7 +34,9 @@ pub use super::handlers::MakerBehavior;
 
 use super::{
     error::MakerError,
-    handlers::{ConnectionState, Maker as MakerTrait, MakerConfig, SwapPhase},
+    handlers::{
+        past_refund_deadline, ConnectionState, Maker as MakerTrait, MakerConfig, SwapPhase,
+    },
     rpc::server::MakerRpc,
     swap_tracker::MakerSwapTracker,
 };
@@ -46,6 +49,8 @@ pub const MIN_SWAP_AMOUNT: u64 = 10_000;
 struct SwapState {
     /// Swap amount.
     swap_amount: Amount,
+    /// Number of contract transactions agreed at negotiation.
+    tx_count: u32,
     /// Timelock value (Legacy: relative CSV, Taproot: absolute CLTV height).
     timelock: u32,
     /// Protocol version for this swap.
@@ -71,15 +76,20 @@ struct SwapState {
     last_activity: Instant,
     /// Time when this swap was accepted by the maker.
     swap_start_time: Instant,
-    /// How many blocks the funds stay locked, derived from `timelock` when the swap was
-    /// accepted. This value is persisted across connection so swap fee calculation remains consistent.
+    /// How many blocks the funds stay locked, fixed when the swap is accepted.
+    /// Persisted so a fee recomputed on a later message comes out the same.
     refund_locktime_offset: u16,
+    /// Height our incoming funding confirmed at. A Legacy refund deadline is counted
+    /// from it, and it cannot be derived later once the swap has moved on.
+    /// `None` until that confirmation is observed.
+    funding_confirmation_height: Option<u32>,
 }
 
 impl Default for SwapState {
     fn default() -> Self {
         SwapState {
             swap_amount: Amount::ZERO,
+            tx_count: 0,
             timelock: 0,
             protocol: ProtocolVersion::Legacy,
             phase: SwapPhase::AwaitingHello,
@@ -93,11 +103,12 @@ impl Default for SwapState {
             last_activity: Instant::now(),
             swap_start_time: Instant::now(),
             refund_locktime_offset: 0,
+            funding_confirmation_height: None,
         }
     }
 }
 
-/// Maker Server configuration for the trait-based approach.
+/// Maker Server configuration.
 #[derive(Debug, Clone)]
 pub struct MakerServerConfig {
     /// Data directory for the Maker.
@@ -118,18 +129,16 @@ pub struct MakerServerConfig {
     pub required_confirms: u32,
     /// Supported protocol versions.
     pub supported_protocols: Vec<ProtocolVersion>,
-    /// ZMQ address for transaction monitoring.
-    pub zmq_addr: String,
     /// Fidelity bond amount in satoshis.
     pub fidelity_amount: u64,
     /// Fidelity bond timelock in blocks.
     pub fidelity_timelock: u32,
     /// Bitcoin network.
     pub network: Network,
-    /// Wallet name.
+    /// Selected blockchain backend (Bitcoin Core or Electrum) and its settings.
+    pub backend: BackendConfig,
+    /// On-disk wallet name; Same as Bitcoin Core watch-only wallet name.
     pub wallet_name: String,
-    /// RPC configuration.
-    pub rpc_config: RPCConfig,
     /// Control port for Tor interface.
     pub control_port: u16,
     /// Socks port for Tor proxy.
@@ -154,12 +163,13 @@ impl Default for MakerServerConfig {
             min_swap_amount: 10_000,
             required_confirms: 1,
             supported_protocols: vec![ProtocolVersion::Legacy, ProtocolVersion::Taproot],
-            zmq_addr: "tcp://127.0.0.1:28332".to_string(),
-            fidelity_amount: 10_000,   // 0.05 BTC
+            fidelity_amount: 10_000,   // 0.0001 BTC
             fidelity_timelock: 15_000, // ~6 months (MAX_FIDELITY_TIMELOCK)
             network: Network::Regtest,
+            backend: BackendConfig::CoreRpc(CoreRpcConfig::default()),
+            // "maker" predates this branch; changing it would strand an upgrading
+            // operator's wallet and fidelity bond.
             wallet_name: "maker".to_string(),
-            rpc_config: RPCConfig::default(),
             control_port: 9051,
             socks_port: 9050,
             tor_auth_password: String::new(),
@@ -176,7 +186,7 @@ impl MakerServerConfig {
     /// If the file doesn't exist or is empty, a default config file is created.
     /// Fields missing from the file fall back to defaults.
     pub fn new(config_path: Option<&Path>) -> Result<Self, WalletError> {
-        let default_config_path = get_maker_dir().join("config.toml");
+        let default_config_path = get_maker_dir()?.join("config.toml");
         let config_path = config_path.unwrap_or(&default_config_path);
         let default_config = Self::default();
 
@@ -252,13 +262,19 @@ impl MakerServerConfig {
             // Runtime fields — not read from config file
             data_dir: default_config.data_dir,
             network: default_config.network,
+            backend: default_config.backend,
             wallet_name: default_config.wallet_name,
-            rpc_config: default_config.rpc_config,
-            zmq_addr: default_config.zmq_addr,
             password: default_config.password,
             supported_protocols: default_config.supported_protocols,
             nostr_relays: default_config.nostr_relays,
         })
+    }
+
+    /// Set the blockchain backend (Bitcoin Core or Electrum).
+    /// Mirrors `TakerInitConfig::with_backend`.
+    pub fn with_backend(mut self, backend: BackendConfig) -> Self {
+        self.backend = backend;
+        self
     }
 
     /// Write the current configuration to a TOML file.
@@ -308,7 +324,12 @@ required_confirms = {}
             self.required_confirms,
         );
 
-        std::fs::create_dir_all(path.parent().expect("Config path should not be root"))?;
+        std::fs::create_dir_all(path.parent().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "config path has no parent directory",
+            )
+        })?)?;
         let mut file = std::fs::File::create(path)?;
         file.write_all(toml_data.as_bytes())?;
         file.flush()?;
@@ -317,10 +338,17 @@ required_confirms = {}
 }
 
 /// Thread pool for managing background threads.
+///
+/// A connection thread is tracked with a *weak* handle on its socket. Weak so the
+/// pool cannot keep a finished connection's socket open, which would leave the
+/// peer waiting for an end that never comes.
 pub struct ThreadPool {
-    threads: Mutex<Vec<JoinHandle<()>>>,
+    threads: Mutex<Vec<PooledThread>>,
     port: u16,
 }
+
+/// A pooled thread, plus the socket it serves when it is a connection handler.
+type PooledThread = (JoinHandle<()>, Option<Weak<TcpStream>>);
 
 impl ThreadPool {
     /// Create a new thread pool.
@@ -332,9 +360,33 @@ impl ThreadPool {
     }
 
     /// Add a thread to the pool.
-    pub fn add_thread(&self, handle: JoinHandle<()>) {
-        let mut threads = self.threads.lock().unwrap();
-        threads.push(handle);
+    pub fn add_thread(&self, handle: JoinHandle<()>) -> Result<(), MakerError> {
+        self.push(handle, None)
+    }
+
+    /// Add a connection thread, so shutdown can close the socket it reads from.
+    pub fn add_connection(
+        &self,
+        handle: JoinHandle<()>,
+        stream: &Arc<TcpStream>,
+    ) -> Result<(), MakerError> {
+        self.push(handle, Some(Arc::downgrade(stream)))
+    }
+
+    fn push(
+        &self,
+        handle: JoinHandle<()>,
+        stream: Option<Weak<TcpStream>>,
+    ) -> Result<(), MakerError> {
+        let mut threads = self
+            .threads
+            .lock()
+            .map_err(|_| MakerError::General("thread pool lock poisoned"))?;
+        // Drop what has already finished, or a long-lived maker keeps every
+        // connection handle it ever accepted.
+        threads.retain(|(handle, _)| !handle.is_finished());
+        threads.push((handle, stream));
+        Ok(())
     }
 
     /// Join all threads in the pool.
@@ -346,7 +398,15 @@ impl ThreadPool {
 
         log::info!("Joining {} threads", threads.len());
 
-        while let Some(thread) = threads.pop() {
+        // Close first, join second. A handler blocked in a read only returns once
+        // its socket dies, and the read timeout is half an hour.
+        for (_, stream) in threads.iter() {
+            if let Some(stream) = stream.as_ref().and_then(|s| s.upgrade()) {
+                let _ = stream.shutdown(std::net::Shutdown::Both);
+            }
+        }
+
+        while let Some((thread, _)) = threads.pop() {
             let thread_name = thread.thread().name().unwrap_or("unknown").to_string();
 
             match thread.join() {
@@ -411,25 +471,26 @@ pub struct IdleSwapData {
 }
 
 impl MakerServer {
-    /// Initialize a new maker server with full setup.
+    /// Initialize a maker server. The backend (Bitcoin Core or Electrum) is
+    /// resolved from `config` via [`MakerServerConfig::backend`].
     pub fn init(mut config: MakerServerConfig) -> Result<Self, MakerError> {
+        std::fs::create_dir_all(&config.data_dir).map_err(MakerError::IO)?;
+        // For the Core backend, bind the node-side wallet name to the on-disk
+        // wallet name (no-op for Electrum, which has no server-side wallet).
+        let wallet_name = config.wallet_name.clone();
+        if let BackendConfig::CoreRpc(cfg) = &mut config.backend {
+            cfg.wallet_name = wallet_name.clone();
+        }
+        let wallet_path = config.data_dir.join("wallets").join(&wallet_name);
+        let blockchain = AnyBlockchain::from_config(&config.backend).map_err(MakerError::Wallet)?;
+        // Misconfiguration (no txindex, dead ZMQ) must fail here, not mid-swap.
+        if let AnyBlockchain::CoreRPC(core) = &blockchain {
+            core.check_node_requirements().map_err(MakerError::Wallet)?;
+        }
+        let mut wallet = Wallet::load_or_init(&wallet_path, blockchain, config.password.clone())?;
         let data_dir = config.data_dir.clone();
-        std::fs::create_dir_all(&data_dir).map_err(MakerError::IO)?;
-
-        let wallets_dir = data_dir.join("wallets");
-        let wallet_path = wallets_dir.join(&config.wallet_name);
-
-        // Initialize or load wallet
-        let mut rpc_config = config.rpc_config.clone();
-        rpc_config.wallet_name = config.wallet_name.clone();
-
-        let wallet =
-            Wallet::load_or_init_wallet(&wallet_path, &rpc_config, config.password.clone())?;
-
-        // Initial wallet sync
-        let mut wallet = wallet;
         log::info!("Sync at:----MakerServer init----");
-        wallet.sync_and_save()?;
+        wallet.sync_and_save(&crate::utill::NO_SHUTDOWN)?;
         let wallet_network = wallet.store.network;
         if config.network != wallet_network {
             log::info!(
@@ -441,13 +502,18 @@ impl MakerServer {
         }
 
         // Initialize watch service
-        let watch_service = crate::watch_tower::service::start_maker_watch_service(
-            &config.zmq_addr,
-            &rpc_config,
-            &data_dir,
-            config.network_port,
-        )
-        .map_err(MakerError::Watcher)?;
+        let watch_service = crate::watch_tower::service::start_maker_watch_service(&config.backend)
+            .map_err(MakerError::Watcher)?;
+
+        // The watcher starts empty, so re-arm every contract still live in the
+        // wallet. Without this a restart leaves them undefended.
+        let mut watches = wallet.incoming_contract_outpoints();
+        watches.extend(wallet.outgoing_contract_outpoints());
+        if !watches.is_empty() {
+            if let Err(e) = watch_service.rebuild_watches(watches) {
+                log::error!("could not rebuild watches on startup: {e}");
+            }
+        }
 
         let swap_tracker = MakerSwapTracker::load_or_create(&data_dir)?;
         let incomplete = swap_tracker.incomplete_swaps();
@@ -486,7 +552,6 @@ impl MakerServer {
     /// Setup fidelity bond for this maker.
     pub fn setup_fidelity_bond(&self, maker_address: &str) -> Result<FidelityProof, MakerError> {
         use bitcoin::absolute::LockTime;
-        use bitcoind::bitcoincore_rpc::RpcApi;
 
         let highest_index = self
             .wallet
@@ -510,14 +575,11 @@ impl MakerServer {
                 .store
                 .fidelity_bond
                 .get(i as usize)
-                .unwrap()
+                .ok_or(MakerError::General("fidelity bond index stale"))?
                 .clone();
-            let current_height = wallet_read
-                .rpc
-                .get_block_count()
-                .map_err(WalletError::Rpc)? as u32;
+            let (current_height, tip_time) = wallet_read.chain_tip().map_err(MakerError::Wallet)?;
             let bond_value = wallet_read
-                .calculate_bond_value(&bond)
+                .calculate_bond_value(&bond, current_height, tip_time)
                 .map_err(MakerError::Wallet)?
                 .to_sat();
             drop(wallet_read);
@@ -534,7 +596,7 @@ impl MakerServer {
                 highest_proof.bond.outpoint,
                 i,
                 bond.amount.to_sat(),
-                bond.lock_time.to_consensus_u32() - current_height,
+                bond.lock_time.to_consensus_u32() - current_height as u32,
                 bond_value
             );
 
@@ -550,9 +612,11 @@ impl MakerServer {
                 .wallet
                 .read()
                 .map_err(|_| MakerError::General("Failed to lock wallet"))?
-                .rpc
+                .blockchain
                 .get_block_count()
-                .map_err(WalletError::Rpc)? as u32;
+                .map_err(MakerError::Wallet)?;
+            let current_height = u32::try_from(current_height)
+                .map_err(|_| MakerError::General("backend tip does not fit u32"))?;
 
             // Set locktime for test (950 blocks) or production
             #[cfg(feature = "integration-test")]
@@ -564,11 +628,20 @@ impl MakerServer {
                 } else {
                     950
                 };
-                LockTime::from_height(current_height + offset).map_err(WalletError::Locktime)?
+                let height = current_height
+                    .checked_add(offset)
+                    .ok_or(MakerError::General("fidelity locktime height overflows"))?;
+                LockTime::from_height(height).map_err(WalletError::Locktime)?
             };
             #[cfg(not(feature = "integration-test"))]
-            let locktime = LockTime::from_height(self.config.fidelity_timelock + current_height)
-                .map_err(WalletError::Locktime)?;
+            let locktime = {
+                let height = self
+                    .config
+                    .fidelity_timelock
+                    .checked_add(current_height)
+                    .ok_or(MakerError::General("fidelity locktime height overflows"))?;
+                LockTime::from_height(height).map_err(WalletError::Locktime)?
+            };
 
             log::info!(
                 "Fidelity timelock {:?} blocks",
@@ -586,7 +659,7 @@ impl MakerServer {
                 self.wallet
                     .write()
                     .map_err(|_| MakerError::General("Failed to lock wallet"))?
-                    .sync_and_save()
+                    .sync_and_save(&self.shutdown)
                     .map_err(MakerError::Wallet)?;
 
                 let fidelity_result = self
@@ -673,7 +746,7 @@ impl MakerServer {
                         self.wallet
                             .write()
                             .map_err(|_| MakerError::General("Failed to lock wallet"))?
-                            .sync_and_save()
+                            .sync_and_save(&self.shutdown)
                             .map_err(MakerError::Wallet)?;
                         break;
                     }
@@ -703,7 +776,7 @@ impl MakerServer {
             self.wallet
                 .write()
                 .map_err(|_| MakerError::General("Failed to lock wallet"))?
-                .sync_and_save()
+                .sync_and_save(&self.shutdown)
                 .map_err(MakerError::Wallet)?;
 
             let offer_max_size = self
@@ -737,19 +810,57 @@ impl MakerServer {
     /// Atomically find and remove stale entries from `ongoing_swaps`.
     /// Returns swap data for each idle swap.
     /// Only drains entries where `outgoing_swapcoins` is non-empty (otherwise nothing to recover).
-    pub fn drain_idle_swaps(&self, timeout: Duration) -> Vec<IdleSwapData> {
-        let mut swaps = self.ongoing_swaps.lock().unwrap();
+    pub fn drain_idle_swaps(&self, timeout: Duration) -> Result<Vec<IdleSwapData>, MakerError> {
+        // Read before the lock: a chain round trip while holding `ongoing_swaps`
+        // would stall every handler. A failure here must not kill the recovery
+        // thread, so this cycle falls back to the idle timeout alone.
+        let current_height = match self.get_current_height() {
+            Ok(height) => Some(height),
+            Err(e) => {
+                log::warn!(
+                    "[{}] Could not read height for refund deadlines: {:?}",
+                    self.config.network_port,
+                    e
+                );
+                None
+            }
+        };
+
+        let mut swaps = self
+            .ongoing_swaps
+            .lock()
+            .map_err(|_| MakerError::MutexPossion)?;
         let mut idle = Vec::new();
 
-        let stale_ids: Vec<String> = swaps
+        // Carries why each swap was drained: an operator reading "dropped connection"
+        // for a taker that never dropped would go looking for the wrong fault.
+        let stale_ids: Vec<(String, bool)> = swaps
             .iter()
-            .filter(|(_, state)| {
-                state.last_activity.elapsed() > timeout && !state.outgoing_swapcoins.is_empty()
+            .filter_map(|(id, state)| {
+                if state.outgoing_swapcoins.is_empty() {
+                    return None;
+                }
+                let past_deadline = current_height.is_some_and(|height| {
+                    past_refund_deadline(
+                        state.protocol,
+                        state.timelock,
+                        state.funding_confirmation_height,
+                        height,
+                    )
+                });
+                (past_deadline || state.last_activity.elapsed() > timeout)
+                    .then(|| (id.clone(), past_deadline))
             })
-            .map(|(id, _)| id.clone())
             .collect();
 
-        for id in stale_ids {
+        for (id, past_deadline) in stale_ids {
+            if past_deadline {
+                log::warn!(
+                    "[{}] Swap {} reached its refund deadline; recovering now",
+                    self.config.network_port,
+                    id
+                );
+            }
             if let Some(state) = swaps.remove(&id) {
                 idle.push(IdleSwapData {
                     swap_id: id,
@@ -762,18 +873,26 @@ impl MakerServer {
             }
         }
 
-        idle
+        Ok(idle)
     }
 
     /// Remove a completed swap's entry from `ongoing_swaps`.
-    pub fn remove_swap_state(&self, swap_id: &str) {
-        let mut swaps = self.ongoing_swaps.lock().unwrap();
+    pub fn remove_swap_state(&self, swap_id: &str) -> Result<(), MakerError> {
+        let mut swaps = self
+            .ongoing_swaps
+            .lock()
+            .map_err(|_| MakerError::MutexPossion)?;
         swaps.remove(swap_id);
+        Ok(())
     }
 
     /// Check if any swaps are currently in progress.
-    pub fn has_ongoing_swaps(&self) -> bool {
-        !self.ongoing_swaps.lock().unwrap().is_empty()
+    pub fn has_ongoing_swaps(&self) -> Result<bool, MakerError> {
+        Ok(!self
+            .ongoing_swaps
+            .lock()
+            .map_err(|_| MakerError::MutexPossion)?
+            .is_empty())
     }
 
     /// Verify the deniability proof for a specific swap.
@@ -827,7 +946,7 @@ impl MakerTrait for MakerServer {
     }
 
     fn validate_swap_parameters(&self, details: &SwapDetails) -> Result<u16, MakerError> {
-        use super::handlers::MIN_CONTRACT_REACTION_TIME;
+        use super::handlers::{offset_meets_reaction_time, MIN_CONTRACT_REACTION_TIME};
 
         let config = self.get_config();
 
@@ -861,8 +980,7 @@ impl MakerTrait for MakerServer {
             }
         }
 
-        // Check timelock bounds and work out how long the funds stay locked. Taproot reads the
-        // tip once for both, so a block arriving mid-check cannot price the swap differently.
+        // Check timelock bounds and work out how long the funds stay locked.
         let locked_blocks = if details.protocol_version == ProtocolVersion::Legacy {
             if details.timelock < MIN_CONTRACT_REACTION_TIME as u32 {
                 log::warn!(
@@ -890,7 +1008,20 @@ impl MakerTrait for MakerServer {
                     "Taproot timelock leaves too little contract reaction time",
                 ));
             }
-            details.timelock.saturating_sub(current_height)
+            if !offset_meets_reaction_time(details.refund_locktime_offset) {
+                log::error!(
+                    "Taproot refund locktime offset {} is below minimum reaction time {}",
+                    details.refund_locktime_offset,
+                    MIN_CONTRACT_REACTION_TIME
+                );
+                return Err(MakerError::General(
+                    "Taproot refund locktime offset is below minimum reaction time",
+                ));
+            }
+            // Price off the offset, not `timelock - current_height`: our own tip moves
+            // while we negotiate, which would price the same swap differently each run.
+            // The offset is not bound to the real lock duration; assess the CSV transition later.
+            details.refund_locktime_offset as u32
         };
 
         if locked_blocks == 0 || locked_blocks > u16::MAX as u32 {
@@ -954,50 +1085,44 @@ impl MakerTrait for MakerServer {
             .read()
             .map_err(|_| MakerError::General("Failed to lock wallet"))?;
         wallet
-            .rpc
+            .blockchain
             .get_block_count()
             .map(|h| h as u32)
-            .map_err(|e| MakerError::Wallet(crate::wallet::WalletError::Rpc(e)))
+            .map_err(MakerError::Wallet)
     }
 
-    fn verify_contract_tx_on_chain(&self, txid: &bitcoin::Txid) -> Result<(), MakerError> {
-        // QA: A mempool-only contract may be replaced via RBF after the maker
-        // funds the next hop. Require at least one confirmation before proceeding.
-        const MAX_ATTEMPTS: u32 = 12;
-        const RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
-        let required_confirms = self.config.required_confirms.max(1);
+    /// Waits on a fresh backend connection so no wallet lock is held for the
+    /// wait's duration; the shared wait bounds arrival and confirmation.
+    fn wait_for_tx_on_chain(
+        &self,
+        txid: &bitcoin::Txid,
+        required_confirms: u32,
+    ) -> Result<(), MakerError> {
+        let required_confirms = required_confirms.max(crate::utill::MIN_REQUIRED_CONFIRM);
 
-        for attempt in 0..MAX_ATTEMPTS {
-            let confirmed = {
-                let wallet = self
-                    .wallet
-                    .read()
-                    .map_err(|_| MakerError::General("Failed to lock wallet"))?;
-                wallet
-                    .rpc
-                    .get_raw_transaction_info(txid, None)
-                    .is_ok_and(|info| info.confirmations.unwrap_or(0) >= required_confirms)
-            };
-
-            if confirmed {
-                return Ok(());
-            }
-
-            if attempt + 1 < MAX_ATTEMPTS {
-                log::info!(
-                    "Contract tx {} not yet confirmed (attempt {}/{}), retrying in {}s",
-                    txid,
-                    attempt + 1,
-                    MAX_ATTEMPTS,
-                    RETRY_INTERVAL.as_secs()
-                );
-                std::thread::sleep(RETRY_INTERVAL);
-            }
-        }
-
-        Err(MakerError::General(
-            "Incoming contract tx does not have the required confirmations",
-        ))
+        log::info!(
+            "[{}] Waiting for {} confirmation(s) on tx {}",
+            self.config.network_port,
+            required_confirms,
+            txid
+        );
+        let chain = self
+            .wallet
+            .read()
+            .map_err(|_| MakerError::General("Failed to lock wallet"))?
+            .blockchain
+            .new_connection()
+            .map_err(MakerError::Wallet)?;
+        crate::wallet::wait_for_tx_confirmation(
+            &chain,
+            &[*txid],
+            required_confirms,
+            crate::utill::TX_BROADCAST_TIMEOUT,
+            Some(&self.shutdown),
+            None,
+        )
+        .map_err(MakerError::Wallet)?;
+        Ok(())
     }
 
     fn broadcast_transaction(&self, tx: &Transaction) -> Result<bitcoin::Txid, MakerError> {
@@ -1007,6 +1132,13 @@ impl MakerTrait for MakerServer {
             .map_err(|_| MakerError::General("Failed to lock wallet"))?;
 
         wallet.send_tx(tx).map_err(MakerError::Wallet)
+    }
+
+    fn is_transaction_known(&self, txid: &bitcoin::Txid) -> bool {
+        self.wallet
+            .read()
+            .map(|wallet| wallet.blockchain.get_raw_transaction(txid, None).is_ok())
+            .unwrap_or(false)
     }
 
     fn save_incoming_swapcoin(
@@ -1033,19 +1165,30 @@ impl MakerTrait for MakerServer {
         wallet.save_to_disk().map_err(MakerError::Wallet)
     }
 
-    fn register_watch_outpoint(&self, outpoint: OutPoint) {
-        self.watch_service.register_watch_request(outpoint);
+    fn register_watch_outpoint(
+        &self,
+        outpoint: OutPoint,
+        script_pubkey: bitcoin::ScriptBuf,
+    ) -> Result<(), MakerError> {
+        self.watch_service
+            .register_watch_request(outpoint, script_pubkey)
+            .map_err(|e| {
+                log::error!("watch registration for {outpoint} failed (watcher gone): {e}");
+                MakerError::General("watchtower registration failed, aborting swap")
+            })
     }
 
-    fn unwatch_outpoint(&self, outpoint: OutPoint) {
-        self.watch_service.unwatch(outpoint);
+    fn unwatch_outpoint(&self, outpoint: OutPoint, script_pubkey: bitcoin::ScriptBuf) {
+        if let Err(e) = self.watch_service.unwatch(outpoint, script_pubkey) {
+            log::error!("unwatch for {outpoint} failed (watcher gone): {e}");
+        }
     }
 
     fn sync_and_save_wallet(&self) -> Result<(), MakerError> {
         self.wallet
             .write()
             .map_err(|_| MakerError::General("Failed to lock wallet"))?
-            .sync_and_save()
+            .sync_and_save(&self.shutdown)
             .map_err(MakerError::Wallet)
     }
 
@@ -1055,13 +1198,11 @@ impl MakerTrait for MakerServer {
             self.config.network_port
         );
 
-        // Sweep all completed incoming swapcoins
-        let sweep_outcome = self
-            .wallet
-            .write()
-            .map_err(|_| MakerError::General("Failed to lock wallet"))?
-            .sweep_incoming_swapcoins(MIN_FEE_RATE)
-            .map_err(MakerError::Wallet)?;
+        // Sweep all completed incoming swapcoins. The sweep takes the lock itself and
+        // drops it across its waits, so a stuck tx cannot wedge the wallet.
+        let sweep_outcome =
+            Wallet::sweep_incoming_swapcoins(&self.wallet, MIN_FEE_RATE, &self.shutdown)
+                .map_err(MakerError::Wallet)?;
 
         if !sweep_outcome.is_empty() {
             log::info!(
@@ -1079,7 +1220,7 @@ impl MakerTrait for MakerServer {
         self.wallet
             .write()
             .map_err(|_| MakerError::General("Failed to lock wallet"))?
-            .sync_and_save()
+            .sync_and_save(&self.shutdown)
             .map_err(MakerError::Wallet)?;
 
         Ok(())
@@ -1150,6 +1291,7 @@ impl MakerTrait for MakerServer {
             );
         }
         swap_state.swap_amount = state.swap_amount;
+        swap_state.tx_count = state.tx_count;
         swap_state.timelock = state.timelock;
         swap_state.protocol = state.protocol;
         swap_state.phase = state.phase;
@@ -1176,12 +1318,16 @@ impl MakerTrait for MakerServer {
         Ok(())
     }
 
-    fn get_connection_state(&self, swap_id: &str) -> Option<ConnectionState> {
-        let swaps = self.ongoing_swaps.lock().unwrap();
-        swaps.get(swap_id).map(|s| {
+    fn get_connection_state(&self, swap_id: &str) -> Result<Option<ConnectionState>, MakerError> {
+        let swaps = self
+            .ongoing_swaps
+            .lock()
+            .map_err(|_| MakerError::MutexPossion)?;
+        Ok(swaps.get(swap_id).map(|s| {
             let mut state = ConnectionState::new(s.protocol);
             state.swap_id = Some(swap_id.to_string());
             state.swap_amount = s.swap_amount;
+            state.tx_count = s.tx_count;
             state.timelock = s.timelock;
             state.phase = s.phase;
             state.incoming_swapcoins = s.incoming_swapcoins.clone();
@@ -1193,12 +1339,29 @@ impl MakerTrait for MakerServer {
             state.reserve_utxo = s.reserve_utxo.clone();
             state.swap_start_time = s.swap_start_time;
             state.refund_locktime_offset = s.refund_locktime_offset;
+            state.last_activity = s.last_activity;
             state
-        })
+        }))
     }
 
-    fn remove_connection_state(&self, swap_id: &str) {
-        self.remove_swap_state(swap_id);
+    fn remove_connection_state(&self, swap_id: &str) -> Result<(), MakerError> {
+        self.remove_swap_state(swap_id)
+    }
+
+    fn swap_past_refund_deadline(&self, swap_id: &str) -> Result<bool, MakerError> {
+        let current_height = self.get_current_height()?;
+        let swaps = self
+            .ongoing_swaps
+            .lock()
+            .map_err(|_| MakerError::MutexPossion)?;
+        Ok(swaps.get(swap_id).is_some_and(|state| {
+            past_refund_deadline(
+                state.protocol,
+                state.timelock,
+                state.funding_confirmation_height,
+                current_height,
+            )
+        }))
     }
 
     fn data_dir(&self) -> &std::path::Path {
@@ -1209,13 +1372,16 @@ impl MakerTrait for MakerServer {
         &self.config.wallet_name
     }
 
-    fn collect_excluded_utxos(&self, current_swap_id: &str) -> Vec<OutPoint> {
-        let swaps = self.ongoing_swaps.lock().unwrap();
-        swaps
+    fn collect_excluded_utxos(&self, current_swap_id: &str) -> Result<Vec<OutPoint>, MakerError> {
+        let swaps = self
+            .ongoing_swaps
+            .lock()
+            .map_err(|_| MakerError::MutexPossion)?;
+        Ok(swaps
             .iter()
             .filter(|(id, _)| id.as_str() != current_swap_id)
             .flat_map(|(_, state)| state.reserve_utxo.clone())
-            .collect()
+            .collect())
     }
 
     fn verify_and_sign_sender_contract_txs(
@@ -1252,7 +1418,7 @@ impl MakerTrait for MakerServer {
         self.wallet
             .write()
             .map_err(|_| MakerError::General("Failed to lock wallet"))?
-            .cache_prevout_to_contracts(&bindings)?;
+            .cache_prevout_to_contract(&bindings)?;
 
         let mut sigs = Vec::new();
         for txinfo in txs_info {
@@ -1296,10 +1462,9 @@ impl MakerTrait for MakerServer {
                 check_reedemscript_is_multisig, read_contract_locktime,
                 read_hashvalue_from_contract,
             },
-            utill::{redeemscript_to_scriptpubkey, REQUIRED_CONFIRMS},
+            utill::{redeemscript_to_scriptpubkey, MIN_REQUIRED_CONFIRM},
         };
         use bitcoin::{hashes::Hash, OutPoint};
-        use bitcoind::bitcoincore_rpc::RpcApi;
         use std::collections::HashSet;
 
         log::info!(
@@ -1317,6 +1482,7 @@ impl MakerTrait for MakerServer {
         // Each proof can be valid on its own, but repeating one outpoint makes the
         // maker count the same incoming value twice and fund excess outgoing value.
         let mut seen_outpoints = HashSet::with_capacity(message.confirmed_funding_txes.len());
+        let mut funding_confirmed_at: Option<u32> = None;
 
         for funding_info in &message.confirmed_funding_txes {
             // Check that the new locktime is sufficiently short enough
@@ -1349,27 +1515,42 @@ impl MakerTrait for MakerServer {
             }
 
             // Check the funding_tx is confirmed to required depth
+            // Same source as the taproot path: the operator's config, not a hardcoded 1.
+            self.wait_for_tx_on_chain(
+                &funding_txid,
+                self.config.required_confirms.max(MIN_REQUIRED_CONFIRM),
+            )?;
+
             let wallet_read = self
                 .wallet
                 .read()
                 .map_err(|_| MakerError::General("Failed to lock wallet"))?;
 
-            if let Some(txout) = wallet_read
-                .rpc
+            // A confirmed txid says nothing about its outputs. Without this the taker
+            // can prove funding with an outpoint it has already spent, and the maker
+            // funds the next hop against value it can never claim. Mempool spends
+            // count: a spend we can already see will confirm before our next hop.
+            if wallet_read
+                .blockchain
                 .get_tx_out(&funding_txid, funding_output_index, None)
-                .map_err(WalletError::Rpc)?
+                .map_err(MakerError::Wallet)?
+                .is_none()
             {
-                if txout.confirmations < REQUIRED_CONFIRMS {
-                    return Err(MakerError::General(
-                        "Funding tx not confirmed to required depth",
-                    ));
-                }
-            } else {
-                return Err(MakerError::General("Funding tx output doesn't exist"));
+                return Err(MakerError::General("Funding output already spent"));
             }
 
-            // Verify the taker-provided SPV proof commits to this funding transaction.
-            wallet_read.verify_tx_out_proof(&funding_txid, &funding_info.funding_tx_merkleproof)?;
+            // Earliest confirmation binds: that contract's refund window opens first.
+            if let Some(height) = wallet_read
+                .blockchain
+                .tx_block_height(&funding_txid)
+                .map_err(MakerError::Wallet)?
+            {
+                let height = height as u32;
+                funding_confirmed_at = Some(match funding_confirmed_at {
+                    Some(earliest) => earliest.min(height),
+                    None => height,
+                });
+            }
 
             check_reedemscript_is_multisig(&funding_info.multisig_redeemscript)?;
 
@@ -1400,6 +1581,19 @@ impl MakerTrait for MakerServer {
                 }
             } else {
                 hashvalue = Some(this_hashvalue);
+            }
+        }
+
+        // Legacy's refund deadline is counted from this height and nothing later can
+        // recover it, so record it while the proof is still in hand.
+        if let Some(height) = funding_confirmed_at {
+            if let Some(state) = self
+                .ongoing_swaps
+                .lock()
+                .map_err(|_| MakerError::MutexPossion)?
+                .get_mut(&message.id)
+            {
+                state.funding_confirmation_height = Some(height);
             }
         }
 

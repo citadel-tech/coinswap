@@ -26,9 +26,7 @@ use bitcoin::{
     },
     Amount, OutPoint, PublicKey,
 };
-use bitcoind::bitcoincore_rpc::{json::ListUnspentResultEntry, RpcApi};
-#[cfg(not(feature = "integration-test"))]
-use socks::Socks5Stream;
+use bitcoind::bitcoincore_rpc::json::ListUnspentResultEntry;
 
 use crate::{
     nostr_coinswap::NOSTR_RELAYS,
@@ -45,15 +43,13 @@ use crate::{
     },
     wallet::{
         swapcoin::{IncomingSwapCoin, OutgoingSwapCoin, WatchOnlySwapCoin},
-        MakerFeeInfo as ReportMakerFeeInfo, RPCConfig, RecoveryOutcome, SwapStatus, TakerReport,
-        Wallet,
+        AnyBlockchain, BackendConfig, Blockchain, CoreRpcConfig,
+        MakerFeeInfo as ReportMakerFeeInfo, RecoveryOutcome, SwapStatus, TakerReport, Wallet,
     },
     watch_tower::{
         registry_storage::FileRegistry,
-        rest_backend::BitcoinRest,
         service::WatchService,
         watcher::{Role, Watcher},
-        zmq_backend::ZmqBackend,
     },
 };
 
@@ -69,6 +65,8 @@ use super::{
 
 #[cfg(not(feature = "integration-test"))]
 use crate::utill::check_tor_status;
+#[cfg(not(feature = "integration-test"))]
+use crate::utill::socks5_connect;
 
 /// Connection type for the taker.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,11 +80,28 @@ pub enum ConnectionType {
 /// Timeout for connecting to makers.
 pub const CONNECT_TIMEOUT_SECS: u64 = 30;
 
-/// Keep active funding waits comfortably below the maker's idle timeout.
-#[cfg(feature = "integration-test")]
-pub(crate) const FUNDING_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(10);
+/// How long the taker waits for a maker's response. A maker can take minutes
+/// to answer contract data — it waits for our contracts to confirm first, and
+/// that wait is block-bound, not message-bound.
 #[cfg(not(feature = "integration-test"))]
-pub(crate) const FUNDING_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(60);
+const MAKER_RESPONSE_TIMEOUT_SECS: u64 = 1800;
+#[cfg(feature = "integration-test")]
+const MAKER_RESPONSE_TIMEOUT_SECS: u64 = 60;
+
+/// How long the taker waits for a maker's funding to show on-chain before
+/// declaring the swap failed. A live maker broadcasts right after processing;
+/// if nothing appears, the maker is gone and waiting longer helps no one.
+#[cfg(not(feature = "integration-test"))]
+pub(crate) const MAKER_FUNDING_TIMEOUT: Duration = Duration::from_secs(900);
+#[cfg(feature = "integration-test")]
+pub(crate) const MAKER_FUNDING_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Gap between route keepalive pings. Must stay comfortably below the maker's
+/// idle timeout, or a maker reads a live swap as dropped and starts recovery.
+#[cfg(feature = "integration-test")]
+pub(crate) const ROUTE_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
+#[cfg(not(feature = "integration-test"))]
+pub(crate) const ROUTE_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(60);
 
 /// Base refund locktime (in blocks) for the innermost hop.
 ///
@@ -119,34 +134,29 @@ const FINALIZE_RETRY_DELAY: Duration = Duration::from_secs(5);
 /// Maximum number of blocks between consecutive hop confirmations.
 /// If a maker's funding confirms more than this many blocks after the previous
 /// hop, the relative timelock staggering may be compromised (legacy CSV only).
-/// In integration tests, blocks are mined in rapid batches so the gap is larger.
+/// In integration tests, blocks are mined in rapid batches so the gap is larger;
+/// over Tor a single hop step takes ~90s, which is ~60 blocks at the slow cadence.
 #[cfg(not(feature = "integration-test"))]
 pub(crate) const CONFIRMATION_HEIGHT_TOLERANCE: u32 = 6;
 #[cfg(feature = "integration-test")]
-pub(crate) const CONFIRMATION_HEIGHT_TOLERANCE: u32 = 50;
-
-/// Margin multiplier applied to the computed maker fee when verifying amounts.
-/// Accounts for mining transaction fees and rounding. For example, 1.5 means the
-/// actual deduction may be up to 50% more than the advertised maker fee.
-pub(crate) const FEE_VERIFICATION_MARGIN: f64 = 1.5;
+pub(crate) const CONFIRMATION_HEIGHT_TOLERANCE: u32 = 150;
 
 /// Taker configuration.
 #[derive(Debug, Clone)]
 pub struct TakerInitConfig {
     /// Data directory path.
     pub data_dir: Option<PathBuf>,
-    /// Wallet file name.
-    pub wallet_file_name: Option<String>,
-    /// RPC configuration for Bitcoin Core.
-    pub rpc_config: Option<RPCConfig>,
+    /// Selected blockchain backend (Bitcoin Core or Electrum) and its settings.
+    pub backend: BackendConfig,
+    /// On-disk wallet name; drives the wallet path and, for the Core backend, the
+    /// node-side wallet name.
+    pub wallet_name: String,
     /// Tor control port (optional).
     pub control_port: Option<u16>,
     /// Tor authentication password (optional).
     pub tor_auth_password: Option<String>,
     /// SOCKS port for Tor.
     pub socks_port: u16,
-    /// ZMQ address for transaction monitoring.
-    pub zmq_addr: String,
     /// Wallet password (optional).
     pub password: Option<String>,
     /// Connection type (Tor or Clearnet).
@@ -159,12 +169,11 @@ impl Default for TakerInitConfig {
     fn default() -> Self {
         TakerInitConfig {
             data_dir: None,
-            wallet_file_name: None,
-            rpc_config: None,
+            backend: BackendConfig::CoreRpc(CoreRpcConfig::default()),
+            wallet_name: "taker-wallet".to_string(),
             control_port: None,
             tor_auth_password: None,
             socks_port: 9050,
-            zmq_addr: "tcp://127.0.0.1:28332".to_string(),
             password: None,
             connection_type: ConnectionType::Tor,
             nostr_relays: NOSTR_RELAYS.iter().map(|s| s.to_string()).collect(),
@@ -179,21 +188,9 @@ impl TakerInitConfig {
         self
     }
 
-    /// Set the wallet file name.
-    pub fn with_wallet_name(mut self, name: String) -> Self {
-        self.wallet_file_name = Some(name);
-        self
-    }
-
-    /// Set the RPC configuration.
-    pub fn with_rpc_config(mut self, rpc_config: RPCConfig) -> Self {
-        self.rpc_config = Some(rpc_config);
-        self
-    }
-
-    /// Set the ZMQ address.
-    pub fn with_zmq_addr(mut self, addr: String) -> Self {
-        self.zmq_addr = addr;
+    /// Set the blockchain backend (Bitcoin Core or Electrum).
+    pub fn with_backend(mut self, backend: BackendConfig) -> Self {
+        self.backend = backend;
         self
     }
 
@@ -378,40 +375,47 @@ impl MakerConnection {
 }
 
 impl Taker {
-    /// Compute the minimum expected output amount for a specific maker hop.
+    /// Compute the exact expected output amount for a specific maker hop.
     ///
     /// Accounts for cumulative fees from all previous hops so that each maker's
     /// output is compared against the correct input amount (not the original
-    /// `send_amount`).
+    /// `send_amount`). Taproot hops are priced on the negotiated locktime offset,
+    /// matching the maker's fee.
     ///
     /// Returns `None` if any maker along the route (up to and including `maker_idx`)
     /// has no stored offer.
     ///
     /// Fee formula: `total_fee = base_fee + (amount * amt_pct)/100 + (amount * locktime * time_pct)/100`
     /// TODO: Use fee estimation here
-    pub(crate) fn min_expected_amount_for_hop(&self, maker_idx: usize) -> Option<Amount> {
+    pub(crate) fn expected_amount_for_hop(&self, maker_idx: usize) -> Option<Amount> {
         let swap = self.swap_state().ok()?;
         let send_amount = swap.params.send_amount;
         let maker_count = swap.makers.len();
 
         // TODO : Have the makers derive the fee & a smart messaging layer to send the estimated target to the taker sequentially.
-        let per_hop_mining_fee =
-            (estimate_funding_tx_fee_sats() * swap.params.tx_count as u64) as f64;
+        let per_hop_mining_fee = estimate_funding_tx_fee_sats() * swap.params.tx_count as u64;
 
-        // Iteratively compute the amount reaching each hop after deducting fees.
-        let mut amount_sats = send_amount.to_sat() as f64;
+        // Replay each hop's deduction exactly as the maker computes it. Any
+        // slack here is room for a cheating maker to underpay the next hop.
+        let mut amount_sats = send_amount.to_sat();
         for i in 0..=maker_idx {
-            let offer = swap.makers[i].offer.as_ref()?;
-            let locktime =
-                REFUND_LOCKTIME_BASE + REFUND_LOCKTIME_STEP * (maker_count - i - 1) as u16;
-            let fee = offer.base_fee as f64
-                + (amount_sats * offer.amount_relative_fee_pct) / 100.0
-                + (amount_sats * locktime as f64 * offer.time_relative_fee_pct) / 100.0;
-            let fee_with_margin = fee * FEE_VERIFICATION_MARGIN;
-            amount_sats = (amount_sats - fee_with_margin - per_hop_mining_fee).max(0.0);
+            let maker = &swap.makers[i];
+            let offer = maker.offer.as_ref()?;
+            let locktime = match maker.protocol {
+                ProtocolVersion::Legacy => maker.negotiated_timelock,
+                ProtocolVersion::Taproot => {
+                    (REFUND_LOCKTIME_BASE + REFUND_LOCKTIME_STEP * (maker_count - i - 1) as u16)
+                        as u32
+                }
+            };
+            let fee = (offer.base_fee as f64
+                + (amount_sats as f64 * offer.amount_relative_fee_pct) / 100.0
+                + (amount_sats as f64 * locktime as f64 * offer.time_relative_fee_pct) / 100.0)
+                .ceil() as u64;
+            amount_sats = amount_sats.saturating_sub(fee + per_hop_mining_fee);
         }
 
-        Some(Amount::from_sat(amount_sats as u64))
+        Some(Amount::from_sat(amount_sats))
     }
 }
 
@@ -446,7 +450,10 @@ impl Drop for Taker {
         // Flush any pending swap state before shutdown
         if let Some(swap) = &self.ongoing_swap {
             if let Ok(record) = self.persist_build_record(swap) {
-                if let Err(e) = self.swap_tracker.lock().unwrap().save_record(&record) {
+                // Drop can't propagate; a poisoned tracker must not abort the
+                // process while we're already unwinding.
+                let mut tracker = self.swap_tracker.lock().unwrap_or_else(|e| e.into_inner());
+                if let Err(e) = tracker.save_record(&record) {
                     log::error!("Failed to flush swap tracker on shutdown: {:?}", e);
                 }
             }
@@ -511,25 +518,62 @@ impl Taker {
             .ok_or_else(|| TakerError::General("No active swap".to_string()))
     }
 
-    /// Initialize a new taker.
+    /// Initialize a new taker. The backend is resolved from `config` via [`TakerInitConfig::backend`].
     pub fn init(config: TakerInitConfig) -> Result<Self, TakerError> {
-        let data_dir = config.data_dir.clone().unwrap_or_else(get_taker_dir);
-        std::fs::create_dir_all(&data_dir)?;
+        // Init the Wallet
+        let wallet_name = config.wallet_name.clone();
 
-        let (wallet, rpc_config) = Self::init_wallet(&config, &data_dir)?;
+        // For the Core backend, bind the node-side wallet name to the on-disk
+        // wallet name (no-op for Electrum, which has no server-side wallet).
+        let mut backend = config.backend.clone();
+        if let BackendConfig::CoreRpc(cfg) = &mut backend {
+            cfg.wallet_name = wallet_name.clone();
+        }
+        let data_dir = config
+            .data_dir
+            .clone()
+            .map(Ok)
+            .unwrap_or_else(get_taker_dir)?;
+        std::fs::create_dir_all(&data_dir)?;
+        let wallet_path = data_dir.join("wallets").join(&wallet_name);
+        let blockchain = AnyBlockchain::from_config(&backend)?;
+        // Misconfiguration (no txindex, dead ZMQ) must fail here, not mid-swap.
+        if let AnyBlockchain::CoreRPC(core) = &blockchain {
+            core.check_node_requirements()?;
+        }
+        let wallet = Wallet::load_or_init(&wallet_path, blockchain, config.password.clone())?;
+
+        // Init Watch Service
         let (watch_service, registry, initial_sync_complete) =
-            Self::init_watch_service(&config, &rpc_config, &data_dir)?;
+            Self::init_watch_service(&config, &backend)?;
+
+        // The watcher starts empty, so re-arm every contract still live in the
+        // wallet. Without this a restart leaves them undefended.
+        let mut watches = wallet.incoming_contract_outpoints();
+        watches.extend(wallet.outgoing_contract_outpoints());
+        watches.extend(wallet.watchonly_contract_outpoints());
+        if !watches.is_empty() {
+            if let Err(e) = watch_service.rebuild_watches(watches) {
+                log::error!("could not rebuild watches on startup: {e}");
+            }
+        }
+
         Self::init_taker_config(&config, &data_dir)?;
+
+        // Init OfferBook Sync
         let offerbook = OfferBookHandle::load_or_create(&data_dir)?;
         let offer_sync_handle = Self::init_offer_sync(
             &offerbook,
             registry,
             config.socks_port,
-            rpc_config,
+            Arc::new(AnyBlockchain::from_config(&backend)?),
             initial_sync_complete,
         )?;
         let swap_tracker = Arc::new(Mutex::new(SwapTracker::load_or_create(&data_dir)?));
-        swap_tracker.lock().unwrap().cleanup_incomplete();
+        swap_tracker
+            .lock()
+            .map_err(|_| TakerError::General("swap tracker lock poisoned".into()))?
+            .cleanup_incomplete();
 
         let mut taker = Taker {
             config,
@@ -557,35 +601,35 @@ impl Taker {
     fn init_recover_wallet(&mut self) {
         log::info!("Checking wallet for unresolved swap contracts...");
 
-        // Wallet-driven recovery: sweep incoming + recover timelocked
+        // The sweep takes the lock itself and drops it across its waits, so a stuck
+        // counterparty tx cannot wedge taker startup.
+        match Wallet::sweep_incoming_swapcoins(&self.wallet, 2.0, &crate::utill::NO_SHUTDOWN) {
+            Ok(ref swept) if !swept.is_empty() => {
+                log::info!(
+                    "Startup recovery: swept {} incoming swapcoins",
+                    swept.resolved.len()
+                );
+            }
+            Ok(_) => {}
+            Err(e) => log::warn!("Startup incoming sweep failed: {:?}", e),
+        }
+
+        // Wallet-driven recovery: recover timelocked. Also takes the lock itself.
+        match Wallet::recover_timelocked_swapcoins(&self.wallet, 2.0, &crate::utill::NO_SHUTDOWN) {
+            Ok(ref recovered) if !recovered.is_empty() => {
+                log::info!(
+                    "Startup recovery: recovered {} timelocked outgoing swapcoins",
+                    recovered.len()
+                );
+            }
+            Ok(_) => {}
+            Err(e) => log::warn!("Startup timelock recovery failed: {:?}", e),
+        }
+
         let has_remaining = match self.write_wallet() {
-            Ok(mut wallet) => {
-                match wallet.sweep_incoming_swapcoins(2.0) {
-                    Ok(ref swept) if !swept.is_empty() => {
-                        log::info!(
-                            "Startup recovery: swept {} incoming swapcoins",
-                            swept.resolved.len()
-                        );
-                    }
-                    Ok(_) => {}
-                    Err(e) => log::warn!("Startup incoming sweep failed: {:?}", e),
-                }
-
-                match wallet.recover_timelocked_swapcoins(2.0) {
-                    Ok(ref recovered) if !recovered.is_empty() => {
-                        log::info!(
-                            "Startup recovery: recovered {} timelocked outgoing swapcoins",
-                            recovered.len()
-                        );
-                    }
-                    Ok(_) => {}
-                    Err(e) => log::warn!("Startup timelock recovery failed: {:?}", e),
-                }
-
-                let has_contracts = !wallet.outgoing_contract_outpoints().is_empty()
-                    || !wallet.incoming_contract_outpoints().is_empty();
-                drop(wallet);
-                has_contracts
+            Ok(wallet) => {
+                !wallet.outgoing_contract_outpoints().is_empty()
+                    || !wallet.incoming_contract_outpoints().is_empty()
             }
             Err(e) => {
                 log::warn!("Startup recovery: failed to lock wallet: {:?}", e);
@@ -594,79 +638,64 @@ impl Taker {
         };
 
         if has_remaining {
-            let data_dir = self.config.data_dir.clone().unwrap_or_else(get_taker_dir);
-            self.recovery_loop = Some(RecoveryLoop::start(
-                self.wallet.clone(),
-                self.swap_tracker.clone(),
-                data_dir,
-            ));
+            let data_dir = match self
+                .config
+                .data_dir
+                .clone()
+                .map(Ok)
+                .unwrap_or_else(get_taker_dir)
+            {
+                Ok(dir) => dir,
+                Err(e) => {
+                    log::warn!("Startup recovery: {e}; skipping recovery loop");
+                    return;
+                }
+            };
+            match RecoveryLoop::start(self.wallet.clone(), self.swap_tracker.clone(), data_dir) {
+                Ok(rl) => self.recovery_loop = Some(rl),
+                // Without the loop, remaining contracts are never swept.
+                Err(e) => log::error!("Failed to spawn recovery loop: {e}"),
+            }
         }
     }
 
-    /// Set up the wallet from config and return it with the resolved RPC config.
-    fn init_wallet(
-        config: &TakerInitConfig,
-        data_dir: &std::path::Path,
-    ) -> Result<(Wallet, RPCConfig), TakerError> {
-        let wallet_file_name = config
-            .wallet_file_name
-            .clone()
-            .unwrap_or_else(|| "taker-wallet".to_string());
-
-        let mut rpc_config = config
-            .rpc_config
-            .clone()
-            .ok_or_else(|| TakerError::General("RPC configuration is required".to_string()))?;
-        rpc_config.wallet_name = wallet_file_name.clone();
-
-        let wallet_path = data_dir.join("wallets").join(&wallet_file_name);
-        let wallet =
-            Wallet::load_or_init_wallet(&wallet_path, &rpc_config, config.password.clone())?;
-
-        Ok((wallet, rpc_config))
-    }
-
-    /// Initialize the ZMQ-backed watch service and spawn the watcher thread.
+    /// Initialize the watch service and spawn the watcher thread.
     /// Returns the watch service, a clone of the registry, and the initial-sync-complete flag.
     fn init_watch_service(
         config: &TakerInitConfig,
-        rpc_config: &RPCConfig,
-        data_dir: &std::path::Path,
+        backend: &BackendConfig,
     ) -> Result<(WatchService, FileRegistry, Arc<AtomicBool>), TakerError> {
-        let backend = ZmqBackend::new(&config.zmq_addr);
-        let rpc_backend = BitcoinRest::new(rpc_config.clone())?;
-        let blockchain_info = rpc_backend.get_blockchain_info()?;
-        let file_registry = data_dir
-            .join(".taker_watcher")
-            .join(blockchain_info.chain.to_string());
-        let registry = FileRegistry::load(file_registry);
+        let blockchain = AnyBlockchain::from_config(&backend.for_watcher())?;
+        let backend_shutdown = blockchain.shutdown_flag();
+
+        let registry = FileRegistry::new();
         let registry_clone = registry.clone();
 
         let (tx_requests, rx_requests) = mpsc::channel();
-        let (tx_events, rx_responses) = crossbeam_channel::unbounded();
-        let rpc_config_watcher = rpc_config.clone();
 
         let initial_sync_complete = Arc::new(AtomicBool::new(false));
         let initial_sync_clone = initial_sync_complete.clone();
 
         let nostr_relays = config.nostr_relays.clone();
         let mut watcher = Watcher::<Taker>::new(
-            backend,
+            blockchain,
             registry,
             rx_requests,
-            tx_events,
             nostr_relays,
             Some((
                 config.socks_port,
                 config.tor_auth_password.clone().unwrap_or_default(),
             )),
         );
-        let _ = thread::Builder::new()
+        // Propagate the error if something goes wrong here.
+        let watcher_shutdown = watcher.shutdown_flag();
+        let handle = thread::Builder::new()
             .name("Watcher thread".to_string())
-            .spawn(move || watcher.run(rpc_config_watcher, initial_sync_clone));
+            .spawn(move || watcher.run(initial_sync_clone))
+            .map_err(|e| TakerError::General(format!("failed to spawn watcher thread: {e}")))?;
 
         Ok((
-            WatchService::new(tx_requests, rx_responses),
+            WatchService::new(tx_requests, handle, backend_shutdown, watcher_shutdown),
             registry_clone,
             initial_sync_complete,
         ))
@@ -704,18 +733,17 @@ impl Taker {
         offerbook: &OfferBookHandle,
         registry: FileRegistry,
         socks_port: u16,
-        rpc_config: RPCConfig,
+        chain: Arc<AnyBlockchain>,
         initial_sync_complete: Arc<AtomicBool>,
     ) -> Result<OfferSyncHandle, TakerError> {
-        let rest_backend = BitcoinRest::new(rpc_config)?;
-        Ok(OfferSyncService::new(
+        OfferSyncService::new(
             offerbook.clone(),
             registry,
             socks_port,
-            rest_backend,
+            chain,
             initial_sync_complete,
         )
-        .start())
+        .start()
     }
 
     /// Get reference to the wallet.
@@ -723,9 +751,20 @@ impl Taker {
         &self.wallet
     }
 
+    /// The config this taker was built from, so a caller can rebuild an
+    /// identical one after a shutdown.
+    pub fn config(&self) -> &TakerInitConfig {
+        &self.config
+    }
+
     /// Log the current swap tracker state at INFO level.
     pub fn log_tracker_state(&self) {
-        self.swap_tracker.lock().unwrap().log_state();
+        // Info-only path; a poisoned tracker should not kill the caller.
+        let Ok(tracker) = self.swap_tracker.lock() else {
+            log::error!("swap tracker lock poisoned; skipping tracker state log");
+            return;
+        };
+        tracker.log_state();
     }
 
     /// Check whether the background recovery loop has completed.
@@ -794,6 +833,9 @@ impl Taker {
             reference_height: None,
         });
 
+        // Block on an offerbook sync first so discovery selects makers from
+        // fresh offers instead of racing the sync for stale ones.
+        self.sync_offerbook_and_wait()?;
         self.discover_makers()?;
         self.persist_swap(SwapPhase::MakersDiscovered)?;
 
@@ -951,9 +993,15 @@ impl Taker {
                             }
                         } else {
                             log::info!("No funds on-chain — safe to abort");
-                            let _ = self.swap_tracker.lock().unwrap().remove_record(
-                                &self.swap_state().map(|s| s.id.clone()).unwrap_or_default(),
-                            );
+                            let _ = self
+                                .swap_tracker
+                                .lock()
+                                .map_err(|_| {
+                                    TakerError::General("swap tracker lock poisoned".into())
+                                })?
+                                .remove_record(
+                                    &self.swap_state().map(|s| s.id.clone()).unwrap_or_default(),
+                                );
                             self.ongoing_swap = None;
                         }
                         return Err(e);
@@ -977,9 +1025,13 @@ impl Taker {
                         }
                     } else {
                         log::info!("No funds on-chain — safe to abort");
-                        let _ = self.swap_tracker.lock().unwrap().remove_record(
-                            &self.swap_state().map(|s| s.id.clone()).unwrap_or_default(),
-                        );
+                        let _ = self
+                            .swap_tracker
+                            .lock()
+                            .map_err(|_| TakerError::General("swap tracker lock poisoned".into()))?
+                            .remove_record(
+                                &self.swap_state().map(|s| s.id.clone()).unwrap_or_default(),
+                            );
                         self.ongoing_swap = None;
                     }
                     return Err(e);
@@ -1025,6 +1077,16 @@ impl Taker {
         // SP7: Finalization starts.
         self.persist_swap(SwapPhase::Finalizing)?;
 
+        // Crash with every contract funded and persisted but nothing settled, so
+        // no counterparty has been handed a key either.
+        #[cfg(feature = "integration-test")]
+        if self.behavior == TakerBehavior::CrashBeforeRecovery {
+            log::warn!("Test behavior: crashing before finalization");
+            let err = TakerError::General("Test: crashed before finalization".to_string());
+            self.persist_failure(SwapPhase::Finalizing, &err);
+            return Err(err);
+        }
+
         match self.finalize_with_retry() {
             Ok(()) => {}
             Err(e) => {
@@ -1046,13 +1108,11 @@ impl Taker {
         // Success path: sweep + report (shared by both protocols)
         let swap_id_owned = swap_id.to_string();
         let expected_incoming_swapcoins = self.swap_state()?.incoming_swapcoins.len();
-        let swept = {
-            let mut wallet = self.write_wallet()?;
-            let swept = wallet.sweep_incoming_swapcoins(2.0)?;
-            log::info!("Swept {} incoming swapcoins", swept.resolved.len());
-            wallet.sync_and_save()?;
-            swept
-        };
+        let swept =
+            Wallet::sweep_incoming_swapcoins(&self.wallet, 2.0, &crate::utill::NO_SHUTDOWN)?;
+        log::info!("Swept {} incoming swapcoins", swept.resolved.len());
+        self.write_wallet()?
+            .sync_and_save(&crate::utill::NO_SHUTDOWN)?;
         if expected_incoming_swapcoins == 0 || swept.resolved.len() < expected_incoming_swapcoins {
             let err = TakerError::General(format!(
                 "Swap finalization swept {}/{} incoming swapcoins",
@@ -1157,7 +1217,7 @@ impl Taker {
                 ProtocolVersion::Taproot => MakerProtocol::Taproot,
             };
 
-            let available_makers = self.offerbook.active_makers(&maker_protocol);
+            let available_makers = self.offerbook.active_makers(&maker_protocol)?;
 
             if available_makers.is_empty() {
                 return Err(TakerError::NotEnoughMakersInOfferBook);
@@ -1258,7 +1318,7 @@ impl Taker {
         let reference_height =
             {
                 let wallet = self.read_wallet()?;
-                wallet.rpc.get_block_count().map_err(|e| {
+                wallet.blockchain.get_block_count().map_err(|e| {
                     TakerError::General(format!("Failed to get block count: {:?}", e))
                 })? as u32
             };
@@ -1385,6 +1445,7 @@ impl Taker {
             amount: send_amount,
             tx_count,
             timelock,
+            refund_locktime_offset,
         };
 
         send_message(&mut stream, &TakerToMakerMessage::SwapDetails(swap_details))?;
@@ -1533,7 +1594,7 @@ impl Taker {
         let reference_height =
             {
                 let wallet = self.read_wallet()?;
-                wallet.rpc.get_block_count().map_err(|e| {
+                wallet.blockchain.get_block_count().map_err(|e| {
                     TakerError::General(format!("Failed to get block count: {:?}", e))
                 })? as u32
             };
@@ -1670,21 +1731,22 @@ impl Taker {
                 network,
                 manually_selected_outpoints,
             )?,
-            ProtocolVersion::Taproot => Self::funding_create_taproot(
-                &mut wallet,
-                &vec![tweakable_point; swap_tx_count],
-                &vec![
-                    taproot_hashlock_pubkey.expect("taproot hashlock pubkey must be set");
-                    swap_tx_count
-                ],
-                preimage,
-                refund_locktime_offset,
-                send_amount,
-                &swap_id,
-                network,
-                manually_selected_outpoints,
-                reference_height,
-            )?,
+            ProtocolVersion::Taproot => {
+                let hashlock_pubkey = taproot_hashlock_pubkey
+                    .ok_or_else(|| TakerError::General("taproot hashlock pubkey not set".into()))?;
+                Self::funding_create_taproot(
+                    &mut wallet,
+                    &vec![tweakable_point; swap_tx_count],
+                    &vec![hashlock_pubkey; swap_tx_count],
+                    preimage,
+                    refund_locktime_offset,
+                    send_amount,
+                    &swap_id,
+                    network,
+                    manually_selected_outpoints,
+                    reference_height,
+                )?
+            }
         };
 
         for swapcoin in &swapcoins {
@@ -1761,25 +1823,63 @@ impl Taker {
             ConnectionType::Tor => {
                 use crate::protocol::common_messages::COINSWAP_PORT;
 
-                let socks_addr = format!("127.0.0.1:{}", self.config.socks_port);
-                let tor_target = format!("{}:{}", address, COINSWAP_PORT);
-                Socks5Stream::connect(socks_addr.as_str(), tor_target.as_str())
-                    .map_err(|e| {
-                        TakerError::General(format!(
-                            "Failed to connect to {} via Tor: {}",
-                            address, e
-                        ))
-                    })?
-                    .into_inner()
+                socks5_connect(
+                    self.config.socks_port,
+                    address,
+                    COINSWAP_PORT,
+                    None,
+                    timeout,
+                )
+                .map_err(|e| {
+                    TakerError::General(format!("Failed to connect to {} via Tor: {}", address, e))
+                })?
             }
         };
 
+        // Reads can block for minutes: a maker answers contract data only after
+        // our contracts confirm, and that wait is block-bound, not message-bound.
         socket
-            .set_read_timeout(Some(timeout))
+            .set_read_timeout(Some(Duration::from_secs(MAKER_RESPONSE_TIMEOUT_SECS)))
             .and_then(|_| socket.set_write_timeout(Some(timeout)))
             .map_err(|e| TakerError::General(format!("Failed to set socket timeout: {}", e)))?;
 
         Ok(socket)
+    }
+
+    /// Connect to every maker in the route and start the heartbeat that keeps
+    /// their idle timers warm while we negotiate each hop. Connection failures
+    /// are logged and skipped — the protocol's own reads report a dead maker.
+    pub(crate) fn start_route_heartbeat(
+        &self,
+        swap_id: &str,
+    ) -> Option<super::background_services::RouteHeartbeat> {
+        let addresses: Vec<String> = self
+            .swap_state()
+            .ok()?
+            .makers
+            .iter()
+            .map(|maker| maker.address.to_string())
+            .collect();
+        let mut streams = Vec::with_capacity(addresses.len());
+        for address in addresses {
+            match self.net_connect(&address) {
+                Ok(mut stream) => {
+                    if let Err(e) = self.net_handshake(&mut stream) {
+                        log::warn!("route heartbeat: handshake with {address} failed: {e:?}");
+                        continue;
+                    }
+                    streams.push(stream);
+                }
+                Err(e) => log::warn!("route heartbeat: connect to {address} failed: {e:?}"),
+            }
+        }
+        match super::background_services::RouteHeartbeat::start(swap_id, streams) {
+            Ok(heartbeat) => Some(heartbeat),
+            Err(e) => {
+                log::warn!("route heartbeat failed to start: {e:?}");
+                None
+            }
+        }
     }
 
     /// Finalize the swap by exchanging private keys with all makers.
@@ -1798,6 +1898,9 @@ impl Taker {
 
     /// Attempt finalization with retries between attempts.
     fn finalize_with_retry(&mut self) -> Result<(), TakerError> {
+        // The loop runs at least once, so falling through means the last
+        // attempt failed and `last_error` is set.
+        let mut last_error = None;
         for attempt in 1..=MAX_FINALIZE_RETRIES {
             match self.finalize_swap() {
                 Ok(()) => return Ok(()),
@@ -1825,13 +1928,14 @@ impl Taker {
                     if attempt < MAX_FINALIZE_RETRIES {
                         log::info!("Retrying in {:?}...", FINALIZE_RETRY_DELAY);
                         thread::sleep(FINALIZE_RETRY_DELAY);
-                    } else {
-                        return Err(e);
                     }
+                    last_error = Some(e);
                 }
             }
         }
-        unreachable!()
+        Err(last_error.unwrap_or_else(|| {
+            TakerError::General("finalization failed with no recorded error".into())
+        }))
     }
 
     /// Exchange private keys with all makers in forward order.
@@ -2046,7 +2150,10 @@ impl Taker {
 
         // Snapshot preserved fields from any existing record.
         let swap_id = self.swap_state()?.id.clone();
-        let tracker_guard = self.swap_tracker.lock().unwrap();
+        let tracker_guard = self
+            .swap_tracker
+            .lock()
+            .map_err(|_| TakerError::General("swap tracker lock poisoned".into()))?;
         let existing = tracker_guard.get_record(&swap_id);
         let created_at = existing.map(|r| r.created_at);
         let recovery = existing.map(|r| r.recovery.clone());
@@ -2072,7 +2179,10 @@ impl Taker {
             record.failure_reason = Some(reason);
         }
 
-        self.swap_tracker.lock().unwrap().save_record(&record)
+        self.swap_tracker
+            .lock()
+            .map_err(|_| TakerError::General("swap tracker lock poisoned".into()))?
+            .save_record(&record)
     }
 
     /// Flush the current swap state to disk without changing the phase.
@@ -2089,13 +2199,19 @@ impl Taker {
                 record.phase = SwapPhase::Failed;
                 record.failed_at_phase = Some(failed_at);
                 record.failure_reason = Some(format!("{:?}", error));
+                record.updated_at = now_secs();
+                // The failure was already reported to the caller; a poisoned
+                // tracker here is no reason to panic.
+                let Ok(mut tracker) = self.swap_tracker.lock() else {
+                    log::error!("swap tracker lock poisoned; skipping failure persist");
+                    return;
+                };
                 // Preserve existing recovery state if resuming
-                if let Some(existing) = self.swap_tracker.lock().unwrap().get_record(&swap_id) {
+                if let Some(existing) = tracker.get_record(&swap_id) {
                     record.recovery = existing.recovery.clone();
                     record.created_at = existing.created_at;
                 }
-                record.updated_at = now_secs();
-                if let Err(e) = self.swap_tracker.lock().unwrap().save_record(&record) {
+                if let Err(e) = tracker.save_record(&record) {
                     log::error!("Failed to persist swap failure: {:?}", e);
                 }
             }
@@ -2343,7 +2459,12 @@ impl Taker {
         );
 
         report.print();
-        let data_dir = self.config.data_dir.clone().unwrap_or_else(get_taker_dir);
+        let data_dir = self
+            .config
+            .data_dir
+            .clone()
+            .map(Ok)
+            .unwrap_or_else(get_taker_dir)?;
         if let Err(e) = report.save_for_wallet(&data_dir, Some(&wallet_file_name)) {
             log::warn!("Failed to save taker swap report: {:?}", e);
         }
@@ -2374,6 +2495,14 @@ impl Taker {
     /// All recovery attempts, per-contract outcome tracking, phase transitions,
     /// and wallet cleanup are handled by the `RecoveryLoop`.
     pub fn recover_active_swap(&mut self) -> Result<(), TakerError> {
+        // A crashed process never reaches its recovery. Gate here rather than at
+        // each failure site, so every path into recovery is covered.
+        #[cfg(feature = "integration-test")]
+        if self.behavior == TakerBehavior::CrashBeforeRecovery {
+            log::warn!("Test behavior: crashing instead of recovering");
+            return Ok(());
+        }
+
         log::warn!("Starting swap recovery...");
 
         let swap_id = if let Some(ref swap) = self.ongoing_swap {
@@ -2403,7 +2532,7 @@ impl Taker {
 
         self.swap_tracker
             .lock()
-            .unwrap()
+            .map_err(|_| TakerError::General("swap tracker lock poisoned".into()))?
             .update_and_save(&swap_id, |record| {
                 record.phase = SwapPhase::Failed;
             })?;
@@ -2416,12 +2545,17 @@ impl Taker {
         self.ongoing_swap = None;
 
         log::info!("Spawning recovery loop for swap {}", swap_id);
-        let data_dir = self.config.data_dir.clone().unwrap_or_else(get_taker_dir);
+        let data_dir = self
+            .config
+            .data_dir
+            .clone()
+            .map(Ok)
+            .unwrap_or_else(get_taker_dir)?;
         self.recovery_loop = Some(RecoveryLoop::start(
             self.wallet.clone(),
             self.swap_tracker.clone(),
             data_dir,
-        ));
+        )?);
 
         Ok(())
     }
@@ -2470,7 +2604,7 @@ impl Taker {
 
         self.swap_tracker
             .lock()
-            .unwrap()
+            .map_err(|_| TakerError::General("swap tracker lock poisoned".into()))?
             .update_and_save(swap_id, |r| {
                 r.recovery.incoming = incoming_outcomes;
                 r.recovery.outgoing = outgoing_outcomes;
@@ -2492,7 +2626,7 @@ impl Taker {
 
     /// Returns the current offerbook snapshot.
     pub fn fetch_offers(&self) -> Result<OfferBook, TakerError> {
-        Ok(self.offerbook.snapshot())
+        self.offerbook.snapshot()
     }
 
     /// Triggers a manual offerbook sync and blocks until it completes.
@@ -2530,22 +2664,21 @@ impl Taker {
     pub fn restore_wallet(
         data_dir: Option<PathBuf>,
         wallet_file_name: Option<String>,
-        rpc_config: Option<RPCConfig>,
+        backend: BackendConfig,
         backup_file: &String,
     ) {
         let backup_file_path = PathBuf::from(backup_file);
         let restored_wallet_filename = wallet_file_name.unwrap_or_default();
 
-        let restored_wallet_path = data_dir
-            .unwrap_or_else(get_taker_dir)
-            .join("wallets")
-            .join(restored_wallet_filename);
+        let restored_wallet_path = match data_dir.map(Ok).unwrap_or_else(get_taker_dir) {
+            Ok(dir) => dir.join("wallets").join(restored_wallet_filename),
+            Err(e) => {
+                log::error!("Wallet restore failed: {e}");
+                return;
+            }
+        };
 
-        Wallet::restore_interactive(
-            &backup_file_path,
-            &rpc_config.unwrap_or_default(),
-            &restored_wallet_path,
-        );
+        Wallet::restore_interactive(&backup_file_path, &backend, &restored_wallet_path);
     }
 }
 
@@ -2571,9 +2704,28 @@ pub enum TakerBehavior {
     InvalidTaprootContractAmount,
     /// Repeat the same incoming funding outpoint in the maker request.
     DuplicateFundingOutpoint,
+    /// Append one more funding entry than negotiated (maker count guard).
+    ExtraFundingTxEntry,
+    /// Repeat the priciest funding entry in place of the cheapest, keeping the
+    /// count but pushing the declared sum over the swap amount (maker sum guard).
+    OverstatedFundingAmount,
     /// Close connection when receiving maker's contract data response (taproot taker abort).
     CloseAtSendersContractFromMaker,
     /// Skip the Legacy sender-signature request, broadcast real funding, and
     /// send ProofOfFunding directly (maker_rejects_proof_of_funding_with_missing_contract_cache).
     SkipSenderContractSigs,
+    /// Spend the funding output through the contract path, then still name that
+    /// outpoint in ProofOfFunding (maker_rejects_spent_funding_outpoint).
+    ReplaySpentFundingOutpoint,
+    /// Same replay, but only wait until the spend is visible in the mempool, so
+    /// the maker must reject it without a confirmation to go on
+    /// (maker_rejects_spent_funding_outpoint).
+    ReplaySpentFundingOutpointMempool,
+    /// Keep the route alive with keepalives but never finish the swap, so only the
+    /// maker's refund deadline can end it (maker_recovers_swap_past_refund_deadline).
+    StallAfterProofOfFunding,
+    /// Die just before finalization, with every contract funded and persisted but
+    /// no key handed over and no recovery run. Leaves every party's contract
+    /// unclaimed so only a restart can settle them (restart_rebuilds_watches).
+    CrashBeforeRecovery,
 }

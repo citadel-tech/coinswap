@@ -14,7 +14,8 @@ use crate::{
         contract::{
             check_reedemscript_is_multisig, read_contract_locktime,
             read_hashlock_pubkey_from_contract, read_hashvalue_from_contract,
-            read_pubkeys_from_multisig_redeemscript, validate_contract_tx, verify_contract_tx_sig,
+            read_pubkeys_from_multisig_redeemscript, sum_claimed_amounts, validate_contract_tx,
+            verify_contract_tx_sig,
         },
         legacy_messages::SenderContractTxInfo,
     },
@@ -174,7 +175,7 @@ impl Taker {
         next_multisig_pubkeys: &[PublicKey],
         next_hashlock_pubkeys: &[PublicKey],
         refund_locktime: u16,
-        min_expected_amount: Option<Amount>,
+        expected_amount: Option<Amount>,
     ) -> Result<(), TakerError> {
         let expected_hashvalue = Hash160::hash(&self.swap_state()?.preimage);
 
@@ -310,15 +311,21 @@ impl Taker {
             }
         }
 
-        // Verify total funding amount is consistent with expected amount after fees.
-        // This uses the maker's advertised fee schedule from the offer.
-        if let Some(min_amount) = min_expected_amount {
-            let total_funding: Amount = senders_info.iter().map(|info| info.funding_amount).sum();
-            if total_funding < min_amount {
+        // The maker deducts a fee we can compute exactly from its advertised
+        // schedule, so the total must match, not just clear a minimum.
+        if let Some(expected) = expected_amount {
+            let total_funding = sum_claimed_amounts(senders_info.iter().map(|i| i.funding_amount))
+                .map_err(|amount| {
+                    TakerError::General(format!(
+                        "Maker sender contract claims {} above the 21M cap",
+                        amount
+                    ))
+                })?;
+            if total_funding != expected {
                 return Err(TakerError::General(format!(
-                    "Maker sender contracts total funding {} is below expected minimum {} \
+                    "Maker sender contracts total funding {} does not match expected {} \
                      (based on maker's advertised fee schedule)",
-                    total_funding, min_amount
+                    total_funding, expected
                 )));
             }
         }

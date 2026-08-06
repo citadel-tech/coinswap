@@ -10,7 +10,9 @@ use bitcoin::{
     Block, Transaction, Txid,
 };
 
-use crate::watch_tower::{registry_storage::FileRegistry, watcher::Role};
+use crate::watch_tower::{
+    registry_storage::FileRegistry, watcher::Role, watcher_error::WatcherError,
+};
 
 /// Maximum number of txids to track for cache.
 const MAX_SEEN_TXIDS: usize = 5_000;
@@ -22,6 +24,8 @@ pub(crate) struct SeenTxids {
     seen: HashSet<Txid>,
     /// Tracks insertion order FIFO
     order: VecDeque<Txid>,
+    /// Txids claimed by a thread for validation. Other threads will skip this.
+    in_flight: HashSet<Txid>,
 }
 
 /// Fidelity announcement done by watcher to registry
@@ -128,42 +132,67 @@ pub fn process_fidelity(tx: &Transaction) -> Option<FidelityAnnouncement> {
 }
 
 /// Processes each transaction in a block, updating watch entries and recording fidelity data.
-pub fn process_block<R: Role>(block: Block, registry: &mut FileRegistry) {
+pub fn process_block<R: Role>(
+    block: Block,
+    registry: &mut FileRegistry,
+) -> Result<(), WatcherError> {
     for tx in block.txdata.iter() {
-        process_transaction(tx, registry, true);
+        process_transaction(tx, registry, true)?;
         if R::RUN_DISCOVERY {
             let fidelity_announcement = process_fidelity(tx);
             if let Some(fidelity_announcement) = fidelity_announcement {
                 let txid = tx.compute_txid();
-                if registry.insert_fidelity(txid, fidelity_announcement) {
+                if registry.insert_fidelity(txid, fidelity_announcement)? {
                     log::info!("Stored verified fidelity via blockchain: {}", txid);
                 }
             }
         }
     }
+    Ok(())
 }
 
 /// Updates the registry for a transaction by clearing spent fidelities and marking watched spends.
-pub fn process_transaction(tx: &Transaction, registry: &mut FileRegistry, in_block: bool) {
-    let watch_requests = registry.list_watches();
+pub fn process_transaction(
+    tx: &Transaction,
+    registry: &mut FileRegistry,
+    in_block: bool,
+) -> Result<(), WatcherError> {
+    let watch_requests = registry.list_watches()?;
     for input in &tx.input {
         let outpoint = input.previous_output;
         for watch_request in &watch_requests {
-            if outpoint == watch_request.outpoint {
-                let mut watch_request = watch_request.clone();
-                watch_request.spent_tx = Some(tx.clone());
-                watch_request.in_block = in_block;
-                registry.upsert_watch(&watch_request);
-                #[cfg(debug_assertions)]
-                log::debug!(
-                    "[WATCH_STATE] Source: watch_tower::utils::process_transaction | Action: watched_outpoint_spent | Outpoint: {} | SpendingTxid: {} | Confirmed: {}",
-                    outpoint,
-                    tx.compute_txid(),
-                    in_block
-                );
+            if outpoint != watch_request.outpoint {
+                continue;
             }
+            if let Some(recorded) = &watch_request.spent_tx {
+                let recorded_txid = recorded.compute_txid();
+                if recorded_txid != tx.compute_txid() {
+                    log::warn!(
+                        "conflicting spend of {outpoint}: recorded {recorded_txid} (confirmed={}), now seen {} (confirmed={in_block})",
+                        watch_request.in_block,
+                        tx.compute_txid()
+                    );
+                    // A confirmed spend can hold the only copy of a preimage, so
+                    // a mempool-only rival must not overwrite it.
+                    if watch_request.in_block && !in_block {
+                        continue;
+                    }
+                }
+            }
+            let mut watch_request = watch_request.clone();
+            watch_request.spent_tx = Some(tx.clone());
+            watch_request.in_block = in_block;
+            registry.upsert_watch(&watch_request)?;
+            #[cfg(debug_assertions)]
+            log::debug!(
+                "[WATCH_STATE] Source: watch_tower::utils::process_transaction | Action: watched_outpoint_spent | Outpoint: {} | SpendingTxid: {} | Confirmed: {}",
+                outpoint,
+                tx.compute_txid(),
+                in_block
+            );
         }
     }
+    Ok(())
 }
 
 pub(crate) fn parse_fidelity_event(event: &nostr::Event) -> Option<(Txid, u32)> {
@@ -181,13 +210,26 @@ impl SeenTxids {
         Self {
             seen: HashSet::new(),
             order: VecDeque::new(),
+            in_flight: HashSet::new(),
         }
+    }
+
+    /// Claims `txid` for processing. Returns false if it is already seen or
+    /// claimed by another thread, so only one thread does the work.
+    pub fn claim(&mut self, txid: Txid) -> bool {
+        !self.seen.contains(&txid) && self.in_flight.insert(txid)
+    }
+
+    /// Drops a claim without marking it seen, leaving the txid open for retry.
+    pub fn release(&mut self, txid: &Txid) {
+        self.in_flight.remove(txid);
     }
 
     /// Returns true if txid was newly inserted (not seen before).
     /// Returns false if txid was already present.
     /// Uses FIFO eviction when capacity is exceeded.
     pub fn insert(&mut self, txid: Txid) -> bool {
+        self.in_flight.remove(&txid);
         if self.seen.insert(txid) {
             self.order.push_back(txid);
 
@@ -217,7 +259,6 @@ mod tests {
         hashes::Hash,
         transaction, Amount, OutPoint, ScriptBuf, Sequence, TxIn, TxOut, Txid, Witness,
     };
-    use bitcoind::tempfile::TempDir;
 
     #[cfg(not(feature = "integration-test"))]
     const TEST_ADDR: &[u8] = b"aslkdfjbiakdsfn#500";
@@ -342,10 +383,7 @@ mod tests {
 
     #[test]
     fn test_process_transaction_in_block_false() {
-        let dir = TempDir::new().unwrap();
-        let path = dir.path().join("reg.cbor");
-
-        let mut reg = FileRegistry::load(&path);
+        let mut reg = FileRegistry::new();
 
         let watched = OutPoint {
             txid: Txid::from_slice(&[3u8; 32]).unwrap(),
@@ -353,16 +391,70 @@ mod tests {
         };
         reg.upsert_watch(&WatchRequest {
             outpoint: watched,
+            script_pubkey: ScriptBuf::new(),
             in_block: false,
             spent_tx: None,
-        });
+        })
+        .unwrap();
 
         let spending = tx(0, vec![watched], vec![]);
-        process_transaction(&spending, &mut reg, false);
+        process_transaction(&spending, &mut reg, false).unwrap();
 
-        let w = reg.list_watches().pop().unwrap();
+        let w = reg.list_watches().unwrap().pop().unwrap();
         assert!(!w.in_block);
     }
+    #[test]
+    fn test_confirmed_spend_survives_a_mempool_rival() {
+        let mut reg = FileRegistry::new();
+
+        let watched = OutPoint {
+            txid: Txid::from_slice(&[4u8; 32]).unwrap(),
+            vout: 0,
+        };
+        // The confirmed spend is the one that may carry the preimage.
+        let confirmed = tx(0, vec![watched], vec![ScriptBuf::new()]);
+        reg.upsert_watch(&WatchRequest {
+            outpoint: watched,
+            script_pubkey: ScriptBuf::new(),
+            in_block: true,
+            spent_tx: Some(confirmed.clone()),
+        })
+        .unwrap();
+
+        let rival = tx(0, vec![watched], vec![]);
+        assert_ne!(rival.compute_txid(), confirmed.compute_txid());
+        process_transaction(&rival, &mut reg, false).unwrap();
+
+        let w = reg.list_watches().unwrap().pop().unwrap();
+        assert_eq!(w.spent_tx, Some(confirmed));
+        assert!(w.in_block);
+    }
+
+    #[test]
+    fn test_confirmed_spend_replaces_a_mempool_spend() {
+        let mut reg = FileRegistry::new();
+
+        let watched = OutPoint {
+            txid: Txid::from_slice(&[5u8; 32]).unwrap(),
+            vout: 0,
+        };
+        let seen_first = tx(0, vec![watched], vec![ScriptBuf::new()]);
+        reg.upsert_watch(&WatchRequest {
+            outpoint: watched,
+            script_pubkey: ScriptBuf::new(),
+            in_block: false,
+            spent_tx: Some(seen_first),
+        })
+        .unwrap();
+
+        let mined = tx(0, vec![watched], vec![]);
+        process_transaction(&mined, &mut reg, true).unwrap();
+
+        let w = reg.list_watches().unwrap().pop().unwrap();
+        assert_eq!(w.spent_tx, Some(mined));
+        assert!(w.in_block);
+    }
+
     #[test]
     fn test_seentxid_insert() {
         // 1. Insert new txid → returns true

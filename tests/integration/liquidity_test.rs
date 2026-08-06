@@ -31,7 +31,7 @@ fn test_low_swap_liquidity() {
 
     // Initialize test framework
     let (test_framework, mut takers, makers, block_generation_handle) =
-        TestFramework::init(makers_config_map, taker_behavior, vec![]);
+        TestFramework::init::<BitcoindBackend>(makers_config_map, taker_behavior, vec![]);
 
     let bitcoind = &test_framework.bitcoind;
     let taker = takers.get_mut(0).unwrap();
@@ -72,7 +72,12 @@ fn test_low_swap_liquidity() {
     drain_maker_liquidity_after_fidelity(maker, bitcoind);
     // Mine a block to confirm the drain, then sync maker wallet
     generate_blocks(bitcoind, 1);
-    maker.wallet.write().unwrap().sync_and_save().unwrap();
+    maker
+        .wallet
+        .write()
+        .unwrap()
+        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .unwrap();
 
     info!("Maker should be halted due to low swap liquidity");
 
@@ -97,6 +102,14 @@ fn test_low_swap_liquidity() {
         Amount::from_btc(0.05).unwrap(),
         AddressType::P2TR,
     );
+
+    // The offerbook still holds the drained max_size=0 offer fetched moments
+    // ago, and a sync round would skip re-polling it while it is within
+    // OFFER_MAX_AGE_BEFORE_REFRESH, which is 10s for tests. Poll this maker directly so selection sees
+    // the re-funded liquidity.
+    taker
+        .poll_maker(format!("127.0.0.1:{}", maker.config.network_port))
+        .expect("re-poll of the re-funded maker should succeed");
 
     // Attempt the swap again, it should succeed
     let swap_params = SwapParams::new(ProtocolVersion::Taproot, Amount::from_sat(500000), 1)

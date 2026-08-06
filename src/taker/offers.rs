@@ -21,8 +21,6 @@ use std::{
 
 use bitcoin::{OutPoint, Txid};
 use serde::{Deserialize, Serialize};
-#[cfg(not(feature = "integration-test"))]
-use socks::Socks5Stream;
 
 use crate::{
     protocol::{
@@ -34,9 +32,12 @@ use crate::{
         error::ProtocolError,
     },
     utill::{read_message, send_message},
-    wallet::verify_fidelity_checks,
-    watch_tower::{registry_storage::FileRegistry, rest_backend::BitcoinRest},
+    wallet::{verify_fidelity_checks, AnyBlockchain, Blockchain, WalletError},
+    watch_tower::registry_storage::FileRegistry,
 };
+
+#[cfg(not(feature = "integration-test"))]
+use crate::utill::socks5_connect;
 
 /// Maximum number of attempts to connect to a maker.
 const FIRST_CONNECT_ATTEMPTS: u32 = 3;
@@ -269,88 +270,98 @@ impl OfferBookHandle {
     }
 
     /// Gets the current snapshot of whole offerbook
-    pub fn snapshot(&self) -> OfferBook {
-        self.inner.read().unwrap().clone()
+    pub fn snapshot(&self) -> Result<OfferBook, TakerError> {
+        Ok(self
+            .inner
+            .read()
+            .map_err(|_| TakerError::General("offerbook lock poisoned".into()))?
+            .clone())
     }
 
     /// Tag a maker as bad
-    pub fn add_bad_maker(&self, maker: &OfferAndAddress) {
+    pub fn add_bad_maker(&self, maker: &OfferAndAddress) -> Result<(), TakerError> {
         log::info!("Bad Maker added: {}", maker.address);
-        self.inner.write().unwrap().mark_bad(&maker.address);
+        self.inner
+            .write()
+            .map_err(|_| TakerError::General("offerbook lock poisoned".into()))?
+            .mark_bad(&maker.address);
+        Ok(())
     }
 
     /// All current good makers
-    pub fn active_makers(&self, protocol: &MakerProtocol) -> Vec<OfferAndAddress> {
-        #[cfg(not(feature = "integration-test"))]
-        {
-            self.inner.read().unwrap().active_makers(protocol)
-        }
-        #[cfg(feature = "integration-test")]
-        {
-            use std::{
-                thread::sleep,
-                time::{Duration, Instant},
-            };
-
-            const POLL_INTERVAL_MS: u64 = 200;
-            const MAX_WAIT_SECS: u64 = 30;
-
-            let start = Instant::now();
-
-            loop {
-                let snapshot = self.inner.read().unwrap().active_makers(protocol);
-
-                if !snapshot.is_empty() {
-                    return snapshot;
-                }
-
-                if start.elapsed().as_secs() >= MAX_WAIT_SECS {
-                    return snapshot;
-                }
-
-                sleep(Duration::from_millis(POLL_INTERVAL_MS));
-            }
-        }
+    pub fn active_makers(
+        &self,
+        protocol: &MakerProtocol,
+    ) -> Result<Vec<OfferAndAddress>, TakerError> {
+        Ok(self
+            .inner
+            .read()
+            .map_err(|_| TakerError::General("offerbook lock poisoned".into()))?
+            .active_makers(protocol))
     }
 
     /// Fetch all good makers
-    pub fn good_makers(&self) -> Vec<OfferAndAddress> {
-        self.inner.read().unwrap().good_makers()
+    pub fn good_makers(&self) -> Result<Vec<OfferAndAddress>, TakerError> {
+        Ok(self
+            .inner
+            .read()
+            .map_err(|_| TakerError::General("offerbook lock poisoned".into()))?
+            .good_makers())
     }
 
     /// All bad makers
-    pub fn get_bad_makers(&self, protocol: &MakerProtocol) -> Vec<OfferAndAddress> {
-        self.inner.read().unwrap().get_bad_makers(protocol)
+    pub fn get_bad_makers(
+        &self,
+        protocol: &MakerProtocol,
+    ) -> Result<Vec<OfferAndAddress>, TakerError> {
+        Ok(self
+            .inner
+            .read()
+            .map_err(|_| TakerError::General("offerbook lock poisoned".into()))?
+            .get_bad_makers(protocol))
     }
 
     /// Fetch all makers good, bad, and unresponsive
-    pub fn all_makers(&self) -> Vec<MakerOfferCandidate> {
-        self.inner.read().unwrap().all_makers()
+    pub fn all_makers(&self) -> Result<Vec<MakerOfferCandidate>, TakerError> {
+        Ok(self
+            .inner
+            .read()
+            .map_err(|_| TakerError::General("offerbook lock poisoned".into()))?
+            .all_makers())
     }
 
     /// Checks if an address is bad or not
-    pub fn is_bad_maker(&self, offer_and_address: &OfferAndAddress) -> bool {
-        let offerbook = self.inner.read().unwrap();
+    pub fn is_bad_maker(&self, offer_and_address: &OfferAndAddress) -> Result<bool, TakerError> {
+        let offerbook = self
+            .inner
+            .read()
+            .map_err(|_| TakerError::General("offerbook lock poisoned".into()))?;
         let value = offerbook
             .makers
             .iter()
             .find(|offer| offer.address == offer_and_address.address);
 
         if let Some(offer) = value {
-            return offer.state == MakerState::Bad;
+            return Ok(offer.state == MakerState::Bad);
         }
-        true
+        Ok(true)
     }
 
     /// Persist offerbook on disk
     pub fn persist(&self) -> Result<(), TakerError> {
-        self.inner.read().unwrap().write_to_disk(&self.path)
+        self.inner
+            .read()
+            .map_err(|_| TakerError::General("offerbook lock poisoned".into()))?
+            .write_to_disk(&self.path)
     }
 
     /// Remove a maker from the offerbook by address.
     /// Returns `true` if an entry was removed, `false` if no matching address was found.
     pub fn remove(&self, address: &MakerAddress) -> Result<bool, TakerError> {
-        let mut book = self.inner.write().unwrap();
+        let mut book = self
+            .inner
+            .write()
+            .map_err(|_| TakerError::General("offerbook lock poisoned".into()))?;
         let before = book.makers.len();
         book.makers.retain(|m| &m.address != address);
         let removed = book.makers.len() < before;
@@ -408,19 +419,26 @@ impl Drop for SyncGuard<'_> {
     }
 }
 
-/// Service run on taker to check if the offerbook makers are active or not
+/// Service run on taker to check if the offerbook makers are active or not.
 pub struct OfferSyncService {
     offerbook: OfferBookHandle,
     registry: FileRegistry,
     socks_port: u16,
-    rest_backend: BitcoinRest,
+    /// Shared so per-maker offer-fetch workers can each hold a handle.
+    blockchain: Arc<AnyBlockchain>,
     /// Set to `true` by Nostr discovery after the first EOSE is received.
     initial_sync_complete: Arc<AtomicBool>,
+    /// Shared with the handle and the fetch workers so shutdown stops new
+    /// fetches; in-flight ones abort via the backend's own flag.
+    shutdown: Arc<AtomicBool>,
 }
 
 /// OfferSync handle, use for shutting down OfferSyncService
 pub struct OfferSyncHandle {
     shutdown: Arc<AtomicBool>,
+    /// The service backend's abort flag, so shutdown also cancels an in-flight
+    /// Electrum call inside a fetch worker.
+    backend_shutdown: Option<Arc<AtomicBool>>,
     join: Option<JoinHandle<()>>,
     cmd_tx: mpsc::Sender<SyncCommand>,
 }
@@ -465,9 +483,14 @@ impl OfferSyncHandle {
     /// Shutdown handler
     pub fn shutdown(&mut self) {
         self.shutdown.store(true, Ordering::Relaxed);
+        if let Some(flag) = &self.backend_shutdown {
+            flag.store(true, Ordering::Relaxed);
+        }
 
         if let Some(join) = self.join.take() {
+            log::info!("Offer sync: joining service thread");
             let _ = join.join();
+            log::info!("Offer sync: service thread joined");
         }
     }
 
@@ -513,15 +536,16 @@ impl OfferSyncService {
         offerbook: OfferBookHandle,
         registry: FileRegistry,
         socks_port: u16,
-        rest_backend: BitcoinRest,
+        blockchain: Arc<AnyBlockchain>,
         initial_sync_complete: Arc<AtomicBool>,
     ) -> Self {
         Self {
             offerbook,
             registry,
             socks_port,
-            rest_backend,
+            blockchain,
             initial_sync_complete,
+            shutdown: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -536,16 +560,20 @@ impl OfferSyncService {
             .unwrap_or(Duration::ZERO)
             .as_secs();
 
-        let height = match self.rest_backend.get_block_count() {
+        let height = match self.blockchain.get_block_count() {
             Ok(h) => h as u32,
             Err(e) => {
-                log::warn!("get_block_count failed; skipping fidelity prune this cycle: {e}");
+                log::warn!("get_block_count failed; skipping fidelity prune this cycle: {e:?}");
                 0
             }
         };
-        let fidelities = self.registry.list_fidelity(height);
+        let fidelities = self.registry.list_fidelity(height)?;
         {
-            let mut book = self.offerbook.inner.write().unwrap();
+            let mut book = self
+                .offerbook
+                .inner
+                .write()
+                .map_err(|_| TakerError::General("offerbook lock poisoned".into()))?;
             for fidelity in fidelities {
                 match MakerAddress::try_from(fidelity.onion_address) {
                     Ok(parsed) => book.upsert_address(parsed, Some(fidelity.txid)),
@@ -556,10 +584,15 @@ impl OfferSyncService {
             }
         }
 
-        let to_poll = self.offerbook.inner.read().unwrap().makers_to_poll(now);
+        let to_poll = self
+            .offerbook
+            .inner
+            .read()
+            .map_err(|_| TakerError::General("offerbook lock poisoned".into()))?
+            .makers_to_poll(now);
 
         if !to_poll.is_empty() {
-            let handles = self.spawn_offer_workers(to_poll);
+            let handles = self.spawn_offer_workers(to_poll)?;
             for h in handles {
                 let _ = h.join();
             }
@@ -576,43 +609,45 @@ impl OfferSyncService {
         Ok(())
     }
 
-    /// Fetches an offer from a single maker, verifies its fidelity proof, and
-    /// updates the offerbook with the result (mark_success or mark_failure),
-    /// then persists the offerbook to disk. Shared by the periodic worker pool
-    /// and the manual `poll_one` path. Returns the recorded maker captured under
-    /// the write lock, or `None` if no entry exists for `addr` after the update
-    /// (e.g. a concurrent `remove` raced the poll).
+    /// Downloads and verifies one maker's offer with no lock held, then takes the
+    /// write guard once to record the result and persist. Shared by the periodic
+    /// worker pool and the manual `poll_one` path. Returns the recorded maker, or
+    /// `None` if no entry exists for `addr` after the update (e.g. a concurrent
+    /// `remove` raced the poll).
     fn fetch_and_record_one(
         addr: MakerAddress,
         socks_port: u16,
-        rest_backend: &BitcoinRest,
+        blockchain: &AnyBlockchain,
         offerbook: &Arc<RwLock<OfferBook>>,
         offerbook_path: &Path,
         now: u64,
     ) -> Option<MakerOfferCandidate> {
         let downloaded = addr.clone().download_offer_with_retries(socks_port);
-        let mut book = offerbook.write().unwrap();
-        match downloaded {
-            Some(oa) => {
-                match verify_fidelity_with_backend(
-                    rest_backend,
-                    &oa.offer.fidelity,
-                    &oa.address.to_string(),
-                    &oa.offer.tweakable_point,
-                    &oa.offer.tweak_chain_code,
-                ) {
-                    Ok(_) => {
-                        book.mark_success(&oa.address, oa.offer, oa.protocol, now);
-                    }
-                    Err(e) => {
-                        log::warn!("Fidelity verification failed for {}: {:?}", oa.address, e);
-                        book.mark_failure(&oa.address, now);
-                    }
-                }
+        // Verify before taking the guard. The backend calls in here can block on a
+        // slow server, which would serialize every worker in the pool behind it.
+        let outcome = downloaded.map(|oa| {
+            let verdict = verify_fidelity_with_backend(
+                blockchain,
+                &oa.offer.fidelity,
+                &oa.address.to_string(),
+                &oa.offer.tweakable_point,
+                &oa.offer.tweak_chain_code,
+            );
+            (oa, verdict)
+        });
+        // Poison means a worker panicked mid-update; skip this maker instead
+        // of panicking the whole worker pool.
+        let mut book = match offerbook.write() {
+            Ok(book) => book,
+            Err(_) => {
+                log::error!("offerbook lock poisoned; skipping maker {addr}");
+                return None;
             }
-            None => {
-                book.mark_failure(&addr, now);
-            }
+        };
+        match outcome {
+            Some((oa, Ok(_))) => book.mark_success(&oa.address, oa.offer, oa.protocol, now),
+            Some((oa, Err(e))) => book.record_fidelity_failure(&oa.address, &e, now),
+            None => book.mark_failure(&addr, now),
         }
         // Capture the maker's final state while we still hold the write lock so
         // a concurrent `remove` can't yank it out from under the caller.
@@ -634,16 +669,19 @@ impl OfferSyncService {
             .as_secs();
 
         // Ensure the maker is present in the offerbook before polling.
-        self.offerbook
-            .inner
-            .write()
-            .unwrap()
-            .upsert_address(address.clone(), None);
+        // Same poison policy as fetch_and_record_one: skip this poll.
+        match self.offerbook.inner.write() {
+            Ok(mut book) => book.upsert_address(address.clone(), None),
+            Err(_) => {
+                log::error!("offerbook lock poisoned; skipping poll of {address}");
+                return None;
+            }
+        }
 
         Self::fetch_and_record_one(
             address,
             self.socks_port,
-            &self.rest_backend,
+            &self.blockchain,
             &self.offerbook.inner,
             &self.offerbook.path,
             now,
@@ -652,7 +690,10 @@ impl OfferSyncService {
 
     /// Spawns worker threads that fetch offers from makers and update the offerbook
     /// as each result arrives. Returns join handles.
-    fn spawn_offer_workers(&self, makers: Vec<MakerAddress>) -> Vec<JoinHandle<()>> {
+    fn spawn_offer_workers(
+        &self,
+        makers: Vec<MakerAddress>,
+    ) -> Result<Vec<JoinHandle<()>>, TakerError> {
         let workers = std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(4)
@@ -662,7 +703,8 @@ impl OfferSyncService {
         let offerbook = self.offerbook.inner.clone();
         let offerbook_path = self.offerbook.path.clone();
         let socks_port = self.socks_port;
-        let rest_backend = self.rest_backend.clone();
+        let blockchain = self.blockchain.clone();
+        let shutdown = self.shutdown.clone();
 
         let mut handles = Vec::with_capacity(workers);
 
@@ -670,52 +712,69 @@ impl OfferSyncService {
             let queue = Arc::clone(&queue);
             let offerbook = Arc::clone(&offerbook);
             let offerbook_path = offerbook_path.clone();
-            let rest_backend = rest_backend.clone();
+            let blockchain = blockchain.clone();
+            let shutdown = shutdown.clone();
 
             let handle = Builder::new()
                 .name(format!("offer-fetch-worker-{i}"))
-                .spawn(move || loop {
-                    let addr = {
-                        let Ok(mut guard) = queue.lock() else { break };
-                        guard.next()
+                .spawn(move || {
+                    // Electrum's client is fully synchronous: two workers calling
+                    // it at once can wedge it and hang taker shutdown forever.
+                    // Each worker gets its own connection.
+                    let backend = match blockchain.new_connection() {
+                        Ok(b) => b,
+                        Err(e) => {
+                            log::warn!(
+                                "offer-fetch-worker-{i}: backend connect failed: {e:?}; skipping this cycle"
+                            );
+                            return;
+                        }
                     };
-                    let Some(addr) = addr else { break };
+                    loop {
+                        if shutdown.load(Ordering::Relaxed) {
+                            break;
+                        }
+                        let addr = {
+                            let Ok(mut guard) = queue.lock() else { break };
+                            guard.next()
+                        };
+                        let Some(addr) = addr else { break };
 
-                    let now = SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap_or(Duration::ZERO)
-                        .as_secs();
+                        let now = SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap_or(Duration::ZERO)
+                            .as_secs();
 
-                    let _ = Self::fetch_and_record_one(
-                        addr,
-                        socks_port,
-                        &rest_backend,
-                        &offerbook,
-                        &offerbook_path,
-                        now,
-                    );
+                        let _ = Self::fetch_and_record_one(
+                            addr,
+                            socks_port,
+                            &backend,
+                            &offerbook,
+                            &offerbook_path,
+                            now,
+                        );
+                    }
                 })
-                .expect("failed to spawn offer-fetch-worker");
+                .map_err(|e| {
+                    TakerError::General(format!("failed to spawn offer-fetch-worker: {e}"))
+                })?;
 
             handles.push(handle);
         }
 
-        handles
+        Ok(handles)
     }
-
     /// Starts the offerbook service
-    pub fn start(self) -> OfferSyncHandle {
-        let shutdown = Arc::new(AtomicBool::new(false));
+    pub fn start(self) -> Result<OfferSyncHandle, TakerError> {
+        let shutdown = self.shutdown.clone();
         let shutdown_flag = shutdown.clone();
+        let backend_shutdown = self.blockchain.shutdown_flag();
         let (cmd_tx, cmd_rx) = mpsc::channel::<SyncCommand>();
 
         let join = std::thread::Builder::new()
             .name("offer-sync-service".to_string())
             .spawn(move || {
                 log::info!("Offer sync service started");
-
-                #[cfg(feature = "integration-test")]
-                std::thread::sleep(Duration::from_secs(7));
 
                 while !shutdown_flag.load(Ordering::Relaxed) {
                     log::info!("Running offerbook sync");
@@ -728,6 +787,12 @@ impl OfferSyncService {
                         match cmd_rx.try_recv() {
                             Ok(SyncCommand::SyncNow(done_tx)) => {
                                 log::info!("Manual offerbook sync requested");
+                                // Shutdown trumps a queued sync; still ack so a
+                                // waiting caller is not left blocking on recv.
+                                if shutdown_flag.load(Ordering::Relaxed) {
+                                    let _ = done_tx.send(());
+                                    break;
+                                }
                                 self.wait_for_discovery(&shutdown_flag);
                                 if let Err(e) = self.run_once() {
                                     log::warn!("Manual offer sync failed: {e:?}");
@@ -751,13 +816,14 @@ impl OfferSyncService {
 
                 log::debug!("Offer sync service stopped");
             })
-            .expect("failed to spawn offer sync service");
+            .map_err(|e| TakerError::General(format!("failed to spawn offer sync service: {e}")))?;
 
-        OfferSyncHandle {
+        Ok(OfferSyncHandle {
             shutdown,
+            backend_shutdown,
             join: Some(join),
             cmd_tx,
-        }
+        })
     }
 
     /// Waits up to DISCOVERY_WAIT_MAX for initial Nostr EOSE before running a manual sync.
@@ -789,18 +855,49 @@ impl OfferSyncService {
     }
 }
 
-/// Verifies a fidelity proof against the blockchain using the given REST backend.
+/// Why a fidelity check failed. Only `BadBond` is the maker's doing; a backend
+/// outage is ours and must not count against them.
+#[derive(Debug)]
+enum FidelityCheckError {
+    BackendDown(TakerError),
+    BadBond(TakerError),
+}
+
+/// Verifies a fidelity proof against the blockchain.
 fn verify_fidelity_with_backend(
-    rest_backend: &BitcoinRest,
+    blockchain: &AnyBlockchain,
     proof: &FidelityProof,
     onion_addr: &str,
     tweakable_point: &bitcoin::PublicKey,
     tweak_chain_code: &bitcoin::bip32::ChainCode,
-) -> Result<(), TakerError> {
+) -> Result<(), FidelityCheckError> {
+    let backend_down = |e: WalletError| FidelityCheckError::BackendDown(TakerError::Wallet(e));
+
     let txid = proof.bond.outpoint.txid;
-    let transaction = rest_backend.get_raw_tx(&txid)?;
-    let current_height = rest_backend.get_block_count()?;
-    let confirmation_height = rest_backend.get_utxo_confirmation_height(&proof.bond.outpoint())?;
+    let vout = proof.bond.outpoint.vout;
+    let transaction = blockchain
+        .get_raw_transaction(&txid, None)
+        .map_err(backend_down)?;
+    // The bond output must still be unspent. `Ok(None)` is the backend
+    // answering "spent or absent", so it is the maker's problem, not ours.
+    if blockchain
+        .get_tx_out(&txid, vout, Some(true))
+        .map_err(backend_down)?
+        .is_none()
+    {
+        return Err(FidelityCheckError::BadBond(TakerError::General(format!(
+            "Fidelity bond output {txid}:{vout} is spent or does not exist"
+        ))));
+    }
+    let current_height = blockchain.get_block_count().map_err(backend_down)?;
+    let confirmation_height = blockchain
+        .tx_block_height(&txid)
+        .map_err(backend_down)?
+        .ok_or_else(|| {
+            FidelityCheckError::BadBond(TakerError::General(format!(
+                "Fidelity bond transaction {txid} is not yet confirmed"
+            )))
+        })? as u32;
 
     verify_fidelity_checks(
         proof,
@@ -811,7 +908,7 @@ fn verify_fidelity_with_backend(
         tweakable_point,
         tweak_chain_code,
     )
-    .map_err(TakerError::Wallet)
+    .map_err(|e| FidelityCheckError::BadBond(TakerError::Wallet(e)))
 }
 
 /// An ephemeral Offerbook tracking good and bad makers. Currently, Offerbook is initiated
@@ -853,6 +950,25 @@ impl OfferBook {
     fn mark_failure(&mut self, address: &MakerAddress, now_ts: u64) {
         if let Some(m) = self.makers.iter_mut().find(|m| &m.address == address) {
             m.mark_failure(now_ts);
+        }
+    }
+
+    /// Scores a failed fidelity check only when the backend answered. Otherwise
+    /// one local outage walks every honest maker to the terminal `Bad` state.
+    fn record_fidelity_failure(
+        &mut self,
+        address: &MakerAddress,
+        err: &FidelityCheckError,
+        now_ts: u64,
+    ) {
+        match err {
+            FidelityCheckError::BadBond(e) => {
+                log::warn!("Fidelity verification failed for {address}: {e:?}");
+                self.mark_failure(address, now_ts);
+            }
+            FidelityCheckError::BackendDown(e) => {
+                log::warn!("Backend failed verifying {address}, leaving its score alone: {e:?}");
+            }
         }
     }
 
@@ -1040,10 +1156,14 @@ impl MakerAddress {
         let mut socket = {
             use crate::protocol::common_messages::COINSWAP_PORT;
 
-            // Production: self.0 is a .onion hostname, append the well-known port
-            let addr = format!("{}:{}", self.0, COINSWAP_PORT);
-            Socks5Stream::connect(format!("127.0.0.1:{socks_port}").as_str(), addr.as_ref())?
-                .into_inner()
+            // Production: self.0 is a .onion hostname, connect via the Tor proxy
+            socks5_connect(
+                socks_port,
+                &self.0,
+                COINSWAP_PORT,
+                None,
+                Duration::from_secs(FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC),
+            )?
         };
 
         socket.set_read_timeout(Some(Duration::from_secs(FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC)))?;
@@ -1264,5 +1384,34 @@ mod tests {
 
         let to_poll_after = book.makers_to_poll(now_ts + 11);
         assert_eq!(to_poll_after, vec![addr("6103")]);
+    }
+
+    #[test]
+    fn backend_down_leaves_maker_state_unchanged() {
+        let now_ts = 170000;
+        let address = addr("6106");
+        let mut book = OfferBook { makers: vec![] };
+        book.makers.push(MakerOfferCandidate {
+            address: address.clone(),
+            fidelity_outpoint: Some(OutPoint::new(Txid::from_slice(&[1; 32]).unwrap(), 0)),
+            offer: None,
+            state: MakerState::Good,
+            protocol: None,
+            last_offer_update_ts: None,
+            next_offer_check_ts: None,
+        });
+
+        let down = FidelityCheckError::BackendDown(TakerError::General("electrum down".into()));
+        book.record_fidelity_failure(&address, &down, now_ts);
+        assert_eq!(book.makers[0].state, MakerState::Good);
+        assert_eq!(book.makers[0].next_offer_check_ts, None);
+
+        // A bond the backend did answer on still counts against the maker.
+        let bad = FidelityCheckError::BadBond(TakerError::General("bond is spent".into()));
+        book.record_fidelity_failure(&address, &bad, now_ts);
+        assert_eq!(
+            book.makers[0].state,
+            MakerState::Unresponsive { retries: 1 }
+        );
     }
 }

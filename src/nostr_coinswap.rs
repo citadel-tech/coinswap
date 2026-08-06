@@ -21,15 +21,20 @@ use nostr::{
     util::JsonUtil,
 };
 #[cfg(not(feature = "integration-test"))]
-use socks::Socks5Stream;
-#[cfg(not(feature = "integration-test"))]
 use tungstenite::http::Uri;
 use tungstenite::{stream::MaybeTlsStream, Message, WebSocket};
 
+#[cfg(not(feature = "integration-test"))]
+use crate::utill::socks5_connect;
 use crate::{
     maker::{MakerError, MakerServerConfig},
     protocol::common_messages::FidelityProof,
 };
+
+/// Tor circuits to a relay can take minutes to build on a slow network; a
+/// shorter bound would fail real connects, not just wedged ones.
+#[cfg(not(feature = "integration-test"))]
+const NOSTR_SOCKS_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// nostr url for coinswap
 #[cfg(not(feature = "integration-test"))]
@@ -59,7 +64,12 @@ pub(crate) fn connect_nostr_websocket(
     #[cfg(feature = "integration-test")]
     {
         let _ = (socks_port, tor_auth_password);
-        tungstenite::connect(relay_url).map(|(ws, _)| ws)
+        let (mut ws, _) = tungstenite::connect(relay_url)?;
+        // Match the prod read timeout so a silent relay can't hang shutdown joins.
+        if let MaybeTlsStream::Plain(tcp) = ws.get_mut() {
+            tcp.set_read_timeout(Some(Duration::from_secs(30)))?;
+        }
+        Ok(ws)
     }
 
     #[cfg(not(feature = "integration-test"))]
@@ -76,20 +86,17 @@ pub(crate) fn connect_nostr_websocket(
             .port_u16()
             .unwrap_or(if scheme == "wss" { 443 } else { 80 });
 
-        let socks_addr = format!("127.0.0.1:{socks_port}");
-        let target_addr = format!("{host}:{port}");
         let tcp = if tor_auth_password.is_empty() {
-            Socks5Stream::connect(socks_addr.as_str(), target_addr.as_str())
+            socks5_connect(socks_port, host, port, None, NOSTR_SOCKS_TIMEOUT)
         } else {
-            Socks5Stream::connect_with_password(
-                socks_addr.as_str(),
-                target_addr.as_str(),
+            socks5_connect(
+                socks_port,
                 host,
-                tor_auth_password,
+                port,
+                Some((host, tor_auth_password)),
+                NOSTR_SOCKS_TIMEOUT,
             )
-        }
-        .map_err(|e| io::Error::other(e.to_string()))?
-        .into_inner();
+        }?;
 
         tcp.set_read_timeout(Some(Duration::from_secs(30)))?;
         tcp.set_write_timeout(Some(Duration::from_secs(30)))?;
@@ -150,7 +157,7 @@ pub fn broadcast_bond_on_nostr(
         )))
         .build(keys.public_key)
         .sign_with_keys(&keys)
-        .expect("Event should be signed");
+        .map_err(|_| MakerError::General("failed to sign nostr event"))?;
 
     log::debug!(
         "Nostr event built | event_id={} pubkey={} kind={} created_at={} tags={:?}",

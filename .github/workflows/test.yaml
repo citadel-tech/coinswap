@@ -63,6 +63,10 @@ jobs:
           EOF
 
       - name: Run cargo-llvm-cov
+        # Surface electrs stderr in the job log, or a hung electrum test
+        # leaves no evidence of what the server was doing.
+        env:
+          ELECTRS_LOG: "1"
         run: |
           mkdir -p ./coverage/reports/
           cargo llvm-cov nextest --lib --bins --tests --retries 1 --max-fail 2:immediate --partition slice:${{ matrix.partition }}/${{strategy.job-total}} --features integration-test --no-capture
@@ -73,3 +77,104 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage/reports/cobertura-${{ strategy.job-index }}.xml
+
+  # Electrum over a real Tor SOCKS proxy. These publish an ephemeral onion
+  # service, so they need live network access to reach the HSDir ring.
+  #
+  # Blocking: a failure here fails the build. Tor weather is absorbed by retrying
+  # each test up to 3 times (nextest `--retries 2`, a fresh process per attempt)
+  # plus the descriptor warm-up in `TorElectrumBackend`. A test that fails all
+  # three attempts is treated as a real failure.
+  #
+  # One test per runner: Tor makes these ~3.5x slower than the direct backend, so
+  # running them in one job would put the worst case past the 6h ceiling. Split
+  # this way the wall clock is one test's three attempts, not everything summed.
+  tor_integration:
+    name: Electrum over Tor (${{ matrix.test }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        test:
+          - tor_abort1_taproot
+          - tor_abort1_legacy
+          - tor_malice2
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install protobuf compiler and tor
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler tor
+
+      - name: Cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-test-${{  hashFiles('**/Cargo.toml','**/Cargo.lock') }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Install nostr-rs-relay binary
+        uses: hulxv/nostr-relay-action@v1.0.0
+        with:
+          version: "0.9.0"
+          start: "false"
+
+      - name: Add nostr-rs-relay to PATH
+        run: echo "$HOME/.nostr-relay-bin" >> "$GITHUB_PATH"
+
+      # Ubuntu's tor package starts its own instance; stop it so ours owns the
+      # ports and we control the control-port auth.
+      - name: Start tor with a control port
+        run: |
+          sudo systemctl stop tor || true
+          mkdir -p /tmp/tor-it
+          # Empty control password: `check_tor_status` sends AUTHENTICATE "" and
+          # the test helpers default COINSWAP_TOR_PASSWORD to empty.
+          HASH="$(tor --hash-password '' | tail -n 1)"
+          cat <<EOF > /tmp/tor-it/torrc
+          SocksPort 9050
+          ControlPort 9051
+          HashedControlPassword $HASH
+          DataDirectory /tmp/tor-it/data
+          Log notice file /tmp/tor-it/tor.log
+          EOF
+          tor -f /tmp/tor-it/torrc &
+          echo "waiting for tor to bootstrap..."
+          for _ in $(seq 1 60); do
+            if grep -q "Bootstrapped 100%" /tmp/tor-it/tor.log 2>/dev/null; then
+              echo "tor bootstrapped"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "tor failed to bootstrap within 300s" >&2
+          cat /tmp/tor-it/tor.log 2>/dev/null || true
+          exit 1
+
+      # `--retries 2` gives the test 3 attempts in a fresh process each time, which
+      # is what absorbs Tor weather. Kept as a flag rather than a nextest profile
+      # so the same command works locally with no config file to add; the job's
+      # `timeout-minutes` already bounds the run.
+      - name: Run ${{ matrix.test }}
+        env:
+          COINSWAP_TOR_IT: "1"
+        run: |
+          cargo nextest run --features integration-test \
+            --run-ignored=only --test-threads=1 --retries 2 \
+            --failure-output immediate-final \
+            -E 'test(${{ matrix.test }})'
+
+      # `always()`, not `failure()`: a job timeout is recorded as a cancellation,
+      # and that is exactly the case where the tor log is the only evidence left.
+      - name: Dump tor log
+        if: always()
+        run: cat /tmp/tor-it/tor.log || true
