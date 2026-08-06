@@ -425,6 +425,8 @@ pub struct Taker {
     pub(crate) config: TakerInitConfig,
     /// Wallet for managing funds.
     pub(crate) wallet: Arc<RwLock<Wallet>>,
+    /// Stops the role and every backend connection it owns.
+    shutdown: Arc<AtomicBool>,
     /// Offer book for managing maker offers.
     pub(crate) offerbook: OfferBookHandle,
     /// Watch service for transaction monitoring.
@@ -447,6 +449,8 @@ pub struct Taker {
 impl Drop for Taker {
     fn drop(&mut self) {
         log::info!("Shutting down taker.");
+        self.shutdown
+            .store(true, std::sync::atomic::Ordering::Relaxed);
         // Flush any pending swap state before shutdown
         if let Some(swap) = &self.ongoing_swap {
             if let Ok(record) = self.persist_build_record(swap) {
@@ -468,20 +472,33 @@ impl Drop for Taker {
             log::info!("Shutting down breach detector");
             detector.stop();
         }
-        if let Err(e) = self.offerbook.persist() {
-            log::error!("Failed to persist offerbook: {:?}", e);
-        }
         log::info!("Shutting down offer sync background job");
         self.offer_sync_handle.shutdown();
         log::info!("Shutting down watch service background job");
         self.watch_service.shutdown();
-        log::info!("Offerbook data saved to disk.");
+        log::info!(
+            "shutdown_phase_start pid={} component=taker phase=state_save",
+            std::process::id()
+        );
+        let mut save_ok = true;
+        if let Err(e) = self.offerbook.persist() {
+            log::error!("Failed to persist offerbook: {:?}", e);
+            save_ok = false;
+        }
         if let Ok(wallet) = self.wallet.write() {
             if let Err(e) = wallet.save_to_disk() {
                 log::error!("Failed to save wallet: {:?}", e);
+                save_ok = false;
             }
+        } else {
+            log::error!("Failed to lock wallet while saving shutdown state");
+            save_ok = false;
         }
-        log::info!("Wallet data saved to disk.");
+        log::info!(
+            "shutdown_phase_done pid={} component=taker phase=state_save outcome={}",
+            std::process::id(),
+            if save_ok { "ok" } else { "error" }
+        );
     }
 }
 
@@ -536,7 +553,8 @@ impl Taker {
             .unwrap_or_else(get_taker_dir)?;
         std::fs::create_dir_all(&data_dir)?;
         let wallet_path = data_dir.join("wallets").join(&wallet_name);
-        let blockchain = AnyBlockchain::from_config(&backend)?;
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let blockchain = AnyBlockchain::from_config_with_shutdown(&backend, shutdown.clone())?;
         // Misconfiguration (no txindex, dead ZMQ) must fail here, not mid-swap.
         if let AnyBlockchain::CoreRPC(core) = &blockchain {
             core.check_node_requirements()?;
@@ -545,7 +563,7 @@ impl Taker {
 
         // Init Watch Service
         let (watch_service, registry, initial_sync_complete) =
-            Self::init_watch_service(&config, &backend)?;
+            Self::init_watch_service(&config, &backend, shutdown.clone())?;
 
         // The watcher starts empty, so re-arm every contract still live in the
         // wallet. Without this a restart leaves them undefended.
@@ -566,8 +584,12 @@ impl Taker {
             &offerbook,
             registry,
             config.socks_port,
-            Arc::new(AnyBlockchain::from_config(&backend)?),
+            Arc::new(AnyBlockchain::from_config_with_shutdown(
+                &backend,
+                shutdown.clone(),
+            )?),
             initial_sync_complete,
+            shutdown.clone(),
         )?;
         let swap_tracker = Arc::new(Mutex::new(SwapTracker::load_or_create(&data_dir)?));
         swap_tracker
@@ -578,6 +600,7 @@ impl Taker {
         let mut taker = Taker {
             config,
             wallet: Arc::new(RwLock::new(wallet)),
+            shutdown,
             offerbook,
             watch_service,
             offer_sync_handle,
@@ -664,9 +687,10 @@ impl Taker {
     fn init_watch_service(
         config: &TakerInitConfig,
         backend: &BackendConfig,
+        shutdown: Arc<AtomicBool>,
     ) -> Result<(WatchService, FileRegistry, Arc<AtomicBool>), TakerError> {
-        let blockchain = AnyBlockchain::from_config(&backend.for_watcher())?;
-        let backend_shutdown = blockchain.shutdown_flag();
+        let blockchain =
+            AnyBlockchain::from_config_with_shutdown(&backend.for_watcher(), shutdown.clone())?;
 
         let registry = FileRegistry::new();
         let registry_clone = registry.clone();
@@ -686,16 +710,15 @@ impl Taker {
                 config.socks_port,
                 config.tor_auth_password.clone().unwrap_or_default(),
             )),
+            shutdown.clone(),
         );
-        // Propagate the error if something goes wrong here.
-        let watcher_shutdown = watcher.shutdown_flag();
         let handle = thread::Builder::new()
             .name("Watcher thread".to_string())
             .spawn(move || watcher.run(initial_sync_clone))
             .map_err(|e| TakerError::General(format!("failed to spawn watcher thread: {e}")))?;
 
         Ok((
-            WatchService::new(tx_requests, handle, backend_shutdown, watcher_shutdown),
+            WatchService::new(tx_requests, handle, shutdown),
             registry_clone,
             initial_sync_complete,
         ))
@@ -735,6 +758,7 @@ impl Taker {
         socks_port: u16,
         chain: Arc<AnyBlockchain>,
         initial_sync_complete: Arc<AtomicBool>,
+        shutdown: Arc<AtomicBool>,
     ) -> Result<OfferSyncHandle, TakerError> {
         OfferSyncService::new(
             offerbook.clone(),
@@ -742,6 +766,7 @@ impl Taker {
             socks_port,
             chain,
             initial_sync_complete,
+            shutdown,
         )
         .start()
     }

@@ -1,14 +1,13 @@
 //! Background service threads for the Taker.
 //!
-//! Contains `RecoveryLoop` (periodic recovery retry) and `BreachDetector`
-//! (adversarial spend monitoring) — standalone structs with their own
-//! background threads, `Arc` state, and `Drop` impls.
+//! Owns the recovery, breach-detection, and route-heartbeat threads.
+//! Each service signals and joins its thread before it is dropped.
 
 use std::{
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering::Relaxed},
-        Arc, Mutex, RwLock,
+        mpsc, Arc, Mutex, RwLock,
     },
     thread::{self, JoinHandle},
     time::Duration,
@@ -226,14 +225,7 @@ impl RecoveryLoop {
                         return;
                     }
 
-                    // Slice the interval so a shutdown lands within a second
-                    // instead of waiting out the full sleep.
-                    let mut remaining = RECOVERY_LOOP_INTERVAL;
-                    while !remaining.is_zero() && !shutdown_clone.load(Relaxed) {
-                        let slice = remaining.min(Duration::from_secs(1));
-                        thread::sleep(slice);
-                        remaining -= slice;
-                    }
+                    thread::park_timeout(RECOVERY_LOOP_INTERVAL);
                 }
                 log::info!("Recovery loop shut down");
             })?;
@@ -374,7 +366,15 @@ impl Drop for RecoveryLoop {
     fn drop(&mut self) {
         self.shutdown.store(true, Relaxed);
         if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
+            handle.thread().unpark();
+            let thread = handle.thread().clone();
+            crate::utill::log_shutdown_join_start("taker_recovery", &thread);
+            let result = handle.join();
+            crate::utill::log_shutdown_join_done(
+                "taker_recovery",
+                &thread,
+                if result.is_ok() { "ok" } else { "panic" },
+            );
         }
     }
 }
@@ -411,7 +411,10 @@ impl BreachDetector {
             .name("Breach detector thread".to_string())
             .spawn(move || {
                 while !shutdown_clone.load(Relaxed) {
-                    thread::sleep(HEART_BEAT_INTERVAL);
+                    thread::park_timeout(HEART_BEAT_INTERVAL);
+                    if shutdown_clone.load(Relaxed) {
+                        break;
+                    }
 
                     let current_sentinels = match sentinels_clone.lock() {
                         Ok(guard) => guard.clone(),
@@ -507,19 +510,29 @@ impl BreachDetector {
 
     /// Signal the background thread to stop and wait for it to finish.
     pub(crate) fn stop(mut self) {
+        self.stop_thread();
+    }
+
+    /// Wakes the detector before joining so its heartbeat wait cannot delay shutdown.
+    fn stop_thread(&mut self) {
         self.shutdown.store(true, Relaxed);
         if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
+            handle.thread().unpark();
+            let thread = handle.thread().clone();
+            crate::utill::log_shutdown_join_start("taker_breach_detector", &thread);
+            let result = handle.join();
+            crate::utill::log_shutdown_join_done(
+                "taker_breach_detector",
+                &thread,
+                if result.is_ok() { "ok" } else { "panic" },
+            );
         }
     }
 }
 
 impl Drop for BreachDetector {
     fn drop(&mut self) {
-        self.shutdown.store(true, Relaxed);
-        if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
-        }
+        self.stop_thread();
     }
 }
 
@@ -530,40 +543,54 @@ impl Drop for BreachDetector {
 /// Send failures are ignored — a dead maker fails the protocol's own reads
 /// soon enough, and the heartbeat must not become a failure path of its own.
 pub(crate) struct RouteHeartbeat {
-    stop: Arc<AtomicBool>,
+    stop: mpsc::Sender<()>,
+    handle: Option<JoinHandle<()>>,
 }
 
 impl RouteHeartbeat {
     /// Spawn the heartbeat thread over pre-connected, handshaked streams.
     pub(crate) fn start(swap_id: &str, streams: Vec<std::net::TcpStream>) -> std::io::Result<Self> {
-        let stop = Arc::new(AtomicBool::new(false));
-        let stop_thread = stop.clone();
+        let (stop, stop_rx) = mpsc::channel();
         let keepalive =
             crate::protocol::common_messages::TakerToMakerMessage::WaitingFundingConfirmation(
                 swap_id.to_string(),
             );
-        // The handle is dropped on purpose: joining on Drop could stall the
-        // caller for a whole write timeout on a dead maker. The thread exits
-        // after one cycle once `stop` is set.
-        thread::Builder::new()
+        let handle = thread::Builder::new()
             .name("Route heartbeat".to_string())
             .spawn(move || {
                 let mut streams = streams;
-                while !stop_thread.load(Relaxed) {
+                loop {
                     for stream in streams.iter_mut() {
+                        if stop_rx.try_recv().is_ok() {
+                            return;
+                        }
                         let _ = crate::utill::send_message(stream, &keepalive);
                     }
-                    thread::sleep(super::api::ROUTE_HEARTBEAT_INTERVAL);
+                    match stop_rx.recv_timeout(super::api::ROUTE_HEARTBEAT_INTERVAL) {
+                        Err(mpsc::RecvTimeoutError::Timeout) => {}
+                        Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => return,
+                    }
                 }
             })?;
-        Ok(Self { stop })
+        Ok(Self {
+            stop,
+            handle: Some(handle),
+        })
     }
 }
 
 impl Drop for RouteHeartbeat {
     fn drop(&mut self) {
-        // No join: a send blocked on a dead maker would stall the caller for
-        // the whole write timeout. The thread exits after one cycle on its own.
-        self.stop.store(true, Relaxed);
+        let _ = self.stop.send(());
+        if let Some(handle) = self.handle.take() {
+            let thread = handle.thread().clone();
+            crate::utill::log_shutdown_join_start("route_heartbeat", &thread);
+            let result = handle.join();
+            crate::utill::log_shutdown_join_done(
+                "route_heartbeat",
+                &thread,
+                if result.is_ok() { "ok" } else { "panic" },
+            );
+        }
     }
 }

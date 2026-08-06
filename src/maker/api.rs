@@ -378,61 +378,121 @@ impl ThreadPool {
         handle: JoinHandle<()>,
         stream: Option<Weak<TcpStream>>,
     ) -> Result<(), MakerError> {
-        let mut threads = self
-            .threads
-            .lock()
-            .map_err(|_| MakerError::General("thread pool lock poisoned"))?;
-        // Drop what has already finished, or a long-lived maker keeps every
-        // connection handle it ever accepted.
-        threads.retain(|(handle, _)| !handle.is_finished());
-        threads.push((handle, stream));
+        let finished = {
+            let mut threads = self
+                .threads
+                .lock()
+                .map_err(|_| MakerError::General("thread pool lock poisoned"))?;
+            let (finished, mut running): (Vec<_>, Vec<_>) = std::mem::take(&mut *threads)
+                .into_iter()
+                .partition(|(handle, _)| handle.is_finished());
+            running.push((handle, stream));
+            *threads = running;
+            finished
+        };
+        for (handle, _) in finished {
+            self.join_thread(handle);
+        }
         Ok(())
     }
 
     /// Join all threads in the pool.
     pub fn join_all_threads(&self) -> Result<(), MakerError> {
-        let mut threads = self
-            .threads
-            .lock()
-            .map_err(|_| MakerError::General("Failed to lock threads"))?;
-
-        log::info!("Joining {} threads", threads.len());
-
-        // Close first, join second. A handler blocked in a read only returns once
-        // its socket dies, and the read timeout is half an hour.
-        for (_, stream) in threads.iter() {
-            if let Some(stream) = stream.as_ref().and_then(|s| s.upgrade()) {
-                let _ = stream.shutdown(std::net::Shutdown::Both);
+        loop {
+            let mut threads = {
+                let mut owned = self
+                    .threads
+                    .lock()
+                    .map_err(|_| MakerError::General("Failed to lock threads"))?;
+                std::mem::take(&mut *owned)
+            };
+            if threads.is_empty() {
+                log::info!(
+                    "shutdown_join_complete pid={} component=maker_pool:{}",
+                    std::process::id(),
+                    self.port
+                );
+                return Ok(());
             }
-        }
 
-        while let Some((thread, _)) = threads.pop() {
-            let thread_name = thread.thread().name().unwrap_or("unknown").to_string();
-
-            match thread.join() {
-                Ok(_) => {
-                    log::info!("[{}] Thread {} joined", self.port, thread_name);
-                }
-                Err(_) => {
-                    log::error!("[{}] Thread {} panicked", self.port, thread_name);
+            // Closing every socket first lets connection reads exit before joins begin.
+            for (_, stream) in &threads {
+                if let Some(stream) = stream.as_ref().and_then(Weak::upgrade) {
+                    let _ = stream.shutdown(std::net::Shutdown::Both);
                 }
             }
-        }
 
-        Ok(())
+            while let Some((thread, _)) = threads.pop() {
+                self.join_thread(thread);
+            }
+        }
+    }
+
+    /// Records a lifecycle pair so a missing completion identifies the stuck handle.
+    fn join_thread(&self, handle: JoinHandle<()>) {
+        let component = format!("maker_pool:{}", self.port);
+        let thread = handle.thread().clone();
+        crate::utill::log_shutdown_join_start(&component, &thread);
+        let outcome = if handle.join().is_ok() { "ok" } else { "panic" };
+        crate::utill::log_shutdown_join_done(&component, &thread, outcome);
     }
 }
 
-/// Maker server
-///
-/// This implements the `Maker` trait with actual swap logic.
+/// Latches the server stop request while allowing its backend abort arm to reset
+/// after every owned thread has joined.
+pub struct ShutdownSignal {
+    requested: AtomicBool,
+    backend: Arc<AtomicBool>,
+}
+
+impl ShutdownSignal {
+    /// Keeps construction private so both flags always start in the same state.
+    fn new() -> Self {
+        Self {
+            requested: AtomicBool::new(false),
+            backend: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// Reads the terminal latch, which backend rearming never clears.
+    pub fn load(&self, ordering: Ordering) -> bool {
+        self.requested.load(ordering)
+    }
+
+    /// Changes both flags so every stop source cancels active backend retries.
+    pub fn store(&self, value: bool, ordering: Ordering) {
+        self.requested.store(value, ordering);
+        self.backend.store(value, ordering);
+    }
+
+    /// Shares backend cancellation without exposing the terminal server latch.
+    fn backend_flag(&self) -> Arc<AtomicBool> {
+        self.backend.clone()
+    }
+
+    /// Rearms wallet access only after all server-owned backend users have joined.
+    pub(crate) fn reset_backend(&self) {
+        self.backend.store(false, Ordering::Relaxed);
+    }
+}
+
+impl std::ops::Deref for ShutdownSignal {
+    type Target = AtomicBool;
+
+    /// Lets observation-only APIs use the latch without seeing backend rearming.
+    fn deref(&self) -> &Self::Target {
+        &self.requested
+    }
+}
+
+/// Maker server implementing the swap protocols and their background services.
 pub struct MakerServer {
     /// Configuration.
     pub config: MakerServerConfig,
     /// Wallet.
     pub wallet: Arc<RwLock<Wallet>>,
     /// Shutdown flag.
-    pub shutdown: AtomicBool,
+    pub shutdown: ShutdownSignal,
     /// Is setup complete flag.
     pub is_setup_complete: AtomicBool,
     /// Highest fidelity proof.
@@ -482,7 +542,11 @@ impl MakerServer {
             cfg.wallet_name = wallet_name.clone();
         }
         let wallet_path = config.data_dir.join("wallets").join(&wallet_name);
-        let blockchain = AnyBlockchain::from_config(&config.backend).map_err(MakerError::Wallet)?;
+        let shutdown = ShutdownSignal::new();
+        let backend_shutdown = shutdown.backend_flag();
+        let blockchain =
+            AnyBlockchain::from_config_with_shutdown(&config.backend, backend_shutdown.clone())
+                .map_err(MakerError::Wallet)?;
         // Misconfiguration (no txindex, dead ZMQ) must fail here, not mid-swap.
         if let AnyBlockchain::CoreRPC(core) = &blockchain {
             core.check_node_requirements().map_err(MakerError::Wallet)?;
@@ -490,7 +554,7 @@ impl MakerServer {
         let mut wallet = Wallet::load_or_init(&wallet_path, blockchain, config.password.clone())?;
         let data_dir = config.data_dir.clone();
         log::info!("Sync at:----MakerServer init----");
-        wallet.sync_and_save(&crate::utill::NO_SHUTDOWN)?;
+        wallet.sync_and_save(&shutdown)?;
         let wallet_network = wallet.store.network;
         if config.network != wallet_network {
             log::info!(
@@ -502,8 +566,11 @@ impl MakerServer {
         }
 
         // Initialize watch service
-        let watch_service = crate::watch_tower::service::start_maker_watch_service(&config.backend)
-            .map_err(MakerError::Watcher)?;
+        let watch_service = crate::watch_tower::service::start_maker_watch_service(
+            &config.backend,
+            backend_shutdown,
+        )
+        .map_err(MakerError::Watcher)?;
 
         // The watcher starts empty, so re-arm every contract still live in the
         // wallet. Without this a restart leaves them undefended.
@@ -530,7 +597,7 @@ impl MakerServer {
         Ok(MakerServer {
             config: config.clone(),
             wallet: Arc::new(RwLock::new(wallet)),
-            shutdown: AtomicBool::new(false),
+            shutdown,
             is_setup_complete: AtomicBool::new(false),
             highest_fidelity_proof: RwLock::new(None),
             ongoing_swaps: Mutex::new(HashMap::new()),
@@ -547,6 +614,20 @@ impl MakerServer {
     /// Check if shutdown has been requested.
     pub fn is_shutdown(&self) -> bool {
         self.shutdown.load(Ordering::Relaxed)
+    }
+
+    /// Sleeps in short slices so long-lived Maker jobs observe shutdown promptly.
+    pub(crate) fn wait_for_shutdown(&self, duration: Duration) -> bool {
+        let mut remaining = duration;
+        while !remaining.is_zero() {
+            if self.is_shutdown() {
+                return false;
+            }
+            let slice = remaining.min(Duration::from_secs(1));
+            thread::sleep(slice);
+            remaining -= slice;
+        }
+        !self.is_shutdown()
     }
 
     /// Setup fidelity bond for this maker.
@@ -698,7 +779,9 @@ impl MakerServer {
 
                             let total_sleep = sleep_increment * sleep_multiplier.min(60);
                             log::info!("Next sync in {total_sleep:?} secs");
-                            thread::sleep(std::time::Duration::from_secs(total_sleep));
+                            if !self.wait_for_shutdown(Duration::from_secs(total_sleep)) {
+                                return Err(MakerError::General("Shutdown requested"));
+                            }
                         } else {
                             log::error!(
                                 "[{}] Fidelity Bond Creation failed: {:?}",
@@ -795,7 +878,9 @@ impl MakerServer {
 
                 sleep_duration = (sleep_duration + sleep_increment).min(600);
                 log::info!("Next sync in {sleep_duration:?} secs");
-                thread::sleep(std::time::Duration::from_secs(sleep_duration));
+                if !self.wait_for_shutdown(Duration::from_secs(sleep_duration)) {
+                    break;
+                }
             } else {
                 log::info!(
                     "Swap Liquidity: {offer_max_size} sats | Min: {min_required} sats | Listening for requests."
@@ -1770,7 +1855,7 @@ impl MakerRpc for MakerServer {
         &self.config
     }
 
-    fn shutdown(&self) -> &AtomicBool {
+    fn shutdown(&self) -> &ShutdownSignal {
         &self.shutdown
     }
 
@@ -1789,5 +1874,86 @@ impl MakerRpc for MakerServer {
             &self.config.tor_auth_password,
             tor_key_bytes,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ShutdownSignal, ThreadPool};
+    use std::{
+        sync::{atomic::Ordering, mpsc, Arc, TryLockError},
+        thread,
+        time::{Duration, Instant},
+    };
+
+    /// Keeps wallet inspection usable without clearing the terminal server latch.
+    #[test]
+    fn shutdown_signal_latches_request_and_rearms_backend_after_joins() {
+        let signal = ShutdownSignal::new();
+        let backend = signal.backend_flag();
+
+        signal.store(true, Ordering::Relaxed);
+        assert!(signal.load(Ordering::Relaxed));
+        assert!(backend.load(Ordering::Relaxed));
+
+        signal.reset_backend();
+        assert!(signal.load(Ordering::Relaxed));
+        assert!(!backend.load(Ordering::Relaxed));
+    }
+
+    /// Proves a joined parent can register a child without deadlocking the pool.
+    #[test]
+    fn shutdown_join_releases_pool_lock_and_drains_late_child() {
+        let pool = Arc::new(ThreadPool::new(0));
+        let (parent_started_tx, parent_started_rx) = mpsc::channel();
+        let (release_parent_tx, release_parent_rx) = mpsc::channel();
+        let (child_done_tx, child_done_rx) = mpsc::channel();
+        let parent_pool = Arc::clone(&pool);
+        let parent = thread::Builder::new()
+            .name("pool-parent".into())
+            .spawn(move || {
+                parent_started_tx.send(()).unwrap();
+                release_parent_rx.recv().unwrap();
+                let child = thread::Builder::new()
+                    .name("pool-child".into())
+                    .spawn(move || child_done_tx.send(()).unwrap())
+                    .unwrap();
+                parent_pool.add_thread(child).unwrap();
+            })
+            .unwrap();
+        pool.add_thread(parent).unwrap();
+        parent_started_rx.recv().unwrap();
+
+        let join_pool = Arc::clone(&pool);
+        let (join_started_tx, join_started_rx) = mpsc::channel();
+        let (joined_tx, joined_rx) = mpsc::channel();
+        let joiner = thread::Builder::new()
+            .name("pool-joiner".into())
+            .spawn(move || {
+                join_started_tx.send(()).unwrap();
+                let result = join_pool.join_all_threads();
+                joined_tx.send(result).unwrap();
+            })
+            .unwrap();
+        join_started_rx.recv().unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            match pool.threads.try_lock() {
+                Ok(threads) if threads.is_empty() => break,
+                Ok(_) | Err(TryLockError::WouldBlock) => {}
+                Err(TryLockError::Poisoned(_)) => panic!("thread pool lock poisoned"),
+            }
+            assert!(Instant::now() < deadline, "join held the thread pool lock");
+            thread::yield_now();
+        }
+
+        release_parent_tx.send(()).unwrap();
+        child_done_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        joined_rx
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .unwrap();
+        joiner.join().unwrap();
     }
 }

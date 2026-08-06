@@ -3308,8 +3308,8 @@ impl Wallet {
         Ok(())
     }
 
-    /// Sync the wallet, then persist to disk. The shutdown flag stops the
-    /// sync retry loop so a teardown can join instead of retrying forever.
+    /// Sync the wallet, then persist to disk. The shutdown flag stops scans,
+    /// backend retries, and the outer retry loop.
     pub fn sync_and_save(
         &mut self,
         shutdown: &std::sync::atomic::AtomicBool,
@@ -3334,8 +3334,13 @@ impl Wallet {
     /// paying that script and value. Bad data here is permanent —
     /// `post_sync_updates` persists the advanced keychain indices — so a lie
     /// fails the sync before the cache or any index can move.
-    fn corroborate_utxos(&self, utxos: &[ListUnspentResultEntry]) -> Result<(), WalletError> {
+    fn corroborate_utxos(
+        &self,
+        utxos: &[ListUnspentResultEntry],
+        shutdown: &std::sync::atomic::AtomicBool,
+    ) -> Result<(), WalletError> {
         for utxo in utxos {
+            Self::check_shutdown(shutdown)?;
             let outpoint = OutPoint {
                 txid: utxo.txid,
                 vout: utxo.vout,
@@ -3359,6 +3364,7 @@ impl Wallet {
     /// after a seed restore) — repeat `pass` until the window stops moving.
     fn sync_with_rolling_gap_limit(
         &mut self,
+        shutdown: &std::sync::atomic::AtomicBool,
         mut pass: impl FnMut(&mut Self) -> Result<(), WalletError>,
     ) -> Result<(), WalletError> {
         let mut prev_window = (
@@ -3366,9 +3372,12 @@ impl Wallet {
             self.max_watch_index(KeychainKind::Internal)?,
         );
         for _ in 0..MAX_SYNC_PASSES {
+            Self::check_shutdown(shutdown)?;
             pass(self)?;
+            Self::check_shutdown(shutdown)?;
             let utxos = self.get_all_utxo_from_blockchain()?;
-            self.corroborate_utxos(&utxos)?;
+            self.corroborate_utxos(&utxos, shutdown)?;
+            Self::check_shutdown(shutdown)?;
             self.update_utxo_cache(utxos)?;
             let window = (
                 self.max_watch_index(KeychainKind::External)?,
@@ -3390,9 +3399,10 @@ impl Wallet {
     }
 
     /// Bitcoin Core's importdescriptors + scan vs Electrum's scripthash-history walk.
-    fn sync(&mut self) -> Result<(), WalletError> {
+    fn sync(&mut self, shutdown: &std::sync::atomic::AtomicBool) -> Result<(), WalletError> {
+        Self::check_shutdown(shutdown)?;
         if self.blockchain.is_electrum() {
-            return self.sync_no_rescan();
+            return self.sync_no_rescan(shutdown);
         }
         // Create or load the watch-only Bitcoin Core wallet.
         self.blockchain
@@ -3402,8 +3412,9 @@ impl Wallet {
 
         if descriptors_to_import.is_empty() {
             // Nothing new to import, but the chain may have moved: refresh state.
+            Self::check_shutdown(shutdown)?;
             self.update_utxo_cache(self.get_all_utxo_from_blockchain()?)?;
-            return self.post_sync_updates();
+            return self.post_sync_updates(shutdown);
         }
 
         // Sometimes in tests multiple wallet scans can occur at the same time, resulting in error.
@@ -3432,16 +3443,18 @@ impl Wallet {
 
         // The import timestamp stays anchored to the pre-sync height so a
         // widened range is scanned over the same blocks on later passes.
-        self.sync_with_rolling_gap_limit(|w| {
+        self.sync_with_rolling_gap_limit(shutdown, |w| {
+            Self::check_shutdown(shutdown)?;
             w.import_descriptors(&descriptors_to_import, Some(time), None)?;
 
             // Returns when the scanning is completed.
             loop {
+                Self::check_shutdown(shutdown)?;
                 match w.blockchain.wallet_scanning_status()? {
                     Some(ScanningDetails::Scanning { duration, .. }) => {
                         // Todo: Show scan progress
                         log::info!("Scanning for {}s", duration);
-                        thread::sleep(HEART_BEAT_INTERVAL);
+                        Self::wait_for_shutdown(shutdown, HEART_BEAT_INTERVAL)?;
                         continue;
                     }
                     Some(ScanningDetails::NotScanning(_)) => {
@@ -3457,20 +3470,30 @@ impl Wallet {
             descriptors_to_import = w.descriptors_to_import()?;
             Ok(())
         })?;
-        self.post_sync_updates()
+        self.post_sync_updates(shutdown)
     }
 
     /// Electrum-style sync: register every wallet-owned script client-side, then
     /// list UTXOs via per-scripthash queries.
-    fn sync_no_rescan(&mut self) -> Result<(), WalletError> {
-        self.sync_with_rolling_gap_limit(|w| w.watch_wallet_scripts())?;
-        self.post_sync_updates()
+    fn sync_no_rescan(
+        &mut self,
+        shutdown: &std::sync::atomic::AtomicBool,
+    ) -> Result<(), WalletError> {
+        self.sync_with_rolling_gap_limit(shutdown, |w| {
+            Self::check_shutdown(shutdown)?;
+            w.watch_wallet_scripts()
+        })?;
+        self.post_sync_updates(shutdown)
     }
 
     /// Shared tail of both sync paths: record the synced tip, advance the
     /// keychain indices, and recompute the offer-max cache. Both callers
     /// refresh the UTXO cache inside their gap-limit loops before calling this.
-    fn post_sync_updates(&mut self) -> Result<(), WalletError> {
+    fn post_sync_updates(
+        &mut self,
+        shutdown: &std::sync::atomic::AtomicBool,
+    ) -> Result<(), WalletError> {
+        Self::check_shutdown(shutdown)?;
         self.store.last_synced_height = Some(self.blockchain.get_block_count()?);
         // Monotonic: on-chain discovery may advance the indices but never
         // rewind them below addresses already handed out (they may be funded
@@ -3478,6 +3501,7 @@ impl Wallet {
         // avoids reusing old change addresses.
         let max_external_index = self.find_hd_next_index(KeychainKind::External)?;
         self.store.external_index = max_external_index.max(self.store.external_index);
+        Self::check_shutdown(shutdown)?;
         let max_internal_index = self.find_hd_next_index(KeychainKind::Internal)?;
         self.store.internal_index = max_internal_index.max(self.store.internal_index);
         self.refresh_offer_maxsize_cache()
@@ -3490,14 +3514,41 @@ impl Wallet {
         &mut self,
         shutdown: &std::sync::atomic::AtomicBool,
     ) -> Result<(), WalletError> {
-        while let Err(e) = self.sync() {
-            if shutdown.load(std::sync::atomic::Ordering::Relaxed) {
-                return Err(WalletError::Interrupted("Shutdown requested"));
+        loop {
+            Self::check_shutdown(shutdown)?;
+            match self.sync(shutdown) {
+                Ok(()) => return Ok(()),
+                Err(WalletError::Interrupted(reason)) => {
+                    return Err(WalletError::Interrupted(reason));
+                }
+                Err(e) => log::error!("Blockchain sync failed. Retrying. | {e:?}"),
             }
-            log::error!("Blockchain sync failed. Retrying. | {e:?}");
-            thread::sleep(HEART_BEAT_INTERVAL);
+            Self::wait_for_shutdown(shutdown, HEART_BEAT_INTERVAL)?;
         }
-        Ok(())
+    }
+
+    /// Returns a typed interruption so shutdown never enters the outer retry path.
+    fn check_shutdown(shutdown: &std::sync::atomic::AtomicBool) -> Result<(), WalletError> {
+        if shutdown.load(std::sync::atomic::Ordering::Relaxed) {
+            Err(WalletError::Interrupted("Shutdown requested"))
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Splits retry waits so cancellation is observed within one second.
+    fn wait_for_shutdown(
+        shutdown: &std::sync::atomic::AtomicBool,
+        duration: Duration,
+    ) -> Result<(), WalletError> {
+        let mut remaining = duration;
+        while !remaining.is_zero() {
+            Self::check_shutdown(shutdown)?;
+            let slice = remaining.min(Duration::from_secs(1));
+            thread::sleep(slice);
+            remaining -= slice;
+        }
+        Self::check_shutdown(shutdown)
     }
 
     /// Build descriptor import requests and hand them to the backend. Does not
@@ -3885,5 +3936,19 @@ mod restore_history_probe_tests {
         // Without the restore flag the probe is off and the empty UTXO set decides.
         wallet.restore_scan = false;
         assert_eq!(wallet.find_hd_next_index(external).unwrap(), 0);
+    }
+
+    /// Proves a stopped sync returns before making its first backend request.
+    #[test]
+    fn sync_does_not_enter_the_backend_after_shutdown() {
+        let temp_dir = tempdir().unwrap();
+        let url = start_stub(StdHashSet::new());
+        let mut wallet = stub_wallet(&temp_dir.path().join("wallet.cbor"), url);
+        let shutdown = std::sync::atomic::AtomicBool::new(true);
+
+        assert!(matches!(
+            wallet.sync_and_save(&shutdown),
+            Err(WalletError::Interrupted("Shutdown requested"))
+        ));
     }
 }

@@ -272,6 +272,29 @@ pub fn setup_logger(filter: LevelFilter, data_dir: Option<PathBuf>) {
     });
 }
 
+/// Logs the stable identity used to find a join without a matching completion.
+pub(crate) fn log_shutdown_join_start(component: &str, thread: &std::thread::Thread) {
+    log::info!(
+        "shutdown_join_start pid={} component={} thread={} id={:?}",
+        std::process::id(),
+        component,
+        thread.name().unwrap_or("unknown"),
+        thread.id()
+    );
+}
+
+/// Logs the matching completion and whether the owned thread panicked.
+pub(crate) fn log_shutdown_join_done(component: &str, thread: &std::thread::Thread, outcome: &str) {
+    log::info!(
+        "shutdown_join_done pid={} component={} thread={} id={:?} outcome={}",
+        std::process::id(),
+        component,
+        thread.name().unwrap_or("unknown"),
+        thread.id(),
+        outcome
+    );
+}
+
 /// Sends a protocol or RPC message through a stream.
 ///
 /// The wire format is a 4-byte big-endian u32 length prefix followed

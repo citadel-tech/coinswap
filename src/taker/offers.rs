@@ -436,9 +436,6 @@ pub struct OfferSyncService {
 /// OfferSync handle, use for shutting down OfferSyncService
 pub struct OfferSyncHandle {
     shutdown: Arc<AtomicBool>,
-    /// The service backend's abort flag, so shutdown also cancels an in-flight
-    /// Electrum call inside a fetch worker.
-    backend_shutdown: Option<Arc<AtomicBool>>,
     join: Option<JoinHandle<()>>,
     cmd_tx: mpsc::Sender<SyncCommand>,
 }
@@ -483,14 +480,16 @@ impl OfferSyncHandle {
     /// Shutdown handler
     pub fn shutdown(&mut self) {
         self.shutdown.store(true, Ordering::Relaxed);
-        if let Some(flag) = &self.backend_shutdown {
-            flag.store(true, Ordering::Relaxed);
-        }
 
         if let Some(join) = self.join.take() {
-            log::info!("Offer sync: joining service thread");
-            let _ = join.join();
-            log::info!("Offer sync: service thread joined");
+            let thread = join.thread().clone();
+            crate::utill::log_shutdown_join_start("offer_sync", &thread);
+            let result = join.join();
+            crate::utill::log_shutdown_join_done(
+                "offer_sync",
+                &thread,
+                if result.is_ok() { "ok" } else { "panic" },
+            );
         }
     }
 
@@ -538,6 +537,7 @@ impl OfferSyncService {
         socks_port: u16,
         blockchain: Arc<AnyBlockchain>,
         initial_sync_complete: Arc<AtomicBool>,
+        shutdown: Arc<AtomicBool>,
     ) -> Self {
         Self {
             offerbook,
@@ -545,7 +545,7 @@ impl OfferSyncService {
             socks_port,
             blockchain,
             initial_sync_complete,
-            shutdown: Arc::new(AtomicBool::new(false)),
+            shutdown,
         }
     }
 
@@ -593,9 +593,7 @@ impl OfferSyncService {
 
         if !to_poll.is_empty() {
             let handles = self.spawn_offer_workers(to_poll)?;
-            for h in handles {
-                let _ = h.join();
-            }
+            Self::join_offer_workers(handles);
         }
 
         let finished_at = SystemTime::now()
@@ -621,8 +619,14 @@ impl OfferSyncService {
         offerbook: &Arc<RwLock<OfferBook>>,
         offerbook_path: &Path,
         now: u64,
+        shutdown: &AtomicBool,
     ) -> Option<MakerOfferCandidate> {
-        let downloaded = addr.clone().download_offer_with_retries(socks_port);
+        if shutdown.load(Ordering::Relaxed) {
+            return None;
+        }
+        let downloaded = addr
+            .clone()
+            .download_offer_with_retries(socks_port, shutdown);
         // Verify before taking the guard. The backend calls in here can block on a
         // slow server, which would serialize every worker in the pool behind it.
         let outcome = downloaded.map(|oa| {
@@ -685,6 +689,7 @@ impl OfferSyncService {
             &self.offerbook.inner,
             &self.offerbook.path,
             now,
+            &self.shutdown,
         )
     }
 
@@ -715,7 +720,7 @@ impl OfferSyncService {
             let blockchain = blockchain.clone();
             let shutdown = shutdown.clone();
 
-            let handle = Builder::new()
+            let handle = match Builder::new()
                 .name(format!("offer-fetch-worker-{i}"))
                 .spawn(move || {
                     // Electrum's client is fully synchronous: two workers calling
@@ -752,23 +757,44 @@ impl OfferSyncService {
                             &offerbook,
                             &offerbook_path,
                             now,
+                            &shutdown,
                         );
                     }
-                })
-                .map_err(|e| {
-                    TakerError::General(format!("failed to spawn offer-fetch-worker: {e}"))
-                })?;
+                }) {
+                Ok(handle) => handle,
+                Err(e) => {
+                    self.shutdown.store(true, Ordering::Relaxed);
+                    Self::join_offer_workers(handles);
+                    return Err(TakerError::General(format!(
+                        "failed to spawn offer-fetch-worker: {e}"
+                    )));
+                }
+            };
 
             handles.push(handle);
         }
 
         Ok(handles)
     }
+
+    /// Joins every fetch worker so partial startup and normal polling share cleanup.
+    fn join_offer_workers(handles: Vec<JoinHandle<()>>) {
+        for handle in handles {
+            let thread = handle.thread().clone();
+            crate::utill::log_shutdown_join_start("offer_sync", &thread);
+            let result = handle.join();
+            crate::utill::log_shutdown_join_done(
+                "offer_sync",
+                &thread,
+                if result.is_ok() { "ok" } else { "panic" },
+            );
+        }
+    }
+
     /// Starts the offerbook service
     pub fn start(self) -> Result<OfferSyncHandle, TakerError> {
         let shutdown = self.shutdown.clone();
         let shutdown_flag = shutdown.clone();
-        let backend_shutdown = self.blockchain.shutdown_flag();
         let (cmd_tx, cmd_rx) = mpsc::channel::<SyncCommand>();
 
         let join = std::thread::Builder::new()
@@ -820,7 +846,6 @@ impl OfferSyncService {
 
         Ok(OfferSyncHandle {
             shutdown,
-            backend_shutdown,
             join: Some(join),
             cmd_tx,
         })
@@ -1110,8 +1135,15 @@ impl TryFrom<String> for MakerAddress {
 }
 
 impl MakerAddress {
-    fn download_offer_with_retries(self, socks_port: u16) -> Option<OfferAndAddress> {
+    fn download_offer_with_retries(
+        self,
+        socks_port: u16,
+        shutdown: &AtomicBool,
+    ) -> Option<OfferAndAddress> {
         for attempt in 1..=FIRST_CONNECT_ATTEMPTS {
+            if shutdown.load(Ordering::Relaxed) {
+                return None;
+            }
             match self.clone().download_offer_auto(socks_port) {
                 Ok(offer) => return Some(offer),
                 Err(e) if attempt < FIRST_CONNECT_ATTEMPTS => {
@@ -1122,7 +1154,16 @@ impl MakerAddress {
                         FIRST_CONNECT_ATTEMPTS,
                         e
                     );
-                    sleep(Duration::from_millis(FIRST_CONNECT_SLEEP_DELAY_SEC));
+                    let delay = Duration::from_millis(FIRST_CONNECT_SLEEP_DELAY_SEC);
+                    let mut remaining = delay;
+                    while !remaining.is_zero() {
+                        if shutdown.load(Ordering::Relaxed) {
+                            return None;
+                        }
+                        let slice = remaining.min(Duration::from_millis(100));
+                        sleep(slice);
+                        remaining -= slice;
+                    }
                 }
                 Err(e) => {
                     log::debug!("Exhausted retries fetching offer from {}: {:?}", self, e);

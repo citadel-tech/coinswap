@@ -59,32 +59,42 @@ pub fn run_discovery(
 
     let seen_txid = Arc::new(Mutex::new(SeenTxids::new()));
     let registry = Arc::new(registry);
-    let blockchain = Arc::new(blockchain);
 
+    let connections = relays
+        .iter()
+        .map(|_| blockchain.new_connection())
+        .collect::<Result<Vec<_>, _>>()?;
     let mut sessions = Vec::with_capacity(relays.len());
-    for relay in relays {
+    for (relay, blockchain) in relays.iter().zip(connections) {
         let relay = relay.to_string();
-        let shutdown = shutdown.clone();
+        let session_shutdown = shutdown.clone();
         let registry = Arc::clone(&registry);
-        let blockchain = Arc::clone(&blockchain);
+        let blockchain = Arc::new(blockchain);
         let seen_txid = Arc::clone(&seen_txid);
         let initial_sync_complete = initial_sync_complete.clone();
         let nostr_tor_config = nostr_tor_config.clone();
 
-        let handle = std::thread::Builder::new()
+        let handle = match std::thread::Builder::new()
             .name(format!("nostr-session-{}", relay))
             .spawn(move || {
                 run_nostr_session_for_relay(
                     &relay,
                     kind,
                     registry,
-                    shutdown,
+                    session_shutdown,
                     blockchain,
                     &seen_txid,
                     &initial_sync_complete,
                     (nostr_tor_config.0, nostr_tor_config.1.as_str()),
                 );
-            })?;
+            }) {
+            Ok(handle) => handle,
+            Err(e) => {
+                shutdown.store(true, Ordering::SeqCst);
+                join_relay_sessions(sessions);
+                return Err(e.into());
+            }
+        };
         sessions.push(handle);
     }
 
@@ -94,14 +104,27 @@ pub fn run_discovery(
         "Nostr discovery: joining {} relay session(s)",
         sessions.len()
     );
-    for session in sessions {
-        if let Err(payload) = session.join() {
-            std::panic::resume_unwind(payload);
-        }
-    }
+    join_relay_sessions(sessions);
     log::info!("Nostr discovery: all relay sessions joined");
 
     Ok(())
+}
+
+/// Joins every spawned relay, including sessions created before a partial-start failure.
+fn join_relay_sessions(sessions: Vec<std::thread::JoinHandle<()>>) {
+    for session in sessions {
+        let thread = session.thread().clone();
+        crate::utill::log_shutdown_join_start("nostr_discovery", &thread);
+        let result = session.join();
+        crate::utill::log_shutdown_join_done(
+            "nostr_discovery",
+            &thread,
+            if result.is_ok() { "ok" } else { "panic" },
+        );
+        if let Err(payload) = result {
+            std::panic::resume_unwind(payload);
+        }
+    }
 }
 
 /// Runs a long-lived Nostr session for a single relay.
@@ -138,7 +161,12 @@ fn run_nostr_session_for_relay(
                 log::warn!(
                     "Nostr session error | relay={relay_url} | error={e:?} | retry_in_secs=5"
                 );
-                std::thread::sleep(std::time::Duration::from_secs(5));
+                for _ in 0..5 {
+                    if shutdown.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                }
             }
         }
     }

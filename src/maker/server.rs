@@ -244,17 +244,25 @@ pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
 
     maker.watch_service.shutdown();
     maker.thread_pool.join_all_threads()?;
+    maker.shutdown.reset_backend();
 
     log::info!(
-        "[{}] Sync at:----Shutdown wallet----",
+        "shutdown_phase_start pid={} component=maker:{} phase=wallet_save",
+        std::process::id(),
         maker.config.network_port
     );
-    maker
+    let save_result = maker
         .wallet
         .write()
-        .map_err(|_| MakerError::General("Failed to lock wallet"))?
-        .sync_and_save(&maker.shutdown)
-        .map_err(MakerError::Wallet)?;
+        .map_err(|_| MakerError::General("Failed to lock wallet"))
+        .and_then(|wallet| wallet.save_to_disk().map_err(MakerError::Wallet));
+    log::info!(
+        "shutdown_phase_done pid={} component=maker:{} phase=wallet_save outcome={}",
+        std::process::id(),
+        maker.config.network_port,
+        if save_result.is_ok() { "ok" } else { "error" }
+    );
+    save_result?;
 
     log::info!("[{}] Server shutdown complete", maker.config.network_port);
 
@@ -277,8 +285,12 @@ fn spawn_nostr_broadcast_thread(
         .name("nostr-thread".to_string())
         .spawn(move || {
             // Initial broadcast
-            if let Err(e) = broadcast_bond_on_nostr(fidelity.clone(), &relays, &maker_clone.config)
-            {
+            if let Err(e) = broadcast_bond_on_nostr(
+                fidelity.clone(),
+                &relays,
+                &maker_clone.config,
+                &maker_clone.shutdown,
+            ) {
                 log::warn!("Initial nostr broadcast failed: {:?}", e);
             }
 
@@ -287,7 +299,9 @@ fn spawn_nostr_broadcast_thread(
             let mut elapsed = Duration::ZERO;
 
             while !maker_clone.shutdown.load(Ordering::Acquire) {
-                thread::sleep(tick);
+                if !maker_clone.wait_for_shutdown(tick) {
+                    break;
+                }
                 elapsed += tick;
 
                 if elapsed < interval {
@@ -298,9 +312,12 @@ fn spawn_nostr_broadcast_thread(
 
                 log::debug!("Re-pinging nostr relays with bond announcement");
 
-                if let Err(e) =
-                    broadcast_bond_on_nostr(fidelity.clone(), &relays, &maker_clone.config)
-                {
+                if let Err(e) = broadcast_bond_on_nostr(
+                    fidelity.clone(),
+                    &relays,
+                    &maker_clone.config,
+                    &maker_clone.shutdown,
+                ) {
                     log::warn!("Nostr re-ping failed: {:?}", e);
                 }
             }
@@ -554,7 +571,9 @@ fn check_for_idle_states(maker: Arc<MakerServer>) -> Result<(), MakerError> {
             maker.thread_pool.add_thread(handle)?;
         }
 
-        sleep(HEART_BEAT_INTERVAL);
+        if !maker.wait_for_shutdown(HEART_BEAT_INTERVAL) {
+            break;
+        }
     }
 
     Ok(())
@@ -568,7 +587,9 @@ fn fidelity_renewal_loop(maker: Arc<MakerServer>, maker_address: &str) -> Result
     let mut elapsed = Duration::ZERO;
 
     while !maker.is_shutdown() {
-        sleep(tick);
+        if !maker.wait_for_shutdown(tick) {
+            break;
+        }
         elapsed += tick;
 
         if elapsed < FIDELITY_BOND_UPDATE_INTERVAL {

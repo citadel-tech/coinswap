@@ -97,11 +97,6 @@ fn run_electrum_swap(protocol: ProtocolVersion, expected: &ExpectedBalances) {
     test_framework.wait_for_electrs_tip();
     let summary = taker.prepare_coinswap(swap_params).unwrap();
     taker.start_coinswap(&summary.swap_id).unwrap();
-    info!("Coinswap finished. Shutting down makers.");
-    makers
-        .iter()
-        .for_each(|maker| maker.shutdown.store(true, Relaxed));
-    maker_threads.into_iter().for_each(|t| t.join().unwrap());
     // electrs indexes asynchronously; let it reach the tip before the
     // post-swap syncs so the asserted balances aren't computed from a
     // stale index.
@@ -208,6 +203,11 @@ fn run_electrum_swap(protocol: ProtocolVersion, expected: &ExpectedBalances) {
         );
     }
     info!("Electrum-only coinswap test ({protocol:?}) completed successfully!");
+    drop(takers);
+    makers
+        .iter()
+        .for_each(|maker| maker.shutdown.store(true, Relaxed));
+    maker_threads.into_iter().for_each(|t| t.join().unwrap());
     test_framework.stop();
     block_generation_handle.join().unwrap();
 }

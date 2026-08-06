@@ -37,25 +37,20 @@ pub struct WatchService {
     tx: StdSender<WatcherCommand>,
     /// Watcher thread handle, joined on shutdown so its exit result is not lost.
     handle: WatcherHandle,
-    /// Backend flag aborting in-flight Electrum retry backoffs on shutdown.
-    backend_shutdown: Option<Arc<AtomicBool>>,
-    /// Watcher's own flag, checked per iteration by its long scan loops.
+    /// Role flag checked by the watcher and every Electrum connection it owns.
     watcher_shutdown: Arc<AtomicBool>,
 }
 
 impl WatchService {
-    /// Creates a new service from the command sender, the watcher thread
-    /// handle, and the backend's shutdown flag (if any).
+    /// Creates a service whose watcher and backend share the role shutdown flag.
     pub fn new(
         tx: StdSender<WatcherCommand>,
         handle: JoinHandle<Result<(), WatcherError>>,
-        backend_shutdown: Option<Arc<AtomicBool>>,
         watcher_shutdown: Arc<AtomicBool>,
     ) -> Self {
         Self {
             tx,
             handle: Arc::new(Mutex::new(Some(handle))),
-            backend_shutdown,
             watcher_shutdown,
         }
     }
@@ -123,14 +118,19 @@ impl WatchService {
     pub fn shutdown(&self) {
         let _ = self.tx.send(WatcherCommand::Shutdown);
         self.watcher_shutdown.store(true, Ordering::Relaxed);
-        if let Some(flag) = &self.backend_shutdown {
-            flag.store(true, Ordering::Relaxed);
-        }
         let handle = self.handle.lock().ok().and_then(|mut h| h.take());
         if let Some(handle) = handle {
-            log::info!("Watch service: joining watcher thread");
-            match handle.join() {
-                Ok(Ok(())) => log::info!("Watch service: watcher thread joined"),
+            let thread = handle.thread().clone();
+            crate::utill::log_shutdown_join_start("watch_service", &thread);
+            let result = handle.join();
+            let outcome = match &result {
+                Ok(Ok(())) => "ok",
+                Ok(Err(_)) => "error",
+                Err(_) => "panic",
+            };
+            crate::utill::log_shutdown_join_done("watch_service", &thread, outcome);
+            match result {
+                Ok(Ok(())) => {}
                 Ok(Err(e)) => log::error!("watcher thread exited with error: {e:?}"),
                 Err(_) => log::error!("watcher thread panicked"),
             }
@@ -138,27 +138,31 @@ impl WatchService {
     }
 }
 
-/// Starts the Maker Watch Service
-pub fn start_maker_watch_service(backend: &BackendConfig) -> Result<WatchService, WatcherError> {
-    let blockchain = AnyBlockchain::from_config(&backend.for_watcher())?;
-    let backend_shutdown = blockchain.shutdown_flag();
+/// Shares the Maker's stop flag with its watcher and backend.
+/// This keeps teardown from waiting through backend retries.
+pub fn start_maker_watch_service(
+    backend: &BackendConfig,
+    shutdown: Arc<AtomicBool>,
+) -> Result<WatchService, WatcherError> {
+    let blockchain =
+        AnyBlockchain::from_config_with_shutdown(&backend.for_watcher(), shutdown.clone())?;
     let registry = FileRegistry::new();
 
     // Channels
     let (tx_requests, rx_requests) = mpsc::channel();
-    let mut watcher =
-        Watcher::<MakerRole>::new(blockchain, registry, rx_requests, Vec::new(), None);
-    let watcher_shutdown = watcher.shutdown_flag();
+    let mut watcher = Watcher::<MakerRole>::new(
+        blockchain,
+        registry,
+        rx_requests,
+        Vec::new(),
+        None,
+        shutdown.clone(),
+    );
 
     // Makers don't run discovery, so pass an already-complete flag.
     let handle = thread::Builder::new()
         .name("Watcher thread".to_string())
         .spawn(move || watcher.run(Arc::new(AtomicBool::new(true))))?;
 
-    Ok(WatchService::new(
-        tx_requests,
-        handle,
-        backend_shutdown,
-        watcher_shutdown,
-    ))
+    Ok(WatchService::new(tx_requests, handle, shutdown))
 }

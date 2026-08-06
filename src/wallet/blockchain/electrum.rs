@@ -293,7 +293,7 @@ impl Electrum {
 
     /// `new` with a caller-owned shutdown flag, so a clone made by `reconnect`
     /// aborts when its parent does.
-    fn with_shutdown_flag(
+    pub(crate) fn with_shutdown_flag(
         cfg: &ElectrumConfig,
         shutdown: Arc<AtomicBool>,
     ) -> Result<Self, WalletError> {
@@ -343,6 +343,9 @@ impl Electrum {
         cfg: &ElectrumConfig,
         shutdown: &AtomicBool,
     ) -> Result<(ElectrumClient, [u8; 32], i64), WalletError> {
+        if shutdown.load(Ordering::Relaxed) {
+            return Err(WalletError::Interrupted("Shutdown requested"));
+        }
         let once = || -> Result<(ElectrumClient, [u8; 32], i64), electrum_client::Error> {
             let inner = ElectrumClient::from_config(&cfg.url, client_config(cfg))?;
             // Some servers do not implement `server.features` (-32601 is the
@@ -388,9 +391,7 @@ impl Electrum {
             let mut remaining = backoff;
             while !remaining.is_zero() {
                 if shutdown.load(Ordering::Relaxed) {
-                    return Err(electrum_err(
-                        "electrum connect aborted: shutdown".to_string(),
-                    ));
+                    return Err(WalletError::Interrupted("Shutdown requested"));
                 }
                 let slice = remaining.min(Duration::from_secs(1));
                 std::thread::sleep(slice);
@@ -463,6 +464,9 @@ impl Electrum {
         &self,
         f: impl Fn(&ElectrumClient) -> Result<T, electrum_client::Error>,
     ) -> Result<T, WalletError> {
+        if self.shutdown.load(Ordering::Relaxed) {
+            return Err(WalletError::Interrupted("Shutdown requested"));
+        }
         let mut last = match self.try_call(&f) {
             Ok(v) => return Ok(v),
             Err(e) if is_terminal(&e) => return Err(e.into()),
@@ -489,7 +493,7 @@ impl Electrum {
             let mut remaining = backoff;
             loop {
                 if self.shutdown.load(Ordering::Relaxed) {
-                    return Err(electrum_err("electrum call aborted: shutdown".to_string()));
+                    return Err(WalletError::Interrupted("Shutdown requested"));
                 }
                 if remaining.is_zero() {
                     break;

@@ -108,6 +108,7 @@ impl<R: Role> Watcher<R> {
         rx_requests: StdReceiver<WatcherCommand>,
         nostr_relays: Vec<String>,
         nostr_tor_config: Option<(u16, String)>,
+        shutdown: Arc<AtomicBool>,
     ) -> Self {
         Self {
             blockchain,
@@ -116,15 +117,9 @@ impl<R: Role> Watcher<R> {
             nostr_relays,
             nostr_tor_config,
             pending_subscribes: Vec::new(),
-            shutdown: Arc::new(AtomicBool::new(false)),
+            shutdown,
             _role: PhantomData,
         }
-    }
-
-    /// The flag `WatchService` sets on shutdown; cloned out before the watcher
-    /// moves into its thread.
-    pub fn shutdown_flag(&self) -> Arc<AtomicBool> {
-        self.shutdown.clone()
     }
 
     /// Runs the watcher loop: handles ZMQ events and commands, optionally spawning discovery.
@@ -166,7 +161,7 @@ impl<R: Role> Watcher<R> {
             R::RUN_DISCOVERY
         );
 
-        let discovery_shutdown = Arc::new(AtomicBool::new(false));
+        let discovery_shutdown = self.shutdown.clone();
         let registry = self.registry.clone();
         let nostr_relays = self.nostr_relays.clone();
         let nostr_tor_config = self.nostr_tor_config.clone();
@@ -197,6 +192,9 @@ impl<R: Role> Watcher<R> {
                 }
             }
             'event_loop: loop {
+                if self.shutdown.load(Ordering::Relaxed) {
+                    break 'event_loop;
+                }
                 // The timeout is the idle wait, so a queued command is picked up
                 // at once instead of after a full heartbeat.
                 match self.rx_requests.recv_timeout(HEART_BEAT_INTERVAL) {
@@ -206,7 +204,10 @@ impl<R: Role> Watcher<R> {
                         }
                         // Drain the burst in the same pass; N queued commands
                         // cost one tick instead of N.
-                        while let Ok(cmd) = self.rx_requests.try_recv() {
+                        while !self.shutdown.load(Ordering::Relaxed) {
+                            let Ok(cmd) = self.rx_requests.try_recv() else {
+                                break;
+                            };
                             if !self.handle_command(cmd) {
                                 break 'event_loop;
                             }
@@ -218,7 +219,10 @@ impl<R: Role> Watcher<R> {
 
                 // Drain pending events too: one per pass would leave the
                 // notification buffer lagging a busy mempool by a heartbeat each.
-                while let Some(event) = self.blockchain.poll_event() {
+                while !self.shutdown.load(Ordering::Relaxed) {
+                    let Some(event) = self.blockchain.poll_event() else {
+                        break;
+                    };
                     self.handle_event(event);
                 }
                 // A failed script-subscribe retries on every pass, not just
@@ -229,10 +233,17 @@ impl<R: Role> Watcher<R> {
             // Stop and join the discovery thread on exit path.
             shutdown_clone.store(true, Ordering::SeqCst);
             if let Some(handle) = discovery_handle {
-                log::info!("Watcher: joining discovery thread");
+                let thread = handle.thread().clone();
+                crate::utill::log_shutdown_join_start("watcher", &thread);
                 // join() nests two results: the panic payload, then discovery's own error.
                 // The first `?` surfaces a panic, the second discovery's WatcherError.
-                handle.join().map_err(|payload| {
+                let result = handle.join();
+                crate::utill::log_shutdown_join_done(
+                    "watcher",
+                    &thread,
+                    if result.is_ok() { "ok" } else { "panic" },
+                );
+                result.map_err(|payload| {
                     // pull out the panic message by downcast.
                     let msg = payload
                         .downcast_ref::<&str>()
@@ -241,7 +252,6 @@ impl<R: Role> Watcher<R> {
                         .unwrap_or_else(|| "unknown payload".to_string());
                     WatcherError::General(format!("Discovery thread panicked: {msg}"))
                 })??;
-                log::info!("Watcher: discovery thread joined");
             }
             Ok(())
         })
@@ -270,6 +280,9 @@ impl<R: Role> Watcher<R> {
             WatcherCommand::RebuildWatches { watches } => {
                 log::info!("Rebuilding {} watches from the wallet", watches.len());
                 for (outpoint, spk) in &watches {
+                    if self.shutdown.load(Ordering::Relaxed) {
+                        return false;
+                    }
                     if let Err(e) = self.registry.register_watch(*outpoint, spk.clone()) {
                         log::error!("registry lock poisoned, watch not stored: {e:?}");
                     }
@@ -300,6 +313,9 @@ impl<R: Role> Watcher<R> {
                 };
                 let mut spent = false;
                 for watch in watches {
+                    if self.shutdown.load(Ordering::Relaxed) {
+                        return false;
+                    }
                     if watch.outpoint != outpoint {
                         continue;
                     }
@@ -369,6 +385,10 @@ impl<R: Role> Watcher<R> {
     fn rescan_for_missed_spends(&mut self, watches: &[(OutPoint, ScriptBuf)]) {
         let mut oldest: Option<u64> = None;
         for (outpoint, _) in watches {
+            if self.shutdown.load(Ordering::Relaxed) {
+                log::info!("watch rebuild rescan aborted before funding lookup: shutdown");
+                return;
+            }
             match self.blockchain.tx_block_height(&outpoint.txid) {
                 Ok(Some(height)) => {
                     oldest = Some(oldest.map_or(height, |old| old.min(height)));
@@ -403,14 +423,21 @@ impl<R: Role> Watcher<R> {
     /// Retry script-subscribes that failed earlier. The backend records a
     /// subscription only on success, so retrying an armed script is a no-op.
     fn retry_subscribes(&mut self) {
+        if self.shutdown.load(Ordering::Relaxed) {
+            return;
+        }
         // Destructured so the closure can call the backend while `retain`
         // holds the vec; borrowing `self` twice would not compile.
         let Self {
             blockchain,
             pending_subscribes,
+            shutdown,
             ..
         } = self;
         pending_subscribes.retain(|(outpoint, spk)| {
+            if shutdown.load(Ordering::Relaxed) {
+                return true;
+            }
             match blockchain.subscribe_script(spk, *outpoint) {
                 Ok(()) => {
                     log::info!("re-subscribe succeeded for {outpoint}");

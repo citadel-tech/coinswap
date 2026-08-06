@@ -351,9 +351,22 @@ impl AnyBlockchain {
     /// Build the active backend from the resolved [`BackendConfig`]. Each
     /// consumer (wallet, watchtower watcher, discovery) builds its own instance.
     pub fn from_config(backend: &BackendConfig) -> Result<Self, WalletError> {
+        Self::from_config_with_shutdown(
+            backend,
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        )
+    }
+
+    /// Binds backend retry cancellation to the role that owns the connection.
+    pub(crate) fn from_config_with_shutdown(
+        backend: &BackendConfig,
+        shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<Self, WalletError> {
         match backend {
             BackendConfig::CoreRpc(cfg) => Ok(AnyBlockchain::CoreRPC(CoreRPC::new(cfg)?)),
-            BackendConfig::Electrum(cfg) => Ok(AnyBlockchain::Electrum(Electrum::new(cfg)?)),
+            BackendConfig::Electrum(cfg) => Ok(AnyBlockchain::Electrum(
+                Electrum::with_shutdown_flag(cfg, shutdown)?,
+            )),
         }
     }
 
@@ -367,15 +380,6 @@ impl AnyBlockchain {
         match self {
             AnyBlockchain::CoreRPC(b) => Ok(AnyBlockchain::CoreRPC(b.reconnect()?)),
             AnyBlockchain::Electrum(b) => Ok(AnyBlockchain::Electrum(b.reconnect()?)),
-        }
-    }
-
-    /// Shutdown flag aborting Electrum's in-flight retry backoffs when set.
-    /// `None` on Core, whose RPC calls do not loop in backoff.
-    pub fn shutdown_flag(&self) -> Option<std::sync::Arc<std::sync::atomic::AtomicBool>> {
-        match self {
-            AnyBlockchain::CoreRPC(_) => None,
-            AnyBlockchain::Electrum(b) => Some(b.shutdown_flag()),
         }
     }
 }

@@ -12,7 +12,7 @@ use std::{
     path::Path,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
+        Arc, Condvar, Mutex,
     },
     thread,
 };
@@ -34,6 +34,7 @@ struct Forwarder {
     /// When set, new connections are accepted then closed straight away. Models a
     /// proxy that is up but cannot reach the far side.
     refuse: Arc<AtomicBool>,
+    accepted: Arc<(Mutex<u64>, Condvar)>,
 }
 
 impl Forwarder {
@@ -42,11 +43,15 @@ impl Forwarder {
         let port = listener.local_addr().unwrap().port();
         let live: Arc<Mutex<Vec<TcpStream>>> = Arc::new(Mutex::new(Vec::new()));
         let refuse = Arc::new(AtomicBool::new(false));
+        let accepted = Arc::new((Mutex::new(0), Condvar::new()));
 
-        let (live_c, refuse_c) = (live.clone(), refuse.clone());
+        let (live_c, refuse_c, accepted_c) = (live.clone(), refuse.clone(), accepted.clone());
         thread::spawn(move || {
             for incoming in listener.incoming() {
                 let Ok(client) = incoming else { continue };
+                let (count, changed) = &*accepted_c;
+                *count.lock().unwrap() += 1;
+                changed.notify_all();
                 if refuse_c.load(Ordering::SeqCst) {
                     let _ = client.shutdown(std::net::Shutdown::Both);
                     continue;
@@ -73,7 +78,12 @@ impl Forwarder {
             }
         });
 
-        Self { port, live, refuse }
+        Self {
+            port,
+            live,
+            refuse,
+            accepted,
+        }
     }
 
     fn url(&self) -> String {
@@ -92,6 +102,26 @@ impl Forwarder {
     fn refuse_forwarding(&self) {
         self.refuse.store(true, Ordering::SeqCst);
         self.drop_connections();
+    }
+
+    /// Returns accepted connections so the retry test can wait for new work.
+    fn connection_count(&self) -> u64 {
+        *self.accepted.0.lock().unwrap()
+    }
+
+    /// Waits for a retry connection instead of relying on a timing sleep.
+    fn wait_for_connection_after(&self, previous: u64) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        let (count, changed) = &*self.accepted;
+        let mut count = count.lock().unwrap();
+        while *count <= previous {
+            let remaining = deadline
+                .checked_duration_since(std::time::Instant::now())
+                .expect("electrum did not attempt a reconnect");
+            let (next, timeout) = changed.wait_timeout(count, remaining).unwrap();
+            count = next;
+            assert!(!timeout.timed_out(), "electrum did not attempt a reconnect");
+        }
     }
 }
 
@@ -430,5 +460,34 @@ fn unreachable_server_reports_exhausted_attempts() {
     }
 
     drop(electrum);
+    cleanup(&s.root_dir);
+}
+
+/// Proves shutdown interrupts an active Electrum retry before the caller joins.
+#[test]
+fn shutdown_interrupts_an_active_retry_and_allows_join() {
+    let s = setup("shutdown-retry");
+    let cfg = ElectrumConfig {
+        url: s.forwarder.url(),
+        ..Default::default()
+    };
+    let electrum = Electrum::new(&cfg).expect("connect via forwarder");
+    electrum.get_block_count().expect("tip while healthy");
+    let shutdown = electrum.shutdown_flag();
+    let connections = s.forwarder.connection_count();
+    s.forwarder.refuse_forwarding();
+
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let handle = thread::spawn(move || {
+        done_tx.send(electrum.get_block_count()).unwrap();
+    });
+    s.forwarder.wait_for_connection_after(connections);
+    shutdown.store(true, Ordering::SeqCst);
+
+    let result = done_rx
+        .recv_timeout(std::time::Duration::from_secs(3))
+        .expect("Electrum call did not stop after shutdown");
+    assert!(matches!(result, Err(WalletError::Interrupted(_))));
+    handle.join().expect("Electrum caller thread panicked");
     cleanup(&s.root_dir);
 }

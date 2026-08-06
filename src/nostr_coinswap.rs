@@ -115,7 +115,11 @@ pub fn broadcast_bond_on_nostr(
     fidelity: FidelityProof,
     relays: &[String],
     config: &MakerServerConfig,
+    shutdown: &std::sync::atomic::AtomicBool,
 ) -> Result<(), MakerError> {
+    if shutdown.load(std::sync::atomic::Ordering::Relaxed) {
+        return Ok(());
+    }
     let outpoint = fidelity.bond.outpoint;
     let content = format!("{}:{}", outpoint.txid, outpoint.vout);
     let kind = coinswap_kind(config.network);
@@ -178,7 +182,13 @@ pub fn broadcast_bond_on_nostr(
     let mut success = false;
 
     for relay in relays {
+        if shutdown.load(std::sync::atomic::Ordering::Relaxed) {
+            return Ok(());
+        }
         for attempt in 1..=MAX_RETRIES {
+            if shutdown.load(std::sync::atomic::Ordering::Relaxed) {
+                return Ok(());
+            }
             log::info!(
                 "Publishing Nostr event | relay={} | attempt={}/{} | payload={}",
                 relay,
@@ -200,7 +210,15 @@ pub fn broadcast_bond_on_nostr(
                         e
                     );
                     if attempt < MAX_RETRIES {
-                        std::thread::sleep(RELAY_DELAY);
+                        let mut remaining = RELAY_DELAY;
+                        while !remaining.is_zero() {
+                            if shutdown.load(std::sync::atomic::Ordering::Relaxed) {
+                                return Ok(());
+                            }
+                            let slice = remaining.min(Duration::from_secs(1));
+                            std::thread::sleep(slice);
+                            remaining -= slice;
+                        }
                     }
                 }
             }
