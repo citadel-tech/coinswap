@@ -40,6 +40,15 @@ pub enum TakerError {
     Watcher(WatcherError),
 }
 
+/// The taker's only interrupt source is its breach detector, so an interrupted
+/// wait means contracts hit the chain rather than a wallet failure.
+pub(crate) fn breach_or_wallet_error(error: WalletError) -> TakerError {
+    match error {
+        WalletError::Interrupted(_) => TakerError::ContractsBroadcasted(vec![]),
+        other => TakerError::Wallet(other),
+    }
+}
+
 impl From<TorError> for TakerError {
     fn from(value: TorError) -> Self {
         Self::TorError(value)

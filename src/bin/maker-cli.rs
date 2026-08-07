@@ -81,13 +81,13 @@ enum Commands {
 
 fn main() -> Result<(), MakerError> {
     let cli = App::parse();
-    let rpc_cookie = fs::read_to_string(
-        cli.data_directory
-            .unwrap_or_else(get_maker_dir)
-            .join("rpc_cookie"),
-    )?
-    .trim()
-    .to_owned();
+    let data_dir = match cli.data_directory {
+        Some(dir) => dir,
+        None => get_maker_dir()?,
+    };
+    let rpc_cookie = fs::read_to_string(data_dir.join("rpc_cookie"))?
+        .trim()
+        .to_owned();
 
     let stream = TcpStream::connect(cli.rpc_port)?;
 
@@ -160,7 +160,7 @@ fn send_rpc_req(
     rpc_cookie: &str,
     request: RpcMsgReq,
 ) -> Result<(), MakerError> {
-    // stream.set_read_timeout(Some(Duration::from_secs(20)))?;
+    stream.set_read_timeout(Some(Duration::from_secs(20)))?;
     stream.set_write_timeout(Some(Duration::from_secs(20)))?;
 
     send_message(

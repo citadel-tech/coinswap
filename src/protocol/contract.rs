@@ -288,11 +288,16 @@ pub(crate) fn read_hashvalue_from_contract(
         return Err(ProtocolError::General("Contract redeemscript too short!"));
     }
     let mut instrs = redeemscript.instructions().skip(2);
-    // Unwrap Safety: length is checked
-    let Instruction::Op(opcodes::all::OP_HASH160) = instrs.next().expect("opcode expected")? else {
+    let Instruction::Op(opcodes::all::OP_HASH160) = instrs
+        .next()
+        .ok_or(ProtocolError::General("contract redeemscript too short"))??
+    else {
         return Err(ProtocolError::General("Hash is not present!"));
     };
-    let Instruction::PushBytes(hash_b) = instrs.next().expect("opcode expected")? else {
+    let Instruction::PushBytes(hash_b) = instrs
+        .next()
+        .ok_or(ProtocolError::General("contract redeemscript too short"))??
+    else {
         return Err(ProtocolError::General("Invalid script!"));
     };
 
@@ -324,7 +329,7 @@ pub(crate) fn read_contract_locktime(redeemscript: &Script) -> Result<u16, Proto
     match redeemscript
         .instructions()
         .nth(12)
-        .expect("Instructions expected")?
+        .ok_or(ProtocolError::General("contract redeemscript too short"))??
     {
         Instruction::PushBytes(locktime_bytes) => match locktime_bytes.len() {
             1 => Ok(locktime_bytes[0] as u16),
@@ -508,6 +513,22 @@ pub(crate) fn verify_contract_tx_sig(
     Ok(secp.verify_ecdsa(&sighash, sig, &pubkey.inner)?)
 }
 
+/// Sum amounts a peer claims, rejecting any above the 21M cap first. The txs they
+/// come from are not consensus-capped, so an unchecked sum can overflow and panic.
+/// The error carries the offending amount.
+pub(crate) fn sum_claimed_amounts(
+    amounts: impl IntoIterator<Item = Amount>,
+) -> Result<Amount, Amount> {
+    let mut total = Amount::ZERO;
+    for amount in amounts {
+        if amount > Amount::MAX_MONEY {
+            return Err(amount);
+        }
+        total += amount;
+    }
+    Ok(total)
+}
+
 #[cfg(test)]
 mod test {
     use crate::protocol::legacy_messages::NextHopInfo;
@@ -689,7 +710,6 @@ mod test {
         let funding_info = FundingTxInfo {
             funding_tx,
             multisig_redeemscript,
-            funding_tx_merkleproof: String::new(),
             multisig_nonce: SecretKey::new(&mut thread_rng()),
             contract_redeemscript: ScriptBuf::new(),
             hashlock_nonce: SecretKey::new(&mut thread_rng()),
@@ -1232,7 +1252,6 @@ mod test {
         let funding_info_1 = FundingTxInfo {
             funding_tx: funding_tx.clone(),
             multisig_redeemscript: multisig_redeemscript.clone(),
-            funding_tx_merkleproof: String::new(),
             multisig_nonce: SecretKey::new(&mut thread_rng()),
             contract_redeemscript: contract_script_1,
             hashlock_nonce: SecretKey::new(&mut thread_rng()),
@@ -1264,7 +1283,6 @@ mod test {
         let funding_info_2 = FundingTxInfo {
             funding_tx,
             multisig_redeemscript,
-            funding_tx_merkleproof: String::new(),
             multisig_nonce: SecretKey::new(&mut thread_rng()),
             contract_redeemscript: contract_script_2,
             hashlock_nonce: SecretKey::new(&mut thread_rng()),
@@ -1292,6 +1310,19 @@ mod test {
         assert_eq!(
             error_message_invalid_length,
             "Contract redeemscript doesn't have equal hashvalues"
+        );
+    }
+
+    #[test]
+    fn claimed_amounts_above_the_cap_are_rejected_before_summing() {
+        // Two of these would overflow a plain sum and panic the swap thread.
+        let over_cap = Amount::from_sat(u64::MAX / 2);
+        assert_eq!(sum_claimed_amounts([over_cap, over_cap]), Err(over_cap));
+
+        let normal = Amount::from_sat(500_000);
+        assert_eq!(
+            sum_claimed_amounts([normal, normal]),
+            Ok(Amount::from_sat(1_000_000))
         );
     }
 }

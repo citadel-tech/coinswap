@@ -1,15 +1,17 @@
-use std::{convert::TryFrom, env, ffi::OsStr, fs, io::Write, path::PathBuf};
+use std::{env, ffi::OsStr, fs, io::Write, path::PathBuf};
 
 use crate::{
     security::{encrypt_struct, load_sensitive_struct, KeyMaterial, SecurityError, SerdeJson},
     utill::prompt_password,
-    wallet::{Wallet, WalletError},
+    wallet::{Blockchain, Wallet, WalletError},
 };
 
-use super::{rpc::RPCConfig, storage::WalletStore};
+use super::{
+    blockchain::{AnyBlockchain, BackendConfig},
+    storage::WalletStore,
+};
 use bip39::Mnemonic;
 use bitcoin::{bip32::Xpriv, Network};
-use bitcoind::bitcoincore_rpc::{Client, RpcApi};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -65,7 +67,9 @@ impl Wallet {
 
         let backup_file_content = match backup_enc_material {
             Some(key_material) => {
-                let encrypted = encrypt_struct(backup, &key_material).unwrap();
+                let encrypted = encrypt_struct(backup, &key_material).map_err(|e| {
+                    WalletError::General(format!("wallet backup encryption failed: {e:?}"))
+                })?;
                 serde_json::to_string_pretty(&encrypted)?
             }
             None => {
@@ -82,7 +86,7 @@ impl Wallet {
     /// Restores a `Wallet` from this backup to a specified path.
     ///
     /// Initializes a new wallet instance using the data from the backup and syncs
-    /// it with the blockchain using the provided RPC configuration.
+    /// it with the blockchain using the provided backend configuration.
     ///
     /// # Returns
     ///
@@ -91,12 +95,12 @@ impl Wallet {
     /// # Behavior
     ///
     /// If `wallet_path` does not contain a file name, `wallet_backup.file_name` will be used.
-    /// The method initializes the wallet store, connects to the blockchain node via RPC,
+    /// The method initializes the wallet store, connects to the blockchain backend,
     /// syncs wallet data, and saves the state to disk.
     pub fn restore(
         wallet_backup: &WalletBackup,
         wallet_path: &Path,
-        rpc_config: &RPCConfig,
+        backend_config: &BackendConfig,
         restored_enc_material: Option<KeyMaterial>,
     ) -> Result<Wallet, WalletError> {
         if wallet_path.exists() {
@@ -109,13 +113,30 @@ impl Wallet {
             .file_name()
             .unwrap_or(OsStr::new(&wallet_backup.file_name)) // If no name filename for the restored one is provided use the previous one
             .to_str()
-            .unwrap()
+            .ok_or_else(|| {
+                WalletError::General(
+                    "restored wallet path has no valid UTF-8 file name".to_string(),
+                )
+            })?
             .to_string();
 
-        let mut rpc_config_test = rpc_config.clone();
-        rpc_config_test.wallet_name = wallet_file_name.clone();
+        // For the Core backend, rebind the node wallet name to the restored
+        // wallet's filename. Electrum has no server-side wallet, so nothing to do.
+        let mut backend_config_test = backend_config.clone();
+        if let BackendConfig::CoreRpc(cfg) = &mut backend_config_test {
+            cfg.wallet_name = wallet_file_name.clone();
+        }
 
-        let rpc = Client::try_from(&rpc_config_test)?;
+        let blockchain = AnyBlockchain::from_config(&backend_config_test)?;
+
+        // Refuse to restore against a backend on a different chain.
+        let chain = blockchain.get_blockchain_info()?.chain;
+        if chain != wallet_backup.network {
+            return Err(WalletError::General(format!(
+                "backend chain `{chain}` does not match backup network `{}`",
+                wallet_backup.network
+            )));
+        }
 
         // Initialise wallet
         let store = WalletStore::init(
@@ -128,13 +149,17 @@ impl Wallet {
         )?;
 
         let mut tmp_wallet = Wallet {
-            rpc,
+            blockchain,
             wallet_file_path: wallet_path.to_path_buf(),
             store,
             store_enc_material: restored_enc_material,
             new_mnemonic: None,
+            locked_utxos: std::collections::HashSet::new(),
+            // Flag to use the RESTORE_ADDRESS_GAP instead of normal gap while restoring.
+            restore_scan: true,
         };
-        tmp_wallet.sync_and_save()?;
+        tmp_wallet.sync_and_save(&crate::utill::NO_SHUTDOWN)?;
+        tmp_wallet.restore_scan = false;
 
         Ok(tmp_wallet)
     }
@@ -152,11 +177,13 @@ impl Wallet {
     pub fn restore_from_mnemonic(
         phrase: &str,
         wallet_path: &Path,
-        rpc_config: &RPCConfig,
+        backend_config: &BackendConfig,
         wallet_birthday: Option<u64>,
         restored_enc_material: Option<KeyMaterial>,
     ) -> Result<Wallet, WalletError> {
-        let network = Client::try_from(rpc_config)?.get_blockchain_info()?.chain;
+        let network = AnyBlockchain::from_config(backend_config)?
+            .get_blockchain_info()?
+            .chain;
 
         let file_name = wallet_path
             .file_name()
@@ -172,7 +199,7 @@ impl Wallet {
             file_name,
         };
 
-        Wallet::restore(&backup, wallet_path, rpc_config, restored_enc_material)
+        Wallet::restore(&backup, wallet_path, backend_config, restored_enc_material)
     }
 
     /// Interactively restores a wallet from a backup file.
@@ -191,7 +218,7 @@ impl Wallet {
     /// - Saves the restored wallet to disk.
     pub fn restore_interactive(
         backup_file_path: &PathBuf,
-        rpc_config: &RPCConfig,
+        backend: &BackendConfig,
         restored_path: &Path,
     ) {
         log::info!(
@@ -227,14 +254,20 @@ impl Wallet {
                     return;
                 }
             };
-        let restore_enc_material = KeyMaterial::new_interactive(Some(
+        let restore_enc_material = match KeyMaterial::new_interactive(Some(
             "Enter restored walled encryption passphrase(empty for no encryption): ".to_string(),
-        ));
+        )) {
+            Ok(material) => material,
+            Err(err) => {
+                log::error!("Encryption passphrase prompt failed: {err}");
+                return;
+            }
+        };
 
         // Attempt to restore the wallet.
         // Since this is an interactive, one-shot restore, the program will exit after this,
         // so these messages are the last feedback the user will see.
-        if let Err(e) = Wallet::restore(&backup, restored_path, rpc_config, restore_enc_material) {
+        if let Err(e) = Wallet::restore(&backup, restored_path, backend, restore_enc_material) {
             log::error!("Wallet restore failed: {e:?}");
         } else {
             println!("Wallet restore succeeded!");
@@ -260,11 +293,22 @@ impl Wallet {
             backup_name
         );
 
-        let working_directory: PathBuf =
-            env::current_dir().expect("Failed to get current directory");
+        let working_directory: PathBuf = match env::current_dir() {
+            Ok(dir) => dir,
+            Err(err) => {
+                log::error!("Failed to get current directory: {err}");
+                return;
+            }
+        };
 
         let backup_enc_material = if encrypt {
-            KeyMaterial::new_interactive(None)
+            match KeyMaterial::new_interactive(None) {
+                Ok(material) => material,
+                Err(err) => {
+                    log::error!("Encryption passphrase prompt failed: {err}");
+                    return;
+                }
+            }
         } else {
             None
         };

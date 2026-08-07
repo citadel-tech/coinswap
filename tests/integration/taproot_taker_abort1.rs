@@ -36,7 +36,7 @@ fn test_taproot_taker_abort1() {
     let maker_behaviors = vec![MakerBehavior::Normal, MakerBehavior::Normal];
 
     let (test_framework, mut takers, makers, block_generation_handle) =
-        TestFramework::init(makers_config_map, taker_behavior, maker_behaviors);
+        TestFramework::init::<BitcoindBackend>(makers_config_map, taker_behavior, maker_behaviors);
 
     let bitcoind = &test_framework.bitcoind;
     let taker = takers.get_mut(0).unwrap();
@@ -77,7 +77,12 @@ fn test_taproot_taker_abort1() {
 
     // Sync wallets after setup
     for maker in &makers {
-        maker.wallet.write().unwrap().sync_and_save().unwrap();
+        maker
+            .wallet
+            .write()
+            .unwrap()
+            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .unwrap();
     }
 
     let _maker_spendable_balance = verify_maker_pre_swap_balances(&makers);
@@ -103,18 +108,13 @@ fn test_taproot_taker_abort1() {
     );
     taker.log_tracker_state();
 
-    // No recovery needed -- this is an early abort before any funding broadcast.
-    // Shut down makers.
-    makers
-        .iter()
-        .for_each(|maker| maker.shutdown.store(true, Relaxed));
-
-    maker_threads
-        .into_iter()
-        .for_each(|thread| thread.join().unwrap());
-
     // Sync taker wallet and verify balance
-    taker.get_wallet().write().unwrap().sync_and_save().unwrap();
+    taker
+        .get_wallet()
+        .write()
+        .unwrap()
+        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .unwrap();
 
     let taker_balances = taker.get_wallet().read().unwrap().get_balances().unwrap();
 
@@ -155,6 +155,13 @@ fn test_taproot_taker_abort1() {
 
     taker.log_tracker_state();
     info!("Taproot taker abort1 test completed successfully!");
+
+    makers
+        .iter()
+        .for_each(|maker| maker.shutdown.store(true, Relaxed));
+    maker_threads
+        .into_iter()
+        .for_each(|thread| thread.join().unwrap());
 
     test_framework.stop();
     block_generation_handle.join().unwrap();

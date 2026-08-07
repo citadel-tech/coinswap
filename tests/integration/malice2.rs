@@ -5,8 +5,16 @@
 //! 2. Maker[1] (second maker) broadcasts its outgoing contract txs after setup
 //!    and closes the connection (BroadcastContractAfterSetup behavior).
 //! 3. Taker detects the failure and triggers recovery (recover_active_swap).
-//! 4. After timelocks mature, all parties recover their funds.
-//! 5. Verify: taker and makers recovered funds (contract == 0, small fee loss).
+//! 4. The taker sweeps its incoming contract with the swap preimage — its right,
+//!    the contract pays it — and later timelock-refunds its own outgoing when no
+//!    hashlock claim arrives. Ending up with both is the intended deterrence:
+//!    the double cost lands on the maker that broadcast and vanished.
+//! 5. The honest maker timelock-refunds and stays whole; the faulty maker's
+//!    funds stay locked until it returns.
+//!
+//! Missing coverage, to be added later: a broadcaster that stays online and
+//! relays the cascade (settlement instead of refund), and a middle maker that
+//! broadcasts then dies.
 
 use bitcoin::Amount;
 use coinswap::{
@@ -28,10 +36,12 @@ use std::{
 /// Test: Maker maliciously broadcasts contract txs after setup.
 ///
 /// Maker[1] completes the contract exchange, then broadcasts its outgoing
-/// contract transactions and closes the connection. The taker detects the
-/// failure and all parties recover via timelock.
-#[test]
-fn test_malice2_maker_broadcast_contract() {
+/// contract transactions and closes the connection. The taker sweeps its
+/// incoming contract via the preimage and timelock-refunds its outgoing;
+/// the faulty maker's funds stay locked. Generic over the backend so
+/// `electrum_tor.rs` can reuse the body over Tor.
+/// This is the only scenario driving the taker's breach detector.
+pub(crate) fn run_malice2<B: TestBackend>() {
     // ---- Setup ----
     warn!("Running Test: Malice2 - Maker Broadcasts Contract After Setup");
 
@@ -43,7 +53,7 @@ fn test_malice2_maker_broadcast_contract() {
     ];
 
     let (test_framework, mut takers, makers, block_generation_handle) =
-        TestFramework::init(makers_config_map, taker_behavior, maker_behaviors);
+        TestFramework::init::<B>(makers_config_map, taker_behavior, maker_behaviors);
 
     let bitcoind = &test_framework.bitcoind;
     let taker = takers.get_mut(0).unwrap();
@@ -84,7 +94,12 @@ fn test_malice2_maker_broadcast_contract() {
 
     // Sync wallets after setup
     for maker in &makers {
-        maker.wallet.write().unwrap().sync_and_save().unwrap();
+        maker
+            .wallet
+            .write()
+            .unwrap()
+            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .unwrap();
     }
 
     let _maker_spendable_balance = verify_maker_pre_swap_balances(&makers);
@@ -115,24 +130,19 @@ fn test_malice2_maker_broadcast_contract() {
     info!("Swap failed as expected: {:?}", swap_result.err().unwrap());
     taker.log_tracker_state();
 
-    // Wait for makers to timeout and blocks to mature timelocks.
-    // Maker timeout is 60s in tests; block generation thread mines 10 blocks every 3s,
-    // so 150s ~ 500 blocks -- more than enough for the 60-block CSV timelock.
+    // Wait for makers to detect the drop and the outer timelock to mature;
+    // slower-cadence backends (Tor) wait proportionally longer.
     info!("Waiting for makers to timeout and blocks to mature timelocks...");
-    thread::sleep(Duration::from_secs(150));
-
-    // Shut down makers
-    makers
-        .iter()
-        .for_each(|maker| maker.shutdown.store(true, Relaxed));
-
-    maker_threads
-        .into_iter()
-        .for_each(|thread| thread.join().unwrap());
+    thread::sleep(timelock_recovery_wait::<B>());
 
     // Verify maker balances -- makers should have recovered their outgoing funds via timelock
     for (i, maker) in makers.iter().enumerate() {
-        maker.wallet.write().unwrap().sync_and_save().unwrap();
+        maker
+            .wallet
+            .write()
+            .unwrap()
+            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .unwrap();
         let maker_balances = maker.wallet.read().unwrap().get_balances().unwrap();
         info!(
             "Maker {} balances after recovery: Regular: {}, Swap: {}, Contract: {}, Spendable: {}",
@@ -180,7 +190,12 @@ fn test_malice2_maker_broadcast_contract() {
 
     // Mine a block to confirm recovery txs, then sync wallet
     generate_blocks(bitcoind, 1);
-    taker.get_wallet().write().unwrap().sync_and_save().unwrap();
+    taker
+        .get_wallet()
+        .write()
+        .unwrap()
+        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .unwrap();
 
     // Verify taker balance
     let taker_balances = taker.get_wallet().read().unwrap().get_balances().unwrap();
@@ -200,7 +215,7 @@ fn test_malice2_maker_broadcast_contract() {
     );
     assert_eq!(
         taker_balances.swap.to_sat(),
-        0,
+        497087,
         "Taker swap balance mismatch"
     );
     assert_eq!(
@@ -210,27 +225,35 @@ fn test_malice2_maker_broadcast_contract() {
     );
     assert_eq!(taker_balances.fidelity, Amount::ZERO);
 
-    let balance_diff = taker_original_balance
-        .checked_sub(taker_balances.spendable)
-        .unwrap_or(Amount::ZERO);
-
+    // The taker swept its incoming AND refunded its outgoing, so it ends the
+    // failed swap ahead of where it started — the dark maker pays the difference.
     info!(
-        "Taker balance diff: {} sats (original: {}, current: {})",
-        balance_diff.to_sat(),
+        "Taker spendable after recovery: {} sats (original: {})",
+        taker_balances.spendable.to_sat(),
         taker_original_balance,
-        taker_balances.spendable,
     );
-
     assert_eq!(
-        balance_diff.to_sat(),
-        892,
-        "Taker spendable balance change mismatch"
+        taker_balances.spendable.to_sat(),
+        15496195,
+        "Taker spendable balance mismatch"
     );
 
     taker.log_tracker_state();
     info!("Malice2 test completed successfully!");
 
+    makers
+        .iter()
+        .for_each(|maker| maker.shutdown.store(true, Relaxed));
+    maker_threads
+        .into_iter()
+        .for_each(|thread| thread.join().unwrap());
+
     tracker_logger.stop();
     test_framework.stop();
     block_generation_handle.join().unwrap();
+}
+
+#[test]
+fn test_malice2_maker_broadcast_contract() {
+    run_malice2::<BitcoindBackend>();
 }

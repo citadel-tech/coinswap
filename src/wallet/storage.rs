@@ -98,7 +98,9 @@ impl WalletStore {
             utxo_cache: HashMap::new(),
         };
 
-        std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
         // Exclusive create: fails with `AlreadyExists` instead of truncating a
         // wallet that appeared since the caller checked the path.
         File::create_new(path)?;
@@ -129,7 +131,9 @@ impl WalletStore {
             Some(material) => {
                 // Encryption branch: encrypt the serialized wallet before writing.
 
-                let encrypted = encrypt_struct(self, material).unwrap();
+                let encrypted = encrypt_struct(self, material).map_err(|e| {
+                    WalletError::General(format!("wallet store encryption failed: {e:?}"))
+                })?;
 
                 // Write encrypted wallet data to disk.
                 serde_cbor::to_writer(writer, &encrypted)?;

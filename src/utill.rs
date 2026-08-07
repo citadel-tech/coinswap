@@ -3,7 +3,7 @@
 use bitcoin::{
     hashes::Hash,
     key::{rand::thread_rng, Keypair},
-    secp256k1::{Secp256k1, SecretKey},
+    secp256k1::{All, Secp256k1, SecretKey},
     Address, Amount, FeeRate, Network, PublicKey, ScriptBuf, WitnessProgram, WitnessVersion,
 };
 use bitcoind::bitcoincore_rpc::json::ListUnspentResultEntry;
@@ -39,6 +39,16 @@ use std::{
 
 static LOGGER: OnceLock<()> = OnceLock::new();
 
+/// Process-wide `Secp256k1<All>` context. `Secp256k1::new()` allocates a ~1.5 MiB
+/// precomputation table; per the upstream secp256k1 docs the recommended
+/// pattern is to construct one context per process and share references. We do
+/// that here so address-derivation hot paths (which can iterate 2,000+ times
+/// per sync at the production gap limit) don't repeatedly allocate.
+pub(crate) fn global_secp() -> &'static Secp256k1<All> {
+    static SECP: OnceLock<Secp256k1<All>> = OnceLock::new();
+    SECP.get_or_init(Secp256k1::new)
+}
+
 use crate::{
     error::NetError,
     protocol::{contract::derive_maker_pubkey_and_nonce, error::ProtocolError},
@@ -56,8 +66,22 @@ const CHECKSUM_FINAL_XOR_VALUE: u64 = 1;
 /// Global heartbeat interval used during waiting periods in critical situations.
 pub(crate) const HEART_BEAT_INTERVAL: Duration = Duration::from_secs(3);
 
-/// Number of confirmation required funding transaction.
-pub const REQUIRED_CONFIRMS: u32 = 1;
+/// Never set. Passing this makes "this operation cannot be aborted" explicit
+/// for callers that have no shutdown signal to wire in.
+pub static NO_SHUTDOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// How long to wait for a peer's tx to reach our mempool. Covers relay propagation
+/// and backend lag only. Sized above a full Electrum reconnect cycle so a transport
+/// blip does not fail an honest swap.
+pub const TX_BROADCAST_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Total deadline for a watched tx to confirm. Without it a low-fee counterparty
+/// tx parks a swap thread forever and quietly spends the timelock reaction margin.
+pub const TX_CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(3600);
+
+/// Floor for funding-tx confirmations: applied when the configured
+/// `required_confirms` is absent or 0.
+pub const MIN_REQUIRED_CONFIRM: u32 = 1;
 
 /// Minimum fee rate in sats/vb for all transactions
 /// This replaces the hardcoded MINER_FEE constant
@@ -69,27 +93,29 @@ pub const MAX_RPC_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
 
 /// Get the system specific home directory.
 /// Uses "/tmp" directory for integration tests
-fn get_home_dir() -> PathBuf {
+fn get_home_dir() -> io::Result<PathBuf> {
     if cfg!(test) {
-        env::temp_dir()
+        Ok(env::temp_dir())
     } else {
-        dirs::home_dir().expect("home directory expected")
+        dirs::home_dir().ok_or_else(|| {
+            io::Error::new(ErrorKind::NotFound, "could not determine home directory")
+        })
     }
 }
 
 /// Get the default data directory. `~/.coinswap`.
-fn get_data_dir() -> PathBuf {
-    get_home_dir().join(".coinswap")
+fn get_data_dir() -> io::Result<PathBuf> {
+    Ok(get_home_dir()?.join(".coinswap"))
 }
 
 /// Get the Maker Directory
-pub fn get_maker_dir() -> PathBuf {
-    get_data_dir().join("maker")
+pub fn get_maker_dir() -> io::Result<PathBuf> {
+    Ok(get_data_dir()?.join("maker"))
 }
 
 /// Get the Taker Directory
-pub fn get_taker_dir() -> PathBuf {
-    get_data_dir().join("taker")
+pub fn get_taker_dir() -> io::Result<PathBuf> {
+    Ok(get_data_dir()?.join("taker"))
 }
 
 /// Creates a FeeRate from the global MIN_FEE_RATE constant
@@ -111,7 +137,7 @@ pub fn calculate_fee_sats(vbytes: u64) -> u64 {
 /// (overhead 11 + P2WPKH input 68 + P2WSPK change 31 + (P2TR/P2WSPK) payment output 43 = 153 vB)
 /// plus a sweep tx (overhead 11 + input 68 + self-payment output 43 = 122 vB).
 ///
-/// Used both by the maker (for routed amount) and by taker's `min_expected_amount_for_hop`
+/// Used both by the maker (for routed amount) and by taker's `expected_amount_for_hop`
 pub fn estimate_funding_tx_fee_sats() -> u64 {
     calculate_fee_sats((11 + 68 + 31 + 43) + (11 + 68 + 43))
 }
@@ -124,34 +150,51 @@ pub fn estimate_funding_tx_fee_sats() -> u64 {
 /// of log verbosity.
 pub fn setup_taker_logger(filter: LevelFilter, is_stdout: bool, datadir: Option<PathBuf>) {
     LOGGER.get_or_init(|| {
-        let log_dir = datadir.unwrap_or_else(get_taker_dir).join("debug.log");
-
-        let file_appender = FileAppender::builder().build(log_dir).unwrap();
+        // File logging is best-effort: without a data dir or a writable log
+        // file we still want stdout logging, not a panic.
+        let file_appender = match datadir.map(Ok).unwrap_or_else(get_taker_dir) {
+            Ok(dir) => {
+                let log_path = dir.join("debug.log");
+                match FileAppender::builder().build(&log_path) {
+                    Ok(appender) => Some(appender),
+                    Err(e) => {
+                        eprintln!(
+                            "failed to open log file {}: {e}; logging without file appender",
+                            log_path.display()
+                        );
+                        None
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("{e}; logging without file appender");
+                None
+            }
+        };
+        let has_file = file_appender.is_some();
         let stdout = ConsoleAppender::builder().build();
 
-        let config =
-            Config::builder().appender(Appender::builder().build("file", Box::new(file_appender)));
+        let mut config = Config::builder();
+        if let Some(file_appender) = file_appender {
+            config = config.appender(Appender::builder().build("file", Box::new(file_appender)));
+        }
+        if is_stdout {
+            config = config.appender(Appender::builder().build("stdout", Box::new(stdout)));
+        }
 
-        let config = if is_stdout {
-            config.appender(Appender::builder().build("stdout", Box::new(stdout)))
-            //.logger(Logger::builder().appender("stdout").build("stdout", filter))
-        } else {
-            config
-        };
-
-        // Add appenders to the root logger
-        let root_logger = if is_stdout {
-            Root::builder()
-                .appender("file")
-                .appender("stdout")
-                .build(filter)
-        } else {
-            Root::builder().appender("file").build(filter)
-        };
+        // Reference only appenders registered above, so config build stays
+        // infallible when the file appender is missing.
+        let mut root = Root::builder();
+        if has_file {
+            root = root.appender("file");
+        }
+        if is_stdout {
+            root = root.appender("stdout");
+        }
 
         let config = config
             .logger(Logger::builder().build("bitcoincore_rpc", LevelFilter::Off))
-            .build(root_logger)
+            .build(root.build(filter))
             .unwrap();
         match log4rs::init_config(config) {
             Ok(_) => log::info!("✅ Logger initialized successfully"),
@@ -168,20 +211,47 @@ pub fn setup_taker_logger(filter: LevelFilter, is_stdout: bool, datadir: Option<
 /// of log verbosity.
 pub fn setup_maker_logger(filter: LevelFilter, data_dir: Option<PathBuf>) {
     LOGGER.get_or_init(|| {
-        let log_dir = data_dir.unwrap_or_else(get_maker_dir).join("debug.log");
-
+        // File logging is best-effort: without a data dir or a writable log
+        // file we still want stdout logging, not a panic.
+        let file_appender = match data_dir.map(Ok).unwrap_or_else(get_maker_dir) {
+            Ok(dir) => {
+                let log_path = dir.join("debug.log");
+                match FileAppender::builder().build(&log_path) {
+                    Ok(appender) => Some(appender),
+                    Err(e) => {
+                        eprintln!(
+                            "failed to open log file {}: {e}; logging without file appender",
+                            log_path.display()
+                        );
+                        None
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("{e}; logging without file appender");
+                None
+            }
+        };
+        let has_file = file_appender.is_some();
         let stdout = ConsoleAppender::builder().build();
-        let file_appender = FileAppender::builder().build(log_dir).unwrap();
 
-        let config = Config::builder()
-            .appender(Appender::builder().build("stdout", Box::new(stdout)))
-            .appender(Appender::builder().build("file", Box::new(file_appender)))
+        let mut config =
+            Config::builder().appender(Appender::builder().build("stdout", Box::new(stdout)));
+        if let Some(file_appender) = file_appender {
+            config = config.appender(Appender::builder().build("file", Box::new(file_appender)));
+        }
+
+        // The additive root logger already echoes maker lines to stdout, so the
+        // no-file fallback adds no appender — an own stdout would print twice.
+        let maker_logger = if has_file {
+            Logger::builder().appender("file")
+        } else {
+            Logger::builder()
+        };
+
+        let config = config
             .logger(Logger::builder().build("bitcoincore_rpc", LevelFilter::Off))
-            .logger(
-                Logger::builder()
-                    .appender("file")
-                    .build("coinswap::maker", filter),
-            )
+            .logger(maker_logger.build("coinswap::maker", filter))
             .build(Root::builder().appender("stdout").build(filter))
             .unwrap();
 
@@ -200,6 +270,29 @@ pub fn setup_logger(filter: LevelFilter, data_dir: Option<PathBuf>) {
         setup_taker_logger(filter, true, data_dir.as_ref().map(|d| d.join("taker")));
         setup_maker_logger(filter, data_dir.as_ref().map(|d| d.join("maker")));
     });
+}
+
+/// Logs the stable identity used to find a join without a matching completion.
+pub(crate) fn log_shutdown_join_start(component: &str, thread: &std::thread::Thread) {
+    log::info!(
+        "shutdown_join_start pid={} component={} thread={} id={:?}",
+        std::process::id(),
+        component,
+        thread.name().unwrap_or("unknown"),
+        thread.id()
+    );
+}
+
+/// Logs the matching completion and whether the owned thread panicked.
+pub(crate) fn log_shutdown_join_done(component: &str, thread: &std::thread::Thread, outcome: &str) {
+    log::info!(
+        "shutdown_join_done pid={} component={} thread={} id={:?} outcome={}",
+        std::process::id(),
+        component,
+        thread.name().unwrap_or("unknown"),
+        thread.id(),
+        outcome
+    );
 }
 
 /// Sends a protocol or RPC message through a stream.
@@ -244,9 +337,9 @@ pub fn read_message(reader: &mut TcpStream) -> Result<Vec<u8>, NetError> {
         match reader.read(&mut buffer[total_read..]) {
             Ok(0) => return Err(NetError::ReachedEOF), // Connection closed
             Ok(n) => total_read += n,
-            Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::Interrupted) => {
-                continue
-            }
+            // A read timeout also arrives as WouldBlock; looping on it turns a
+            // silent peer into a permanent wedge instead of a timed-out read.
+            Err(e) if matches!(e.kind(), ErrorKind::Interrupted) => continue,
             Err(e) => return Err(e.into()),
         }
     }
@@ -515,8 +608,12 @@ impl From<serde_cbor::Error> for TorError {
     }
 }
 
-#[cfg(not(feature = "integration-test"))]
-pub(crate) fn check_tor_status(control_port: u16, password: &str) -> Result<(), TorError> {
+/// Authenticate against the Tor control port and report bootstrap progress.
+///
+/// Returns `Ok(())` once the control connection authenticates. A still-starting
+/// Tor is logged as a warning rather than an error, since callers only need the
+/// daemon to be reachable.
+pub fn check_tor_status(control_port: u16, password: &str) -> Result<(), TorError> {
     use std::{
         io::BufRead,
         net::{SocketAddr, ToSocketAddrs},
@@ -565,6 +662,106 @@ pub(crate) fn check_tor_status(control_port: u16, password: &str) -> Result<(), 
         log::warn!("Tor is still starting, try again later: {response}");
     }
     Ok(())
+}
+
+/// Connect to `target_host:target_port` through the local Tor SOCKS5 proxy,
+/// with connect and handshake bounded by `timeout`. The `socks` crate does an
+/// un-timed connect, so a wedged proxy would hang shutdown joins forever.
+#[cfg(not(feature = "integration-test"))]
+pub(crate) fn socks5_connect(
+    socks_port: u16,
+    target_host: &str,
+    target_port: u16,
+    auth: Option<(&str, &str)>,
+    timeout: Duration,
+) -> io::Result<TcpStream> {
+    let proxy = std::net::SocketAddr::from(([127, 0, 0, 1], socks_port));
+    let mut socket = TcpStream::connect_timeout(&proxy, timeout)?;
+    socket.set_read_timeout(Some(timeout))?;
+    socket.set_write_timeout(Some(timeout))?;
+
+    // Greeting: always offer no-auth, plus password when credentials exist.
+    let mut greeting = vec![5u8];
+    match auth {
+        Some(_) => greeting.extend_from_slice(&[2, 0, 2]),
+        None => greeting.extend_from_slice(&[1, 0]),
+    }
+    socket.write_all(&greeting)?;
+
+    let mut choice = [0u8; 2];
+    socket.read_exact(&mut choice)?;
+    if choice[0] != 5 {
+        return Err(io::Error::new(
+            ErrorKind::InvalidData,
+            "invalid socks version",
+        ));
+    }
+    match choice[1] {
+        0 => {}
+        2 => {
+            let (username, password) = auth.ok_or_else(|| {
+                io::Error::new(ErrorKind::PermissionDenied, "proxy demands password auth")
+            })?;
+            if username.is_empty() || username.len() > 255 || password.len() > 255 {
+                return Err(io::Error::new(
+                    ErrorKind::InvalidInput,
+                    "bad socks credentials",
+                ));
+            }
+            let mut req = vec![1u8, username.len() as u8];
+            req.extend_from_slice(username.as_bytes());
+            req.push(password.len() as u8);
+            req.extend_from_slice(password.as_bytes());
+            socket.write_all(&req)?;
+            let mut status = [0u8; 2];
+            socket.read_exact(&mut status)?;
+            if status[1] != 0 {
+                return Err(io::Error::new(
+                    ErrorKind::PermissionDenied,
+                    "socks auth failed",
+                ));
+            }
+        }
+        m => {
+            return Err(io::Error::other(format!(
+                "no acceptable socks auth method: {m}"
+            )))
+        }
+    }
+
+    // CONNECT with the target as a domain so .onion names resolve at the proxy.
+    let host = target_host.as_bytes();
+    if host.len() > 255 {
+        return Err(io::Error::new(
+            ErrorKind::InvalidInput,
+            "target host too long",
+        ));
+    }
+    let mut req = vec![5u8, 1, 0, 3, host.len() as u8];
+    req.extend_from_slice(host);
+    req.extend_from_slice(&target_port.to_be_bytes());
+    socket.write_all(&req)?;
+
+    let mut head = [0u8; 4];
+    socket.read_exact(&mut head)?;
+    if head[0] != 5 || head[1] != 0 {
+        return Err(io::Error::other(format!(
+            "socks connect failed, reply code {}",
+            head[1]
+        )));
+    }
+    // Drain the bound address; its length depends on the address type.
+    match head[3] {
+        1 => socket.read_exact(&mut [0u8; 6])?,
+        3 => {
+            let mut len = [0u8; 1];
+            socket.read_exact(&mut len)?;
+            socket.read_exact(&mut vec![0u8; len[0] as usize + 2])?;
+        }
+        4 => socket.read_exact(&mut [0u8; 18])?,
+        t => return Err(io::Error::other(format!("unknown socks address type: {t}"))),
+    }
+    Ok(socket)
 }
 
 struct RawModeGuard;
@@ -652,8 +849,18 @@ pub fn print_new_wallet_seed(mnemonic: &SecretMnemonic) -> io::Result<()> {
     out.flush()
 }
 
-#[cfg(not(feature = "integration-test"))]
-pub(crate) fn get_ephemeral_address(
+/// Publish `local_port` as an ephemeral Tor onion service via `ADD_ONION`.
+///
+/// The service listens on [`COINSWAP_PORT`](crate::protocol::common_messages::COINSWAP_PORT)
+/// and forwards to `127.0.0.1:local_port`. Pass `"NEW:ED25519-V3"` as
+/// `private_key_data` for a fresh key, or `"ED25519-V3:<base64>"` to reuse one.
+/// When `service_id_data` is set, that service is removed first.
+///
+/// Created with `Flags=Detach`, so the service outlives the control connection
+/// and must be removed explicitly if it should not persist.
+///
+/// Returns the `<serviceid>.onion` hostname.
+pub fn get_ephemeral_address(
     control_port: u16,
     local_port: u16,
     password: &str,
@@ -720,7 +927,11 @@ pub(crate) fn get_tor_hostname(
                 Some(hostname_data.trim_end_matches(".onion")),
             )?;
 
-            assert_eq!(hostname, hostname_data);
+            if hostname != hostname_data {
+                return Err(TorError::General(
+                    "tor hostname mismatch between stored key and ADD_ONION response".to_string(),
+                ));
+            }
 
             log::info!("Generated existing Tor Hidden Service Hostname: {hostname}");
 

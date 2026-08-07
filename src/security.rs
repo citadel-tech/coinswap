@@ -199,18 +199,17 @@ impl KeyMaterial {
     ///
     /// If the user enters an empty string, returns `None`, indicating no encryption.
     /// Otherwise, returns `Some(KeyMaterial)` with a newly generated nonce and salt.
-    pub fn new_interactive(prompt: Option<String>) -> Option<Self> {
+    pub fn new_interactive(prompt: Option<String>) -> Result<Option<Self>, SecurityError> {
         let enc_password =
             utill::prompt_password(prompt.unwrap_or(
                 "Enter new encryption passphrase (empty for no encryption): ".to_string(),
-            ))
-            .unwrap();
+            ))?;
 
         if enc_password.is_empty() {
-            None
+            Ok(None)
         } else {
             let pbkdf2_salt = random::<PBKDF2Salt>();
-            Some(KeyMaterial {
+            Ok(Some(KeyMaterial {
                 key: pbkdf2_hmac_array::<Sha256, 32>(
                     enc_password.as_bytes(),
                     &pbkdf2_salt,
@@ -218,7 +217,7 @@ impl KeyMaterial {
                 ),
                 nonce: Aes256Gcm::generate_nonce(&mut OsRng).into(),
                 pbkdf2_salt,
-            })
+            }))
         }
     }
 

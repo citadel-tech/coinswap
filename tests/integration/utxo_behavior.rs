@@ -61,36 +61,13 @@ const TEST_CASES: &[(f64, &[f64], &str, &str)] = &[
 ];
 
 #[test]
-fn run_all_utxo_tests() {
-    println!("=== Running All UTXO Tests ===");
-    println!("\nStarting Manual Swapping in conjunction with Regular-Swapcoin clause Test");
-    test_manual_coinselection();
-
-    println!("\nWaiting for cleanup...");
-    std::thread::sleep(Duration::from_secs(10));
-
-    println!("\nStarting Separated UTXO Test");
-    test_separated_utxo_coin_selection();
-
-    println!("\nWaiting for cleanup...");
-    std::thread::sleep(Duration::from_secs(10));
-
-    println!("\nStarting Address Grouping Test");
-    test_address_grouping_behavior();
-
-    println!("\nAll UTXO Tests Completed Successfully");
-
-    println!("\nWaiting for cleanup...");
-    std::thread::sleep(Duration::from_secs(10));
-}
-
 fn test_address_grouping_behavior() {
     // Initialize test environment with one maker (no swap needed, just wallet testing)
     let makers_config_map = vec![(8702, None)];
     let taker_behavior = vec![TakerBehavior::Normal];
 
     let (test_framework, _takers, makers, block_generation_handle) =
-        TestFramework::init(makers_config_map, taker_behavior, vec![]);
+        TestFramework::init::<BitcoindBackend>(makers_config_map, taker_behavior, vec![]);
 
     println!("=== Testing Smart Address Grouping Behavior ===");
 
@@ -132,7 +109,7 @@ fn test_address_grouping_behavior() {
     // Sync wallet to see all the UTXOs we just created
     {
         let mut wallet = maker.wallet.write().unwrap();
-        wallet.sync_and_save().unwrap();
+        wallet.sync_and_save(&coinswap::utill::NO_SHUTDOWN).unwrap();
     }
 
     println!("\n=== Available UTXO Summary ===");
@@ -200,13 +177,14 @@ fn test_address_grouping_behavior() {
     block_generation_handle.join().unwrap();
 }
 
+#[test]
 fn test_separated_utxo_coin_selection() {
     // Initialize test environment with TWO makers and one taker
     let makers_config_map = vec![(8702, None), (18702, None)];
     let taker_behavior = vec![TakerBehavior::Normal];
 
     let (test_framework, mut takers, makers, block_generation_handle) =
-        TestFramework::init(makers_config_map, taker_behavior, vec![]);
+        TestFramework::init::<BitcoindBackend>(makers_config_map, taker_behavior, vec![]);
 
     warn!("Running Test: Separated UTXO Coin Selection");
     let bitcoind = &test_framework.bitcoind;
@@ -257,19 +235,10 @@ fn test_separated_utxo_coin_selection() {
         .start_coinswap(&summary.swap_id)
         .expect("coinswap should succeed");
 
-    // Shutdown maker servers
-    makers
-        .iter()
-        .for_each(|maker| maker.shutdown.store(true, Relaxed));
-
-    maker_threads
-        .into_iter()
-        .for_each(|thread| thread.join().unwrap());
-
     // Sync both maker wallets
     for maker in &makers {
         let mut wallet = maker.wallet.write().unwrap();
-        wallet.sync_and_save().unwrap();
+        wallet.sync_and_save(&coinswap::utill::NO_SHUTDOWN).unwrap();
     }
 
     println!("=== Testing Separated UTXO Coin Selection ===");
@@ -377,7 +346,7 @@ fn test_separated_utxo_coin_selection() {
     // Sync wallet and retry
     {
         let mut wallet = maker.wallet.write().unwrap();
-        wallet.sync_and_save().unwrap();
+        wallet.sync_and_save(&coinswap::utill::NO_SHUTDOWN).unwrap();
         let updated_balances = wallet.get_balances().unwrap();
 
         println!("Updated balances after funding:");
@@ -405,17 +374,23 @@ fn test_separated_utxo_coin_selection() {
 
     println!("\n=== Test Completed Successfully ===");
 
-    // Clean shutdown
+    makers
+        .iter()
+        .for_each(|maker| maker.shutdown.store(true, Relaxed));
+    maker_threads
+        .into_iter()
+        .for_each(|thread| thread.join().unwrap());
     test_framework.stop();
     block_generation_handle.join().unwrap();
 }
 
+#[test]
 fn test_manual_coinselection() {
     let makers_config_map = vec![(28702, None), (38702, None)];
     let taker_behavior = vec![TakerBehavior::Normal];
 
     let (test_framework, mut takers, makers, block_generation_handle) =
-        TestFramework::init(makers_config_map, taker_behavior, vec![]);
+        TestFramework::init::<BitcoindBackend>(makers_config_map, taker_behavior, vec![]);
 
     let bitcoind = &test_framework.bitcoind;
     let taker = &mut takers[0];
@@ -456,7 +431,12 @@ fn test_manual_coinselection() {
 
     wait_for_makers_setup(&makers, 120);
 
-    taker.get_wallet().write().unwrap().sync_and_save().unwrap();
+    taker
+        .get_wallet()
+        .write()
+        .unwrap()
+        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .unwrap();
 
     let all_utxos = taker.get_wallet().read().unwrap().list_all_utxo();
 
@@ -506,11 +486,16 @@ fn test_manual_coinselection() {
     thread::sleep(Duration::from_secs(10));
 
     // Sync taker wallet to get the latest UTXO state after swap
-    taker.get_wallet().write().unwrap().sync_and_save().unwrap();
+    taker
+        .get_wallet()
+        .write()
+        .unwrap()
+        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .unwrap();
 
     for maker in makers.iter() {
         let mut wallet = maker.wallet.write().unwrap();
-        wallet.sync_and_save().unwrap();
+        wallet.sync_and_save(&coinswap::utill::NO_SHUTDOWN).unwrap();
     }
 
     // Check that the originally manually selected UTXOs were spent

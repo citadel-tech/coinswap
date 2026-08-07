@@ -1,7 +1,7 @@
 use crate::{
     protocol::common_messages::FidelityProof,
     utill::{redeemscript_to_scriptpubkey, MIN_FEE_RATE},
-    wallet::{infer_address_type, AddressType, Wallet},
+    wallet::{infer_address_type, AddressType, Blockchain, Wallet},
 };
 use bitcoin::{
     absolute::LockTime,
@@ -13,7 +13,6 @@ use bitcoin::{
     secp256k1::{Keypair, Message, Secp256k1},
     Address, Amount, OutPoint, PublicKey, ScriptBuf, Transaction, Txid,
 };
-use bitcoind::bitcoincore_rpc::RpcApi;
 use serde::{Deserialize, Serialize};
 use std::{
     str::FromStr,
@@ -323,12 +322,15 @@ impl Wallet {
 
     /// Display the fidelity bonds
     pub fn display_fidelity_bonds(&self) -> Result<String, WalletError> {
+        // Only a live bond needs a valuation, so the tip is fetched on the
+        // first one that does. An empty or all-spent list makes no chain call.
+        let mut tip = None;
         let serialized = self
             .store
             .fidelity_bond
             .iter()
             .enumerate()
-            .map(|(index, bond)| {
+            .map(|(index, bond)| -> Result<serde_json::Value, WalletError> {
                 let mut bond_info = serde_json::json!({
                         "index": index,
                         "outpoint": bond.outpoint.to_string(),
@@ -337,21 +339,32 @@ impl Wallet {
                 });
 
                 if !bond.is_spent {
-                    let bond_value = self
-                        .calculate_bond_value(bond)
-                        .expect("Bond value calculation must not fail for valid bonds.");
+                    let (tip_height, tip_time) = match tip {
+                        Some(t) => t,
+                        None => {
+                            let t = self.chain_tip()?;
+                            tip = Some(t);
+                            t
+                        }
+                    };
+                    let bond_value = self.calculate_bond_value(bond, tip_height, tip_time)?;
                     bond_info["bond_value"] = serde_json::json!(bond_value);
                 }
 
-                bond_info
+                Ok(bond_info)
             })
-            .collect::<Vec<serde_json::Value>>();
+            .collect::<Result<Vec<serde_json::Value>, _>>()?;
 
         serde_json::to_string_pretty(&serialized).map_err(|e| WalletError::General(e.to_string()))
     }
 
     /// Get the highest value fidelity bond. Returns None, if no bond exists.
     pub fn get_highest_fidelity_index(&self) -> Result<Option<u32>, WalletError> {
+        // No live bond means no valuation and no chain calls.
+        if self.store.fidelity_bond.iter().all(|b| b.is_spent) {
+            return Ok(None);
+        }
+        let (tip_height, tip_time) = self.chain_tip()?;
         Ok(self
             .store
             .fidelity_bond
@@ -359,7 +372,7 @@ impl Wallet {
             .enumerate()
             .filter_map(|(i, bond)| {
                 if !bond.is_spent {
-                    match self.calculate_bond_value(bond) {
+                    match self.calculate_bond_value(bond, tip_height, tip_time) {
                         Ok(v) => {
                             log::info!("Fidelity Bond found | Index: {i} | Bond Value : {v}");
                             Some((i as u32, v))
@@ -427,28 +440,33 @@ impl Wallet {
         ))
     }
 
+    /// Current tip height and its header time. Fetched once by callers so a
+    /// scan over many bonds uses the value fetched once.
+    pub fn chain_tip(&self) -> Result<(u64, u64), WalletError> {
+        let height = self.blockchain.get_block_count()?;
+        let time = self.blockchain.header_at_height(height)?.time as u64;
+        Ok((height, time))
+    }
+
     /// Calculate the theoretical fidelity bond value.
     /// Bond value calculation is described in the document below.
     /// <https://gist.github.com/chris-belcher/87ebbcbb639686057a389acb9ab3e25b#financial-mathematics-of-joinmarket-fidelity-bonds>
-    pub fn calculate_bond_value(&self, bond: &FidelityBond) -> Result<Amount, WalletError> {
+    pub fn calculate_bond_value(
+        &self,
+        bond: &FidelityBond,
+        tip_height: u64,
+        tip_time: u64,
+    ) -> Result<Amount, WalletError> {
         let current_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("This can't error")
             .as_secs();
 
-        let hash = self
-            .rpc
-            .get_block_hash(bond.conf_height.ok_or(FidelityError::BondDoesNotExist)? as u64)?;
-
-        let confirmation_time = self.rpc.get_block_header_info(&hash)?.time as u64;
+        let conf_height = bond.conf_height.ok_or(FidelityError::BondDoesNotExist)? as u64;
+        let confirmation_time = self.blockchain.header_at_height(conf_height)?.time as u64;
 
         let locktime = match bond.lock_time {
             LockTime::Blocks(blocks) => {
-                let tip_hash = self.rpc.get_blockchain_info()?.best_block_hash;
-                let (tip_height, tip_time) = {
-                    let info = self.rpc.get_block_header_info(&tip_hash)?;
-                    (info.height, info.time as u64)
-                };
                 // Estimated locktime from block height = [current-time + (maturity-height - block-count) * 10 * 60] sec
                 let height_diff =
                     if let Some(x) = blocks.to_consensus_u32().checked_sub(tip_height as u32) {
@@ -550,7 +568,7 @@ impl Wallet {
         &mut self,
         destination_address_type: AddressType,
     ) -> Result<(), WalletError> {
-        let curr_height = self.rpc.get_block_count()? as u32;
+        let curr_height = self.blockchain.get_block_count()? as u32;
 
         let expired_bond_indices = self
             .store

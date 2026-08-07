@@ -4,7 +4,12 @@
 //! In the future, takers might adopt alternative synchronization methods, such as lightweight wallet solutions.
 
 use std::{
-    cmp::max, convert::TryFrom, fmt::Display, path::PathBuf, str::FromStr, thread, time::Duration,
+    cmp::max,
+    fmt::Display,
+    path::PathBuf,
+    str::FromStr,
+    thread,
+    time::{Duration, Instant},
 };
 
 use std::collections::{HashMap, HashSet};
@@ -16,6 +21,7 @@ use bip39::Mnemonic;
 use bitcoin::hashes::{sha512, Hash};
 use bitcoin::{
     bip32::{ChainCode, ChildNumber, DerivationPath, Xpriv, Xpub},
+    block::Header,
     key::TapTweak,
     secp256k1,
     secp256k1::{Keypair, Secp256k1, SecretKey},
@@ -23,12 +29,18 @@ use bitcoin::{
     Address, Amount, Network, OutPoint, PublicKey, Script, ScriptBuf, Transaction, TxOut, Txid,
     Weight,
 };
-use bitcoind::bitcoincore_rpc::{bitcoincore_rpc_json::ListUnspentResultEntry, Client, RpcApi};
+use bitcoind::bitcoincore_rpc::bitcoincore_rpc_json::{ListUnspentResultEntry, ScanningDetails};
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use std::path::Path;
 
-use crate::utill::{
-    compute_checksum, generate_keypair, get_hd_path_from_descriptor, redeemscript_to_scriptpubkey,
+use crate::{
+    protocol::contract::create_multisig_redeemscript,
+    utill::{
+        compute_checksum, generate_keypair, get_hd_path_from_descriptor,
+        redeemscript_to_scriptpubkey, HEART_BEAT_INTERVAL, TX_BROADCAST_TIMEOUT,
+        TX_CONFIRMATION_TIMEOUT,
+    },
 };
 
 use rust_coinselect::{
@@ -38,8 +50,8 @@ use rust_coinselect::{
 };
 
 use super::{
+    blockchain::{AnyBlockchain, Blockchain, HdOrigin},
     error::WalletError,
-    rpc::RPCConfig,
     storage::{AddressType, WalletStore},
 };
 
@@ -47,6 +59,21 @@ use super::{
 // data in the bitcoin core wallet
 // for example which privkey corresponds to a scriptpubkey is stored in hd paths
 
+/// Address gap limit of 20 from [BIP-44](https://github.com/bitcoin/bips/blob/master/bip-0044.mediawiki#address-gap-limit):
+/// the rolling watch/import window always extends this many unused addresses
+/// beyond the last used one per keychain (see [`Wallet::max_watch_index`]).
+pub(crate) const ADDRESS_IMPORT_COUNT: u32 = 20;
+/// Wider gap used while syncing a wallet restored from backup. The backup
+/// carries no hand-out counters, so index gaps left by aborted multi-tx
+/// funding (see [`Wallet::get_next_internal_addresses`]) must be bridged by
+/// scanning alone; a run of unused indices longer than the gap would otherwise
+/// end discovery early and strand funds past it. Only costs restore-time
+/// queries — regular syncs stay at [`ADDRESS_IMPORT_COUNT`].
+pub(crate) const RESTORE_ADDRESS_GAP: u32 = 100;
+/// Hard caps on the rolling-gap sync loop: a server inventing UTXOs at ever
+/// higher indices must not keep the loop or the watch window growing forever.
+const MAX_SYNC_PASSES: u32 = 100;
+const MAX_WATCH_WINDOW: u32 = 100_000;
 /// P2WSH ECDSA: 2 sigs/sig+preimage + full redeemscript (~149)
 const LEGACY_CONTRACT_SPEND_VSIZE: u64 = 150;
 /// key-path: one 64B Schnorr sig, no script (~111)
@@ -71,7 +98,7 @@ impl SecretMnemonic {
 
 /// Represents a Bitcoin wallet with associated functionality and data.
 pub struct Wallet {
-    pub(crate) rpc: Client,
+    pub(crate) blockchain: AnyBlockchain,
     pub(crate) wallet_file_path: PathBuf,
     pub(crate) store: WalletStore,
     /// Optional encryption material derived from the user’s passphrase.
@@ -81,6 +108,23 @@ pub struct Wallet {
     /// Transient: seed phrase of a wallet created by
     /// [`Wallet::init`]. Read once via [`Wallet::take_new_mnemonic`].
     pub(super) new_mnemonic: Option<SecretMnemonic>,
+    /// Wallet-side set of outpoints excluded from coin selection.
+    pub(crate) locked_utxos: HashSet<OutPoint>,
+    /// Transient (never persisted): widens the gap-limit window to
+    /// [`RESTORE_ADDRESS_GAP`] while the restore sync runs. Set only by
+    /// [`Wallet::restore`].
+    pub(crate) restore_scan: bool,
+}
+
+/// Manual impl: `AnyBlockchain` (and the encryption material) carry no useful
+/// or safe-to-print state, so only the file path and store are shown.
+impl std::fmt::Debug for Wallet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Wallet")
+            .field("wallet_file_path", &self.wallet_file_path)
+            .field("store", &self.store)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Compares two wallets for cryptographic equivalence.
@@ -127,12 +171,6 @@ impl PartialEq for Wallet {
 pub(crate) enum KeychainKind {
     External = 0isize,
     Internal,
-}
-
-#[derive(Deserialize)]
-struct LockedUtxo {
-    txid: Txid,
-    vout: u32,
 }
 
 impl KeychainKind {
@@ -287,6 +325,16 @@ pub struct RecoveryOutcome {
     pub discarded: Vec<Txid>,
 }
 
+/// Chain state of one swapcoin's contract output on a recovery pass.
+enum ContractChainState {
+    /// The output is on-chain or was just broadcast; recovery can proceed.
+    OnChain,
+    /// The output is gone for good; the swapcoin can be dropped.
+    Discarded,
+    /// Nothing decided this pass; the next recovery run retries.
+    NotYet,
+}
+
 impl RecoveryOutcome {
     /// Returns true if no contracts were resolved or discarded.
     pub fn is_empty(&self) -> bool {
@@ -321,11 +369,10 @@ impl Wallet {
     /// If the wallet file doesn't exist it will create a new wallet file.
     pub fn init(
         path: &Path,
-        rpc_config: &RPCConfig,
+        blockchain: AnyBlockchain,
         store_enc_material: Option<KeyMaterial>,
     ) -> Result<Self, WalletError> {
-        let rpc = Client::try_from(rpc_config)?;
-        let network = rpc.get_blockchain_info()?.chain;
+        let network = blockchain.get_blockchain_info()?.chain;
 
         // Generate Master key
         let mnemonic = Mnemonic::generate(12)?;
@@ -334,12 +381,13 @@ impl Wallet {
         // Initialise wallet
         let file_name = path
             .file_name()
-            .expect("file name expected")
-            .to_str()
-            .expect("expected")
+            .and_then(|f| f.to_str())
+            .ok_or_else(|| {
+                WalletError::General("wallet path has no valid UTF-8 file name".to_string())
+            })?
             .to_string();
 
-        let wallet_birthday = rpc.get_block_count()?;
+        let wallet_birthday = blockchain.get_block_count()?;
         let store = WalletStore::init(
             file_name,
             path,
@@ -348,23 +396,18 @@ impl Wallet {
             Some(wallet_birthday),
             &store_enc_material,
         )?;
-        let last_synced_height_val = match store.last_synced_height {
-            Some(height) => height.to_string(),
-            None => "None".to_string(),
-        };
-
         log::info!(
-            "Wallet birth_height = {}, wallet last_sync_height = {}",
-            wallet_birthday,
-            last_synced_height_val
+            "Wallet birth_height = {wallet_birthday}, last_synced_height = {:?}",
+            store.last_synced_height
         );
-
         Ok(Self {
-            rpc,
+            blockchain,
             wallet_file_path: path.to_path_buf(),
             store,
             store_enc_material,
             new_mnemonic: Some(SecretMnemonic(mnemonic)),
+            locked_utxos: HashSet::new(),
+            restore_scan: false,
         })
     }
 
@@ -380,6 +423,7 @@ impl Wallet {
     pub fn take_new_mnemonic(&mut self) -> Option<SecretMnemonic> {
         self.new_mnemonic.take()
     }
+
     /// Get the wallet name
     pub fn get_name(&self) -> &str {
         &self.store.file_name
@@ -397,33 +441,35 @@ impl Wallet {
             .parent()
             .ok_or_else(|| std::io::Error::other("wallet path has no parent directory"))?
             .join(format!("{stem}_swap_report.json"));
-        crate::wallet::deniability::verify_deniability(&report_path, &self.rpc, swap_id)
+        crate::wallet::deniability::verify_deniability(&report_path, &self.blockchain, swap_id)
     }
 
-    /// Load wallet data from file and connect to a core RPC.
-    /// The core rpc wallet name, and wallet_id field in the file should match.
+    /// Load wallet data from file and connect to a blockchain backend.
+    /// In case of core rpc, core wallet name, and wallet_id field in the file should match.
     /// If encryption material is provided, decrypt the wallet store using it.
     pub(crate) fn load(
         path: &Path,
-        rpc_config: &RPCConfig,
+        blockchain: AnyBlockchain,
         password: Option<String>,
-    ) -> Result<Wallet, WalletError> {
+    ) -> Result<Self, WalletError> {
         let (store, store_enc_material) =
             WalletStore::read_from_disk(path, password.unwrap_or_default())?;
 
-        if rpc_config.wallet_name != store.file_name {
-            return Err(WalletError::General(format!(
-                "Wallet name of database file and core mismatch, expected {}, found {}",
-                rpc_config.wallet_name, store.file_name
-            )));
+        if let AnyBlockchain::CoreRPC(core) = &blockchain {
+            if core.wallet_name() != store.file_name {
+                return Err(WalletError::General(format!(
+                    "Wallet name of database file and core mismatch, expected {}, found {}",
+                    core.wallet_name(),
+                    store.file_name
+                )));
+            }
         }
-        let rpc = Client::try_from(rpc_config)?;
-        let network = rpc.get_blockchain_info()?.chain;
+        let network = blockchain.get_blockchain_info()?.chain;
 
         // Check if the backend node is running on correct network. Or else hard error.
         if store.network != network {
             log::error!(
-                "Wallet file is created for {}, backend Bitcoin Core is running on {}",
+                "Wallet file is created for {}, backend is running on {}",
                 store.network,
                 network
             );
@@ -436,13 +482,14 @@ impl Wallet {
             store.incoming_swapcoins.len(),
             store.outgoing_swapcoins.len()
         );
-
         Ok(Self {
-            rpc,
+            blockchain,
             wallet_file_path: path.to_path_buf(),
             store,
             store_enc_material,
             new_mnemonic: None,
+            locked_utxos: HashSet::new(),
+            restore_scan: false,
         })
     }
 
@@ -451,14 +498,14 @@ impl Wallet {
     /// Prompts the user for an encryption passphrase (unless running tests),
     /// derives encryption key material if a passphrase is provided,
     /// and either loads or creates the wallet accordingly.
-    pub(crate) fn load_or_init_wallet(
+    pub(crate) fn load_or_init(
         path: &Path,
-        rpc_config: &RPCConfig,
+        blockchain: AnyBlockchain,
         password: Option<String>,
     ) -> Result<Wallet, WalletError> {
         let wallet = if path.exists() {
             // wallet already exists, load the wallet
-            let wallet = Wallet::load(path, rpc_config, password)?;
+            let wallet = Wallet::load(path, blockchain, password)?;
             log::info!("Wallet file at {path:?} successfully loaded.");
             wallet
         } else {
@@ -466,7 +513,7 @@ impl Wallet {
 
             let store_enc_material = KeyMaterial::new_from_password(password);
 
-            let wallet = Wallet::init(path, rpc_config, store_enc_material)?;
+            let wallet = Wallet::init(path, blockchain, store_enc_material)?;
 
             log::info!("New Wallet created at : {path:?}");
             wallet
@@ -539,10 +586,7 @@ impl Wallet {
                 if let (Some(my_pubkey), Some(other_pubkey)) =
                     (swapcoin.my_pubkey, swapcoin.other_pubkey)
                 {
-                    let computed_script = crate::protocol::contract::create_multisig_redeemscript(
-                        &my_pubkey,
-                        &other_pubkey,
-                    );
+                    let computed_script = create_multisig_redeemscript(&my_pubkey, &other_pubkey);
                     if &computed_script == multisig_redeemscript {
                         return Some(swapcoin);
                     }
@@ -562,10 +606,7 @@ impl Wallet {
                 if let (Some(my_pubkey), Some(other_pubkey)) =
                     (swapcoin.my_pubkey, swapcoin.other_pubkey)
                 {
-                    let computed_script = crate::protocol::contract::create_multisig_redeemscript(
-                        &my_pubkey,
-                        &other_pubkey,
-                    );
+                    let computed_script = create_multisig_redeemscript(&my_pubkey, &other_pubkey);
                     if &computed_script == multisig_redeemscript {
                         return Some(swapcoin);
                     }
@@ -614,6 +655,11 @@ impl Wallet {
         self.store.watchonly_swapcoins.remove(swap_id)
     }
 
+    /// True when this wallet talks to an Electrum server rather than Bitcoin Core.
+    pub fn is_electrum(&self) -> bool {
+        self.blockchain.is_electrum()
+    }
+
     /// Gets the count of incoming swap coins.
     pub fn get_incoming_swapcoins_count(&self) -> usize {
         self.store.incoming_swapcoins.len()
@@ -624,26 +670,64 @@ impl Wallet {
         self.store.outgoing_swapcoins.len()
     }
 
-    /// Returns contract outpoints for all persisted outgoing swapcoins.
-    pub(crate) fn outgoing_contract_outpoints(&self) -> Vec<OutPoint> {
+    /// Returns contract outpoints and their scriptPubKeys for all persisted outgoing swapcoins.
+    pub(crate) fn outgoing_contract_outpoints(&self) -> Vec<(OutPoint, ScriptBuf)> {
         self.store
             .outgoing_swapcoins
             .values()
-            .map(|sc| OutPoint {
-                txid: sc.contract_tx.compute_txid(),
-                vout: 0,
+            .map(|sc| {
+                let vout = sc.get_contract_output_vout();
+                (
+                    OutPoint {
+                        txid: sc.contract_tx.compute_txid(),
+                        vout,
+                    },
+                    sc.contract_tx.output[vout as usize].script_pubkey.clone(),
+                )
             })
             .collect()
     }
 
-    /// Returns contract outpoints for all persisted incoming swapcoins.
-    pub(crate) fn incoming_contract_outpoints(&self) -> Vec<OutPoint> {
+    /// Returns contract outpoints and their scriptPubKeys for all persisted incoming swapcoins.
+    pub(crate) fn incoming_contract_outpoints(&self) -> Vec<(OutPoint, ScriptBuf)> {
         self.store
             .incoming_swapcoins
             .values()
-            .map(|sc| OutPoint {
-                txid: sc.contract_tx.compute_txid(),
-                vout: 0,
+            .map(|sc| {
+                let vout = sc.get_contract_output_vout();
+                (
+                    OutPoint {
+                        txid: sc.contract_tx.compute_txid(),
+                        vout,
+                    },
+                    sc.contract_tx.output[vout as usize].script_pubkey.clone(),
+                )
+            })
+            .collect()
+    }
+
+    /// Returns contract outpoints and their scriptPubKeys for all persisted
+    /// watchonly swapcoins. These carry no `get_contract_output_vout`, so the
+    /// contract output is the one paying the funding amount.
+    pub(crate) fn watchonly_contract_outpoints(&self) -> Vec<(OutPoint, ScriptBuf)> {
+        self.store
+            .watchonly_swapcoins
+            .values()
+            .flatten()
+            .map(|sc| {
+                let vout = sc
+                    .contract_tx
+                    .output
+                    .iter()
+                    .position(|o| o.value == sc.funding_amount)
+                    .unwrap_or(0) as u32;
+                (
+                    OutPoint {
+                        txid: sc.contract_tx.compute_txid(),
+                        vout,
+                    },
+                    sc.contract_tx.output[vout as usize].script_pubkey.clone(),
+                )
             })
             .collect()
     }
@@ -674,283 +758,312 @@ impl Wallet {
             .collect()
     }
 
+    /// Ensure a swapcoin's contract tx is on-chain, broadcasting it when needed.
+    ///
+    /// Every answer comes from a chain query, never from parsing backend error
+    /// strings; a transport failure reaches the caller instead of reading as
+    /// "output spent".
+    fn ensure_contract_on_chain(
+        chain: &AnyBlockchain,
+        swap_id: &str,
+        swapcoin: &super::swapcoin::OutgoingSwapCoin,
+    ) -> Result<ContractChainState, WalletError> {
+        let contract_txid = swapcoin.contract_tx.compute_txid();
+        let contract_vout = swapcoin.get_contract_output_vout();
+
+        if chain
+            .get_tx_out(&contract_txid, contract_vout, Some(false))?
+            .is_some()
+        {
+            return Ok(ContractChainState::OnChain);
+        }
+
+        // The confirmed view has no such output: it was spent, or the
+        // contract tx was never broadcast.
+        if chain.tx_block_height(&contract_txid)?.is_some() {
+            // Discard only on a confirmed spend. On Electrum a mempool-spent
+            // output looks identical here, and such a spend can be evicted;
+            // the backend answers from the script's history instead.
+            let outpoint = OutPoint::new(contract_txid, contract_vout);
+            let script = &swapcoin.contract_tx.output[contract_vout as usize].script_pubkey;
+            if chain.is_confirmed_spend(&outpoint, script)? {
+                log::info!(
+                    "Contract output for {} spent by a confirmed tx — discarding swapcoin",
+                    swap_id
+                );
+                return Ok(ContractChainState::Discarded);
+            }
+            return Ok(ContractChainState::NotYet);
+        }
+
+        // The contract tx is not on-chain. For Taproot it IS the funding tx:
+        // if its wallet input is still unspent, the tx was never broadcast
+        // and the funds never left.
+        let input_outpoint = swapcoin.contract_tx.input[0].previous_output;
+        let input_unspent = chain
+            .get_tx_out(&input_outpoint.txid, input_outpoint.vout, Some(true))?
+            .is_some();
+        if input_unspent && swapcoin.protocol == crate::protocol::ProtocolVersion::Taproot {
+            log::info!(
+                "Contract tx for {} was never broadcast — wallet UTXOs still unspent, discarding swapcoin",
+                swap_id
+            );
+            return Ok(ContractChainState::Discarded);
+        }
+
+        // Legacy: the contract tx is pre-signed insurance that may never have
+        // been broadcast. Push it so the timelock output exists.
+        let signed_contract_tx = match swapcoin.create_signed_contract_tx() {
+            Ok(tx) => tx,
+            Err(e) => {
+                log::warn!(
+                    "Failed to sign contract tx for {}: {:?} — skipping recovery",
+                    swap_id,
+                    e
+                );
+                return Ok(ContractChainState::NotYet);
+            }
+        };
+        if let Err(e) = chain.send_raw_transaction(&signed_contract_tx) {
+            // Derive the real state from the chain instead of parsing the
+            // error: the output showing up (mempool counts) means the tx was
+            // already on its way; the input being gone means it never confirms.
+            if chain
+                .get_tx_out(&contract_txid, contract_vout, Some(true))?
+                .is_some()
+            {
+                return Ok(ContractChainState::OnChain);
+            }
+            let input_gone = chain
+                .get_tx_out(&input_outpoint.txid, input_outpoint.vout, Some(true))?
+                .is_none();
+            if input_gone {
+                return Ok(ContractChainState::Discarded);
+            }
+            log::warn!(
+                "Failed to broadcast contract tx for {}: {:?} — retrying next cycle",
+                swap_id,
+                e
+            );
+            return Ok(ContractChainState::NotYet);
+        }
+        log::info!(
+            "Contract tx {} broadcast successfully",
+            signed_contract_tx.compute_txid()
+        );
+        Ok(ContractChainState::OnChain)
+    }
+
     /// Attempt to recover timelocked outgoing swapcoins.
+    ///
+    /// Takes the wallet lock, not a guard: the confirmation waits run on a fresh
+    /// backend connection with no guard held, so a slow tx cannot wedge the wallet.
     pub fn recover_timelocked_swapcoins(
-        &mut self,
+        wallet: &std::sync::RwLock<Wallet>,
         fee_rate: f64,
+        shutdown: &std::sync::atomic::AtomicBool,
     ) -> Result<RecoveryOutcome, WalletError> {
         let mut outcome = RecoveryOutcome::default();
-        let mut recovered_keys = Vec::new();
 
-        let current_height = self.rpc.get_block_count()? as u32;
+        // Snapshot everything the recovery needs, then drop the guard before any wait.
+        let (candidates, chain) = {
+            let mut w = wallet
+                .write()
+                .map_err(|_| WalletError::General("wallet lock poisoned".to_string()))?;
 
-        let mut to_recover = Vec::new();
+            let candidates: Vec<_> = w
+                .store
+                .outgoing_swapcoins
+                .iter()
+                .filter(|(_, sc)| sc.my_privkey.is_some())
+                .filter_map(|(swap_id, sc)| {
+                    sc.get_timelock()
+                        .map(|timelock| (swap_id.clone(), sc.clone(), timelock))
+                })
+                .collect();
+
+            if candidates.is_empty() {
+                return Ok(outcome);
+            }
+
+            w.sync_and_save(shutdown)?;
+
+            let chain = w.blockchain.new_connection()?;
+            (candidates, chain)
+        };
+
+        let current_height = chain.get_block_count()? as u32;
 
         log::info!(
             "recover_timelocked: {} outgoing swapcoins in store at height {}",
-            self.store.outgoing_swapcoins.len(),
+            candidates.len(),
             current_height
         );
 
-        for (swap_id, swapcoin) in &self.store.outgoing_swapcoins {
-            if swapcoin.my_privkey.is_some() {
-                if let Some(timelock) = swapcoin.get_timelock() {
-                    if swapcoin.protocol == crate::protocol::ProtocolVersion::Taproot {
-                        // Taproot uses CLTV (absolute height).
-                        if current_height >= timelock {
-                            log::info!(
-                                "Outgoing swapcoin {} ready for timelock recovery (current: {}, CLTV: {})",
-                                swap_id, current_height, timelock
-                            );
-                            to_recover.push(swap_id.clone());
-                        } else {
-                            log::debug!(
-                                "Outgoing swapcoin {} not yet ready (current: {}, CLTV: {})",
-                                swap_id,
-                                current_height,
-                                timelock
-                            );
-                        }
-                    } else {
-                        // Legacy uses CSV (relative to contract tx confirmation).
-                        // Can't filter by height alone — the downstream confirmation
-                        // count check (line 938) is the real gate.
-                        log::debug!(
-                            "Outgoing swapcoin {} queued for timelock recovery (CSV: {} blocks)",
-                            swap_id,
-                            timelock
-                        );
-                        to_recover.push(swap_id.clone());
-                    }
+        let mut to_recover = Vec::new();
+
+        for (swap_id, swapcoin, timelock) in candidates {
+            if swapcoin.protocol == crate::protocol::ProtocolVersion::Taproot {
+                // Taproot uses CLTV (absolute height).
+                if current_height >= timelock {
+                    log::info!(
+                        "Outgoing swapcoin {} ready for timelock recovery (current: {}, CLTV: {})",
+                        swap_id,
+                        current_height,
+                        timelock
+                    );
+                    to_recover.push((swap_id, swapcoin, timelock));
+                } else {
+                    log::debug!(
+                        "Outgoing swapcoin {} not yet ready (current: {}, CLTV: {})",
+                        swap_id,
+                        current_height,
+                        timelock
+                    );
                 }
+            } else {
+                // Legacy uses CSV (relative to contract tx confirmation).
+                // Can't filter by height alone — the downstream confirmation
+                // count check in `recover_timelocked_swapcoins` is the real gate.
+                log::debug!(
+                    "Outgoing swapcoin {} queued for timelock recovery (CSV: {} blocks)",
+                    swap_id,
+                    timelock
+                );
+                to_recover.push((swap_id, swapcoin, timelock));
             }
         }
 
         let mut discarded = Vec::new();
 
-        for swap_id in to_recover {
-            if let Some(swapcoin) = self.store.outgoing_swapcoins.get(&swap_id).cloned() {
-                // Ensure the contract tx is on-chain before attempting timelock spend.
-                let contract_txid = swapcoin.contract_tx.compute_txid();
-                let contract_vout = swapcoin.get_contract_output_vout();
-                match self
-                    .rpc
-                    .get_tx_out(&contract_txid, contract_vout, Some(false))
-                {
-                    Ok(Some(_)) => {
-                        log::info!(
-                            "Contract tx {} already on-chain for {}",
-                            contract_txid,
-                            swap_id
-                        );
-                    }
-                    _ => {
-                        // get_tx_out returned None — either the UTXO was spent or
-                        // the contract tx was never broadcast.
+        for (swap_id, swapcoin, timelock) in to_recover {
+            let contract_txid = swapcoin.contract_tx.compute_txid();
+            let contract_vout = swapcoin.get_contract_output_vout();
+            match Self::ensure_contract_on_chain(&chain, &swap_id, &swapcoin)? {
+                ContractChainState::OnChain => {}
+                ContractChainState::Discarded => {
+                    discarded.push(swap_id.clone());
+                    continue;
+                }
+                ContractChainState::NotYet => continue,
+            }
 
-                        // First, check if the contract tx exists on-chain at all.
-                        let contract_tx_on_chain = self
-                            .rpc
-                            .get_raw_transaction_info(&contract_txid, None)
-                            .ok()
-                            .and_then(|info| info.confirmations)
-                            .unwrap_or(0)
-                            > 0;
+            // Verify the contract UTXO is confirmed and the timelock is satisfied.
+            //
+            // Legacy uses BIP68 CSV (relative): the recovery tx sets
+            // Sequence::from_height(timelock), requiring `timelock` confirmations.
+            //
+            // Taproot uses BIP65 CLTV (absolute): the recovery tx sets
+            // nLockTime to the absolute height. We just need the UTXO to be
+            // confirmed (at least 1 confirmation).
+            let required_confirmations =
+                if swapcoin.protocol == crate::protocol::ProtocolVersion::Taproot {
+                    1 // CLTV only needs the UTXO to exist; the height check is above
+                } else {
+                    timelock // CSV needs this many confirmations
+                };
+            match chain.get_tx_out(&contract_txid, contract_vout, Some(false)) {
+                Ok(Some(utxo_info)) if utxo_info.confirmations >= required_confirmations => {
+                    log::info!(
+                        "Contract tx {} has {} confirmations (need {}), proceeding with recovery",
+                        contract_txid,
+                        utxo_info.confirmations,
+                        required_confirmations
+                    );
+                }
+                Ok(Some(utxo_info)) => {
+                    log::info!(
+                        "Contract tx {} has {} confirmations, need {} — waiting",
+                        contract_txid,
+                        utxo_info.confirmations,
+                        required_confirmations
+                    );
+                    continue;
+                }
+                Ok(None) => {
+                    log::info!(
+                        "Contract tx {} not yet confirmed, skipping recovery attempt",
+                        contract_txid
+                    );
+                    continue;
+                }
+                Err(e) => return Err(e),
+            }
 
-                        if contract_tx_on_chain {
-                            // Contract tx IS on-chain but UTXO is spent — someone
-                            // already claimed this output (hashlock or timelock).
-                            // Nothing left to recover.
+            // Allocate the address only for a coin actually being recovered; a coin
+            // skipped every pass would otherwise burn an index each time and grow
+            // the watch window forever. Take the guard just for this, so the wait
+            // below does not hold it.
+            let recovery_address = {
+                let mut w = wallet
+                    .write()
+                    .map_err(|_| WalletError::General("wallet lock poisoned".to_string()))?;
+                w.get_next_internal_addresses(1, AddressType::P2TR)?[0].clone()
+            };
+
+            match Self::create_timelock_recovery_tx(&swapcoin, fee_rate, recovery_address) {
+                Ok(recovery_tx) => {
+                    match chain.send_raw_transaction(&recovery_tx) {
+                        Ok(txid) => {
+                            // Keep the swapcoin until the spend is mined. A failed wait
+                            // leaves it for the next pass to rebroadcast; dropping it
+                            // here would strand the funds if this tx never confirms.
+                            let conf_height = wait_for_tx_confirmation(
+                                &chain,
+                                &[txid],
+                                1,
+                                TX_BROADCAST_TIMEOUT,
+                                Some(shutdown),
+                                None,
+                            )?;
                             log::info!(
-                                "Contract UTXO for {} was already spent — discarding swapcoin",
-                                swap_id
+                                "Timelock recovery tx {} confirmed at blockheight: {}",
+                                txid,
+                                conf_height
                             );
-                            discarded.push(swap_id.clone());
-                            continue;
+
+                            outcome.resolved.push((contract_txid, txid));
+
+                            // Re-acquire the guard only to record the recovery.
+                            let mut w = wallet.write().map_err(|_| {
+                                WalletError::General("wallet lock poisoned".to_string())
+                            })?;
+                            w.remove_outgoing_swapcoin(&swap_id);
                         }
-
-                        // Contract tx not on-chain. Check if the wallet UTXOs
-                        // (inputs to the contract tx) are still unspent — if so,
-                        // the tx was never broadcast and funds are still ours.
-                        let input_outpoint = swapcoin.contract_tx.input[0].previous_output;
-                        let input_still_unspent = matches!(
-                            self.rpc.get_tx_out(
-                                &input_outpoint.txid,
-                                input_outpoint.vout,
-                                Some(true)
-                            ),
-                            Ok(Some(_))
-                        );
-
-                        if input_still_unspent
-                            && swapcoin.protocol == crate::protocol::ProtocolVersion::Taproot
-                        {
-                            // For Taproot, contract_tx IS the funding tx.
-                            // If its input (wallet UTXO) is still unspent, funds are still ours.
-                            log::info!(
-                                "Contract tx for {} was never broadcast — wallet UTXOs still unspent, discarding swapcoin",
-                                swap_id
-                            );
-                            discarded.push(swap_id.clone());
-                            continue;
-                        }
-                        // For Legacy, the input is the 2-of-2 multisig funding output,
-                        // not a wallet UTXO. Fall through to broadcast the contract tx.
-
-                        // Inputs are spent but contract output isn't on-chain.
-                        // For Legacy, the contract tx (pre-signed insurance) may
-                        // not have been broadcast yet — sign and push it so the
-                        // timelock output exists.
-                        log::info!(
-                            "Signing and broadcasting contract tx for {} before timelock recovery",
-                            swap_id
-                        );
-                        match swapcoin.create_signed_contract_tx() {
-                            Ok(signed_contract_tx) => match self.send_tx(&signed_contract_tx) {
-                                Ok(_) => {
-                                    log::info!(
-                                        "Contract tx {} broadcast successfully",
-                                        signed_contract_tx.compute_txid()
-                                    );
-                                }
-                                Err(e) => {
-                                    let err_str = format!("{:?}", e);
-                                    // RPC error -27 means "Transaction already in block chain"
-                                    // — the contract tx IS on-chain, so proceed with recovery.
-                                    let is_already_in_chain = err_str.contains("-27")
-                                        || err_str.contains("already in utxo set");
-                                    // RPC error -25 means inputs are missing or already spent
-                                    // — the funding tx was never broadcast (e.g. SkipFundingBroadcast),
-                                    // so this swapcoin is permanently unrecoverable. Discard it.
-                                    let is_inputs_missing = err_str.contains("-25")
-                                        || err_str.contains("bad-txns-inputs-missingorspent");
-                                    if is_already_in_chain {
-                                        log::info!(
-                                            "Contract tx for {} already on-chain, proceeding with timelock recovery",
-                                            swap_id
-                                        );
-                                    } else if is_inputs_missing {
-                                        log::warn!(
-                                            "Contract tx for {} has missing/spent inputs — discarding swapcoin: {}",
-                                            swap_id,
-                                            err_str
-                                        );
-                                        discarded.push(swap_id.clone());
-                                        continue;
-                                    } else {
-                                        log::warn!(
-                                            "Failed to broadcast contract tx for {}: {:?} — skipping recovery",
-                                            swap_id,
-                                            e
-                                        );
-                                        continue;
-                                    }
-                                }
-                            },
-                            Err(e) => {
-                                log::warn!(
-                                    "Failed to sign contract tx for {}: {:?} — skipping recovery",
-                                    swap_id,
-                                    e
-                                );
-                                continue;
-                            }
+                        Err(e) => {
+                            log::warn!("Failed to broadcast recovery tx for {}: {:?}", swap_id, e);
                         }
                     }
                 }
-
-                // Verify the contract UTXO is confirmed and the timelock is satisfied.
-                //
-                // Legacy uses BIP68 CSV (relative): the recovery tx sets
-                // Sequence::from_height(timelock), requiring `timelock` confirmations.
-                //
-                // Taproot uses BIP65 CLTV (absolute): the recovery tx sets
-                // nLockTime to the absolute height. We just need the UTXO to be
-                // confirmed (at least 1 confirmation).
-                let timelock_value = swapcoin.get_timelock().unwrap_or(0);
-                let required_confirmations =
-                    if swapcoin.protocol == crate::protocol::ProtocolVersion::Taproot {
-                        1 // CLTV only needs the UTXO to exist; height check is at lines 744-745
-                    } else {
-                        timelock_value // CSV needs this many confirmations
-                    };
-                match self
-                    .rpc
-                    .get_tx_out(&contract_txid, contract_vout, Some(false))
-                {
-                    Ok(Some(utxo_info)) if utxo_info.confirmations >= required_confirmations => {
-                        log::info!(
-                            "Contract tx {} has {} confirmations (need {}), proceeding with recovery",
-                            contract_txid,
-                            utxo_info.confirmations,
-                            required_confirmations
-                        );
-                    }
-                    Ok(Some(utxo_info)) => {
-                        log::info!(
-                            "Contract tx {} has {} confirmations, need {} — waiting",
-                            contract_txid,
-                            utxo_info.confirmations,
-                            required_confirmations
-                        );
-                        continue;
-                    }
-                    _ => {
-                        log::info!(
-                            "Contract tx {} not yet confirmed, skipping recovery attempt",
-                            contract_txid
-                        );
-                        continue;
-                    }
-                }
-
-                match self.create_timelock_recovery_tx(&swapcoin, fee_rate) {
-                    Ok(recovery_tx) => {
-                        let txid = recovery_tx.compute_txid();
-                        match self.send_tx(&recovery_tx) {
-                            Ok(_) => {
-                                log::info!("Broadcast timelock recovery tx: {}", txid);
-                                outcome.resolved.push((contract_txid, txid));
-                                recovered_keys.push(swap_id.clone());
-                            }
-                            Err(e) => {
-                                log::warn!(
-                                    "Failed to broadcast recovery tx for {}: {:?}",
-                                    swap_id,
-                                    e
-                                );
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        log::warn!("Failed to create recovery tx for {}: {:?}", swap_id, e);
-                    }
+                Err(e) => {
+                    log::warn!("Failed to create recovery tx for {}: {:?}", swap_id, e);
                 }
             }
         }
+
+        let mut w = wallet
+            .write()
+            .map_err(|_| WalletError::General("wallet lock poisoned".to_string()))?;
 
         for id in &discarded {
-            if let Some(sc) = self.store.outgoing_swapcoins.get(id) {
+            if let Some(sc) = w.store.outgoing_swapcoins.get(id) {
                 outcome.discarded.push(sc.contract_tx.compute_txid());
             }
-            self.store.outgoing_swapcoins.remove(id);
-        }
-        for key in &recovered_keys {
-            self.store.outgoing_swapcoins.remove(key);
+            w.store.outgoing_swapcoins.remove(id);
         }
 
         if !outcome.is_empty() || !discarded.is_empty() {
-            self.save_to_disk()?;
+            w.save_to_disk()?;
         }
 
         if !outcome.is_empty() {
             #[cfg(debug_assertions)]
             log::debug!(
                 "[RECOVERY_STATE] Wallet: {} | Action: recover_timelocked | Resolved: {} | Discarded: {} | OutgoingRemaining: {}",
-                self.store.file_name,
+                w.store.file_name,
                 outcome.resolved.len(),
                 outcome.discarded.len(),
-                self.store.outgoing_swapcoins.len()
+                w.store.outgoing_swapcoins.len()
             );
         }
         Ok(outcome)
@@ -958,9 +1071,9 @@ impl Wallet {
 
     /// Create a recovery transaction for a timelocked outgoing swapcoin.
     fn create_timelock_recovery_tx(
-        &mut self,
         swapcoin: &super::swapcoin::OutgoingSwapCoin,
         fee_rate: f64,
+        recovery_address: Address,
     ) -> Result<bitcoin::Transaction, WalletError> {
         use bitcoin::{locktime::absolute::LockTime, transaction::Version, Sequence, TxIn, TxOut};
 
@@ -982,12 +1095,6 @@ impl Wallet {
         let output_amount = contract_output.value.checked_sub(fee).ok_or_else(|| {
             WalletError::General("Insufficient funds for recovery fee".to_string())
         })?;
-
-        let recovery_address = self
-            .get_next_internal_addresses(1, AddressType::P2TR)?
-            .into_iter()
-            .next()
-            .ok_or_else(|| WalletError::General("Failed to get recovery address".to_string()))?;
 
         // Legacy (CSV): nSequence encodes relative locktime, nLockTime = 0.
         // Taproot (CLTV): nLockTime = absolute height, nSequence enables locktime.
@@ -1078,24 +1185,10 @@ impl Wallet {
         }
     }
 
-    /// Dynamic address import count function. 10 for tests, 5000 for production.
-    pub(crate) fn get_addrss_import_count(&self) -> u32 {
-        #[cfg(feature = "integration-test")]
-        {
-            10
-        }
-        #[cfg(not(feature = "integration-test"))]
-        {
-            5000
-        }
-    }
-
-    /// Persistently binds funding prevouts to contracts after the maker approves them.
-    ///
-    /// The full batch is checked before mutation and saved with one disk write.
-    /// Repeating identical bindings is idempotent, but rebinding an outpoint to
-    /// a different contract is rejected because a signature may already exist.
-    pub(crate) fn cache_prevout_to_contracts(
+    /// Stores an entry into [`WalletStore`]'s prevout-to-contract map.
+    /// Refuses to rebind a prevout that already has a different contract — that
+    /// refusal stops a taker re-binding a prevout the maker already signed for.
+    pub(crate) fn cache_prevout_to_contract(
         &mut self,
         bindings: &[(OutPoint, ScriptBuf)],
     ) -> Result<(), WalletError> {
@@ -1174,31 +1267,33 @@ impl Wallet {
             .collect()
     }
 
-    /// Checks if the addresses derived from the wallet descriptor is imported upto full index range.
-    /// Returns the list of descriptors not imported yet. Max index range is as below:
-    /// Production => 5000
-    /// Integration Tests => 6
+    /// Checks if the addresses derived from the wallet descriptor is imported upto the
+    /// rolling gap-limit window ([`Wallet::max_watch_index`]).
+    /// Returns the list of descriptors not imported yet.
     pub(super) fn get_unimported_wallet_desc(
         &self,
         address_type: AddressType,
     ) -> Result<Vec<String>, WalletError> {
         let mut unimported = Vec::new();
-        for (_, descriptor) in self.get_wallet_descriptors(address_type)? {
-            let first_addr = self.rpc.derive_addresses(&descriptor, Some([0, 0]))?[0].clone();
+        for (keychain, descriptor) in self.get_wallet_descriptors(address_type)? {
+            let first_addr = self
+                .blockchain
+                .derive_addresses(&descriptor, Some([0, 0]))?[0]
+                .clone();
 
-            let last_index = self.get_addrss_import_count() - 1;
+            let last_index = self.max_watch_index(keychain)?;
             let last_addr = self
-                .rpc
+                .blockchain
                 .derive_addresses(&descriptor, Some([last_index, last_index]))?[0]
                 .clone();
 
             let first_addr_imported = self
-                .rpc
+                .blockchain
                 .get_address_info(&first_addr.assume_checked())?
                 .is_watchonly
                 .unwrap_or(false);
             let last_addr_imported = self
-                .rpc
+                .blockchain
                 .get_address_info(&last_addr.assume_checked())?
                 .is_watchonly
                 .unwrap_or(false);
@@ -1224,40 +1319,41 @@ impl Wallet {
     }
 
     /// Locks the fidelity and live_contract utxos which are not considered for spending from the wallet.
-    pub fn lock_unspendable_utxos(&self) -> Result<(), WalletError> {
-        self.rpc.unlock_unspent_all()?;
+    pub fn lock_unspendable_utxos(&mut self) -> Result<(), WalletError> {
+        self.locked_utxos.clear();
 
-        let all_unspents = self
-            .rpc
-            .list_unspent(Some(0), Some(9999999), None, None, None)?;
-        let utxos_to_lock = &all_unspents
-            .into_iter()
-            .filter(|u| {
-                self.check_and_derive_descriptor_utxo_or_swap_coin(u)
-                    .unwrap()
-                    .is_none()
-            })
-            .map(|u| OutPoint {
-                txid: u.txid,
-                vout: u.vout,
-            })
-            .collect::<Vec<OutPoint>>();
-        self.rpc.lock_unspent(utxos_to_lock)?;
+        let all_unspents = self.blockchain.list_unspent(Some(0), Some(9999999))?;
+        let mut utxos_to_lock = Vec::new();
+        for u in all_unspents {
+            if self
+                .check_and_derive_descriptor_utxo_or_swap_coin(&u)?
+                .is_none()
+            {
+                utxos_to_lock.push(OutPoint {
+                    txid: u.txid,
+                    vout: u.vout,
+                });
+            }
+        }
+        self.lock_utxos(&utxos_to_lock);
         Ok(())
     }
 
-    fn list_lock_unspent(&self) -> Result<Vec<OutPoint>, WalletError> {
-        // Call the RPC method "listlockunspent" with no parameters.
-        let locked_utxos: Vec<LockedUtxo> = self.rpc.call("listlockunspent", &[])?;
+    /// Add `outpoints` to the wallet-side lock set so [`Wallet::coin_select`]
+    /// skips them. See [`Wallet::locked_utxos`].
+    pub(crate) fn lock_utxos(&mut self, outpoints: &[OutPoint]) {
+        self.locked_utxos.extend(outpoints.iter().copied());
+    }
 
-        // Convert each LockedUtxo into an OutPoint.
-        Ok(locked_utxos
-            .into_iter()
-            .map(|lu| OutPoint {
-                txid: lu.txid,
-                vout: lu.vout,
-            })
-            .collect())
+    /// Clear the wallet-side lock set, making every coin selectable again.
+    pub(crate) fn unlock_all_utxos(&mut self) {
+        self.locked_utxos.clear();
+    }
+
+    /// Outpoints currently held in the wallet-side lock set (see
+    /// [`Wallet::locked_utxos`]).
+    fn list_lock_unspent(&self) -> Vec<OutPoint> {
+        self.locked_utxos.iter().copied().collect()
     }
 
     /// Checks if a UTXO belongs to fidelity bonds, and then returns corresponding UTXOSpendInfo
@@ -1283,26 +1379,40 @@ impl Wallet {
         &self,
         utxo: &ListUnspentResultEntry,
     ) -> Option<UTXOSpendInfo> {
-        if self
+        if !self
             .store
             .swept_incoming_swapcoins
             .contains(&utxo.script_pub_key)
         {
-            if let Some(descriptor) = &utxo.descriptor {
-                if let Some((_, addr_type, index)) = get_hd_path_from_descriptor(descriptor) {
-                    let path = format!("m/{addr_type}/{index}");
-                    let address_type = if descriptor.starts_with("tr(") {
-                        AddressType::P2TR
-                    } else {
-                        AddressType::P2WPKH
-                    };
-                    return Some(UTXOSpendInfo::SweptCoin {
-                        input_value: utxo.amount,
-                        path,
-                        address_type,
-                    });
-                }
+            return None;
+        }
+        // Bitcoin Core path: HD origin lives in the descriptor string.
+        if let Some(descriptor) = &utxo.descriptor {
+            if let Some((_, addr_type, index)) = get_hd_path_from_descriptor(descriptor) {
+                let address_type = if descriptor.starts_with("tr(") {
+                    AddressType::P2TR
+                } else {
+                    AddressType::P2WPKH
+                };
+                return Some(UTXOSpendInfo::SweptCoin {
+                    input_value: utxo.amount,
+                    path: format!("m/{addr_type}/{index}"),
+                    address_type,
+                });
             }
+        }
+        // Electrum Path: HD Origin is stored internally for each script pubkey.
+        if let Some(hd) = self.blockchain.hd_origin_for_script(&utxo.script_pub_key) {
+            let address_type = if hd.is_taproot {
+                AddressType::P2TR
+            } else {
+                AddressType::P2WPKH
+            };
+            return Some(UTXOSpendInfo::SweptCoin {
+                input_value: utxo.amount,
+                path: format!("m/{}/{}", hd.keychain_idx, hd.index),
+                address_type,
+            });
         }
         None
     }
@@ -1313,19 +1423,19 @@ impl Wallet {
     fn check_and_derive_live_contract_spend_info(
         &self,
         utxo: &ListUnspentResultEntry,
-    ) -> Result<Option<UTXOSpendInfo>, WalletError> {
+    ) -> Option<UTXOSpendInfo> {
         // Check outgoing swapcoins for timelock contracts
         for outgoing in self.store.outgoing_swapcoins.values() {
             let contract_txid = outgoing.contract_tx.compute_txid();
             let vout = outgoing.get_contract_output_vout();
             if utxo.txid == contract_txid && utxo.vout == vout {
-                return Ok(Some(UTXOSpendInfo::TimelockContract {
+                return Some(UTXOSpendInfo::TimelockContract {
                     swapcoin_multisig_redeemscript: outgoing
                         .contract_redeemscript
                         .clone()
                         .unwrap_or_default(),
                     input_value: utxo.amount,
-                }));
+                });
             }
         }
 
@@ -1334,17 +1444,17 @@ impl Wallet {
             let contract_txid = incoming.contract_tx.compute_txid();
             let vout = incoming.get_contract_output_vout();
             if utxo.txid == contract_txid && utxo.vout == vout && incoming.is_preimage_known() {
-                return Ok(Some(UTXOSpendInfo::HashlockContract {
+                return Some(UTXOSpendInfo::HashlockContract {
                     swapcoin_multisig_redeemscript: incoming
                         .contract_redeemscript
                         .clone()
                         .unwrap_or_default(),
                     input_value: utxo.amount,
-                }));
+                });
             }
         }
 
-        Ok(None)
+        None
     }
 
     /// Checks if a UTXO belongs to descriptor or swap coin, and then returns corresponding UTXOSpendInfo
@@ -1357,6 +1467,56 @@ impl Wallet {
         // First check if it's a swept incoming swap coin (V1)
         if let Some(swept_info) = self.check_if_swept_incoming_swapcoin(utxo) {
             return Ok(Some(swept_info));
+        }
+
+        // Electrum surfaces HD origin out-of-band rather than via the descriptor
+        // string (which is empty for Electrum UTXOs).
+        if let Some(hd) = self.blockchain.hd_origin_for_script(&utxo.script_pub_key) {
+            let address_type = if hd.is_taproot {
+                AddressType::P2TR
+            } else {
+                AddressType::P2WPKH
+            };
+            let secp = crate::utill::global_secp();
+            let derivation_path = Self::get_derivation_path(address_type, self.store.network);
+            let master_private_key = self.store.master_key.derive_priv(secp, &derivation_path)?;
+            if hd.fingerprint == master_private_key.fingerprint(secp).to_string() {
+                return Ok(Some(UTXOSpendInfo::SeedCoin {
+                    path: format!("m/{}/{}", hd.keychain_idx, hd.index),
+                    input_value: utxo.amount,
+                    address_type,
+                }));
+            }
+        }
+
+        // Bitcoin Core populates `witness_script` via importdescriptors; Electrum
+        // doesn't. Fall back to deriving the redeem script from our swap-coin
+        // records and matching by scriptPubKey.
+        if utxo.witness_script.is_none() {
+            let spk = utxo.script_pub_key.as_script();
+            let legacy = crate::protocol::ProtocolVersion::Legacy;
+            let match_rs = |my: Option<PublicKey>, other: Option<PublicKey>| -> Option<ScriptBuf> {
+                let rs = create_multisig_redeemscript(&my?, &other?);
+                (ScriptBuf::new_p2wsh(&rs.wscript_hash()).as_script() == spk).then_some(rs)
+            };
+            for sc in self.store.incoming_swapcoins.values() {
+                if sc.protocol == legacy && sc.other_privkey.is_some() {
+                    if let Some(rs) = match_rs(sc.my_pubkey, sc.other_pubkey) {
+                        return Ok(Some(UTXOSpendInfo::IncomingSwapCoin {
+                            multisig_redeemscript: rs,
+                        }));
+                    }
+                }
+            }
+            for sc in self.store.outgoing_swapcoins.values() {
+                if sc.protocol == legacy && sc.hash_preimage.is_some() {
+                    if let Some(rs) = match_rs(sc.my_pubkey, sc.other_pubkey) {
+                        return Ok(Some(UTXOSpendInfo::OutgoingSwapCoin {
+                            multisig_redeemscript: rs,
+                        }));
+                    }
+                }
+            }
         }
 
         // Existing logic for other UTXO types
@@ -1582,22 +1742,87 @@ impl Wallet {
         let mut swap_coin_utxo = self.list_swap_coin_utxo_spend_info();
         utxos.append(&mut swap_coin_utxo);
 
+        let target = keychain.index_num();
         for (utxo, _) in utxos {
-            if utxo.descriptor.is_none() {
+            // The HD path comes from the UTXO's descriptor string on Bitcoin Core;
+            // Electrum attaches no descriptor, so fall back to the backend's
+            // script -> HdOrigin map populated by `watch_wallet_scripts`.
+            let (kc_idx, index) = if let Some(d) = &utxo.descriptor {
+                match get_hd_path_from_descriptor(d) {
+                    Some((_, kc, i)) => (kc, i),
+                    None => continue,
+                }
+            } else if let Some(hd) = self.blockchain.hd_origin_for_script(&utxo.script_pub_key) {
+                (hd.keychain_idx, hd.index as i32)
+            } else {
                 continue;
+            };
+            if kc_idx == target {
+                max_index = std::cmp::max(max_index, index);
             }
-            let descriptor = utxo.descriptor.expect("its not none");
-            let ret = get_hd_path_from_descriptor(&descriptor);
-            if ret.is_none() {
-                continue;
-            }
-            let (_, addr_type, index) = ret.expect("its not none");
-            if addr_type != keychain.index_num() {
-                continue;
-            }
-            max_index = std::cmp::max(max_index, index);
         }
-        Ok((max_index + 1) as u32)
+        let mut next = (max_index + 1) as u32;
+
+        // A backup carries no hand-out counters, and an emptied address leaves no
+        // UTXO to find, so the loop above stops at the first spent-out run. Script
+        // history still remembers those addresses, so probe forward on it.
+        if self.restore_scan && self.blockchain.is_electrum() {
+            let secp = crate::utill::global_secp();
+            let mut accounts = Vec::with_capacity(2);
+            for address_type in [AddressType::P2WPKH, AddressType::P2TR] {
+                accounts.push((
+                    address_type,
+                    self.store.master_key.derive_priv(
+                        secp,
+                        &Self::get_derivation_path(address_type, self.store.network),
+                    )?,
+                ));
+            }
+
+            let mut probe = next;
+            let mut empty_run = 0;
+            // The window cap is only checked after this returns, so stop probing
+            // at it too - otherwise a server claiming history everywhere loops on.
+            while empty_run < RESTORE_ADDRESS_GAP && probe <= MAX_WATCH_WINDOW {
+                let mut has_history = false;
+                for (address_type, account) in &accounts {
+                    let script = derive_child_script(account, *address_type, keychain, probe)?;
+                    if self.blockchain.script_has_history(&script)? {
+                        has_history = true;
+                        break;
+                    }
+                }
+                if has_history {
+                    next = probe + 1;
+                    empty_run = 0;
+                } else {
+                    empty_run += 1;
+                }
+                probe += 1;
+            }
+        }
+        Ok(next)
+    }
+
+    /// Highest HD index (inclusive) to watch/import on a keychain. The returned
+    /// index leaves [`ADDRESS_IMPORT_COUNT`] unused addresses beyond the last
+    /// used one: `used` below is the *next* never-used index, so the window ends
+    /// at `used + gap - 1`.
+    pub(crate) fn max_watch_index(&self, keychain: KeychainKind) -> Result<u32, WalletError> {
+        let handed_out = match keychain {
+            KeychainKind::External => self.store.external_index,
+            KeychainKind::Internal => self.store.internal_index,
+        };
+        // Take the max because each side misses addresses the other knows:
+        // the UTXO scan can't see addresses that are handed out but not yet
+        // funded, and the store counters can't see on-chain funds past them.
+        let used = self.find_hd_next_index(keychain)?.max(handed_out);
+        let gap = if self.restore_scan {
+            RESTORE_ADDRESS_GAP
+        } else {
+            ADDRESS_IMPORT_COUNT
+        };
+        Ok(used + gap - 1)
     }
 
     /// Gets the next external address from the HD keychain. Saves the wallet to disk
@@ -1609,7 +1834,7 @@ impl Wallet {
         let receive_branch_descriptor = descriptors
             .get(&KeychainKind::External)
             .expect("external keychain expected");
-        let receive_address = self.rpc.derive_addresses(
+        let receive_address = self.blockchain.derive_addresses(
             receive_branch_descriptor,
             Some([self.store.external_index, self.store.external_index]),
         )?[0]
@@ -1625,15 +1850,22 @@ impl Wallet {
         count: u32,
         address_type: AddressType,
     ) -> Result<Vec<Address>, WalletError> {
+        // Return early. If count = 0 the calculation below will overflow.
+        if count == 0 {
+            return Ok(Vec::new());
+        }
         let start = self.store.internal_index;
         let descriptors = self.get_wallet_descriptors(address_type)?;
         let change_branch_descriptor = descriptors
             .get(&KeychainKind::Internal)
             .expect("Internal Keychain expected");
         let addresses = self
-            .rpc
+            .blockchain
             .derive_addresses(change_branch_descriptor, Some([start, start + count - 1]))?;
 
+        // Deliberate: the counter advances at hand-out time (multi-tx funding
+        // needs a batch up front), so aborted attempts leave unused index gaps.
+        // The rolling watch window follows the counter, so funds stay visible;
         self.store.internal_index += count;
         self.save_to_disk()?;
 
@@ -1686,7 +1918,10 @@ impl Wallet {
     }
 
     /// Refreshes the UTXO cache by adding only new UTXOs while preserving existing ones.
-    pub(crate) fn update_utxo_cache(&mut self, utxos: Vec<ListUnspentResultEntry>) {
+    pub(crate) fn update_utxo_cache(
+        &mut self,
+        utxos: Vec<ListUnspentResultEntry>,
+    ) -> Result<(), WalletError> {
         let mut new_entries = Vec::new();
         let existing_outpoints: std::collections::HashSet<OutPoint> = utxos
             .iter()
@@ -1722,16 +1957,13 @@ impl Wallet {
             }
 
             // Process UTXOs to pair each with it's spend info using the wallet's private methods.
-            let spend_info = self
+            let spend_info = match self
                 .check_if_fidelity(&utxo)
-                .or_else(|| {
-                    self.check_and_derive_live_contract_spend_info(&utxo)
-                        .unwrap()
-                })
-                .or_else(|| {
-                    self.check_and_derive_descriptor_utxo_or_swap_coin(&utxo)
-                        .unwrap()
-                });
+                .or_else(|| self.check_and_derive_live_contract_spend_info(&utxo))
+            {
+                Some(info) => Some(info),
+                None => self.check_and_derive_descriptor_utxo_or_swap_coin(&utxo)?,
+            };
 
             // If we found valid spend info, store it in the cache
             if let Some(info) = spend_info {
@@ -1756,6 +1988,7 @@ impl Wallet {
         for (outpoint, entry) in new_entries {
             self.store.utxo_cache.insert(outpoint, entry);
         }
+        Ok(())
     }
 
     /// Signs a transaction corresponding to the provided UTXO spend information.
@@ -1772,62 +2005,64 @@ impl Wallet {
         // Build all prevouts for taproot sighash computation (BIP-341 requires all prevouts)
         let prevouts: Vec<TxOut> = inputs_info
             .iter()
-            .map(|info| match info {
-                UTXOSpendInfo::SeedCoin {
-                    path,
-                    input_value,
-                    address_type,
-                }
-                | UTXOSpendInfo::SweptCoin {
-                    path,
-                    input_value,
-                    address_type,
-                    ..
-                } => {
-                    let base_derivation =
-                        Self::get_derivation_path(*address_type, self.store.network);
-                    let master_private_key = self
-                        .store
-                        .master_key
-                        .derive_priv(&secp, &base_derivation)
-                        .unwrap();
-                    let privkey = master_private_key
-                        .derive_priv(&secp, &DerivationPath::from_str(path).unwrap())
-                        .unwrap()
-                        .private_key;
+            .map(|info| -> Result<TxOut, WalletError> {
+                Ok(match info {
+                    UTXOSpendInfo::SeedCoin {
+                        path,
+                        input_value,
+                        address_type,
+                    }
+                    | UTXOSpendInfo::SweptCoin {
+                        path,
+                        input_value,
+                        address_type,
+                        ..
+                    } => {
+                        let base_derivation =
+                            Self::get_derivation_path(*address_type, self.store.network);
+                        let master_private_key = self
+                            .store
+                            .master_key
+                            .derive_priv(&secp, &base_derivation)
+                            .unwrap();
+                        let privkey = master_private_key
+                            .derive_priv(&secp, &DerivationPath::from_str(path).unwrap())
+                            .unwrap()
+                            .private_key;
 
-                    let script_pubkey = match address_type {
-                        AddressType::P2WPKH => {
-                            let pubkey = PublicKey {
-                                compressed: true,
-                                inner: privkey.public_key(&secp),
-                            };
-                            ScriptBuf::new_p2wpkh(&pubkey.wpubkey_hash().unwrap())
+                        let script_pubkey = match address_type {
+                            AddressType::P2WPKH => {
+                                let pubkey = PublicKey {
+                                    compressed: true,
+                                    inner: privkey.public_key(&secp),
+                                };
+                                ScriptBuf::new_p2wpkh(&pubkey.wpubkey_hash().unwrap())
+                            }
+                            AddressType::P2TR => {
+                                let keypair = Keypair::from_secret_key(&secp, &privkey);
+                                let (x_only_pubkey, _) = keypair.x_only_public_key();
+                                ScriptBuf::new_p2tr(&secp, x_only_pubkey, None)
+                            }
+                        };
+                        TxOut {
+                            script_pubkey,
+                            value: *input_value,
                         }
-                        AddressType::P2TR => {
-                            let keypair = Keypair::from_secret_key(&secp, &privkey);
-                            let (x_only_pubkey, _) = keypair.x_only_public_key();
-                            ScriptBuf::new_p2tr(&secp, x_only_pubkey, None)
+                    }
+                    UTXOSpendInfo::FidelityBondCoin { index, input_value } => {
+                        let redeemscript = self.get_fidelity_reedemscript(*index)?;
+                        TxOut {
+                            script_pubkey: redeemscript.to_p2wsh(),
+                            value: *input_value,
                         }
-                    };
-                    TxOut {
-                        script_pubkey,
-                        value: *input_value,
                     }
-                }
-                UTXOSpendInfo::FidelityBondCoin { index, input_value } => {
-                    let redeemscript = self.get_fidelity_reedemscript(*index).unwrap();
-                    TxOut {
-                        script_pubkey: redeemscript.to_p2wsh(),
-                        value: *input_value,
-                    }
-                }
-                _ => TxOut {
-                    script_pubkey: ScriptBuf::new(),
-                    value: Amount::ZERO,
-                },
+                    _ => TxOut {
+                        script_pubkey: ScriptBuf::new(),
+                        value: Amount::ZERO,
+                    },
+                })
             })
-            .collect();
+            .collect::<Result<Vec<_>, _>>()?;
 
         if tx.input.len() != inputs_info.len() {
             return Err(WalletError::General(format!(
@@ -1849,7 +2084,11 @@ impl Wallet {
                 } => {
                     let sc = self
                         .find_incoming_swapcoin_by_multisig(&multisig_redeemscript)
-                        .expect("incoming swapcoin missing");
+                        .ok_or_else(|| {
+                            WalletError::General(
+                                "incoming swapcoin not found in wallet store".to_string(),
+                            )
+                        })?;
                     let spend_tx = sc.sign_spend_transaction(
                         sc.funding_amount,
                         &tx.output[0].script_pubkey,
@@ -1926,7 +2165,11 @@ impl Wallet {
                 } => {
                     let sc = self
                         .find_outgoing_swapcoin_by_multisig(&swapcoin_multisig_redeemscript)
-                        .expect("Outgoing swapcoin expected");
+                        .ok_or_else(|| {
+                            WalletError::General(
+                                "outgoing swapcoin not found in wallet store".to_string(),
+                            )
+                        })?;
                     let signed_tx = sc.sign_timelock_recovery(tx_clone.clone())?;
                     input.witness = signed_tx.input[0].witness.clone();
                 }
@@ -1936,7 +2179,11 @@ impl Wallet {
                 } => {
                     let sc = self
                         .find_incoming_swapcoin_by_multisig(&swapcoin_multisig_redeemscript)
-                        .expect("Incoming swapcoin expected");
+                        .ok_or_else(|| {
+                            WalletError::General(
+                                "incoming swapcoin not found in wallet store".to_string(),
+                            )
+                        })?;
                     let spend_tx = sc.sign_spend_transaction(
                         sc.funding_amount,
                         &tx.output[0].script_pubkey,
@@ -2027,7 +2274,7 @@ impl Wallet {
         let change_output_weight = (Amount::SIZE as u64 + 1 + 34u64) * 4;
 
         // 1. Drop locked and explicitly excluded UTXOs from consideration.
-        let locked_utxos = self.list_lock_unspent()?;
+        let locked_utxos = self.list_lock_unspent();
         let excluded: std::collections::HashSet<OutPoint> =
             excluded_outpoints.unwrap_or_default().into_iter().collect();
         let filter_locked = |utxos: Vec<(ListUnspentResultEntry, UTXOSpendInfo)>| {
@@ -2045,7 +2292,7 @@ impl Wallet {
         let available_swap_utxos = filter_locked(self.list_swept_incoming_swap_utxos());
 
         // Assert that no non-spendable UTXOs are included after filtering
-        assert!(
+        debug_assert!(
         available_regular_utxos.iter().chain(available_swap_utxos.iter()).all(|(_, spend_info)| !matches!(
             spend_info,
             UTXOSpendInfo::FidelityBondCoin { .. }
@@ -2355,20 +2602,44 @@ impl Wallet {
     ) -> Result<(Address, SecretKey), WalletError> {
         let (my_pubkey, my_privkey) = generate_keypair();
 
-        let descriptor = self
-            .rpc
-            .get_descriptor_info(&format!("wsh(sortedmulti(2,{my_pubkey},{other_pubkey}))"))?
-            .descriptor;
-        self.import_descriptors(std::slice::from_ref(&descriptor), None, None)?;
+        // create_multisig_reedemscript already follows BIP67 lexicographic ordering.
+        // So this reedemscript is equavalent to `sortedmulti` descriptor.
+        // This is revalidated again for Core backend only.
+        let redeem_script = create_multisig_redeemscript(&my_pubkey, other_pubkey);
+        let network = self.store.network;
+        let address = Address::p2wsh(&redeem_script, network);
 
-        // redeemscript and descriptor show up in `getaddressinfo` only after
-        // the address gets outputs on it-
-        Ok((
-            self.rpc.derive_addresses(&descriptor[..], None)?[0]
-                .clone()
-                .assume_checked(),
-            my_privkey,
-        ))
+        let descriptor_without_checksum = format!("wsh(sortedmulti(2,{my_pubkey},{other_pubkey}))");
+        let descriptor = format!(
+            "{descriptor_without_checksum}#{}",
+            compute_checksum(&descriptor_without_checksum)?
+        );
+
+        // Check for equvalence from Core backend
+        // Electrum cannot do this.
+        if !self.blockchain.is_electrum() {
+            let derived = self
+                .blockchain
+                .derive_addresses(&descriptor, None)?
+                .first()
+                .map(|a| a.clone().assume_checked())
+                .ok_or_else(|| {
+                    WalletError::General(format!(
+                        "deriveaddresses returned no address for {descriptor}"
+                    ))
+                })?;
+            if derived != address {
+                return Err(WalletError::General(format!(
+                    "descriptor {descriptor} derives {derived}, expected {address}"
+                )));
+            }
+        }
+        // Import into Core
+        self.import_descriptors(std::slice::from_ref(&descriptor), None, None)?;
+        // Import into Electrum
+        self.blockchain.watch_script(&address.script_pubkey(), None);
+
+        Ok((address, my_privkey))
     }
 
     pub(crate) fn descriptors_to_import(&self) -> Result<Vec<String>, WalletError> {
@@ -2440,40 +2711,56 @@ impl Wallet {
 
     /// Uses internal RPC client to broadcast a transaction
     pub fn send_tx(&self, tx: &Transaction) -> Result<Txid, WalletError> {
-        Ok(self.rpc.send_raw_transaction(tx)?)
+        self.blockchain.send_raw_transaction(tx)
     }
     /// Sweeps all completed incoming swap coins.
+    /// Sweep incoming swapcoins whose claim is ready (cooperative key or hashlock preimage).
+    ///
+    /// The taker always claims what it can. If a maker goes dark and breaks the
+    /// preimage cascade, the taker may end up with both the incoming sweep and
+    /// its own timelock refund — the double cost lands on the faulty maker.
+    ///
+    /// Takes the wallet lock, not a guard: the confirmation waits run on a fresh
+    /// backend connection with no guard held, so a slow tx cannot wedge the wallet.
     pub fn sweep_incoming_swapcoins(
-        &mut self,
+        wallet: &std::sync::RwLock<Wallet>,
         feerate: f64,
+        shutdown: &std::sync::atomic::AtomicBool,
     ) -> Result<RecoveryOutcome, WalletError> {
         let mut outcome = RecoveryOutcome::default();
 
-        let completed_swapcoins: Vec<_> = self
-            .store
-            .incoming_swapcoins
-            .iter()
-            .filter(|(_, swapcoin)| {
-                swapcoin.other_privkey.is_some() || swapcoin.hash_preimage.is_some()
-            })
-            .map(|(swap_id, swapcoin)| (swap_id.clone(), swapcoin.clone()))
-            .collect();
+        // Snapshot everything the sweep needs, then drop the guard before any wait.
+        let (completed_swapcoins, chain) = {
+            let mut w = wallet
+                .write()
+                .map_err(|_| WalletError::General("wallet lock poisoned".to_string()))?;
 
-        if completed_swapcoins.is_empty() {
-            log::info!("No completed incoming swap coins to sweep");
-            return Ok(outcome);
-        }
+            let completed_swapcoins: Vec<_> = w
+                .store
+                .incoming_swapcoins
+                .iter()
+                .filter(|(_, swapcoin)| {
+                    swapcoin.other_privkey.is_some() || swapcoin.hash_preimage.is_some()
+                })
+                .map(|(swap_id, swapcoin)| (swap_id.clone(), swapcoin.clone()))
+                .collect();
+
+            if completed_swapcoins.is_empty() {
+                log::info!("No completed incoming swap coins to sweep");
+                return Ok(outcome);
+            }
+
+            w.sync_and_save(shutdown)?;
+
+            let chain = w.blockchain.new_connection()?;
+            (completed_swapcoins, chain)
+        };
 
         log::info!(
             "Sweeping {} completed incoming swap coins",
             completed_swapcoins.len()
         );
-
-        self.sync_and_save()?;
-
-        let internal_addresses =
-            self.get_next_internal_addresses(completed_swapcoins.len() as u32, AddressType::P2TR)?;
-        for (i, (swap_id, swapcoin)) in completed_swapcoins.into_iter().enumerate() {
+        for (swap_id, swapcoin) in completed_swapcoins.into_iter() {
             let contract_txid = swapcoin.contract_tx.compute_txid();
             // Determine which UTXO to spend based on protocol and spending path.
             let (utxo_txid, utxo_vout, input_value) = match swapcoin.protocol {
@@ -2528,16 +2815,14 @@ impl Wallet {
             // Verify the UTXO actually exists on chain before attempting to spend.
             // First check confirmed UTXOs, then fall back to mempool.
             let utxo_confirmed = matches!(
-                self.rpc.get_tx_out(&utxo_txid, utxo_vout, Some(false)),
+                chain.get_tx_out(&utxo_txid, utxo_vout, Some(false)),
                 Ok(Some(_))
             );
 
             if !utxo_confirmed {
                 // UTXO not yet confirmed. Check if it's at least in the mempool.
-                let in_mempool = matches!(
-                    self.rpc.get_tx_out(&utxo_txid, utxo_vout, None),
-                    Ok(Some(_))
-                );
+                let in_mempool =
+                    matches!(chain.get_tx_out(&utxo_txid, utxo_vout, None), Ok(Some(_)));
 
                 if in_mempool {
                     // The incoming contract tx is broadcast but unconfirmed.
@@ -2548,41 +2833,28 @@ impl Wallet {
                         utxo_vout,
                         swap_id
                     );
-                    // Poll get_tx_out with confirmed-only until the UTXO appears.
-                    // We can't use wait_for_tx_confirmation here because that
-                    // requires the tx to be in our wallet's transaction history,
-                    // but this tx was broadcast by another party.
-                    let mut wait_secs = 0u64;
-                    loop {
-                        if matches!(
-                            self.rpc.get_tx_out(&utxo_txid, utxo_vout, Some(false)),
-                            Ok(Some(_))
-                        ) {
-                            log::info!(
-                                "Incoming contract tx {}:{} confirmed for {}",
-                                utxo_txid,
-                                utxo_vout,
-                                swap_id
-                            );
-                            break;
-                        }
-                        wait_secs += 10;
-                        if wait_secs > 600 {
+                    match wait_for_tx_confirmation(
+                        &chain,
+                        &[utxo_txid],
+                        1,
+                        TX_BROADCAST_TIMEOUT,
+                        Some(shutdown),
+                        None,
+                    ) {
+                        Ok(_) => {}
+                        Err(e @ WalletError::Interrupted(_)) => return Err(e),
+                        Err(e) => {
+                            // Bounded wait ran out — skip this coin; the recovery
+                            // loop retries the sweep on its next pass.
                             log::warn!(
-                                "Timed out waiting for contract tx {}:{} to confirm for {}",
+                                "Giving up waiting on {}:{} for {}: {:?}",
                                 utxo_txid,
                                 utxo_vout,
-                                swap_id
+                                swap_id,
+                                e
                             );
-                            break;
+                            continue;
                         }
-                        log::info!(
-                            "Still waiting for {}:{} to confirm ({}s elapsed)",
-                            utxo_txid,
-                            utxo_vout,
-                            wait_secs
-                        );
-                        std::thread::sleep(std::time::Duration::from_secs(10));
                     }
                 } else if swapcoin.other_privkey.is_none() && swapcoin.others_contract_sig.is_some()
                 {
@@ -2591,23 +2863,25 @@ impl Wallet {
                         swap_id
                     );
                     match swapcoin.create_signed_contract_tx() {
-                        Ok(signed_contract_tx) => match self.send_tx(&signed_contract_tx) {
-                            Ok(txid) => {
-                                log::info!(
-                                    "Broadcast incoming contract tx {} for {}",
-                                    txid,
-                                    swap_id
-                                );
+                        Ok(signed_contract_tx) => {
+                            match chain.send_raw_transaction(&signed_contract_tx) {
+                                Ok(txid) => {
+                                    log::info!(
+                                        "Broadcast incoming contract tx {} for {}",
+                                        txid,
+                                        swap_id
+                                    );
+                                }
+                                Err(e) => {
+                                    log::warn!(
+                                        "Failed to broadcast incoming contract tx for {}: {:?}",
+                                        swap_id,
+                                        e
+                                    );
+                                    continue;
+                                }
                             }
-                            Err(e) => {
-                                log::warn!(
-                                    "Failed to broadcast incoming contract tx for {}: {:?}",
-                                    swap_id,
-                                    e
-                                );
-                                continue;
-                            }
-                        },
+                        }
                         Err(e) => {
                             log::warn!(
                                 "Failed to create signed incoming contract tx for {}: {:?}",
@@ -2620,7 +2894,7 @@ impl Wallet {
 
                     // Re-check UTXO availability (including mempool) after broadcast
                     let utxo_available = matches!(
-                        self.rpc.get_tx_out(&utxo_txid, utxo_vout, Some(true)),
+                        chain.get_tx_out(&utxo_txid, utxo_vout, Some(true)),
                         Ok(Some(_))
                     );
                     if !utxo_available {
@@ -2639,8 +2913,22 @@ impl Wallet {
                 }
             }
 
-            // Receive the swept funds at this coin's pre-allocated distinct address.
-            let internal_address = internal_addresses[i].clone();
+            // Allocate the address only for a coin actually being swept; a coin
+            // skipped every pass would otherwise burn an index each time and
+            // grow the watch window forever. Take the guard just for this, so
+            // nothing below waits with it held.
+            let internal_address = {
+                let mut w = wallet
+                    .write()
+                    .map_err(|_| WalletError::General("wallet lock poisoned".to_string()))?;
+                let addr = w.get_next_internal_addresses(1, AddressType::P2TR)?[0].clone();
+                // Mark the sweep target before broadcast, not after confirmation: a
+                // sync inside the confirmation window must not see it as a seed coin.
+                w.store
+                    .swept_incoming_swapcoins
+                    .insert(addr.script_pubkey());
+                addr
+            };
 
             log::info!(
                 "Sweeping incoming swap coin {} (utxo: {}:{}) to internal address {}",
@@ -2656,10 +2944,16 @@ impl Wallet {
                 feerate,
             ) {
                 Ok(spend_tx) => {
-                    match self.send_tx(&spend_tx) {
+                    match chain.send_raw_transaction(&spend_tx) {
                         Ok(txid) => {
-                            let conf_height =
-                                self.wait_for_tx_confirmation(&[txid], 1, None, None)?;
+                            let conf_height = wait_for_tx_confirmation(
+                                &chain,
+                                &[txid],
+                                1,
+                                TX_BROADCAST_TIMEOUT,
+                                Some(shutdown),
+                                None,
+                            )?;
                             log::info!(
                                 "Sweep transaction {} confirmed at blockheight: {}",
                                 txid,
@@ -2669,14 +2963,11 @@ impl Wallet {
                             outcome.resolved.push((contract_txid, txid));
                             log::info!("Successfully swept incoming swap coin: {}", swap_id);
 
-                            // Remove the swapcoin from wallet
-                            self.remove_incoming_swapcoin(&swap_id);
-
-                            // Track the output scriptpubkey to prevent mixing with regular UTXOs
-                            let output_scriptpubkey = internal_address.script_pubkey();
-                            self.store
-                                .swept_incoming_swapcoins
-                                .insert(output_scriptpubkey);
+                            // Re-acquire the guard only to drop the swept coin.
+                            let mut w = wallet.write().map_err(|_| {
+                                WalletError::General("wallet lock poisoned".to_string())
+                            })?;
+                            w.remove_incoming_swapcoin(&swap_id);
                         }
                         Err(e) => {
                             log::warn!(
@@ -2684,6 +2975,15 @@ impl Wallet {
                                 swap_id,
                                 e
                             );
+                            // Sweep never happened; unmark the address.
+                            wallet
+                                .write()
+                                .map_err(|_| {
+                                    WalletError::General("wallet lock poisoned".to_string())
+                                })?
+                                .store
+                                .swept_incoming_swapcoins
+                                .remove(&internal_address.script_pubkey());
                         }
                     }
                 }
@@ -2693,33 +2993,36 @@ impl Wallet {
                         swap_id,
                         e
                     );
+                    // Sweep never happened; unmark the address.
+                    wallet
+                        .write()
+                        .map_err(|_| WalletError::General("wallet lock poisoned".to_string()))?
+                        .store
+                        .swept_incoming_swapcoins
+                        .remove(&internal_address.script_pubkey());
                 }
             }
         }
 
-        self.save_to_disk()?;
+        let w = wallet
+            .write()
+            .map_err(|_| WalletError::General("wallet lock poisoned".to_string()))?;
+        w.save_to_disk()?;
         if !outcome.is_empty() {
             #[cfg(debug_assertions)]
             log::debug!(
                 "[RECOVERY_STATE] Wallet: {} | Action: sweep_incoming | Resolved: {} | Discarded: {} | IncomingRemaining: {}",
-                self.store.file_name,
+                w.store.file_name,
                 outcome.resolved.len(),
                 outcome.discarded.len(),
-                self.store.incoming_swapcoins.len()
+                w.store.incoming_swapcoins.len()
             );
         }
         Ok(outcome)
     }
 
-    /// Wait for one or more transactions to reach the required number of confirmations.
-    ///
-    /// Returns the highest block height at which any of the transactions was confirmed
-    /// (i.e. `current_height - confirmations + 1`). Returns 0 if `required_confirms` is 0
-    /// or `txids` is empty.
-    ///
-    /// If a `shutdown` flag is provided, the wait is interrupted when it becomes `true`.
-    /// If an `abort_check` is provided, it is polled during the wait; if it returns `true`,
-    /// the wait is interrupted.
+    /// Runs the crate's shared bounded wait on this wallet's own backend connection.
+    /// Note the connection is shared, so the caller must not hold a wallet guard.
     pub fn wait_for_tx_confirmation(
         &self,
         txids: &[Txid],
@@ -2727,96 +3030,656 @@ impl Wallet {
         shutdown: Option<&std::sync::atomic::AtomicBool>,
         abort_check: Option<&dyn Fn() -> bool>,
     ) -> Result<u32, WalletError> {
-        if required_confirms == 0 || txids.is_empty() {
-            return Ok(0);
+        wait_for_tx_confirmation(
+            &self.blockchain,
+            txids,
+            required_confirms,
+            TX_BROADCAST_TIMEOUT,
+            shutdown,
+            abort_check,
+        )
+    }
+}
+
+/// Wait for the given txs to reach `required_confirms`, returning the highest block
+/// height any of them was mined at. Returns 0 if `required_confirms` is 0 or `txids`
+/// is empty.
+///
+/// Bounded three ways: a tx that never reaches our mempool fails after
+/// `arrival_timeout`; a seen tx that vanishes gets one window of the same
+/// length to reappear (it never re-arms, so a flapping tx still trips it); and the
+/// whole wait fails after [`TX_CONFIRMATION_TIMEOUT`]. A `shutdown` flag or an
+/// `abort_check` closure interrupts the wait between polls.
+///
+/// `arrival_timeout` is [`TX_BROADCAST_TIMEOUT`] for a tx already broadcast, which
+/// only covers relay lag. Waiting on a maker to broadcast at all needs longer.
+pub(crate) fn wait_for_tx_confirmation(
+    blockchain: &AnyBlockchain,
+    txids: &[Txid],
+    required_confirms: u32,
+    arrival_timeout: Duration,
+    shutdown: Option<&std::sync::atomic::AtomicBool>,
+    abort_check: Option<&dyn Fn() -> bool>,
+) -> Result<u32, WalletError> {
+    if required_confirms == 0 || txids.is_empty() {
+        return Ok(0);
+    }
+
+    log::info!(
+        "Waiting for {} confirmation(s) on {} transaction(s)...",
+        required_confirms,
+        txids.len()
+    );
+
+    // cap at ~1 block interval
+    let max_backoff_secs: u64 = 600;
+    let sleep_increment_secs: u64 = 10;
+    let mut attempt: u64 = 0;
+
+    let started = Instant::now();
+    let mut unseen: HashSet<Txid> = txids.iter().copied().collect();
+    let mut vanished_at: HashMap<Txid, Instant> = HashMap::new();
+
+    loop {
+        if shutdown.is_some_and(|s| s.load(std::sync::atomic::Ordering::Relaxed)) {
+            return Err(WalletError::Interrupted("Shutdown requested"));
+        }
+        if abort_check.is_some_and(|f| f()) {
+            return Err(WalletError::Interrupted("Abort requested"));
+        }
+        if started.elapsed() > TX_CONFIRMATION_TIMEOUT {
+            log::error!(
+                "Tx(s) did not confirm within {}s",
+                TX_CONFIRMATION_TIMEOUT.as_secs()
+            );
+            return Err(WalletError::General(
+                "Tx did not confirm before the confirmation deadline".to_string(),
+            ));
         }
 
-        log::info!(
-            "Waiting for {} confirmation(s) on {} transaction(s)...",
-            required_confirms,
-            txids.len()
-        );
+        attempt = attempt.saturating_add(1);
 
-        // cap at ~1 block interval
-        let max_backoff_secs: u64 = 600;
-        let sleep_increment_secs: u64 = 10;
-        let mut attempt: u64 = 0;
+        let mut all_confirmed = true;
+        let mut max_confirm_height: u32 = 0;
 
-        loop {
+        for txid in txids {
+            match blockchain.get_raw_transaction_info(txid, None) {
+                Ok(tx_info) => {
+                    let confirms: u32 = tx_info.confirmations.unwrap_or(0);
+                    // First sighting gets a line: the eviction window anchors
+                    // to it, and tests time a replacement off it.
+                    if unseen.remove(txid) && confirms < required_confirms {
+                        log::info!(
+                            "Tx {txid} seen in mempool, waiting for {required_confirms} confirmation(s)"
+                        );
+                    }
+                    if confirms < required_confirms {
+                        log::debug!(
+                            "Tx {} has {} confirmations (need {})",
+                            txid,
+                            confirms,
+                            required_confirms
+                        );
+                        all_confirmed = false;
+                    } else {
+                        // QA: Ask the backend for the mined height directly;
+                        // tip-height arithmetic can race with a newly mined block.
+                        let confirm_height = blockchain.tx_block_height(txid)?.ok_or_else(|| {
+                            WalletError::General(format!(
+                                "Confirmed transaction {txid} has no block height"
+                            ))
+                        })? as u32;
+                        max_confirm_height = max_confirm_height.max(confirm_height);
+                    }
+                }
+                Err(e) => {
+                    log::debug!("Error getting tx info for {}: {:?}", txid, e);
+                    // A seen tx that vanishes (mempool eviction) gets one window to
+                    // reappear. Re-sighting never clears the window, so a tx
+                    // flapping in and out of the mempool still trips the bound.
+                    if !unseen.contains(txid)
+                        && vanished_at
+                            .entry(*txid)
+                            .or_insert_with(Instant::now)
+                            .elapsed()
+                            > arrival_timeout
+                    {
+                        return Err(WalletError::General(
+                            "Tx vanished from our mempool and did not reappear".to_string(),
+                        ));
+                    }
+                    all_confirmed = false;
+                }
+            }
+        }
+
+        if !unseen.is_empty() && started.elapsed() > arrival_timeout {
+            log::error!(
+                "{} tx(s) never reached our mempool within {}s",
+                unseen.len(),
+                arrival_timeout.as_secs()
+            );
+            return Err(WalletError::General(
+                "Tx did not reach our mempool before the broadcast timeout".to_string(),
+            ));
+        }
+
+        if all_confirmed {
+            log::info!(
+                "All transactions confirmed (latest at height {})",
+                max_confirm_height
+            );
+            return Ok(max_confirm_height);
+        }
+
+        let total_sleep = sleep_increment_secs
+            .saturating_mul(attempt)
+            .min(max_backoff_secs);
+        log::info!("Next sync in {} secs", total_sleep);
+
+        // Sleep in 1-second increments so we can check shutdown/abort.
+        for _ in 0..total_sleep {
             if shutdown.is_some_and(|s| s.load(std::sync::atomic::Ordering::Relaxed)) {
                 return Err(WalletError::Interrupted("Shutdown requested"));
             }
             if abort_check.is_some_and(|f| f()) {
                 return Err(WalletError::Interrupted("Abort requested"));
             }
+            thread::sleep(Duration::from_secs(1));
+        }
+    }
+}
 
-            attempt = attempt.saturating_add(1);
+/// True when `tx` is the transaction `utxo` names (txid recomputed, not
+/// trusted) and really pays the reported script and value at `utxo.vout`.
+fn utxo_matches_tx(tx: &Transaction, utxo: &ListUnspentResultEntry) -> bool {
+    tx.compute_txid() == utxo.txid
+        && tx
+            .output
+            .get(utxo.vout as usize)
+            .is_some_and(|out| out.script_pubkey == utxo.script_pub_key && out.value == utxo.amount)
+}
 
-            let mut all_confirmed = true;
-            let mut max_confirm_height: u32 = 0;
+/// scriptPubKey at `(keychain, index)` under an already-derived account key.
+/// Taking the account keeps the expensive hardened derivation out of index loops.
+fn derive_child_script(
+    account: &Xpriv,
+    address_type: AddressType,
+    keychain: KeychainKind,
+    index: u32,
+) -> Result<ScriptBuf, WalletError> {
+    let secp = crate::utill::global_secp();
+    let child = account.derive_priv(
+        secp,
+        &DerivationPath::from(vec![
+            ChildNumber::from_normal_idx(keychain.index_num())?,
+            ChildNumber::from_normal_idx(index)?,
+        ]),
+    )?;
+    Ok(match address_type {
+        AddressType::P2WPKH => {
+            let pk = PublicKey {
+                compressed: true,
+                inner: child.private_key.public_key(secp),
+            };
+            ScriptBuf::new_p2wpkh(
+                &pk.wpubkey_hash()
+                    .expect("compressed key always has wpubkey hash"),
+            )
+        }
+        AddressType::P2TR => {
+            let keypair = Keypair::from_secret_key(secp, &child.private_key);
+            let (xonly, _parity) = keypair.x_only_public_key();
+            ScriptBuf::new_p2tr(secp, xonly, None)
+        }
+    })
+}
 
-            for txid in txids {
-                match self.rpc.get_raw_transaction_info(txid, None) {
-                    Ok(tx_info) => {
-                        let confirms: u32 = tx_info.confirmations.unwrap_or(0);
-                        if confirms < required_confirms {
-                            log::debug!(
-                                "Tx {} has {} confirmations (need {})",
-                                txid,
-                                confirms,
-                                required_confirms
-                            );
-                            all_confirmed = false;
-                        } else {
-                            // QA: Derive the mined height from the block itself;
-                            // tip-height arithmetic can race with a newly mined block.
-                            let block_hash = tx_info.blockhash.ok_or_else(|| {
-                                WalletError::General(format!(
-                                    "Confirmed transaction {txid} has no block hash"
-                                ))
-                            })?;
-                            let confirm_height =
-                                self.rpc.get_block_header_info(&block_hash)?.height as u32;
-                            max_confirm_height = max_confirm_height.max(confirm_height);
-                        }
-                    }
-                    Err(e) => {
-                        log::debug!("Error getting tx info for {}: {:?}", txid, e);
-                        all_confirmed = false;
-                    }
+/// Wallet synchronization APIs.
+impl Wallet {
+    /// Register every wallet-owned scriptPubKey with the backend: HD-derived
+    /// receive/change addresses (up to the rolling gap-limit window, see
+    /// [`Wallet::max_watch_index`]), fidelity bonds, and persisted swapcoin SPKs.
+    /// No-op on Bitcoin Core (server-side wallet tracks these); on Electrum this
+    /// populates the local watch set so `list_unspent` returns the right UTXOs.
+    pub(crate) fn watch_wallet_scripts(&self) -> Result<(), WalletError> {
+        let secp = crate::utill::global_secp();
+
+        // Add the descriptor utxos to the watch list.
+        for address_type in [AddressType::P2WPKH, AddressType::P2TR] {
+            // Derive the account-level Xpriv once per address_type; every
+            // (keychain, index) below it is then a cheap child derive.
+            let account = self.store.master_key.derive_priv(
+                secp,
+                &Self::get_derivation_path(address_type, self.store.network),
+            )?;
+            let fingerprint = account.fingerprint(secp).to_string();
+            let is_taproot = matches!(address_type, AddressType::P2TR);
+            for keychain in [KeychainKind::External, KeychainKind::Internal] {
+                for index in 0..=self.max_watch_index(keychain)? {
+                    let script = derive_child_script(&account, address_type, keychain, index)?;
+                    self.blockchain.watch_script(
+                        &script,
+                        Some(HdOrigin {
+                            fingerprint: fingerprint.clone(),
+                            keychain_idx: keychain.index_num(),
+                            index,
+                            is_taproot,
+                        }),
+                    );
                 }
-            }
-
-            if all_confirmed {
-                log::info!(
-                    "All transactions confirmed (latest at height {})",
-                    max_confirm_height
-                );
-                return Ok(max_confirm_height);
-            }
-
-            let total_sleep = sleep_increment_secs
-                .saturating_mul(attempt)
-                .min(max_backoff_secs);
-            log::info!("Next sync in {} secs", total_sleep);
-
-            // Sleep in 1-second increments so we can check shutdown/abort.
-            for _ in 0..total_sleep {
-                if shutdown.is_some_and(|s| s.load(std::sync::atomic::Ordering::Relaxed)) {
-                    return Err(WalletError::Interrupted("Shutdown requested"));
-                }
-                if abort_check.is_some_and(|f| f()) {
-                    return Err(WalletError::Interrupted("Abort requested"));
-                }
-                thread::sleep(Duration::from_secs(1));
             }
         }
+
+        // Watch fidelity bonds
+        for bond in self.store.fidelity_bond.iter() {
+            self.blockchain.watch_script(&bond.script_pub_key(), None);
+        }
+
+        // Add the incoming and outgoing swapcoins into watch list.
+        // Any malformed script will error here.
+        for (my_pubkey, other_pubkey, contract_redeemscript, contract_output_spk) in self
+            .store
+            .incoming_swapcoins
+            .values()
+            .map(|sc| {
+                (
+                    sc.my_pubkey,
+                    sc.other_pubkey,
+                    sc.contract_redeemscript(),
+                    sc.contract_tx
+                        .output
+                        .get(sc.get_contract_output_vout() as usize)
+                        .map(|out| &out.script_pubkey),
+                )
+            })
+            .chain(self.store.outgoing_swapcoins.values().map(|sc| {
+                (
+                    sc.my_pubkey,
+                    sc.other_pubkey,
+                    sc.contract_redeemscript(),
+                    sc.contract_tx
+                        .output
+                        .get(sc.get_contract_output_vout() as usize)
+                        .map(|out| &out.script_pubkey),
+                )
+            }))
+        {
+            if let (Some(mine), Some(other)) = (my_pubkey, other_pubkey) {
+                let multisig_redeem = create_multisig_redeemscript(&mine, &other);
+                let multisig_spk = ScriptBuf::new_p2wsh(&multisig_redeem.wscript_hash());
+                self.blockchain.watch_script(&multisig_spk, None);
+            }
+            if let Some(redeem) = contract_redeemscript {
+                let contract_spk = redeemscript_to_scriptpubkey(redeem)?;
+                self.blockchain.watch_script(&contract_spk, None);
+            }
+            // Taproot swapcoins carry no redeemscript or multisig keys; the
+            // contract output's own script is the only watchable handle.
+            // For legacy this duplicates the redeemscript-derived script.
+            if let Some(spk) = contract_output_spk {
+                self.blockchain.watch_script(spk, None);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Sync the wallet, then persist to disk. The shutdown flag stops scans,
+    /// backend retries, and the outer retry loop.
+    pub fn sync_and_save(
+        &mut self,
+        shutdown: &std::sync::atomic::AtomicBool,
+    ) -> Result<(), WalletError> {
+        log::info!("Sync Started for {:?}", self.store.file_name);
+        self.sync_no_fail(shutdown)?;
+        self.save_to_disk()?;
+        log::info!("Synced & Saved {:?}", self.store.file_name);
+        Ok(())
+    }
+
+    /// Get all utxos tracked by the backend.
+    ///
+    /// Returns the full unspent set; coin locking is applied wallet-side at
+    /// selection time (see [`Wallet::coin_select`]), not by filtering here.
+    fn get_all_utxo_from_blockchain(&self) -> Result<Vec<ListUnspentResultEntry>, WalletError> {
+        let all_utxos = self.blockchain.list_unspent(Some(0), Some(9999999))?;
+        Ok(all_utxos)
+    }
+
+    /// Every UTXO the backend reports must be backed by a real transaction
+    /// paying that script and value. Bad data here is permanent —
+    /// `post_sync_updates` persists the advanced keychain indices — so a lie
+    /// fails the sync before the cache or any index can move.
+    fn corroborate_utxos(
+        &self,
+        utxos: &[ListUnspentResultEntry],
+        shutdown: &std::sync::atomic::AtomicBool,
+    ) -> Result<(), WalletError> {
+        for utxo in utxos {
+            Self::check_shutdown(shutdown)?;
+            let outpoint = OutPoint {
+                txid: utxo.txid,
+                vout: utxo.vout,
+            };
+            // Already corroborated when it first entered the cache.
+            if self.store.utxo_cache.contains_key(&outpoint) {
+                continue;
+            }
+            let tx = self.blockchain.get_raw_transaction(&utxo.txid, None)?;
+            if !utxo_matches_tx(&tx, utxo) {
+                return Err(WalletError::General(format!(
+                    "Backend reported UTXO {outpoint} that its transaction does not pay"
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// Rolling gap limit, shared by both sync paths: a wider watch window can
+    /// reveal UTXOs at higher indices, which widens the window again (e.g.
+    /// after a seed restore) — repeat `pass` until the window stops moving.
+    fn sync_with_rolling_gap_limit(
+        &mut self,
+        shutdown: &std::sync::atomic::AtomicBool,
+        mut pass: impl FnMut(&mut Self) -> Result<(), WalletError>,
+    ) -> Result<(), WalletError> {
+        let mut prev_window = (
+            self.max_watch_index(KeychainKind::External)?,
+            self.max_watch_index(KeychainKind::Internal)?,
+        );
+        for _ in 0..MAX_SYNC_PASSES {
+            Self::check_shutdown(shutdown)?;
+            pass(self)?;
+            Self::check_shutdown(shutdown)?;
+            let utxos = self.get_all_utxo_from_blockchain()?;
+            self.corroborate_utxos(&utxos, shutdown)?;
+            Self::check_shutdown(shutdown)?;
+            self.update_utxo_cache(utxos)?;
+            let window = (
+                self.max_watch_index(KeychainKind::External)?,
+                self.max_watch_index(KeychainKind::Internal)?,
+            );
+            if window == prev_window {
+                return Ok(());
+            }
+            if window.0.max(window.1) > MAX_WATCH_WINDOW {
+                return Err(WalletError::General(format!(
+                    "Watch window {window:?} exceeds cap {MAX_WATCH_WINDOW}"
+                )));
+            }
+            prev_window = window;
+        }
+        Err(WalletError::General(format!(
+            "Wallet sync did not settle within {MAX_SYNC_PASSES} passes"
+        )))
+    }
+
+    /// Bitcoin Core's importdescriptors + scan vs Electrum's scripthash-history walk.
+    fn sync(&mut self, shutdown: &std::sync::atomic::AtomicBool) -> Result<(), WalletError> {
+        Self::check_shutdown(shutdown)?;
+        if self.blockchain.is_electrum() {
+            return self.sync_no_rescan(shutdown);
+        }
+        // Create or load the watch-only Bitcoin Core wallet.
+        self.blockchain
+            .prepare_backend_wallet(&self.store.file_name)?;
+
+        let mut descriptors_to_import = self.descriptors_to_import()?;
+
+        if descriptors_to_import.is_empty() {
+            // Nothing new to import, but the chain may have moved: refresh state.
+            Self::check_shutdown(shutdown)?;
+            self.update_utxo_cache(self.get_all_utxo_from_blockchain()?)?;
+            return self.post_sync_updates(shutdown);
+        }
+
+        // Sometimes in tests multiple wallet scans can occur at the same time, resulting in error.
+        let mut last_synced_height = self
+            .store
+            .last_synced_height
+            .unwrap_or(0)
+            .max(self.store.wallet_birthday.unwrap_or(0));
+        let node_synced = self.blockchain.get_block_count()?;
+
+        // If the chain is shorter than the wallet's last synced height (e.g. node
+        // restarted with a fresh chain or a reorg), reset to rescan from the start.
+        if last_synced_height > node_synced {
+            log::warn!(
+                "Wallet last_synced_height ({}) exceeds chain height ({}), resetting to 0",
+                last_synced_height,
+                node_synced
+            );
+            last_synced_height = 0;
+            self.store.last_synced_height = Some(0);
+        }
+
+        log::info!("Re-scanning Blockchain from:{last_synced_height} to:{node_synced}");
+
+        let Header { time, .. } = self.blockchain.header_at_height(last_synced_height)?;
+
+        // The import timestamp stays anchored to the pre-sync height so a
+        // widened range is scanned over the same blocks on later passes.
+        self.sync_with_rolling_gap_limit(shutdown, |w| {
+            Self::check_shutdown(shutdown)?;
+            w.import_descriptors(&descriptors_to_import, Some(time), None)?;
+
+            // Returns when the scanning is completed.
+            loop {
+                Self::check_shutdown(shutdown)?;
+                match w.blockchain.wallet_scanning_status()? {
+                    Some(ScanningDetails::Scanning { duration, .. }) => {
+                        // Todo: Show scan progress
+                        log::info!("Scanning for {}s", duration);
+                        Self::wait_for_shutdown(shutdown, HEART_BEAT_INTERVAL)?;
+                        continue;
+                    }
+                    Some(ScanningDetails::NotScanning(_)) => {
+                        log::info!("Scanning completed");
+                        break;
+                    }
+                    None => {
+                        log::info!("No scan is in progress or Scanning completed");
+                        break;
+                    }
+                }
+            }
+            descriptors_to_import = w.descriptors_to_import()?;
+            Ok(())
+        })?;
+        self.post_sync_updates(shutdown)
+    }
+
+    /// Electrum-style sync: register every wallet-owned script client-side, then
+    /// list UTXOs via per-scripthash queries.
+    fn sync_no_rescan(
+        &mut self,
+        shutdown: &std::sync::atomic::AtomicBool,
+    ) -> Result<(), WalletError> {
+        self.sync_with_rolling_gap_limit(shutdown, |w| {
+            Self::check_shutdown(shutdown)?;
+            w.watch_wallet_scripts()
+        })?;
+        self.post_sync_updates(shutdown)
+    }
+
+    /// Shared tail of both sync paths: record the synced tip, advance the
+    /// keychain indices, and recompute the offer-max cache. Both callers
+    /// refresh the UTXO cache inside their gap-limit loops before calling this.
+    fn post_sync_updates(
+        &mut self,
+        shutdown: &std::sync::atomic::AtomicBool,
+    ) -> Result<(), WalletError> {
+        Self::check_shutdown(shutdown)?;
+        self.store.last_synced_height = Some(self.blockchain.get_block_count()?);
+        // Monotonic: on-chain discovery may advance the indices but never
+        // rewind them below addresses already handed out (they may be funded
+        // later). Internal only lags after a seed restore; advancing it there
+        // avoids reusing old change addresses.
+        let max_external_index = self.find_hd_next_index(KeychainKind::External)?;
+        self.store.external_index = max_external_index.max(self.store.external_index);
+        Self::check_shutdown(shutdown)?;
+        let max_internal_index = self.find_hd_next_index(KeychainKind::Internal)?;
+        self.store.internal_index = max_internal_index.max(self.store.internal_index);
+        self.refresh_offer_maxsize_cache()
+    }
+
+    /// Retry sync until it succeeds; handles transient backend errors.
+    /// The shutdown flag breaks the loop so teardown can join the caller's
+    /// thread instead of retrying against a dead backend forever.
+    fn sync_no_fail(
+        &mut self,
+        shutdown: &std::sync::atomic::AtomicBool,
+    ) -> Result<(), WalletError> {
+        loop {
+            Self::check_shutdown(shutdown)?;
+            match self.sync(shutdown) {
+                Ok(()) => return Ok(()),
+                Err(WalletError::Interrupted(reason)) => {
+                    return Err(WalletError::Interrupted(reason));
+                }
+                Err(e) => log::error!("Blockchain sync failed. Retrying. | {e:?}"),
+            }
+            Self::wait_for_shutdown(shutdown, HEART_BEAT_INTERVAL)?;
+        }
+    }
+
+    /// Returns a typed interruption so shutdown never enters the outer retry path.
+    fn check_shutdown(shutdown: &std::sync::atomic::AtomicBool) -> Result<(), WalletError> {
+        if shutdown.load(std::sync::atomic::Ordering::Relaxed) {
+            Err(WalletError::Interrupted("Shutdown requested"))
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Splits retry waits so cancellation is observed within one second.
+    fn wait_for_shutdown(
+        shutdown: &std::sync::atomic::AtomicBool,
+        duration: Duration,
+    ) -> Result<(), WalletError> {
+        let mut remaining = duration;
+        while !remaining.is_zero() {
+            Self::check_shutdown(shutdown)?;
+            let slice = remaining.min(Duration::from_secs(1));
+            thread::sleep(slice);
+            remaining -= slice;
+        }
+        Self::check_shutdown(shutdown)
+    }
+
+    /// Build descriptor import requests and hand them to the backend. Does not
+    /// check whether the descriptors were already imported. Scans blocks from a
+    /// given timestamp. No-op on Electrum (which pre-registers scripts instead).
+    pub(crate) fn import_descriptors(
+        &self,
+        descriptors_to_import: &[String],
+        time: Option<u32>,
+        address_label: Option<String>,
+    ) -> Result<(), WalletError> {
+        let address_label = address_label.unwrap_or(self.get_core_wallet_label());
+
+        // Offset by +2h because importdescriptors applies a default -2h to the timestamp.
+        let time_stamp = time.map(|t| json!(t + 7200)).unwrap_or(json!("now"));
+
+        // Ranged (HD) descriptors are imported up to the rolling gap-limit
+        // window; a single range covering both keychains keeps the import flat.
+        let max_index = self
+            .max_watch_index(KeychainKind::External)?
+            .max(self.max_watch_index(KeychainKind::Internal)?);
+
+        let import_requests: Vec<Value> = descriptors_to_import
+            .iter()
+            .map(|desc| {
+                if desc.contains("/*") {
+                    json!({
+                        "timestamp": time_stamp,
+                        "desc": desc,
+                        "range": max_index
+                    })
+                } else {
+                    json!({
+                        "timestamp": time_stamp,
+                        "desc": desc,
+                        "label": address_label
+                    })
+                }
+            })
+            .collect();
+        self.blockchain.import_descriptors(&import_requests)
+    }
+}
+
+#[cfg(test)]
+mod utxo_corroboration_tests {
+    use super::*;
+    use bitcoin::{absolute::LockTime, hashes::Hash, transaction::Version};
+
+    fn entry_for(
+        tx: &Transaction,
+        vout: u32,
+        spk: ScriptBuf,
+        amount: Amount,
+    ) -> ListUnspentResultEntry {
+        ListUnspentResultEntry {
+            txid: tx.compute_txid(),
+            vout,
+            address: None,
+            label: None,
+            redeem_script: None,
+            witness_script: None,
+            script_pub_key: spk,
+            amount,
+            confirmations: 1,
+            spendable: true,
+            solvable: true,
+            descriptor: None,
+            safe: true,
+        }
+    }
+
+    #[test]
+    fn fabricated_utxo_fails_corroboration() {
+        let spk = ScriptBuf::from_bytes(vec![0x51]);
+        let value = Amount::from_sat(1000);
+        let tx = Transaction {
+            version: Version::TWO,
+            lock_time: LockTime::ZERO,
+            input: vec![],
+            output: vec![TxOut {
+                value,
+                script_pubkey: spk.clone(),
+            }],
+        };
+
+        // Honest report passes.
+        assert!(utxo_matches_tx(&tx, &entry_for(&tx, 0, spk.clone(), value)));
+        // Wrong value.
+        assert!(!utxo_matches_tx(
+            &tx,
+            &entry_for(&tx, 0, spk.clone(), Amount::from_sat(2000))
+        ));
+        // Wrong script.
+        assert!(!utxo_matches_tx(
+            &tx,
+            &entry_for(&tx, 0, ScriptBuf::from_bytes(vec![0x52]), value)
+        ));
+        // Non-existent output index.
+        assert!(!utxo_matches_tx(
+            &tx,
+            &entry_for(&tx, 1, spk.clone(), value)
+        ));
+        // Txid that does not hash to the fetched transaction.
+        let mut lying = entry_for(&tx, 0, spk, value);
+        lying.txid = Txid::all_zeros();
+        assert!(!utxo_matches_tx(&tx, &lying));
     }
 }
 
 #[cfg(test)]
 mod prevout_contract_tests {
     use super::*;
+    use crate::wallet::blockchain::{BackendConfig, CoreRpcConfig};
     use bitcoind::tempfile::tempdir;
 
     fn test_wallet(path: &Path) -> Wallet {
@@ -2831,12 +3694,17 @@ mod prevout_contract_tests {
         )
         .unwrap();
 
+        let blockchain =
+            AnyBlockchain::from_config(&BackendConfig::CoreRpc(CoreRpcConfig::default())).unwrap();
+
         Wallet {
-            rpc: Client::try_from(&RPCConfig::default()).unwrap(),
+            blockchain,
             wallet_file_path: path.to_path_buf(),
             store,
             store_enc_material: None,
             new_mnemonic: None,
+            locked_utxos: HashSet::new(),
+            restore_scan: false,
         }
     }
 
@@ -2886,7 +3754,7 @@ mod prevout_contract_tests {
         let different_contract = ScriptBuf::from_bytes(vec![0x52]);
 
         wallet
-            .cache_prevout_to_contracts(&[(prevout, approved_contract.clone())])
+            .cache_prevout_to_contract(&[(prevout, approved_contract.clone())])
             .unwrap();
 
         wallet
@@ -2910,13 +3778,13 @@ mod prevout_contract_tests {
         let approved_contract = ScriptBuf::from_bytes(vec![0x51]);
 
         wallet
-            .cache_prevout_to_contracts(&[(prevout, approved_contract.clone())])
+            .cache_prevout_to_contract(&[(prevout, approved_contract.clone())])
             .unwrap();
         wallet
-            .cache_prevout_to_contracts(&[(prevout, approved_contract.clone())])
+            .cache_prevout_to_contract(&[(prevout, approved_contract.clone())])
             .unwrap();
         assert!(wallet
-            .cache_prevout_to_contracts(&[
+            .cache_prevout_to_contract(&[
                 (new_prevout, ScriptBuf::from_bytes(vec![0x53])),
                 (prevout, ScriptBuf::from_bytes(vec![0x52])),
             ])
@@ -2931,5 +3799,173 @@ mod prevout_contract_tests {
             reloaded_store.prevout_to_contract_map.get(&prevout),
             Some(&approved_contract)
         );
+    }
+}
+
+#[cfg(test)]
+mod restore_history_probe_tests {
+    use super::*;
+    use crate::wallet::blockchain::Electrum;
+    use bitcoin::{
+        consensus::encode::serialize_hex,
+        hashes::{sha256, Hash},
+    };
+    use bitcoind::tempfile::tempdir;
+    use std::{
+        collections::HashSet as StdHashSet,
+        io::{BufRead, BufReader, Write as IoWrite},
+        net::TcpListener,
+    };
+
+    const MASTER_SEED: [u8; 32] = [42; 32];
+
+    fn scripthash_hex(script: &Script) -> String {
+        let mut hash = sha256::Hash::hash(script.as_bytes()).to_byte_array();
+        hash.reverse();
+        hash.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    /// The smallest Electrum server that `Electrum::new` and a history probe need:
+    /// a handshake, plus a scripted `get_history` answer per scripthash.
+    fn start_stub(with_history: StdHashSet<String>) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind stub");
+        let url = format!("tcp://{}", listener.local_addr().unwrap());
+        let genesis = bitcoin::constants::genesis_block(bitcoin::Network::Regtest);
+        let genesis_hash = genesis.block_hash().to_string();
+        let header_hex = serialize_hex(&genesis.header);
+
+        thread::spawn(move || {
+            for incoming in listener.incoming() {
+                let Ok(stream) = incoming else { continue };
+                // Each probe is one tiny request/reply, so Nagle would add its
+                // delay to every single one of them.
+                let _ = stream.set_nodelay(true);
+                let (hash, header) = (genesis_hash.clone(), header_hex.clone());
+                let known = with_history.clone();
+                thread::spawn(move || {
+                    let mut out = stream.try_clone().expect("clone stub stream");
+                    for line in BufReader::new(stream).lines() {
+                        let Ok(line) = line else { return };
+                        let req: Value = match serde_json::from_str(&line) {
+                            Ok(v) => v,
+                            Err(_) => return,
+                        };
+                        let id = req["id"].clone();
+                        let result = match req["method"].as_str().unwrap_or_default() {
+                            "server.features" => json!({
+                                "server_version": "stub",
+                                "genesis_hash": hash,
+                                "protocol_min": "1.4",
+                                "protocol_max": "1.4",
+                                "hash_function": "sha256",
+                                "pruning": Value::Null,
+                            }),
+                            "blockchain.headers.subscribe" => {
+                                json!({"height": 0, "hex": header})
+                            }
+                            "blockchain.scripthash.get_history" => {
+                                let sh = req["params"][0].as_str().unwrap_or_default();
+                                if known.contains(sh) {
+                                    json!([{"height": 1, "tx_hash": Txid::all_zeros().to_string()}])
+                                } else {
+                                    json!([])
+                                }
+                            }
+                            _ => json!(Value::Null),
+                        };
+                        let resp = json!({"jsonrpc": "2.0", "id": id, "result": result});
+                        if writeln!(out, "{resp}").is_err() {
+                            return;
+                        }
+                    }
+                });
+            }
+        });
+
+        url
+    }
+
+    fn account_for(address_type: AddressType) -> Xpriv {
+        let master = Xpriv::new_master(bitcoin::Network::Regtest, &MASTER_SEED).unwrap();
+        master
+            .derive_priv(
+                crate::utill::global_secp(),
+                &Wallet::get_derivation_path(address_type, bitcoin::Network::Regtest),
+            )
+            .unwrap()
+    }
+
+    fn stub_wallet(path: &Path, url: String) -> Wallet {
+        let master_key = Xpriv::new_master(bitcoin::Network::Regtest, &MASTER_SEED).unwrap();
+        let store = WalletStore::init(
+            "restore-probe-test".to_string(),
+            path,
+            bitcoin::Network::Regtest,
+            master_key,
+            None,
+            &None,
+        )
+        .unwrap();
+        let electrum = Electrum::new(&crate::wallet::ElectrumConfig {
+            url,
+            ..Default::default()
+        })
+        .expect("connect to stub");
+
+        Wallet {
+            blockchain: AnyBlockchain::Electrum(electrum),
+            wallet_file_path: path.to_path_buf(),
+            store,
+            store_enc_material: None,
+            new_mnemonic: None,
+            locked_utxos: HashSet::new(),
+            restore_scan: true,
+        }
+    }
+
+    /// A restored wallet holds no UTXOs and no hand-out counters, so only script
+    /// history can reveal index 60. The gap between it and index 0 is far wider
+    /// than the regular 20, and the two indices use different address types.
+    #[test]
+    fn restore_probe_bridges_a_long_run_of_emptied_addresses() {
+        let temp_dir = tempdir().unwrap();
+        let external = KeychainKind::External;
+        let funded = |address_type, index| {
+            let account = account_for(address_type);
+            let script =
+                derive_child_script(&account, address_type, external, index).expect("derive");
+            scripthash_hex(&script)
+        };
+        let with_history = StdHashSet::from([
+            funded(AddressType::P2WPKH, 0),
+            funded(AddressType::P2TR, 60),
+        ]);
+
+        let url = start_stub(with_history);
+        let mut wallet = stub_wallet(&temp_dir.path().join("wallet.cbor"), url);
+
+        assert_eq!(
+            wallet.find_hd_next_index(external).unwrap(),
+            61,
+            "history probing must reach the P2TR-only index past the hole"
+        );
+
+        // Without the restore flag the probe is off and the empty UTXO set decides.
+        wallet.restore_scan = false;
+        assert_eq!(wallet.find_hd_next_index(external).unwrap(), 0);
+    }
+
+    /// Proves a stopped sync returns before making its first backend request.
+    #[test]
+    fn sync_does_not_enter_the_backend_after_shutdown() {
+        let temp_dir = tempdir().unwrap();
+        let url = start_stub(StdHashSet::new());
+        let mut wallet = stub_wallet(&temp_dir.path().join("wallet.cbor"), url);
+        let shutdown = std::sync::atomic::AtomicBool::new(true);
+
+        assert!(matches!(
+            wallet.sync_and_save(&shutdown),
+            Err(WalletError::Interrupted("Shutdown requested"))
+        ));
     }
 }

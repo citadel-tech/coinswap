@@ -27,7 +27,7 @@ fn test_taproot_coinswap() {
     let maker_behaviors = vec![MakerBehavior::Normal, MakerBehavior::Normal];
 
     let (test_framework, mut takers, makers, block_generation_handle) =
-        TestFramework::init(makers_config_map, taker_behavior, maker_behaviors);
+        TestFramework::init::<BitcoindBackend>(makers_config_map, taker_behavior, maker_behaviors);
 
     let bitcoind = &test_framework.bitcoind;
     let taker = takers.get_mut(0).unwrap();
@@ -68,7 +68,12 @@ fn test_taproot_coinswap() {
 
     // Sync wallets after setup to ensure fidelity bonds are accounted for
     for maker in &makers {
-        maker.wallet.write().unwrap().sync_and_save().unwrap();
+        maker
+            .wallet
+            .write()
+            .unwrap()
+            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .unwrap();
     }
 
     let maker_spendable_balance = verify_maker_pre_swap_balances(&makers);
@@ -91,23 +96,24 @@ fn test_taproot_coinswap() {
         .expect("Taproot coinswap should complete successfully");
     log::info!("Taproot coinswap completed successfully!");
 
-    // After swap, shutdown maker threads
-    makers
-        .iter()
-        .for_each(|maker| maker.shutdown.store(true, Relaxed));
-
-    maker_threads
-        .into_iter()
-        .for_each(|thread| thread.join().unwrap());
-
     // Sync wallets and verify results
-    taker.get_wallet().write().unwrap().sync_and_save().unwrap();
+    taker
+        .get_wallet()
+        .write()
+        .unwrap()
+        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .unwrap();
 
     // Mine a block to confirm the sweep transactions
     generate_blocks(bitcoind, 1);
 
     for maker in makers.iter() {
-        maker.wallet.write().unwrap().sync_and_save().unwrap();
+        maker
+            .wallet
+            .write()
+            .unwrap()
+            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .unwrap();
     }
 
     let taker_balances = taker.get_wallet().read().unwrap().get_balances().unwrap();
@@ -125,11 +131,7 @@ fn test_taproot_coinswap() {
         14499076,
         "Taker regular balance mismatch"
     );
-    assert_eq!(
-        taker_balances.swap.to_sat(),
-        494815,
-        "Taker swap balance mismatch"
-    );
+    assert_eq!(taker_balances.swap.to_sat(), 494815, "Taker swap balance");
     assert_eq!(
         taker_balances.contract.to_sat(),
         0,
@@ -146,7 +148,7 @@ fn test_taproot_coinswap() {
     assert_eq!(
         balance_diff.to_sat(),
         6109,
-        "Taker spendable balance change mismatch"
+        "Taker spendable balance change"
     );
 
     // Verify makers earned fees
@@ -164,14 +166,12 @@ fn test_taproot_coinswap() {
         assert_eq!(
             balances.regular.to_sat(),
             expected_regular[i],
-            "Maker {} regular balance mismatch",
-            i
+            "Maker {i} regular balance"
         );
         assert_eq!(
             balances.swap.to_sat(),
             expected_swap[i],
-            "Maker {} swap balance mismatch",
-            i
+            "Maker {i} swap balance"
         );
         assert_eq!(
             balances.contract.to_sat(),
@@ -192,12 +192,7 @@ fn test_taproot_coinswap() {
             maker_fee.to_sat()
         );
 
-        assert_eq!(
-            maker_fee.to_sat(),
-            expected_fee[i],
-            "Maker {} fee earned mismatch",
-            i
-        );
+        assert_eq!(maker_fee.to_sat(), expected_fee[i], "Maker {i} fee earned");
     }
 
     info!("All taproot swap tests completed successfully!");
@@ -225,6 +220,12 @@ fn test_taproot_coinswap() {
         );
     }
 
+    makers
+        .iter()
+        .for_each(|maker| maker.shutdown.store(true, Relaxed));
+    maker_threads
+        .into_iter()
+        .for_each(|thread| thread.join().unwrap());
     test_framework.stop();
     block_generation_handle.join().unwrap();
 }

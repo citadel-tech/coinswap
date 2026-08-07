@@ -2,10 +2,7 @@ use std::{
     fs::{self, OpenOptions},
     io::{ErrorKind, Write},
     net::{TcpListener, TcpStream},
-    sync::{
-        atomic::{AtomicBool, Ordering::Relaxed},
-        Arc,
-    },
+    sync::{atomic::Ordering::Relaxed, Arc},
     thread::sleep,
     time::Duration,
 };
@@ -19,7 +16,11 @@ use super::messages::{AuthenticatedRpcRequest, RpcMsgReq};
 #[cfg(not(feature = "integration-test"))]
 use crate::utill::TorError;
 use crate::{
-    maker::{api::MakerServerConfig, error::MakerError, rpc::messages::RpcMsgResp},
+    maker::{
+        api::{MakerServerConfig, ShutdownSignal},
+        error::MakerError,
+        rpc::messages::RpcMsgResp,
+    },
     utill::{parse_checked_address, read_message, send_message, HEART_BEAT_INTERVAL, UTXO},
     wallet::{infer_address_type, AddressType, Destination, Wallet},
 };
@@ -64,7 +65,7 @@ pub trait MakerRpc {
     fn wallet(&self) -> &RwLock<Wallet>;
     fn data_dir(&self) -> &Path;
     fn config(&self) -> &MakerServerConfig;
-    fn shutdown(&self) -> &AtomicBool;
+    fn shutdown(&self) -> &ShutdownSignal;
     #[cfg(not(feature = "integration-test"))]
     fn get_tor_hostname(&self) -> Result<String, TorError>;
 }
@@ -80,7 +81,10 @@ fn handle_request<M: MakerRpc>(
         _ => {
             log::warn!(
                 "Rejected unauthenticated RPC request from {}",
-                socket.peer_addr().unwrap()
+                socket
+                    .peer_addr()
+                    .map(|a| a.to_string())
+                    .unwrap_or_else(|_| "<unknown>".into())
             );
             send_message(socket, &RpcMsgResp::ServerError("unauthorized".to_string()))?;
             return Ok(());
@@ -174,7 +178,7 @@ fn handle_request<M: MakerRpc>(
             let txid = maker.wallet().read()?.send_tx(&tx)?;
 
             log::info!("Sync at:----handle_request----");
-            maker.wallet().write()?.sync_and_save()?;
+            maker.wallet().write()?.sync_and_save(maker.shutdown())?;
 
             RpcMsgResp::SendToAddressResp(txid.to_string())
         }
@@ -202,7 +206,7 @@ fn handle_request<M: MakerRpc>(
         RpcMsgReq::SyncWallet => {
             log::info!("Initializing wallet sync");
             let mut wallet = maker.wallet().write()?;
-            if let Err(e) = wallet.sync_and_save() {
+            if let Err(e) = wallet.sync_and_save(maker.shutdown()) {
                 RpcMsgResp::ServerError(e.to_string())
             } else {
                 log::info!("Completed wallet sync");

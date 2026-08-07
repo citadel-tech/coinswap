@@ -34,7 +34,13 @@ pub(crate) fn verify_req_contract_sigs_for_sender(
         ));
     }
 
-    let taker_locktime = locktime + REFUND_LOCKTIME_STEP;
+    // `locktime` comes straight off the wire, so a peer picking a value near
+    // `u16::MAX` would otherwise panic this thread on overflow.
+    let taker_locktime = locktime
+        .checked_add(REFUND_LOCKTIME_STEP)
+        .ok_or(MakerError::General(
+            "Sender contract locktime overflows the refund step",
+        ))?;
 
     for (i, txinfo) in txs_info.iter().enumerate() {
         // Validate multisig redeemscript is a 2-of-2 multisig
@@ -227,4 +233,110 @@ pub(crate) fn verify_legacy_privkey_handover(
         privkeys.len()
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bitcoin::{
+        absolute::LockTime,
+        hashes::Hash,
+        secp256k1::{Secp256k1, SecretKey},
+        transaction, Amount, OutPoint, Sequence, Transaction, TxIn, TxOut, Txid, Witness,
+    };
+
+    use crate::{
+        protocol::contract::{create_contract_redeemscript, create_multisig_redeemscript},
+        utill::redeemscript_to_scriptpubkey,
+    };
+
+    fn pubkey(byte: u8) -> PublicKey {
+        let secp = Secp256k1::new();
+        let secret = SecretKey::from_slice(&[byte; 32]).unwrap();
+        PublicKey::new(bitcoin::secp256k1::PublicKey::from_secret_key(
+            &secp, &secret,
+        ))
+    }
+
+    /// One sender contract that passes every check, for the locktime the maker
+    /// derives from `locktime` on the wire.
+    fn sender_contract(locktime: u16) -> (Vec<ContractTxInfoForSender>, PublicKey, Hash160) {
+        let tweakable_pubkey = pubkey(1);
+        let multisig_nonce = SecretKey::from_slice(&[2u8; 32]).unwrap();
+        let hashlock_nonce = SecretKey::from_slice(&[3u8; 32]).unwrap();
+        let timelock_pubkey = pubkey(4);
+        let hashvalue = Hash160::hash(&[5u8; 32]);
+
+        let maker_multisig_pubkey =
+            calculate_pubkey_from_nonce(&tweakable_pubkey, &multisig_nonce).unwrap();
+        let multisig_redeemscript =
+            create_multisig_redeemscript(&maker_multisig_pubkey, &pubkey(6));
+        let hashlock_pubkey =
+            calculate_pubkey_from_nonce(&tweakable_pubkey, &hashlock_nonce).unwrap();
+        let contract_redeemscript = create_contract_redeemscript(
+            &hashlock_pubkey,
+            &timelock_pubkey,
+            &hashvalue,
+            &locktime.wrapping_add(REFUND_LOCKTIME_STEP),
+        );
+
+        let senders_contract_tx = Transaction {
+            version: transaction::Version::TWO,
+            lock_time: LockTime::ZERO,
+            input: vec![TxIn {
+                previous_output: OutPoint {
+                    txid: Txid::all_zeros(),
+                    vout: 0,
+                },
+                script_sig: bitcoin::ScriptBuf::new(),
+                sequence: Sequence::MAX,
+                witness: Witness::new(),
+            }],
+            output: vec![TxOut {
+                value: Amount::from_sat(50_000),
+                script_pubkey: redeemscript_to_scriptpubkey(&contract_redeemscript).unwrap(),
+            }],
+        };
+
+        (
+            vec![ContractTxInfoForSender {
+                multisig_nonce,
+                hashlock_nonce,
+                timelock_pubkey,
+                senders_contract_tx,
+                multisig_redeemscript,
+                funding_input_value: Amount::from_sat(60_000),
+            }],
+            tweakable_pubkey,
+            hashvalue,
+        )
+    }
+
+    #[test]
+    fn locktime_that_overflows_the_refund_step_is_rejected() {
+        let (txs_info, tweakable_pubkey, hashvalue) = sender_contract(u16::MAX);
+
+        let error = verify_req_contract_sigs_for_sender(
+            &txs_info,
+            &tweakable_pubkey,
+            &hashvalue,
+            u16::MAX,
+            0,
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            MakerError::General("Sender contract locktime overflows the refund step")
+        ));
+    }
+
+    #[test]
+    fn normal_locktime_is_accepted() {
+        let locktime = 100;
+        let (txs_info, tweakable_pubkey, hashvalue) = sender_contract(locktime);
+
+        verify_req_contract_sigs_for_sender(&txs_info, &tweakable_pubkey, &hashvalue, locktime, 0)
+            .unwrap();
+    }
 }

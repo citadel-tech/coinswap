@@ -41,7 +41,7 @@ fn test_taproot_timelock_recovery() {
     ];
 
     let (test_framework, mut takers, makers, block_generation_handle) =
-        TestFramework::init(makers_config_map, taker_behavior, maker_behaviors);
+        TestFramework::init::<BitcoindBackend>(makers_config_map, taker_behavior, maker_behaviors);
 
     let bitcoind = &test_framework.bitcoind;
     let taker = takers.get_mut(0).unwrap();
@@ -82,7 +82,12 @@ fn test_taproot_timelock_recovery() {
 
     // Sync wallets after setup
     for maker in &makers {
-        maker.wallet.write().unwrap().sync_and_save().unwrap();
+        maker
+            .wallet
+            .write()
+            .unwrap()
+            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .unwrap();
     }
 
     // Use post-fidelity, pre-swap balances as the correct baseline
@@ -114,24 +119,20 @@ fn test_taproot_timelock_recovery() {
     info!("Swap failed as expected: {:?}", swap_result.err().unwrap());
     taker.log_tracker_state();
 
-    // Wait for makers to timeout and blocks to mature timelocks.
-    // Maker timeout is 60s in tests; block generation thread mines 10 blocks every 3s,
-    // so 150s ~ 500 blocks -- more than enough for the CSV timelock.
+    // Sleep budget: 60s maker idle timeout (test builds) + 225-block outer-hop
+    // timelock (REFUND_LOCKTIME_BASE 150 + STEP 75, 2 makers) ≈ 135s at
+    // 5 blocks/3s; remaining ~105s is scheduling margin.
     info!("Waiting for makers to timeout and blocks to mature timelocks...");
-    thread::sleep(Duration::from_secs(150));
-
-    // Shut down makers
-    makers
-        .iter()
-        .for_each(|maker| maker.shutdown.store(true, Relaxed));
-
-    maker_threads
-        .into_iter()
-        .for_each(|thread| thread.join().unwrap());
+    thread::sleep(Duration::from_secs(300));
 
     // Verify maker balances after recovery
     for (i, maker) in makers.iter().enumerate() {
-        maker.wallet.write().unwrap().sync_and_save().unwrap();
+        maker
+            .wallet
+            .write()
+            .unwrap()
+            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .unwrap();
         let maker_balances = maker.wallet.read().unwrap().get_balances().unwrap();
         info!(
             "Maker {} balances after recovery: Regular: {}, Swap: {}, Contract: {}, Spendable: {}",
@@ -165,7 +166,12 @@ fn test_taproot_timelock_recovery() {
 
     // Mine a block to confirm recovery txs, then sync wallet
     generate_blocks(bitcoind, 1);
-    taker.get_wallet().write().unwrap().sync_and_save().unwrap();
+    taker
+        .get_wallet()
+        .write()
+        .unwrap()
+        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .unwrap();
 
     // Verify taker balance
     let taker_balances = taker.get_wallet().read().unwrap().get_balances().unwrap();
@@ -214,7 +220,12 @@ fn test_taproot_timelock_recovery() {
 
     // Verify maker balances
     for (i, maker) in makers.iter().enumerate() {
-        maker.wallet.write().unwrap().sync_and_save().unwrap();
+        maker
+            .wallet
+            .write()
+            .unwrap()
+            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .unwrap();
         let maker_balances = maker.wallet.read().unwrap().get_balances().unwrap();
         let original = maker_spendable_balance[i];
 
@@ -247,6 +258,13 @@ fn test_taproot_timelock_recovery() {
 
     taker.log_tracker_state();
     info!("Taproot timelock recovery test completed successfully!");
+
+    makers
+        .iter()
+        .for_each(|maker| maker.shutdown.store(true, Relaxed));
+    maker_threads
+        .into_iter()
+        .for_each(|thread| thread.join().unwrap());
 
     tracker_logger.stop();
     test_framework.stop();

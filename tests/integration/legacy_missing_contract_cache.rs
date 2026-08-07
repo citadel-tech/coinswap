@@ -31,7 +31,7 @@ fn maker_rejects_proof_of_funding_with_missing_contract_cache() {
     let maker_behaviors = vec![MakerBehavior::Normal, MakerBehavior::Normal];
 
     let (test_framework, mut takers, makers, block_generation_handle) =
-        TestFramework::init(makers_config_map, taker_behavior, maker_behaviors);
+        TestFramework::init::<BitcoindBackend>(makers_config_map, taker_behavior, maker_behaviors);
 
     let bitcoind = &test_framework.bitcoind;
     let taker = takers.get_mut(0).unwrap();
@@ -61,7 +61,12 @@ fn maker_rejects_proof_of_funding_with_missing_contract_cache() {
 
     wait_for_makers_setup(&makers, 120);
     for maker in &makers {
-        maker.wallet.write().unwrap().sync_and_save().unwrap();
+        maker
+            .wallet
+            .write()
+            .unwrap()
+            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .unwrap();
     }
 
     let maker_spendable_before = makers[0]
@@ -103,14 +108,12 @@ fn maker_rejects_proof_of_funding_with_missing_contract_cache() {
         "maker must reject before broadcasting outgoing funding transactions"
     );
 
-    makers
-        .iter()
-        .for_each(|maker| maker.shutdown.store(true, Relaxed));
-    maker_threads
-        .into_iter()
-        .for_each(|thread| thread.join().unwrap());
-
-    makers[0].wallet.write().unwrap().sync_and_save().unwrap();
+    makers[0]
+        .wallet
+        .write()
+        .unwrap()
+        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .unwrap();
     let maker_spendable_after = makers[0]
         .wallet
         .read()
@@ -123,6 +126,12 @@ fn maker_rejects_proof_of_funding_with_missing_contract_cache() {
         "rejected proof must not spend maker liquidity"
     );
 
+    makers
+        .iter()
+        .for_each(|maker| maker.shutdown.store(true, Relaxed));
+    maker_threads
+        .into_iter()
+        .for_each(|thread| thread.join().unwrap());
     test_framework.stop();
     block_generation_handle.join().unwrap();
 }

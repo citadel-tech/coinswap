@@ -2,10 +2,13 @@
 
 use std::collections::HashMap;
 
-use bitcoind::bitcoincore_rpc::{json::EstimateMode, RpcApi};
+use bitcoind::bitcoincore_rpc::json::EstimateMode;
 use serde::Deserialize;
 
-use crate::{error::FeeEstimatorError, wallet::Wallet};
+use crate::{
+    error::FeeEstimatorError,
+    wallet::{Blockchain, Wallet},
+};
 
 const MEMPOOL_FEES_API_URL: &str = "https://mempool.space/api/v1/fees/recommended";
 const ESPLORA_FEES_API_URL: &str = "https://blockstream.info/api/fee-estimates";
@@ -133,8 +136,9 @@ impl FeeEstimator {
         let targets = [1, 6, 24]; // Same as Block Targets
         for target in targets {
             let res = wallet
-                .rpc
-                .estimate_smart_fee(target, Some(EstimateMode::Conservative))?;
+                .blockchain
+                .estimate_smart_fee(target, Some(EstimateMode::Conservative))
+                .map_err(|e| FeeEstimatorError::MissingData(e.to_string()))?;
             if let Some(fee_rate) = res.fee_rate {
                 let fee_rate_sats_vbyte = fee_rate.to_sat() as f64 / 1000.0;
                 match target {

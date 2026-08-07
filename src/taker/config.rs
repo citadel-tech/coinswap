@@ -40,8 +40,8 @@ impl TakerConfig {
     ///
     /// Default data-dir for linux: `~/.coinswap/taker`
     /// Default config locations: `~/.coinswap/taker/config.toml`.
-    pub(crate) fn new(config_path: Option<&Path>) -> io::Result<Self> {
-        let default_config_path = get_taker_dir().join("config.toml");
+    pub fn new(config_path: Option<&Path>) -> io::Result<Self> {
+        let default_config_path = get_taker_dir()?.join("config.toml");
 
         let config_path = config_path.unwrap_or(&default_config_path);
 
@@ -86,7 +86,13 @@ tor_auth_password = {}",
             self.control_port, self.socks_port, self.tor_auth_password,
         );
 
-        std::fs::create_dir_all(path.parent().expect("Path should NOT be root!"))?;
+        let parent = path.parent().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "config path has no parent directory",
+            )
+        })?;
+        std::fs::create_dir_all(parent)?;
         let mut file = std::fs::File::create(path)?;
         file.write_all(toml_data.as_bytes())?;
         file.flush()?;
@@ -187,7 +193,7 @@ mod tests {
 
     #[test]
     fn test_missing_file() {
-        let config_path = get_taker_dir().join("taker.toml");
+        let config_path = get_taker_dir().unwrap().join("taker.toml");
         let config = TakerConfig::new(Some(&config_path)).unwrap();
         remove_temp_config(&config_path);
         assert_eq!(config, TakerConfig::default());

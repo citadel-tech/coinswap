@@ -13,32 +13,89 @@
 //!   and new bond creation can properly consume them.
 
 use bitcoin::{absolute::LockTime, Amount};
-use bitcoind::bitcoincore_rpc::RpcApi;
+use bitcoind::bitcoincore_rpc::{Auth, RpcApi};
 use coinswap::{
     maker::start_server,
     taker::TakerBehavior,
     utill::MIN_FEE_RATE,
-    wallet::{AddressType, Destination},
+    wallet::{AddressType, Blockchain, CoreRPC, CoreRpcConfig, Destination},
 };
 
 use super::test_framework::*;
 
 use log::info;
 use std::{sync::atomic::Ordering::Relaxed, thread, time::Duration};
+/// Pins the two backend answers the maker's funding check rests on: `None` sees a
+/// mempool-only spend, while `Some(false)` — the argument it used to pass — reports
+/// that output live on Core. Pins the backend, not the maker's call site.
 #[test]
-fn test_fidelity_complete() {
-    test_fidelity();
-    test_fidelity_spending();
+fn test_mempool_only_spend_reads_as_spent() {
+    // Its own bitcoind: nothing mines in the background, so the spend cannot
+    // confirm while the assertions run.
+    let temp_dir =
+        std::env::temp_dir().join(format!("coinswap-mempool-spend-{}", std::process::id()));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    // Ask the OS for the zmq port rather than guessing one in a range.
+    let zmq_port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let bitcoind = init_bitcoind(&temp_dir, format!("tcp://127.0.0.1:{}", zmq_port));
+
+    let rpc_config = CoreRpcConfig {
+        url: bitcoind.rpc_url().split_at(7).1.to_string(),
+        auth: Auth::CookieFile(bitcoind.params.cookie_file.clone()),
+        ..Default::default()
+    };
+    let backend = CoreRPC::new(&rpc_config).expect("connect Core backend");
+
+    let address = bitcoind
+        .client
+        .get_new_address(None, None)
+        .unwrap()
+        .assume_checked();
+    let spend_txid = send_to_address(&bitcoind, &address, Amount::ONE_BTC);
+    let spend = bitcoind
+        .client
+        .get_raw_transaction(&spend_txid, None)
+        .unwrap();
+    let funding = spend.input[0].previous_output;
+
+    assert!(
+        bitcoind.client.get_mempool_entry(&spend_txid).is_ok(),
+        "spend {} must still be unconfirmed for this case to mean anything",
+        spend_txid
+    );
+    assert!(
+        backend
+            .get_tx_out(&funding.txid, funding.vout, Some(false))
+            .unwrap()
+            .is_some(),
+        "Some(false) hides a mempool spend on Core - that is the hole being closed"
+    );
+    assert!(
+        backend
+            .get_tx_out(&funding.txid, funding.vout, None)
+            .unwrap()
+            .is_none(),
+        "the maker's None query must see the mempool spend and reject the funding"
+    );
+
+    info!("Mempool-only spend reads as spent on the Core backend");
+    drop(bitcoind);
+    let _ = std::fs::remove_dir_all(&temp_dir);
 }
 
 /// Test Fidelity Bond Creation and Redemption
-fn test_fidelity() {
+#[test]
+fn test_fidelity_creation() {
     // ---- Setup ----
     let makers_config_map = vec![(8102, None)];
     let taker_behavior = vec![TakerBehavior::Normal];
 
     let (test_framework, _takers, makers, block_generation_handle) =
-        TestFramework::init(makers_config_map, taker_behavior, vec![]);
+        TestFramework::init::<BitcoindBackend>(makers_config_map, taker_behavior, vec![]);
 
     log::info!("Running Test: Fidelity Bond Creation and Redemption ");
 
@@ -99,7 +156,10 @@ fn test_fidelity() {
             .get_fidelity_bonds()
             .get(highest_bond_index as usize)
             .unwrap();
-        let bond_value = wallet_read.calculate_bond_value(bond).unwrap();
+        let (tip_height, tip_time) = wallet_read.chain_tip().unwrap();
+        let bond_value = wallet_read
+            .calculate_bond_value(bond, tip_height, tip_time)
+            .unwrap();
         // Bond value depends on wall-clock time and regtest block timing,
         // so it varies between runs. Just sanity-check it's in a reasonable range.
         assert!(
@@ -174,7 +234,12 @@ fn test_fidelity() {
     log::info!("Verifying balances with both fidelity bonds");
     // Verify balances
     {
-        maker.wallet.write().unwrap().sync_and_save().unwrap();
+        maker
+            .wallet
+            .write()
+            .unwrap()
+            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .unwrap();
         let wallet_read = maker.wallet.read().unwrap();
 
         let balances = wallet_read.get_balances().unwrap();
@@ -244,7 +309,9 @@ fn test_fidelity() {
         let maker = maker.clone();
         move || {
             let mut maker_write_wallet = maker.wallet.write().unwrap();
-            maker_write_wallet.sync_and_save().unwrap();
+            maker_write_wallet
+                .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+                .unwrap();
         }
     });
 
@@ -274,6 +341,7 @@ fn test_fidelity() {
 /// - Creates a fidelity bond and lets it expire by advancing blockchain height
 /// - Verifies that regular transactions never select expired fidelity bond UTXOs for spending
 /// - Confirms that new fidelity bond creation can properly consume expired fidelity bond UTXOs
+#[test]
 fn test_fidelity_spending() {
     const TIMELOCK_DURATION: u32 = 50;
     const FIDELITY_AMOUNT: u64 = 5_000_000;
@@ -283,7 +351,7 @@ fn test_fidelity_spending() {
     let taker_behavior = vec![TakerBehavior::Normal];
 
     let (test_framework, _takers, makers, block_generation_handle) =
-        TestFramework::init(makers_config_map, taker_behavior, vec![]);
+        TestFramework::init::<BitcoindBackend>(makers_config_map, taker_behavior, vec![]);
 
     log::info!("Running Test: Assert Fidelity Spending Behavior ");
 
@@ -332,14 +400,24 @@ fn test_fidelity_spending() {
     };
 
     generate_blocks(bitcoind, 1);
-    maker.wallet.write().unwrap().sync_and_save().unwrap();
+    maker
+        .wallet
+        .write()
+        .unwrap()
+        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .unwrap();
 
     // Make fidelity bond expire
     while (bitcoind.client.get_block_count().unwrap() as u32) < short_timelock_height {
         generate_blocks(bitcoind, 10);
     }
     generate_blocks(bitcoind, 5);
-    maker.wallet.write().unwrap().sync_and_save().unwrap();
+    maker
+        .wallet
+        .write()
+        .unwrap()
+        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .unwrap();
 
     // Assert UTXO shows up in list and track the specific fidelity UTXO
     let fidelity_utxo_info = {
@@ -446,7 +524,12 @@ fn test_fidelity_spending() {
             Ok(Some(tx)) => {
                 bitcoind.client.send_raw_transaction(&tx).unwrap();
                 generate_blocks(bitcoind, 1);
-                maker.wallet.write().unwrap().sync_and_save().unwrap();
+                maker
+                    .wallet
+                    .write()
+                    .unwrap()
+                    .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+                    .unwrap();
                 log::info!("Regular transaction #{} completed successfully", i + 1);
             }
             Ok(None) => {
@@ -476,7 +559,12 @@ fn test_fidelity_spending() {
     }
 
     generate_blocks(bitcoind, 1);
-    maker.wallet.write().unwrap().sync_and_save().unwrap();
+    maker
+        .wallet
+        .write()
+        .unwrap()
+        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .unwrap();
 
     // Verify the specific UTXO is now consumed and bond is spent
     {
@@ -543,7 +631,12 @@ fn test_fidelity_spending() {
     };
 
     generate_blocks(bitcoind, 1);
-    maker.wallet.write().unwrap().sync_and_save().unwrap();
+    maker
+        .wallet
+        .write()
+        .unwrap()
+        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .unwrap();
 
     {
         let wallet = maker.wallet.read().unwrap();

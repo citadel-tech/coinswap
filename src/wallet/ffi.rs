@@ -6,12 +6,12 @@
 use crate::{
     security::{load_sensitive_struct, KeyMaterial, SerdeJson},
     utill::{get_taker_dir, parse_checked_address, MIN_FEE_RATE},
-    wallet::{
-        infer_address_type, AddressType, Destination, RPCConfig, Wallet, WalletBackup, WalletError,
-    },
+    wallet::{infer_address_type, AddressType, Destination, Wallet, WalletBackup, WalletError},
 };
 use bitcoin::{Amount, OutPoint, Txid};
-use bitcoind::bitcoincore_rpc::{json::ListTransactionResult, RpcApi};
+use bitcoind::bitcoincore_rpc::json::ListTransactionResult;
+
+use super::blockchain::{BackendConfig, Blockchain};
 use std::path::{Path, PathBuf};
 
 pub use super::report::{
@@ -41,7 +41,7 @@ pub use super::report::{
 pub fn restore_wallet_gui_app(
     data_dir: Option<PathBuf>,
     wallet_file_name: Option<String>,
-    rpc_config: RPCConfig,
+    backend: BackendConfig,
     backup_file_path: PathBuf,
     password: Option<String>,
 ) {
@@ -57,16 +57,18 @@ pub fn restore_wallet_gui_app(
     };
     let restored_wallet_filename = wallet_file_name.unwrap_or("".to_string());
 
-    let restored_wallet_path = data_dir
-        .clone()
-        .unwrap_or(get_taker_dir())
-        .join("wallets")
-        .join(restored_wallet_filename);
+    let restored_wallet_path = match data_dir.clone().map(Ok).unwrap_or_else(get_taker_dir) {
+        Ok(dir) => dir.join("wallets").join(restored_wallet_filename),
+        Err(e) => {
+            log::error!("Wallet restore failed: {e}");
+            return;
+        }
+    };
 
     if let Err(e) = Wallet::restore(
         &backup,
         &restored_wallet_path,
-        &rpc_config,
+        &backend,
         encryption_material,
     ) {
         log::error!("Wallet restore failed: {e:?}");
@@ -135,7 +137,8 @@ impl Wallet {
         count: Option<usize>,
         skip: Option<usize>,
     ) -> Result<Vec<ListTransactionResult>, WalletError> {
-        Ok(self.rpc.list_transactions(None, count, skip, Some(true))?)
+        self.blockchain
+            .list_transactions(None, count, skip, Some(true))
     }
 
     /// Sends specified Amount of Satoshis to an External Address
@@ -179,7 +182,7 @@ impl Wallet {
         )?;
 
         let txid = self.send_tx(&tx)?;
-        self.sync_and_save()?;
+        self.sync_and_save(&crate::utill::NO_SHUTDOWN)?;
 
         Ok(txid)
     }

@@ -39,7 +39,7 @@ fn test_concurrent_takers_legacy() {
 
     // Initialize test framework with 2 takers and 2 makers
     let (test_framework, mut takers, makers, block_generation_handle) =
-        TestFramework::init(makers_config_map, taker_behavior, vec![]);
+        TestFramework::init::<BitcoindBackend>(makers_config_map, taker_behavior, vec![]);
 
     let bitcoind = &test_framework.bitcoind;
 
@@ -98,7 +98,12 @@ fn test_concurrent_takers_legacy() {
 
     // Sync wallets after setup to ensure fidelity bonds are accounted for
     for maker in &makers {
-        maker.wallet.write().unwrap().sync_and_save().unwrap();
+        maker
+            .wallet
+            .write()
+            .unwrap()
+            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .unwrap();
     }
 
     // Collect pre-swap spendable balances (skip standard assertions since we use limited liquidity)
@@ -210,27 +215,23 @@ fn test_concurrent_takers_legacy() {
         "Both takers should have completed (success or failure)"
     );
 
-    // ---- Shutdown and verify ----
-    makers
-        .iter()
-        .for_each(|maker| maker.shutdown.store(true, Relaxed));
-
-    maker_threads
-        .into_iter()
-        .for_each(|thread| thread.join().unwrap());
-
     log::info!("All coinswaps processed. Transactions complete.");
 
     // Sync all wallets
     for taker in takers.iter() {
-        taker.get_wallet().write().unwrap().sync_and_save().unwrap();
+        taker
+            .get_wallet()
+            .write()
+            .unwrap()
+            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .unwrap();
     }
 
     generate_blocks(bitcoind, 1);
 
     for maker in makers.iter() {
         let mut wallet = maker.wallet.write().unwrap();
-        wallet.sync_and_save().unwrap();
+        wallet.sync_and_save(&coinswap::utill::NO_SHUTDOWN).unwrap();
     }
 
     // ---- Verify balances ----
@@ -303,6 +304,13 @@ fn test_concurrent_takers_legacy() {
     }
 
     info!("All concurrent taker swap tests (Legacy) completed successfully!");
+
+    makers
+        .iter()
+        .for_each(|maker| maker.shutdown.store(true, Relaxed));
+    maker_threads
+        .into_iter()
+        .for_each(|thread| thread.join().unwrap());
 
     // Drop takers before stopping the framework so their background services
     // shut down while bitcoind is still running.

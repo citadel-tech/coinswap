@@ -17,7 +17,7 @@ use crate::{
     nostr_coinswap::broadcast_bond_on_nostr,
     protocol::common_messages::{FidelityProof, MakerToTakerMessage, TakerToMakerMessage},
     utill::{HEART_BEAT_INTERVAL, MAX_RPC_MESSAGE_SIZE},
-    wallet::RecoveryReport,
+    wallet::{Blockchain, RecoveryReport, Wallet},
 };
 
 use super::{
@@ -30,9 +30,19 @@ use super::{
 #[cfg(not(feature = "integration-test"))]
 pub const IDLE_CONNECTION_TIMEOUT: Duration = Duration::from_secs(900);
 
-/// Idle connection timeout (testing).
+/// Idle connection timeout (testing). Must sit above a single slow electrum
+/// call (~10s over Tor) since keepalives can only land between RPCs; the slow
+/// test miner keeps the refund locktime margin regardless of wall clock.
 #[cfg(feature = "integration-test")]
-pub const IDLE_CONNECTION_TIMEOUT: Duration = Duration::from_secs(60);
+pub const IDLE_CONNECTION_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Socket read timeout for swap connections, kept separate from
+/// `IDLE_CONNECTION_TIMEOUT`. Sized for the quiet phases of a healthy swap —
+/// contract confirmation waits are block-bound, not message-bound.
+#[cfg(not(feature = "integration-test"))]
+const CONNECTION_READ_TIMEOUT: Duration = Duration::from_secs(1800);
+#[cfg(feature = "integration-test")]
+const CONNECTION_READ_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Fidelity bond update interval (testing): 30 seconds.
 #[cfg(feature = "integration-test")]
@@ -128,7 +138,7 @@ pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
                         }
                     })
                     .map_err(MakerError::IO)?;
-                maker.thread_pool.add_thread(handle);
+                maker.thread_pool.add_thread(handle)?;
             }
         }
     }
@@ -167,7 +177,7 @@ pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
             }
         })
         .map_err(MakerError::IO)?;
-    maker.thread_pool.add_thread(rpc_handle);
+    maker.thread_pool.add_thread(rpc_handle)?;
 
     // Spawn idle state checker thread for recovery
     let maker_clone = Arc::clone(&maker);
@@ -179,7 +189,7 @@ pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
             }
         })
         .map_err(MakerError::IO)?;
-    maker.thread_pool.add_thread(idle_handle);
+    maker.thread_pool.add_thread(idle_handle)?;
 
     // Spawn fidelity bond renewal thread
     let maker_fidelity = Arc::clone(&maker);
@@ -192,7 +202,7 @@ pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
             }
         })
         .map_err(MakerError::IO)?;
-    maker.thread_pool.add_thread(fidelity_handle);
+    maker.thread_pool.add_thread(fidelity_handle)?;
 
     while !maker.is_shutdown() {
         match listener.accept() {
@@ -204,7 +214,12 @@ pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
                 );
 
                 let maker_clone = Arc::clone(&maker);
-                thread::Builder::new()
+                // Shared so shutdown can close the socket under a parked read. The
+                // handler owns the only strong reference, so it still closes
+                // normally the moment the handler returns.
+                let stream = Arc::new(stream);
+                let watched = Arc::clone(&stream);
+                let conn_handle = thread::Builder::new()
                     .name(format!("connection-{}", addr))
                     .spawn(move || {
                         if let Err(e) = handle_connection(maker_clone, stream) {
@@ -212,6 +227,8 @@ pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
                         }
                     })
                     .map_err(MakerError::IO)?;
+                maker.thread_pool.add_connection(conn_handle, &watched)?;
+                drop(watched);
             }
             Err(e) if e.kind() == ErrorKind::WouldBlock => {
                 // No connection waiting, sleep briefly
@@ -227,17 +244,25 @@ pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
 
     maker.watch_service.shutdown();
     maker.thread_pool.join_all_threads()?;
+    maker.shutdown.reset_backend();
 
     log::info!(
-        "[{}] Sync at:----Shutdown wallet----",
+        "shutdown_phase_start pid={} component=maker:{} phase=wallet_save",
+        std::process::id(),
         maker.config.network_port
     );
-    maker
+    let save_result = maker
         .wallet
         .write()
-        .map_err(|_| MakerError::General("Failed to lock wallet"))?
-        .sync_and_save()
-        .map_err(MakerError::Wallet)?;
+        .map_err(|_| MakerError::General("Failed to lock wallet"))
+        .and_then(|wallet| wallet.save_to_disk().map_err(MakerError::Wallet));
+    log::info!(
+        "shutdown_phase_done pid={} component=maker:{} phase=wallet_save outcome={}",
+        std::process::id(),
+        maker.config.network_port,
+        if save_result.is_ok() { "ok" } else { "error" }
+    );
+    save_result?;
 
     log::info!("[{}] Server shutdown complete", maker.config.network_port);
 
@@ -260,8 +285,12 @@ fn spawn_nostr_broadcast_thread(
         .name("nostr-thread".to_string())
         .spawn(move || {
             // Initial broadcast
-            if let Err(e) = broadcast_bond_on_nostr(fidelity.clone(), &relays, &maker_clone.config)
-            {
+            if let Err(e) = broadcast_bond_on_nostr(
+                fidelity.clone(),
+                &relays,
+                &maker_clone.config,
+                &maker_clone.shutdown,
+            ) {
                 log::warn!("Initial nostr broadcast failed: {:?}", e);
             }
 
@@ -270,7 +299,9 @@ fn spawn_nostr_broadcast_thread(
             let mut elapsed = Duration::ZERO;
 
             while !maker_clone.shutdown.load(Ordering::Acquire) {
-                thread::sleep(tick);
+                if !maker_clone.wait_for_shutdown(tick) {
+                    break;
+                }
                 elapsed += tick;
 
                 if elapsed < interval {
@@ -281,9 +312,12 @@ fn spawn_nostr_broadcast_thread(
 
                 log::debug!("Re-pinging nostr relays with bond announcement");
 
-                if let Err(e) =
-                    broadcast_bond_on_nostr(fidelity.clone(), &relays, &maker_clone.config)
-                {
+                if let Err(e) = broadcast_bond_on_nostr(
+                    fidelity.clone(),
+                    &relays,
+                    &maker_clone.config,
+                    &maker_clone.shutdown,
+                ) {
                     log::warn!("Nostr re-ping failed: {:?}", e);
                 }
             }
@@ -292,16 +326,16 @@ fn spawn_nostr_broadcast_thread(
         })
         .map_err(MakerError::IO)?;
 
-    maker.thread_pool.add_thread(handle);
+    maker.thread_pool.add_thread(handle)?;
 
     Ok(())
 }
 
 /// Handle a single connection.
-fn handle_connection(maker: Arc<MakerServer>, stream: TcpStream) -> Result<(), MakerError> {
+fn handle_connection(maker: Arc<MakerServer>, stream: Arc<TcpStream>) -> Result<(), MakerError> {
     stream.set_nonblocking(false).map_err(MakerError::IO)?;
     stream
-        .set_read_timeout(Some(IDLE_CONNECTION_TIMEOUT))
+        .set_read_timeout(Some(CONNECTION_READ_TIMEOUT))
         .map_err(MakerError::IO)?;
 
     let mut state = ConnectionState::default();
@@ -329,6 +363,12 @@ fn handle_connection(maker: Arc<MakerServer>, stream: TcpStream) -> Result<(), M
         let message = match read_message(&stream) {
             Ok(msg) => msg,
             Err(e) => {
+                // A read timeout is only a wakeup: keepalives arrive on separate
+                // connections and refresh the shared swap activity. Break only
+                // when the swap has gone quiet everywhere, not just this socket.
+                if is_read_timeout(&e) && !swap_is_quiet(&maker, &state) {
+                    continue;
+                }
                 log::debug!(
                     "[{}] Read error (may be normal disconnect): {:?}",
                     maker.config.network_port,
@@ -353,6 +393,11 @@ fn handle_connection(maker: Arc<MakerServer>, stream: TcpStream) -> Result<(), M
             }
         };
 
+        // Handling can block for minutes on contract confirmation waits.
+        // Count the work itself as activity, or the loop-top idle check kills
+        // the connection right after a long productive call.
+        state.touch();
+
         if let Some(response) = response {
             log::debug!(
                 "[{}] Sending response: {:?}",
@@ -375,7 +420,7 @@ fn handle_connection(maker: Arc<MakerServer>, stream: TcpStream) -> Result<(), M
             // Otherwise the idle checker can race the sweep and launch recovery for
             // a swap that has already completed successfully.
             if let Some(ref swap_id) = state.swap_id {
-                maker.remove_connection_state(swap_id);
+                maker.remove_connection_state(swap_id)?;
             }
 
             log::info!(
@@ -402,20 +447,26 @@ fn handle_connection(maker: Arc<MakerServer>, stream: TcpStream) -> Result<(), M
             // Unwatch all contract outputs now that the swap is complete.
             for incoming in &state.incoming_swapcoins {
                 let txid = incoming.contract_tx.compute_txid();
-                for (vout, _) in incoming.contract_tx.output.iter().enumerate() {
-                    maker.unwatch_outpoint(bitcoin::OutPoint {
-                        txid,
-                        vout: vout as u32,
-                    });
+                for (vout, txout) in incoming.contract_tx.output.iter().enumerate() {
+                    maker.unwatch_outpoint(
+                        bitcoin::OutPoint {
+                            txid,
+                            vout: vout as u32,
+                        },
+                        txout.script_pubkey.clone(),
+                    );
                 }
             }
             for outgoing in &state.outgoing_swapcoins {
                 let txid = outgoing.contract_tx.compute_txid();
-                for (vout, _) in outgoing.contract_tx.output.iter().enumerate() {
-                    maker.unwatch_outpoint(bitcoin::OutPoint {
-                        txid,
-                        vout: vout as u32,
-                    });
+                for (vout, txout) in outgoing.contract_tx.output.iter().enumerate() {
+                    maker.unwatch_outpoint(
+                        bitcoin::OutPoint {
+                            txid,
+                            vout: vout as u32,
+                        },
+                        txout.script_pubkey.clone(),
+                    );
                 }
             }
 
@@ -431,6 +482,24 @@ fn handle_connection(maker: Arc<MakerServer>, stream: TcpStream) -> Result<(), M
     Ok(())
 }
 
+/// True when the error is the socket read timeout firing, not a real IO failure.
+fn is_read_timeout(e: &MakerError) -> bool {
+    matches!(e, MakerError::IO(io) if io.kind() == ErrorKind::WouldBlock)
+}
+
+/// A swap is quiet when neither this connection nor any keepalive connection
+/// has shown activity within the idle timeout.
+fn swap_is_quiet(maker: &Arc<MakerServer>, state: &ConnectionState) -> bool {
+    let timeout = IDLE_CONNECTION_TIMEOUT.as_secs();
+    match state.swap_id {
+        Some(ref id) => match maker.get_connection_state(id) {
+            Ok(Some(stored)) => stored.is_timed_out(timeout),
+            _ => state.is_timed_out(timeout),
+        },
+        None => state.is_timed_out(timeout),
+    }
+}
+
 /// Background thread that checks for idle swap states and spawns recovery.
 fn check_for_idle_states(maker: Arc<MakerServer>) -> Result<(), MakerError> {
     use super::swap_tracker::{now_secs, MakerRecoveryState, MakerSwapPhase, MakerSwapRecord};
@@ -440,7 +509,7 @@ fn check_for_idle_states(maker: Arc<MakerServer>) -> Result<(), MakerError> {
             break;
         }
 
-        let idle_swaps = maker.drain_idle_swaps(IDLE_CONNECTION_TIMEOUT);
+        let idle_swaps = maker.drain_idle_swaps(IDLE_CONNECTION_TIMEOUT)?;
 
         for idle in idle_swaps {
             log::error!(
@@ -464,8 +533,24 @@ fn check_for_idle_states(maker: Arc<MakerServer>) -> Result<(), MakerError> {
                 updated_at: now,
             };
 
-            if let Err(e) = maker.swap_tracker.lock().unwrap().save_record(&record) {
+            if let Err(e) = maker
+                .swap_tracker
+                .lock()
+                .map_err(|_| MakerError::MutexPossion)?
+                .save_record(&record)
+            {
                 log::error!("Failed to save swap tracker record: {:?}", e);
+            }
+
+            // A crashed process never reaches its idle recovery, so the contracts
+            // stay unclaimed until a restart picks them up.
+            #[cfg(feature = "integration-test")]
+            if maker.behavior == super::handlers::MakerBehavior::CrashBeforeRecovery {
+                log::warn!(
+                    "[{}] Test behavior: crashing instead of recovering",
+                    maker.config.network_port
+                );
+                continue;
             }
 
             let swap_id = idle.swap_id.clone();
@@ -483,10 +568,12 @@ fn check_for_idle_states(maker: Arc<MakerServer>) -> Result<(), MakerError> {
                     }
                 })
                 .map_err(MakerError::IO)?;
-            maker.thread_pool.add_thread(handle);
+            maker.thread_pool.add_thread(handle)?;
         }
 
-        sleep(HEART_BEAT_INTERVAL);
+        if !maker.wait_for_shutdown(HEART_BEAT_INTERVAL) {
+            break;
+        }
     }
 
     Ok(())
@@ -500,7 +587,9 @@ fn fidelity_renewal_loop(maker: Arc<MakerServer>, maker_address: &str) -> Result
     let mut elapsed = Duration::ZERO;
 
     while !maker.is_shutdown() {
-        sleep(tick);
+        if !maker.wait_for_shutdown(tick) {
+            break;
+        }
         elapsed += tick;
 
         if elapsed < FIDELITY_BOND_UPDATE_INTERVAL {
@@ -509,7 +598,7 @@ fn fidelity_renewal_loop(maker: Arc<MakerServer>, maker_address: &str) -> Result
         elapsed = Duration::ZERO;
 
         // Skip renewal check if a swap is in progress
-        if maker.has_ongoing_swaps() {
+        if maker.has_ongoing_swaps()? {
             continue;
         }
 
@@ -573,12 +662,22 @@ fn check_for_preimage_via_watchtower(
                 txid: contract_txid,
                 vout: vout as u32,
             };
-            maker.watch_service.watch_request(outpoint);
+            // Blocking on purpose: we need this pass's fresh answer before
+            // choosing timelock over hashlock — a stale miss refunds while a
+            // preimage spend already exists.
+            let reply = match maker.watch_service.watch_request(outpoint) {
+                Ok(reply) => reply,
+                // If something is wrong at watchtower, log the error, don't suppress fully.
+                Err(e) => {
+                    log::error!("watch request for {outpoint} failed (watcher gone): {e}");
+                    continue;
+                }
+            };
 
             if let Some(crate::watch_tower::watcher::WatcherEvent::UtxoSpent {
                 spending_tx: Some(spending_tx),
                 ..
-            }) = maker.watch_service.wait_for_event()
+            }) = reply
             {
                 // Extract preimages from the spending transaction's witnesses.
                 for input in &spending_tx.input {
@@ -667,7 +766,13 @@ fn update_tracker(
     swap_id: &str,
     f: impl FnOnce(&mut super::swap_tracker::MakerSwapRecord),
 ) {
-    let mut tracker = maker.swap_tracker.lock().unwrap();
+    let mut tracker = match maker.swap_tracker.lock() {
+        Ok(tracker) => tracker,
+        Err(_) => {
+            log::error!("Swap tracker lock poisoned, skipping update for {swap_id}");
+            return;
+        }
+    };
     if let Some(record) = tracker.get_record_mut(swap_id) {
         f(record);
         record.updated_at = super::swap_tracker::now_secs();
@@ -693,7 +798,6 @@ fn recover_from_swap(
     outgoing_swapcoins: Vec<crate::wallet::swapcoin::OutgoingSwapCoin>,
 ) -> Result<(), MakerError> {
     use super::swap_tracker::{MakerRecoveryPhase, MakerSwapPhase};
-    use bitcoind::bitcoincore_rpc::RpcApi;
 
     // For Taproot, get_timelock() returns an absolute CLTV height.
     // For Legacy, it returns a relative CSV offset — but Legacy recovery
@@ -708,9 +812,9 @@ fn recover_from_swap(
         .wallet
         .read()
         .map_err(|_| MakerError::General("Failed to lock wallet"))?
-        .rpc
+        .blockchain
         .get_block_count()
-        .map_err(crate::wallet::WalletError::Rpc)? as u32;
+        .map_err(MakerError::Wallet)? as u32;
 
     log::info!(
         "[{}] recover_from_swap started | height={} timelock_expiry={} | incoming={} outgoing={}",
@@ -737,12 +841,7 @@ fn recover_from_swap(
             );
 
         for (txid, vout) in contract_txids {
-            if wallet
-                .rpc
-                .get_tx_out(&txid, vout, None)
-                .map_err(crate::wallet::WalletError::Rpc)?
-                .is_some()
-            {
+            if wallet.blockchain.get_tx_out(&txid, vout, None)?.is_some() {
                 return Ok(false);
             }
         }
@@ -757,7 +856,7 @@ fn recover_from_swap(
         let funding_broadcast = maker
             .swap_tracker
             .lock()
-            .unwrap()
+            .map_err(|_| MakerError::MutexPossion)?
             .get_record(&swap_id)
             .map(|r| r.funding_broadcast);
 
@@ -801,12 +900,6 @@ fn recover_from_swap(
         r.recovery.phase = MakerRecoveryPhase::Monitoring;
     });
 
-    // NOTE: Do NOT re-register outgoing contract outputs here.
-    // They were already registered with the watch tower during swap setup
-    // (in legacy_handlers / taproot_handlers). Re-registering would overwrite
-    // the registry entry and lose any recorded `spent_tx` from on-chain
-    // hashlock spends that the watcher already captured.
-
     while !maker.is_shutdown() {
         // --- Hashlock path: check if preimages are available ---
         check_for_preimage_via_watchtower(&maker, &outgoing_swapcoins, &incoming_swapcoins)?;
@@ -836,15 +929,15 @@ fn recover_from_swap(
                 .wallet
                 .write()
                 .map_err(|_| MakerError::General("Failed to lock wallet"))?
-                .sync_and_save()
+                .sync_and_save(&maker.shutdown)
                 .map_err(MakerError::Wallet)?;
 
-            let swept = maker
-                .wallet
-                .write()
-                .map_err(|_| MakerError::General("Failed to lock wallet"))?
-                .sweep_incoming_swapcoins(crate::utill::MIN_FEE_RATE)
-                .map_err(MakerError::Wallet)?;
+            let swept = Wallet::sweep_incoming_swapcoins(
+                &maker.wallet,
+                crate::utill::MIN_FEE_RATE,
+                &maker.shutdown,
+            )
+            .map_err(MakerError::Wallet)?;
 
             if !swept.is_empty() {
                 log::info!(
@@ -912,9 +1005,9 @@ fn recover_from_swap(
             .wallet
             .read()
             .map_err(|_| MakerError::General("Failed to lock wallet"))?
-            .rpc
+            .blockchain
             .get_block_count()
-            .map_err(crate::wallet::WalletError::Rpc)? as u32;
+            .map_err(MakerError::Wallet)? as u32;
 
         if current_height >= timelock_expiry {
             log::info!(
@@ -929,20 +1022,12 @@ fn recover_from_swap(
                 r.recovery.phase = MakerRecoveryPhase::TimelockWaiting;
             });
 
-            log::info!("Sync at:----recover_from_swap timelock----");
-            maker
-                .wallet
-                .write()
-                .map_err(|_| MakerError::General("Failed to lock wallet"))?
-                .sync_and_save()
-                .map_err(MakerError::Wallet)?;
-
-            let recovered = maker
-                .wallet
-                .write()
-                .map_err(|_| MakerError::General("Failed to lock wallet"))?
-                .recover_timelocked_swapcoins(crate::utill::MIN_FEE_RATE)
-                .map_err(MakerError::Wallet)?;
+            let recovered = Wallet::recover_timelocked_swapcoins(
+                &maker.wallet,
+                crate::utill::MIN_FEE_RATE,
+                &maker.shutdown,
+            )
+            .map_err(MakerError::Wallet)?;
 
             if !recovered.is_empty() {
                 log::info!(
@@ -959,7 +1044,17 @@ fn recover_from_swap(
                     r.recovery.outgoing_recovered = timelock_recovery_txids.clone();
                     r.recovery.phase = MakerRecoveryPhase::TimelockRecovered;
                 });
-                if all_swap_contracts_resolved()? {
+                // A backend that cannot answer says nothing about the contracts;
+                // ask again next pass rather than declaring the swap finished.
+                let resolved = all_swap_contracts_resolved().unwrap_or_else(|e| {
+                    log::warn!(
+                        "[{}] Could not check contract outputs: {:?}",
+                        maker.config.network_port,
+                        e
+                    );
+                    false
+                });
+                if resolved {
                     update_tracker(&maker, &swap_id, |r| {
                         r.phase = MakerSwapPhase::Recovered;
                         r.recovery.phase = MakerRecoveryPhase::CleanedUp;
