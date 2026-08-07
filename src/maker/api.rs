@@ -677,7 +677,9 @@ impl MakerServer {
                 highest_proof.bond.outpoint,
                 i,
                 bond.amount.to_sat(),
-                bond.lock_time.to_consensus_u32() - current_height as u32,
+                bond.lock_time
+                    .to_consensus_u32()
+                    .saturating_sub(current_height as u32),
                 bond_value
             );
 
