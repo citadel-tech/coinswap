@@ -170,7 +170,7 @@ jobs:
         run: |
           cargo nextest run --features integration-test \
             --run-ignored=only --test-threads=1 --retries 2 \
-            --failure-output immediate-final \
+            --no-capture \
             -E 'test(${{ matrix.test }})'
 
       # `always()`, not `failure()`: a job timeout is recorded as a cancellation,
