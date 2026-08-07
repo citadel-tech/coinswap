@@ -135,7 +135,7 @@ jobs:
       # ports and we control the control-port auth.
       - name: Start tor with a control port
         run: |
-          sudo systemctl stop tor || true
+          sudo systemctl stop tor@default.service tor.service || true
           mkdir -p /tmp/tor-it
           # Empty control password: `check_tor_status` sends AUTHENTICATE "" and
           # the test helpers default COINSWAP_TOR_PASSWORD to empty.
