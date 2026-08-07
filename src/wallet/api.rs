@@ -20,6 +20,7 @@ use bip39::Mnemonic;
 #[cfg(not(feature = "integration-test"))]
 use bitcoin::hashes::{sha512, Hash};
 use bitcoin::{
+    address::NetworkUnchecked,
     bip32::{ChainCode, ChildNumber, DerivationPath, Xpriv, Xpub},
     block::Header,
     key::TapTweak,
@@ -333,6 +334,19 @@ enum ContractChainState {
     Discarded,
     /// Nothing decided this pass; the next recovery run retries.
     NotYet,
+}
+
+fn recovery_address_or_else<F>(
+    stored: Option<Address<NetworkUnchecked>>,
+    create: F,
+) -> Result<(Address<NetworkUnchecked>, bool), WalletError>
+where
+    F: FnOnce() -> Result<Address<NetworkUnchecked>, WalletError>,
+{
+    match stored {
+        Some(address) => Ok((address, false)),
+        None => Ok((create()?, true)),
+    }
 }
 
 impl RecoveryOutcome {
@@ -990,15 +1004,38 @@ impl Wallet {
                 Err(e) => return Err(e),
             }
 
-            // Allocate the address only for a coin actually being recovered; a coin
-            // skipped every pass would otherwise burn an index each time and grow
-            // the watch window forever. Take the guard just for this, so the wait
-            // below does not hold it.
+            // A retry must rebuild the same transaction. Persist its destination
+            // before broadcasting so a failed wait cannot burn another index.
             let recovery_address = {
                 let mut w = wallet
                     .write()
                     .map_err(|_| WalletError::General("wallet lock poisoned".to_string()))?;
-                w.get_next_internal_addresses(1, AddressType::P2TR)?[0].clone()
+                let stored = w
+                    .store
+                    .outgoing_swapcoins
+                    .get(&swap_id)
+                    .and_then(|coin| coin.recovery_address.clone());
+                let (address, created) = recovery_address_or_else(stored, || {
+                    Ok(w.get_next_internal_addresses(1, AddressType::P2TR)?[0]
+                        .clone()
+                        .into_unchecked())
+                })?;
+                if created {
+                    w.store
+                        .outgoing_swapcoins
+                        .get_mut(&swap_id)
+                        .ok_or_else(|| {
+                            WalletError::General(format!(
+                                "outgoing swapcoin {} disappeared during recovery",
+                                swap_id
+                            ))
+                        })?
+                        .recovery_address = Some(address.clone());
+                    w.save_to_disk()?;
+                }
+                address.require_network(w.store.network).map_err(|e| {
+                    WalletError::General(format!("invalid recovery address network: {e}"))
+                })?
             };
 
             match Self::create_timelock_recovery_tx(&swapcoin, fee_rate, recovery_address) {
@@ -3967,5 +4004,37 @@ mod restore_history_probe_tests {
             wallet.sync_and_save(&shutdown),
             Err(WalletError::Interrupted("Shutdown requested"))
         ));
+    }
+}
+
+#[cfg(test)]
+mod recovery_address_tests {
+    use super::*;
+
+    fn address() -> Address<NetworkUnchecked> {
+        let secp = Secp256k1::new();
+        let keypair = Keypair::from_secret_key(&secp, &SecretKey::from_slice(&[1u8; 32]).unwrap());
+        Address::p2tr(&secp, keypair.x_only_public_key().0, None, Network::Regtest).into_unchecked()
+    }
+
+    #[test]
+    fn retry_reuses_the_stored_recovery_address() {
+        let stored = address();
+        let (selected, created) = recovery_address_or_else(Some(stored.clone()), || {
+            panic!("a retry must not allocate another address")
+        })
+        .unwrap();
+
+        assert_eq!(selected, stored);
+        assert!(!created);
+    }
+
+    #[test]
+    fn first_recovery_creates_an_address() {
+        let expected = address();
+        let (selected, created) = recovery_address_or_else(None, || Ok(expected.clone())).unwrap();
+
+        assert_eq!(selected, expected);
+        assert!(created);
     }
 }
