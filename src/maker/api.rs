@@ -892,9 +892,8 @@ impl MakerServer {
         Ok(())
     }
 
-    /// Atomically find and remove stale entries from `ongoing_swaps`.
-    /// Returns swap data for each idle swap.
-    /// Only drains entries where `outgoing_swapcoins` is non-empty (otherwise nothing to recover).
+    /// Atomically release stale unfunded reservations and drain swaps requiring recovery.
+    /// Returns swap data only for entries with on-chain recovery material.
     pub fn drain_idle_swaps(&self, timeout: Duration) -> Result<Vec<IdleSwapData>, MakerError> {
         // Read before the lock: a chain round trip while holding `ongoing_swaps`
         // would stall every handler. A failure here must not kill the recovery
@@ -916,6 +915,30 @@ impl MakerServer {
             .lock()
             .map_err(|_| MakerError::MutexPossion)?;
         let mut idle = Vec::new();
+
+        // An accepted swap with no funding material only reserves liquidity;
+        // there is nothing on-chain to recover, so it is dropped without recovery.
+        let released_ids: Vec<String> = swaps
+            .iter()
+            .filter(|(_, state)| {
+                state.phase == SwapPhase::AwaitingContractData
+                    && state.incoming_swapcoins.is_empty()
+                    && state.outgoing_swapcoins.is_empty()
+                    && state.pending_funding_txes.is_empty()
+                    && !state.funding_broadcast
+                    && state.last_activity.elapsed() > timeout
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+
+        for id in released_ids {
+            swaps.remove(&id);
+            log::info!(
+                "[{}] Released idle unfunded reservation for swap {}",
+                self.config.network_port,
+                id
+            );
+        }
 
         // Carries why each swap was drained: an operator reading "dropped connection"
         // for a taker that never dropped would go looking for the wrong fault.
