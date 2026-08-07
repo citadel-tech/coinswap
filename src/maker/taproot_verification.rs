@@ -10,7 +10,7 @@ use bitcoin::{secp256k1::Secp256k1, OutPoint, PublicKey};
 use crate::{
     protocol::{
         common_messages::SwapPrivkey, contract2::extract_hash_from_hashlock,
-        taproot_messages::TaprootContractData,
+        musig_interface::get_aggregated_pubkey_compat, taproot_messages::TaprootContractData,
     },
     taker::api::REFUND_LOCKTIME_STEP,
 };
@@ -20,6 +20,7 @@ use super::error::MakerError;
 /// Verify incoming Taproot contract data from the taker.
 pub(crate) fn verify_taproot_contract_data(
     data: &TaprootContractData,
+    maker_pubkey: &PublicKey,
     maker_timelock: u32,
     network_port: u16,
 ) -> Result<(), MakerError> {
@@ -105,6 +106,20 @@ pub(crate) fn verify_taproot_contract_data(
     // Each contract has its own timelock script, internal key and tap tweak.
     for (i, tx) in data.contract_txs.iter().enumerate() {
         let timelock_script = &data.timelock_scripts[i];
+        let mut ordered_pubkeys = [&data.pubkeys[i], maker_pubkey];
+        ordered_pubkeys.sort_by_key(|pk| pk.inner.serialize());
+        let expected_internal_key =
+            get_aggregated_pubkey_compat(ordered_pubkeys[0].inner, ordered_pubkeys[1].inner)
+                .map_err(|e| {
+                    MakerError::General(
+                        format!("Taproot internal key {} aggregation failed: {:?}", i, e).leak(),
+                    )
+                })?;
+        if data.internal_keys[i] != expected_internal_key {
+            return Err(MakerError::General(
+                "Taproot internal key does not match the expected MuSig2 aggregate",
+            ));
+        }
 
         // Verify timelock script has expected format (5 instructions):
         // <locktime> OP_CLTV OP_DROP <pubkey> OP_CHECKSIG
@@ -321,7 +336,11 @@ mod tests {
         absolute::LockTime,
         hashes::Hash,
         opcodes::all::{OP_CHECKSIG, OP_CLTV, OP_DROP, OP_DUP, OP_EQUALVERIFY},
-        script, transaction, Amount, OutPoint, Sequence, Transaction, TxIn, TxOut, Txid, Witness,
+        script,
+        secp256k1::{Keypair, PublicKey as SecpPublicKey, SecretKey, XOnlyPublicKey},
+        taproot::TaprootBuilder,
+        transaction, Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid,
+        Witness,
     };
 
     use crate::protocol::{
@@ -331,19 +350,19 @@ mod tests {
 
     const MAKER_TIMELOCK: u32 = 300;
 
-    fn keypair(byte: u8) -> bitcoin::secp256k1::Keypair {
+    fn keypair(byte: u8) -> Keypair {
         let secp = Secp256k1::new();
-        let secret = bitcoin::secp256k1::SecretKey::from_slice(&[byte; 32]).unwrap();
-        bitcoin::secp256k1::Keypair::from_secret_key(&secp, &secret)
+        let secret = SecretKey::from_slice(&[byte; 32]).unwrap();
+        Keypair::from_secret_key(&secp, &secret)
     }
 
     fn output_script(
-        internal_key: bitcoin::secp256k1::XOnlyPublicKey,
-        hashlock_script: bitcoin::ScriptBuf,
-        timelock_script: bitcoin::ScriptBuf,
-    ) -> (bitcoin::ScriptBuf, SerializableScalar) {
+        internal_key: XOnlyPublicKey,
+        hashlock_script: ScriptBuf,
+        timelock_script: ScriptBuf,
+    ) -> (ScriptBuf, SerializableScalar) {
         let secp = Secp256k1::new();
-        let tap_info = bitcoin::taproot::TaprootBuilder::new()
+        let tap_info = TaprootBuilder::new()
             .add_leaf(1, hashlock_script)
             .unwrap()
             .add_leaf(1, timelock_script)
@@ -351,12 +370,12 @@ mod tests {
             .finalize(&secp, internal_key)
             .unwrap();
         (
-            bitcoin::ScriptBuf::new_p2tr_tweaked(tap_info.output_key()),
+            ScriptBuf::new_p2tr_tweaked(tap_info.output_key()),
             SerializableScalar::from_bytes(tap_info.tap_tweak().to_scalar().to_be_bytes().to_vec()),
         )
     }
 
-    fn contract_tx(script_pubkey: bitcoin::ScriptBuf, amount: Amount) -> Transaction {
+    fn contract_tx(script_pubkey: ScriptBuf, amount: Amount) -> Transaction {
         Transaction {
             version: transaction::Version::TWO,
             lock_time: LockTime::ZERO,
@@ -365,7 +384,7 @@ mod tests {
                     txid: Txid::all_zeros(),
                     vout: 0,
                 },
-                script_sig: bitcoin::ScriptBuf::new(),
+                script_sig: ScriptBuf::new(),
                 sequence: Sequence::MAX,
                 witness: Witness::new(),
             }],
@@ -377,8 +396,14 @@ mod tests {
     }
 
     fn valid_contract_data() -> TaprootContractData {
-        let internal_key = bitcoin::secp256k1::XOnlyPublicKey::from_keypair(&keypair(1)).0;
-        let script_key = bitcoin::secp256k1::XOnlyPublicKey::from_keypair(&keypair(2)).0;
+        let taker_pubkey = PublicKey::new(SecpPublicKey::from_keypair(&keypair(4)));
+        let maker_pubkey = PublicKey::new(SecpPublicKey::from_keypair(&keypair(3)));
+        let mut ordered_pubkeys = [&taker_pubkey, &maker_pubkey];
+        ordered_pubkeys.sort_by_key(|pk| pk.inner.serialize());
+        let internal_key =
+            get_aggregated_pubkey_compat(ordered_pubkeys[0].inner, ordered_pubkeys[1].inner)
+                .unwrap();
+        let script_key = XOnlyPublicKey::from_keypair(&keypair(2)).0;
         let hash = [7u8; 32];
         let hashlock_script = create_hashlock_script(&hash, &script_key);
         let timelock = LockTime::from_height(MAKER_TIMELOCK + REFUND_LOCKTIME_STEP as u32).unwrap();
@@ -392,10 +417,8 @@ mod tests {
 
         TaprootContractData::new(
             "test-swap".to_string(),
-            vec![bitcoin::PublicKey::new(
-                bitcoin::secp256k1::PublicKey::from_keypair(&keypair(4)),
-            )],
-            bitcoin::PublicKey::new(bitcoin::secp256k1::PublicKey::from_keypair(&keypair(3))),
+            vec![taker_pubkey],
+            maker_pubkey,
             vec![internal_key],
             vec![tap_tweak],
             hashlock_script,
@@ -421,8 +444,9 @@ mod tests {
     fn rejects_amount_that_does_not_match_contract_output() {
         let mut data = valid_contract_data();
         data.amounts[0] += Amount::from_sat(1);
+        let maker_pubkey = PublicKey::new(SecpPublicKey::from_keypair(&keypair(3)));
 
-        assert!(verify_taproot_contract_data(&data, MAKER_TIMELOCK, 0).is_err());
+        assert!(verify_taproot_contract_data(&data, &maker_pubkey, MAKER_TIMELOCK, 0).is_err());
     }
 
     #[test]
@@ -434,8 +458,10 @@ mod tests {
         data.timelock_scripts.push(data.timelock_scripts[0].clone());
         data.contract_txs.push(data.contract_txs[0].clone());
         data.amounts.push(data.amounts[0]);
+        let maker_pubkey = PublicKey::new(SecpPublicKey::from_keypair(&keypair(3)));
 
-        let error = verify_taproot_contract_data(&data, MAKER_TIMELOCK, 0).unwrap_err();
+        let error =
+            verify_taproot_contract_data(&data, &maker_pubkey, MAKER_TIMELOCK, 0).unwrap_err();
         assert!(matches!(
             error,
             MakerError::General("Duplicate Taproot contract outpoint")
@@ -445,7 +471,7 @@ mod tests {
     #[test]
     fn rejects_hashlock_script_with_wrong_template() {
         let mut data = valid_contract_data();
-        let script_key = bitcoin::secp256k1::XOnlyPublicKey::from_keypair(&keypair(2)).0;
+        let script_key = XOnlyPublicKey::from_keypair(&keypair(2)).0;
         data.hashlock_script = script::Builder::new()
             .push_opcode(OP_DUP)
             .push_slice([7u8; 32])
@@ -454,14 +480,15 @@ mod tests {
             .push_opcode(OP_CHECKSIG)
             .into_script();
         refresh_output_script(&mut data);
+        let maker_pubkey = PublicKey::new(SecpPublicKey::from_keypair(&keypair(3)));
 
-        assert!(verify_taproot_contract_data(&data, MAKER_TIMELOCK, 0).is_err());
+        assert!(verify_taproot_contract_data(&data, &maker_pubkey, MAKER_TIMELOCK, 0).is_err());
     }
 
     #[test]
     fn rejects_timelock_script_with_wrong_template() {
         let mut data = valid_contract_data();
-        let script_key = bitcoin::secp256k1::XOnlyPublicKey::from_keypair(&keypair(2)).0;
+        let script_key = XOnlyPublicKey::from_keypair(&keypair(2)).0;
         let timelock = LockTime::from_height(MAKER_TIMELOCK + REFUND_LOCKTIME_STEP as u32).unwrap();
         data.timelock_scripts[0] = script::Builder::new()
             .push_lock_time(timelock)
@@ -471,15 +498,34 @@ mod tests {
             .push_opcode(OP_CHECKSIG)
             .into_script();
         refresh_output_script(&mut data);
+        let maker_pubkey = PublicKey::new(SecpPublicKey::from_keypair(&keypair(3)));
 
-        assert!(verify_taproot_contract_data(&data, MAKER_TIMELOCK, 0).is_err());
+        assert!(verify_taproot_contract_data(&data, &maker_pubkey, MAKER_TIMELOCK, 0).is_err());
     }
 
     #[test]
     fn rejects_tap_tweak_that_does_not_match_script_tree() {
         let mut data = valid_contract_data();
         data.tap_tweaks[0] = SerializableScalar::from_bytes([1u8; 32].to_vec());
+        let maker_pubkey = PublicKey::new(SecpPublicKey::from_keypair(&keypair(3)));
 
-        assert!(verify_taproot_contract_data(&data, MAKER_TIMELOCK, 0).is_err());
+        assert!(verify_taproot_contract_data(&data, &maker_pubkey, MAKER_TIMELOCK, 0).is_err());
+    }
+
+    #[test]
+    fn rejects_self_consistent_wrong_internal_key() {
+        let mut data = valid_contract_data();
+        data.internal_keys[0] = XOnlyPublicKey::from_keypair(&keypair(1)).0;
+        refresh_output_script(&mut data);
+        let maker_pubkey = PublicKey::new(SecpPublicKey::from_keypair(&keypair(3)));
+
+        let error =
+            verify_taproot_contract_data(&data, &maker_pubkey, MAKER_TIMELOCK, 0).unwrap_err();
+        assert!(matches!(
+            error,
+            MakerError::General(
+                "Taproot internal key does not match the expected MuSig2 aggregate"
+            )
+        ));
     }
 }

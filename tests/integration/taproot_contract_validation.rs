@@ -16,7 +16,6 @@ use std::{sync::atomic::Ordering::Relaxed, thread};
 #[test]
 fn test_taproot_maker_rejects_contract_amount_mismatch() {
     warn!("Running Test: Taproot maker rejects mismatched contract amount");
-
     let makers_config_map = vec![(7202, Some(19161)), (17202, Some(19162))];
     let taker_behavior = vec![TakerBehavior::InvalidTaprootContractAmount];
     let maker_behaviors = vec![MakerBehavior::Normal, MakerBehavior::Normal];
