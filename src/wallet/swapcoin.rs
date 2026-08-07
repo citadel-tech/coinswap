@@ -1,11 +1,12 @@
 //! SwapCoin structures for both Legacy (ECDSA) and Taproot (MuSig2) protocols.
 
 use bitcoin::{
+    address::NetworkUnchecked,
     hashes::Hash,
     secp256k1::{Keypair, Scalar, SecretKey, XOnlyPublicKey},
     sighash::SighashCache,
     taproot::Signature as TaprootSignature,
-    Amount, PublicKey, ScriptBuf, Transaction, Txid, Witness,
+    Address, Amount, PublicKey, ScriptBuf, Transaction, Txid, Witness,
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::convert::TryInto;
@@ -788,6 +789,9 @@ pub struct OutgoingSwapCoin {
     pub tap_tweak: Option<Scalar>,
     /// Taproot internal key.
     pub internal_key: Option<XOnlyPublicKey>,
+    /// Destination reused by every timelock recovery retry.
+    #[serde(default)]
+    pub recovery_address: Option<Address<NetworkUnchecked>>,
 }
 
 impl OutgoingSwapCoin {
@@ -824,6 +828,7 @@ impl OutgoingSwapCoin {
             others_contract_sig: None,
             tap_tweak: None,
             internal_key: None,
+            recovery_address: None,
         }
     }
 
@@ -853,6 +858,7 @@ impl OutgoingSwapCoin {
             others_contract_sig: None,
             tap_tweak: None,
             internal_key: None,
+            recovery_address: None,
         }
     }
 

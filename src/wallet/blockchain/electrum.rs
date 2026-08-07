@@ -225,6 +225,8 @@ struct Subscription {
 struct NotifierState {
     /// Highest header height seen, so duplicate tip notifications are ignored.
     last_height: i64,
+    /// Hash at `last_height`, so a same-height replacement is not dropped.
+    last_hash: Option<BlockHash>,
     /// Live subscription per scriptPubKey. An entry exists only once its history
     /// has been replayed, which is what lets `retry_subscribes` spot the gap.
     subscriptions: HashMap<ScriptBuf, Subscription>,
@@ -263,9 +265,6 @@ pub struct Electrum {
     watched: Mutex<HashSet<ScriptBuf>>,
     /// HD-origin hint per watched script, for UTXO classification without a descriptor.
     hd_paths: Mutex<HashMap<ScriptBuf, HdOrigin>>,
-    /// height → hash cache to optimize `get_block_hash`. Only stores hashes for
-    /// previously queried heights.
-    height_to_hash: Mutex<HashMap<u64, BlockHash>>,
     /// Network derived from the server's reported genesis hash.
     network: bitcoin::Network,
     /// Watchtower notification bookkeeping.
@@ -305,7 +304,7 @@ impl Electrum {
                 cfg.url
             )));
         }
-        let (inner, genesis, last_height) = Self::connect(cfg, &shutdown)?;
+        let (inner, genesis, last_height, last_hash) = Self::connect(cfg, &shutdown)?;
         let config = cfg.clone();
         // Not retried: a server on the wrong chain will keep saying so.
         let network = network_from_electrum_genesis(&genesis).ok_or_else(|| {
@@ -323,10 +322,10 @@ impl Electrum {
             reconnects: AtomicU64::new(0),
             watched: Mutex::new(HashSet::new()),
             hd_paths: Mutex::new(HashMap::new()),
-            height_to_hash: Mutex::new(HashMap::new()),
             network,
             notifier: Mutex::new(NotifierState {
                 last_height,
+                last_hash: Some(last_hash),
                 ..Default::default()
             }),
             shutdown,
@@ -342,11 +341,11 @@ impl Electrum {
     fn connect(
         cfg: &ElectrumConfig,
         shutdown: &AtomicBool,
-    ) -> Result<(ElectrumClient, [u8; 32], i64), WalletError> {
+    ) -> Result<(ElectrumClient, [u8; 32], i64, BlockHash), WalletError> {
         if shutdown.load(Ordering::Relaxed) {
             return Err(WalletError::Interrupted("Shutdown requested"));
         }
-        let once = || -> Result<(ElectrumClient, [u8; 32], i64), electrum_client::Error> {
+        let once = || -> Result<_, electrum_client::Error> {
             let inner = ElectrumClient::from_config(&cfg.url, client_config(cfg))?;
             // Some servers do not implement `server.features` (-32601 is the
             // JSON-RPC "method not found" code). Read the genesis header
@@ -368,8 +367,8 @@ impl Electrum {
             };
             // Arm the header subscription so the watchtower's `poll_event` sees
             // tip updates; harmless for the wallet's instance, which never polls.
-            let last_height = inner.block_headers_subscribe()?.height as i64;
-            Ok((inner, genesis, last_height))
+            let tip = inner.block_headers_subscribe()?;
+            Ok((inner, genesis, tip.height as i64, tip.header.block_hash()))
         };
 
         let mut last = match once() {
@@ -715,7 +714,7 @@ impl Blockchain for Electrum {
 
     fn get_blockchain_info(&self) -> Result<GetBlockchainInfoResult, WalletError> {
         let tip = self.call(|c| c.block_headers_subscribe())?;
-        let best = self.get_block_hash(tip.height as u64)?;
+        let best = tip.header.block_hash();
         // Build via serde so we don't have to enumerate every field (some are
         // private or non-`Default` upstream).
         let v = json!({
@@ -742,20 +741,11 @@ impl Blockchain for Electrum {
     }
 
     fn get_block_hash(&self, height: u64) -> Result<BlockHash, WalletError> {
-        if let Ok(cache) = self.height_to_hash.lock() {
-            if let Some(h) = cache.get(&height) {
-                return Ok(*h);
-            }
-        }
-        Ok(self.header_at_height(height)?.block_hash())
+        Ok(self.call(|c| c.block_header(height as usize))?.block_hash())
     }
 
     fn header_at_height(&self, height: u64) -> Result<Header, WalletError> {
-        let header = self.call(|c| c.block_header(height as usize))?;
-        if let Ok(mut cache) = self.height_to_hash.lock() {
-            cache.insert(height, header.block_hash());
-        }
-        Ok(header)
+        self.call(|c| c.block_header(height as usize))
     }
 
     fn tx_block_height(&self, txid: &Txid) -> Result<Option<u64>, WalletError> {
@@ -1413,13 +1403,15 @@ impl Blockchain for Electrum {
         // Header tip update.
         let n = self.call(|c| c.block_headers_pop()).ok().flatten()?;
         let height = n.height as i64;
-        if height <= state.last_height {
+        let hash = n.header.block_hash();
+        if height == state.last_height && state.last_hash == Some(hash) {
             return None;
         }
         state.last_height = height;
+        state.last_hash = Some(hash);
         Some(WatchEvent::BlockConnected(BlockRef {
             height: height as u64,
-            hash: serialize(&n.header.block_hash()),
+            hash: serialize(&hash),
         }))
     }
 
@@ -1432,6 +1424,9 @@ impl Blockchain for Electrum {
 
 #[cfg(test)]
 mod tests {
+    use bitcoin::Amount;
+    use electrum_client::Error;
+
     use super::*;
 
     fn cfg(url: &str, socks5: Option<&str>) -> ElectrumConfig {
@@ -1532,7 +1527,6 @@ mod tests {
 
     #[test]
     fn terminal_errors_are_not_retried() {
-        use electrum_client::Error;
         // Answered-but-negative, or local state: reconnecting cannot help.
         assert!(is_terminal(&Error::AlreadySubscribed([0u8; 32].into())));
         assert!(is_terminal(&Error::NotSubscribed([0u8; 32].into())));
@@ -1542,7 +1536,6 @@ mod tests {
 
     #[test]
     fn only_the_unknown_txid_protocol_error_reads_as_absent() {
-        use electrum_client::Error;
         // bitcoind's wording, relayed by electrs and Fulcrum alike.
         let unknown = Error::Protocol(json!({
             "code": -32603,
@@ -1577,7 +1570,7 @@ mod tests {
     fn accumulated_total_above_max_money_errors() {
         // A consensus-valid tx cannot carry this, but a chain of fabricated prev
         // outputs can, and `Amount`'s `Add` would panic on the fold.
-        let half = bitcoin::Amount::MAX_MONEY / 2;
+        let half = Amount::MAX_MONEY / 2;
         let total = checked_add_amount(half, half, "input total").expect("half + half fits");
         let msg = checked_add_amount(total, half, "input total")
             .unwrap_err()

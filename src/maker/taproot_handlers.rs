@@ -118,6 +118,7 @@ fn process_taproot_contract<M: Maker>(
     // Full verification: script formats, timelock, P2TR output, amounts, array consistency
     super::taproot_verification::verify_taproot_contract_data(
         &data,
+        &tweakable_pubkey,
         state.timelock,
         maker.network_port(),
     )?;

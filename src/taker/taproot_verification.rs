@@ -6,16 +6,41 @@ use bitcoin::{
     hashes::{sha256, Hash},
     opcodes::all::{OP_CHECKSIG, OP_CLTV, OP_DROP, OP_EQUALVERIFY, OP_SHA256},
     script::Instruction,
-    secp256k1::Secp256k1,
+    secp256k1::{Secp256k1, XOnlyPublicKey},
     PublicKey,
 };
 
 use crate::protocol::{
     contract::sum_claimed_amounts, contract2::extract_hash_from_hashlock,
-    taproot_messages::TaprootContractData,
+    musig_interface::get_aggregated_pubkey_compat, taproot_messages::TaprootContractData,
 };
 
 use super::{api::Taker, error::TakerError};
+
+fn verify_internal_key(
+    claimed: XOnlyPublicKey,
+    maker_pubkey: &PublicKey,
+    next_hop_pubkey: &PublicKey,
+    maker_idx: usize,
+    contract_idx: usize,
+) -> Result<(), TakerError> {
+    let mut ordered_pubkeys = [maker_pubkey, next_hop_pubkey];
+    ordered_pubkeys.sort_by_key(|pk| pk.inner.serialize());
+    let expected = get_aggregated_pubkey_compat(ordered_pubkeys[0].inner, ordered_pubkeys[1].inner)
+        .map_err(|e| {
+            TakerError::General(format!(
+                "Maker {} Taproot internal key {} aggregation failed: {:?}",
+                maker_idx, contract_idx, e
+            ))
+        })?;
+    if claimed != expected {
+        return Err(TakerError::General(format!(
+            "Maker {} Taproot internal key {} does not match the expected MuSig2 aggregate",
+            maker_idx, contract_idx
+        )));
+    }
+    Ok(())
+}
 
 impl Taker {
     /// Verify a maker's Taproot contract data response.
@@ -127,26 +152,13 @@ impl Taker {
         // so verify the timelock template, locktime value and P2TR output per contract.
         for (i, tx) in contract.contract_txs.iter().enumerate() {
             let timelock_script = &contract.timelock_scripts[i];
-            let mut ordered_pubkeys = [&contract.pubkeys[i], &expected_next_hop_pubkey];
-            ordered_pubkeys.sort_by_key(|pk| pk.inner.serialize());
-            let expected_internal_key =
-                crate::protocol::musig_interface::get_aggregated_pubkey_compat(
-                    ordered_pubkeys[0].inner,
-                    ordered_pubkeys[1].inner,
-                )
-                .map_err(|e| {
-                    TakerError::General(format!(
-                        "Maker {} Taproot internal key {} aggregation failed: {:?}",
-                        maker_idx, i, e
-                    ))
-                })?;
-
-            if contract.internal_keys[i] != expected_internal_key {
-                return Err(TakerError::General(format!(
-                    "Maker {} Taproot internal key {} does not match the expected MuSig2 aggregate",
-                    maker_idx, i
-                )));
-            }
+            verify_internal_key(
+                contract.internal_keys[i],
+                &contract.pubkeys[i],
+                &expected_next_hop_pubkey,
+                maker_idx,
+                i,
+            )?;
 
             // Verify timelock script has expected format (5 instructions):
             // <locktime> OP_CLTV OP_DROP <pubkey> OP_CHECKSIG
@@ -351,5 +363,35 @@ impl Taker {
             contract.contract_txs.len()
         );
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bitcoin::secp256k1::{Keypair, PublicKey as SecpPublicKey, Secp256k1, SecretKey};
+
+    use super::*;
+
+    fn pubkey(byte: u8) -> PublicKey {
+        let secp = Secp256k1::new();
+        let secret = SecretKey::from_slice(&[byte; 32]).unwrap();
+        PublicKey::new(SecpPublicKey::from_secret_key(&secp, &secret))
+    }
+
+    #[test]
+    fn rejects_wrong_internal_key() {
+        let wrong_key = Keypair::from_secret_key(
+            &Secp256k1::new(),
+            &SecretKey::from_slice(&[3u8; 32]).unwrap(),
+        )
+        .x_only_public_key()
+        .0;
+
+        let error = verify_internal_key(wrong_key, &pubkey(1), &pubkey(2), 4, 5).unwrap_err();
+        assert!(matches!(
+            error,
+            TakerError::General(message)
+                if message == "Maker 4 Taproot internal key 5 does not match the expected MuSig2 aggregate"
+        ));
     }
 }
