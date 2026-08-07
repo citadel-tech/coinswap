@@ -19,7 +19,7 @@ use coinswap::{
 use super::test_framework::*;
 
 use log::{info, warn};
-use std::{sync::atomic::Ordering::Relaxed, thread};
+use std::{sync::atomic::Ordering::Relaxed, thread, time::Duration};
 
 /// Test: Taker aborts at AckSwapDetails response (Taproot).
 ///
@@ -97,7 +97,7 @@ fn test_taproot_taker_abort1() {
 
     // Prepare should fail at AckResponse — the taker closes the connection
     // right after receiving AckSwapDetails, before any funding is broadcast.
-    let prepare_result = taker.prepare_coinswap(swap_params);
+    let prepare_result = taker.prepare_coinswap(swap_params.clone());
     assert!(
         prepare_result.is_err(),
         "Prepare should fail due to CloseAtAckResponse behavior"
@@ -107,6 +107,47 @@ fn test_taproot_taker_abort1() {
         prepare_result.err().unwrap()
     );
     taker.log_tracker_state();
+
+    // The accepted-but-unfunded reservation must expire without requiring a restart.
+    let log_path = format!("{}/taker/debug.log", test_framework.temp_dir.display());
+    wait_for_log(
+        &log_path,
+        "Released idle unfunded reservation",
+        Duration::from_secs(60),
+    );
+    let release_deadline = std::time::Instant::now() + Duration::from_secs(15);
+    while makers
+        .iter()
+        .any(|maker| maker.has_ongoing_swaps().unwrap())
+    {
+        assert!(
+            std::time::Instant::now() < release_deadline,
+            "Early-abort reservations should be released after the idle timeout"
+        );
+        thread::sleep(Duration::from_secs(1));
+    }
+
+    // With the stale reservation gone, the makers must be back at full capacity:
+    // a fresh swap request has to be accepted again. The maker only sends
+    // AckSwapDetails after storing a new reservation, and the taker only emits
+    // the CloseAtAckResponse test error after receiving that ack — so hitting
+    // that exact error proves the makers accepted the retry.
+    let retry_result = taker.prepare_coinswap(swap_params);
+    let retry_err = format!(
+        "{:?}",
+        retry_result.expect_err("Retry should still abort at AckSwapDetails")
+    );
+    assert!(
+        retry_err.contains("closing at ack response"),
+        "Retry should have been accepted up to AckSwapDetails, got: {}",
+        retry_err
+    );
+    assert!(
+        makers
+            .iter()
+            .any(|maker| maker.has_ongoing_swaps().unwrap()),
+        "Accepted retry should hold a fresh reservation on a maker"
+    );
 
     // Sync taker wallet and verify balance
     taker
