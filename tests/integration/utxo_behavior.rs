@@ -61,29 +61,6 @@ const TEST_CASES: &[(f64, &[f64], &str, &str)] = &[
 ];
 
 #[test]
-fn run_all_utxo_tests() {
-    println!("=== Running All UTXO Tests ===");
-    println!("\nStarting Manual Swapping in conjunction with Regular-Swapcoin clause Test");
-    test_manual_coinselection();
-
-    println!("\nWaiting for cleanup...");
-    std::thread::sleep(Duration::from_secs(10));
-
-    println!("\nStarting Separated UTXO Test");
-    test_separated_utxo_coin_selection();
-
-    println!("\nWaiting for cleanup...");
-    std::thread::sleep(Duration::from_secs(10));
-
-    println!("\nStarting Address Grouping Test");
-    test_address_grouping_behavior();
-
-    println!("\nAll UTXO Tests Completed Successfully");
-
-    println!("\nWaiting for cleanup...");
-    std::thread::sleep(Duration::from_secs(10));
-}
-
 fn test_address_grouping_behavior() {
     // Initialize test environment with one maker (no swap needed, just wallet testing)
     let makers_config_map = vec![(8702, None)];
@@ -200,6 +177,7 @@ fn test_address_grouping_behavior() {
     block_generation_handle.join().unwrap();
 }
 
+#[test]
 fn test_separated_utxo_coin_selection() {
     // Initialize test environment with TWO makers and one taker
     let makers_config_map = vec![(8702, None), (18702, None)];
@@ -256,15 +234,6 @@ fn test_separated_utxo_coin_selection() {
     taker
         .start_coinswap(&summary.swap_id)
         .expect("coinswap should succeed");
-
-    // Shutdown maker servers
-    makers
-        .iter()
-        .for_each(|maker| maker.shutdown.store(true, Relaxed));
-
-    maker_threads
-        .into_iter()
-        .for_each(|thread| thread.join().unwrap());
 
     // Sync both maker wallets
     for maker in &makers {
@@ -405,11 +374,17 @@ fn test_separated_utxo_coin_selection() {
 
     println!("\n=== Test Completed Successfully ===");
 
-    // Clean shutdown
+    makers
+        .iter()
+        .for_each(|maker| maker.shutdown.store(true, Relaxed));
+    maker_threads
+        .into_iter()
+        .for_each(|thread| thread.join().unwrap());
     test_framework.stop();
     block_generation_handle.join().unwrap();
 }
 
+#[test]
 fn test_manual_coinselection() {
     let makers_config_map = vec![(28702, None), (38702, None)];
     let taker_behavior = vec![TakerBehavior::Normal];

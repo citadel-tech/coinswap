@@ -2921,7 +2921,13 @@ impl Wallet {
                 let mut w = wallet
                     .write()
                     .map_err(|_| WalletError::General("wallet lock poisoned".to_string()))?;
-                w.get_next_internal_addresses(1, AddressType::P2TR)?[0].clone()
+                let addr = w.get_next_internal_addresses(1, AddressType::P2TR)?[0].clone();
+                // Mark the sweep target before broadcast, not after confirmation: a
+                // sync inside the confirmation window must not see it as a seed coin.
+                w.store
+                    .swept_incoming_swapcoins
+                    .insert(addr.script_pubkey());
+                addr
             };
 
             log::info!(
@@ -2957,16 +2963,11 @@ impl Wallet {
                             outcome.resolved.push((contract_txid, txid));
                             log::info!("Successfully swept incoming swap coin: {}", swap_id);
 
-                            // Re-acquire the guard only to record the sweep.
+                            // Re-acquire the guard only to drop the swept coin.
                             let mut w = wallet.write().map_err(|_| {
                                 WalletError::General("wallet lock poisoned".to_string())
                             })?;
-                            // Remove the swapcoin from wallet
                             w.remove_incoming_swapcoin(&swap_id);
-
-                            // Track the output scriptpubkey to prevent mixing with regular UTXOs
-                            let output_scriptpubkey = internal_address.script_pubkey();
-                            w.store.swept_incoming_swapcoins.insert(output_scriptpubkey);
                         }
                         Err(e) => {
                             log::warn!(
@@ -2974,6 +2975,15 @@ impl Wallet {
                                 swap_id,
                                 e
                             );
+                            // Sweep never happened; unmark the address.
+                            wallet
+                                .write()
+                                .map_err(|_| {
+                                    WalletError::General("wallet lock poisoned".to_string())
+                                })?
+                                .store
+                                .swept_incoming_swapcoins
+                                .remove(&internal_address.script_pubkey());
                         }
                     }
                 }
@@ -2983,6 +2993,13 @@ impl Wallet {
                         swap_id,
                         e
                     );
+                    // Sweep never happened; unmark the address.
+                    wallet
+                        .write()
+                        .map_err(|_| WalletError::General("wallet lock poisoned".to_string()))?
+                        .store
+                        .swept_incoming_swapcoins
+                        .remove(&internal_address.script_pubkey());
                 }
             }
         }

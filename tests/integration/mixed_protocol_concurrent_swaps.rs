@@ -139,13 +139,6 @@ fn test_concurrent_legacy_and_taproot_swaps() {
         "Taproot swap should succeed while the makers also process a Legacy swap"
     );
 
-    makers
-        .iter()
-        .for_each(|maker| maker.shutdown.store(true, Relaxed));
-    maker_threads
-        .into_iter()
-        .for_each(|handle| handle.join().unwrap());
-
     let expected_taker_regular = [14_499_076, 14_299_076];
     let expected_taker_swap = [494_587, 694_730];
     let expected_taker_fees = [6_337, 6_194];
@@ -267,6 +260,12 @@ fn test_concurrent_legacy_and_taproot_swaps() {
         );
     }
 
+    makers
+        .iter()
+        .for_each(|maker| maker.shutdown.store(true, Relaxed));
+    maker_threads
+        .into_iter()
+        .for_each(|handle| handle.join().unwrap());
     drop(takers);
     test_framework.stop();
     block_generation_handle.join().unwrap();

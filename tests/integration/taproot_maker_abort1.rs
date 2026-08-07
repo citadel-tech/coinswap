@@ -105,15 +105,6 @@ fn test_taproot_maker_abort1() {
         prepare_result.err().unwrap()
     );
 
-    // Shutdown makers
-    makers
-        .iter()
-        .for_each(|maker| maker.shutdown.store(true, Relaxed));
-
-    maker_threads
-        .into_iter()
-        .for_each(|thread| thread.join().unwrap());
-
     // Sync taker wallet and verify balance is unchanged
     taker
         .get_wallet()
@@ -146,6 +137,13 @@ fn test_taproot_maker_abort1() {
     );
 
     info!("Taproot maker abort1 test completed successfully!");
+
+    makers
+        .iter()
+        .for_each(|maker| maker.shutdown.store(true, Relaxed));
+    maker_threads
+        .into_iter()
+        .for_each(|thread| thread.join().unwrap());
 
     test_framework.stop();
     block_generation_handle.join().unwrap();

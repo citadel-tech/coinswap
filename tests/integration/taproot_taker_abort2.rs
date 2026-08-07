@@ -123,15 +123,6 @@ fn test_taproot_taker_abort2() {
     info!("Waiting for makers to timeout and blocks to mature timelocks...");
     thread::sleep(Duration::from_secs(300));
 
-    // Shut down makers
-    makers
-        .iter()
-        .for_each(|maker| maker.shutdown.store(true, Relaxed));
-
-    maker_threads
-        .into_iter()
-        .for_each(|thread| thread.join().unwrap());
-
     // Verify maker balances -- makers should have recovered their outgoing funds via timelock
     for (i, maker) in makers.iter().enumerate() {
         maker
@@ -240,6 +231,13 @@ fn test_taproot_taker_abort2() {
 
     taker.log_tracker_state();
     info!("Taproot taker abort2 test completed successfully!");
+
+    makers
+        .iter()
+        .for_each(|maker| maker.shutdown.store(true, Relaxed));
+    maker_threads
+        .into_iter()
+        .for_each(|thread| thread.join().unwrap());
 
     tracker_logger.stop();
     test_framework.stop();

@@ -129,15 +129,6 @@ fn test_legacy_timelock_only_recovery() {
     info!("Waiting for makers to timeout and blocks to mature timelocks...");
     thread::sleep(Duration::from_secs(300));
 
-    // Shut down makers
-    makers
-        .iter()
-        .for_each(|maker| maker.shutdown.store(true, Relaxed));
-
-    maker_threads
-        .into_iter()
-        .for_each(|thread| thread.join().unwrap());
-
     // Verify maker balances after recovery
     for (i, maker) in makers.iter().enumerate() {
         maker
@@ -257,6 +248,13 @@ fn test_legacy_timelock_only_recovery() {
     taker.log_tracker_state();
     info!("Legacy timelock-only recovery test completed successfully!");
 
+    makers
+        .iter()
+        .for_each(|maker| maker.shutdown.store(true, Relaxed));
+    maker_threads
+        .into_iter()
+        .for_each(|thread| thread.join().unwrap());
+
     tracker_logger.stop();
     test_framework.stop();
     block_generation_handle.join().unwrap();
@@ -369,15 +367,6 @@ fn test_taproot_timelock_only_recovery() {
     // 5 blocks/3s; remaining ~105s is scheduling margin.
     info!("Waiting for makers to timeout and blocks to mature timelocks...");
     thread::sleep(Duration::from_secs(300));
-
-    // Shut down makers
-    makers
-        .iter()
-        .for_each(|maker| maker.shutdown.store(true, Relaxed));
-
-    maker_threads
-        .into_iter()
-        .for_each(|thread| thread.join().unwrap());
 
     // Verify maker balances after recovery
     for (i, maker) in makers.iter().enumerate() {
@@ -498,6 +487,13 @@ fn test_taproot_timelock_only_recovery() {
 
     taker.log_tracker_state();
     info!("Taproot timelock-only recovery test completed successfully!");
+
+    makers
+        .iter()
+        .for_each(|maker| maker.shutdown.store(true, Relaxed));
+    maker_threads
+        .into_iter()
+        .for_each(|thread| thread.join().unwrap());
 
     tracker_logger.stop();
     test_framework.stop();

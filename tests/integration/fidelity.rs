@@ -25,16 +25,10 @@ use super::test_framework::*;
 
 use log::info;
 use std::{sync::atomic::Ordering::Relaxed, thread, time::Duration};
-#[test]
-fn test_fidelity_complete() {
-    test_fidelity();
-    test_fidelity_spending();
-    test_mempool_only_spend_reads_as_spent();
-}
-
 /// Pins the two backend answers the maker's funding check rests on: `None` sees a
 /// mempool-only spend, while `Some(false)` — the argument it used to pass — reports
 /// that output live on Core. Pins the backend, not the maker's call site.
+#[test]
 fn test_mempool_only_spend_reads_as_spent() {
     // Its own bitcoind: nothing mines in the background, so the spend cannot
     // confirm while the assertions run.
@@ -94,7 +88,8 @@ fn test_mempool_only_spend_reads_as_spent() {
 }
 
 /// Test Fidelity Bond Creation and Redemption
-fn test_fidelity() {
+#[test]
+fn test_fidelity_creation() {
     // ---- Setup ----
     let makers_config_map = vec![(8102, None)];
     let taker_behavior = vec![TakerBehavior::Normal];
@@ -346,6 +341,7 @@ fn test_fidelity() {
 /// - Creates a fidelity bond and lets it expire by advancing blockchain height
 /// - Verifies that regular transactions never select expired fidelity bond UTXOs for spending
 /// - Confirms that new fidelity bond creation can properly consume expired fidelity bond UTXOs
+#[test]
 fn test_fidelity_spending() {
     const TIMELOCK_DURATION: u32 = 50;
     const FIDELITY_AMOUNT: u64 = 5_000_000;

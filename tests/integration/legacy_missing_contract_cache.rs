@@ -108,13 +108,6 @@ fn maker_rejects_proof_of_funding_with_missing_contract_cache() {
         "maker must reject before broadcasting outgoing funding transactions"
     );
 
-    makers
-        .iter()
-        .for_each(|maker| maker.shutdown.store(true, Relaxed));
-    maker_threads
-        .into_iter()
-        .for_each(|thread| thread.join().unwrap());
-
     makers[0]
         .wallet
         .write()
@@ -133,6 +126,12 @@ fn maker_rejects_proof_of_funding_with_missing_contract_cache() {
         "rejected proof must not spend maker liquidity"
     );
 
+    makers
+        .iter()
+        .for_each(|maker| maker.shutdown.store(true, Relaxed));
+    maker_threads
+        .into_iter()
+        .for_each(|thread| thread.join().unwrap());
     test_framework.stop();
     block_generation_handle.join().unwrap();
 }

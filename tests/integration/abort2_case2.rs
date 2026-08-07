@@ -96,15 +96,6 @@ fn maker_abort2_case2() {
         .start_coinswap(&summary.swap_id)
         .expect("Swap should succeed with spare maker");
 
-    // Shutdown makers
-    makers
-        .iter()
-        .for_each(|maker| maker.shutdown.store(true, Relaxed));
-
-    maker_threads
-        .into_iter()
-        .for_each(|thread| thread.join().unwrap());
-
     // Sync wallets and verify results
     taker
         .get_wallet()
@@ -168,6 +159,12 @@ fn maker_abort2_case2() {
     }
 
     info!("maker_abort2_case2 completed successfully!");
+    makers
+        .iter()
+        .for_each(|maker| maker.shutdown.store(true, Relaxed));
+    maker_threads
+        .into_iter()
+        .for_each(|thread| thread.join().unwrap());
     test_framework.stop();
     block_generation_handle.join().unwrap();
 }

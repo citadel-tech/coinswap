@@ -217,15 +217,6 @@ fn test_concurrent_takers_taproot() {
         "Both takers should have completed (success or failure)"
     );
 
-    // ---- Shutdown and verify ----
-    makers
-        .iter()
-        .for_each(|maker| maker.shutdown.store(true, Relaxed));
-
-    maker_threads
-        .into_iter()
-        .for_each(|thread| thread.join().unwrap());
-
     log::info!("All coinswaps processed. Transactions complete.");
 
     // Sync all wallets
@@ -315,6 +306,13 @@ fn test_concurrent_takers_taproot() {
     }
 
     info!("All concurrent taker swap tests (Taproot) completed successfully!");
+
+    makers
+        .iter()
+        .for_each(|maker| maker.shutdown.store(true, Relaxed));
+    maker_threads
+        .into_iter()
+        .for_each(|thread| thread.join().unwrap());
 
     // Drop takers before stopping the framework so their background services
     // shut down while bitcoind is still running.

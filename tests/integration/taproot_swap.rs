@@ -96,15 +96,6 @@ fn test_taproot_coinswap() {
         .expect("Taproot coinswap should complete successfully");
     log::info!("Taproot coinswap completed successfully!");
 
-    // After swap, shutdown maker threads
-    makers
-        .iter()
-        .for_each(|maker| maker.shutdown.store(true, Relaxed));
-
-    maker_threads
-        .into_iter()
-        .for_each(|thread| thread.join().unwrap());
-
     // Sync wallets and verify results
     taker
         .get_wallet()
@@ -229,6 +220,12 @@ fn test_taproot_coinswap() {
         );
     }
 
+    makers
+        .iter()
+        .for_each(|maker| maker.shutdown.store(true, Relaxed));
+    maker_threads
+        .into_iter()
+        .for_each(|thread| thread.join().unwrap());
     test_framework.stop();
     block_generation_handle.join().unwrap();
 }

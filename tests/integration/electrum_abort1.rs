@@ -161,15 +161,6 @@ pub(crate) fn run_abort1<B: TestBackend>(protocol: ProtocolVersion, expected: &E
     info!("Waiting for makers to timeout and blocks to mature timelocks...");
     thread::sleep(timelock_recovery_wait::<B>());
 
-    // Shut down makers
-    makers
-        .iter()
-        .for_each(|maker| maker.shutdown.store(true, Relaxed));
-
-    maker_threads
-        .into_iter()
-        .for_each(|thread| thread.join().unwrap());
-
     // Verify maker balances after recovery
     for (i, maker) in makers.iter().enumerate() {
         maker
@@ -313,6 +304,13 @@ pub(crate) fn run_abort1<B: TestBackend>(protocol: ProtocolVersion, expected: &E
     taker.log_tracker_state();
     info!("Electrum abort1 test ({protocol:?}) completed successfully!");
 
+    makers
+        .iter()
+        .for_each(|maker| maker.shutdown.store(true, Relaxed));
+    maker_threads
+        .into_iter()
+        .for_each(|thread| thread.join().unwrap());
+
     tracker_logger.stop();
     // Drop the taker while relay, electrs, and bitcoind are still up, so its
     // background services shut down against live servers instead of dead ones.
@@ -322,8 +320,12 @@ pub(crate) fn run_abort1<B: TestBackend>(protocol: ProtocolVersion, expected: &E
 }
 
 #[test]
-fn electrum_taker_abort1() {
+fn taker_abort_1_taproot_electrum() {
     run_abort1::<ElectrumBackend>(ProtocolVersion::Taproot, &TAPROOT_EXPECTED);
+}
+
+#[test]
+fn taker_abort_1_legacy_electrum() {
     run_abort1::<ElectrumBackend>(ProtocolVersion::Legacy, &LEGACY_EXPECTED);
 }
 

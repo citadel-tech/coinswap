@@ -124,15 +124,6 @@ fn maker_abort2_case3() {
     info!("Waiting for makers to timeout and blocks to mature timelocks...");
     thread::sleep(Duration::from_secs(300));
 
-    // Shut down makers
-    makers
-        .iter()
-        .for_each(|maker| maker.shutdown.store(true, Relaxed));
-
-    maker_threads
-        .into_iter()
-        .for_each(|thread| thread.join().unwrap());
-
     // Verify maker balances after recovery
     for (i, maker) in makers.iter().enumerate() {
         maker
@@ -266,6 +257,13 @@ fn maker_abort2_case3() {
 
     taker.log_tracker_state();
     info!("Legacy abort2 case 3 test completed successfully!");
+
+    makers
+        .iter()
+        .for_each(|maker| maker.shutdown.store(true, Relaxed));
+    maker_threads
+        .into_iter()
+        .for_each(|thread| thread.join().unwrap());
 
     tracker_logger.stop();
     test_framework.stop();

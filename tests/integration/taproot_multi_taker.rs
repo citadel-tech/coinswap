@@ -154,15 +154,6 @@ fn test_taproot_multi_taker_coinswap() {
         }
     }
 
-    // ---- Shutdown and verify ----
-    makers
-        .iter()
-        .for_each(|maker| maker.shutdown.store(true, Relaxed));
-
-    maker_threads
-        .into_iter()
-        .for_each(|thread| thread.join().unwrap());
-
     log::info!("All coinswaps processed successfully. Transactions complete.");
 
     // Sync all wallets
@@ -286,6 +277,13 @@ fn test_taproot_multi_taker_coinswap() {
     }
 
     info!("All multi-taker swap tests (Taproot) completed successfully!");
+
+    makers
+        .iter()
+        .for_each(|maker| maker.shutdown.store(true, Relaxed));
+    maker_threads
+        .into_iter()
+        .for_each(|thread| thread.join().unwrap());
 
     test_framework.stop();
     block_generation_handle.join().unwrap();

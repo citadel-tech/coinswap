@@ -108,16 +108,6 @@ fn test_taproot_taker_abort1() {
     );
     taker.log_tracker_state();
 
-    // No recovery needed -- this is an early abort before any funding broadcast.
-    // Shut down makers.
-    makers
-        .iter()
-        .for_each(|maker| maker.shutdown.store(true, Relaxed));
-
-    maker_threads
-        .into_iter()
-        .for_each(|thread| thread.join().unwrap());
-
     // Sync taker wallet and verify balance
     taker
         .get_wallet()
@@ -165,6 +155,13 @@ fn test_taproot_taker_abort1() {
 
     taker.log_tracker_state();
     info!("Taproot taker abort1 test completed successfully!");
+
+    makers
+        .iter()
+        .for_each(|maker| maker.shutdown.store(true, Relaxed));
+    maker_threads
+        .into_iter()
+        .for_each(|thread| thread.join().unwrap());
 
     test_framework.stop();
     block_generation_handle.join().unwrap();

@@ -213,7 +213,11 @@ fn run_electrum_swap(protocol: ProtocolVersion, expected: &ExpectedBalances) {
 }
 
 #[test]
-fn test_electrum_coinswap() {
+fn test_taproot_coinswap_electrum() {
     run_electrum_swap(ProtocolVersion::Taproot, &TAPROOT_EXPECTED);
+}
+
+#[test]
+fn test_legacy_coinswap_electrum() {
     run_electrum_swap(ProtocolVersion::Legacy, &LEGACY_EXPECTED);
 }

@@ -135,15 +135,6 @@ pub(crate) fn run_malice2<B: TestBackend>() {
     info!("Waiting for makers to timeout and blocks to mature timelocks...");
     thread::sleep(timelock_recovery_wait::<B>());
 
-    // Shut down makers
-    makers
-        .iter()
-        .for_each(|maker| maker.shutdown.store(true, Relaxed));
-
-    maker_threads
-        .into_iter()
-        .for_each(|thread| thread.join().unwrap());
-
     // Verify maker balances -- makers should have recovered their outgoing funds via timelock
     for (i, maker) in makers.iter().enumerate() {
         maker
@@ -249,6 +240,13 @@ pub(crate) fn run_malice2<B: TestBackend>() {
 
     taker.log_tracker_state();
     info!("Malice2 test completed successfully!");
+
+    makers
+        .iter()
+        .for_each(|maker| maker.shutdown.store(true, Relaxed));
+    maker_threads
+        .into_iter()
+        .for_each(|thread| thread.join().unwrap());
 
     tracker_logger.stop();
     test_framework.stop();
