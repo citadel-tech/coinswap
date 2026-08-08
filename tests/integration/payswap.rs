@@ -22,6 +22,10 @@ use super::test_framework::*;
 use log::{info, warn};
 use std::{sync::atomic::Ordering::Relaxed, thread};
 
+/// Taproot's settlement budget: one script-path spend at the minimum feerate.
+/// Legacy budgets a contract publication on top, so it must come out higher.
+const TAPROOT_SETTLEMENT_BUDGET_SATS: u64 = 310;
+
 /// Taproot PaySwap with multiple final swapcoins (`tx_count = 3`), so the
 /// settlement splits the receiver amount across several exact outputs.
 #[test]
@@ -128,6 +132,11 @@ fn test_taproot_payswap() {
     );
     assert_eq!(quote.amount, payment_amount);
     assert_eq!(quote.address, receiver_address);
+    assert_eq!(
+        quote.settlement_budget,
+        Amount::from_sat(TAPROOT_SETTLEMENT_BUDGET_SATS * 3),
+        "taproot budgets one script-path spend per settlement output"
+    );
     assert!(
         summary.send_amount > payment_amount + quote.settlement_budget,
         "gross route amount must cover the receiver amount, settlement budget, and maker fees"
@@ -213,9 +222,9 @@ fn test_taproot_payswap() {
     block_generation_handle.join().unwrap();
 }
 
-/// Legacy PaySwap: the settlement budget must also cover contract publication
-/// on the recovery path, and the cooperative sweep still delivers the exact
-/// amount.
+/// Legacy PaySwap: the settlement budget covers both contract publication and
+/// the contract spend, and the cooperative sweep delivers the exact amount.
+/// Cooperative path only — recovery is not exercised here.
 #[test]
 fn test_legacy_payswap() {
     // ---- Setup ----
@@ -296,6 +305,18 @@ fn test_legacy_payswap() {
         quote.amount, quote.settlement_budget, summary.send_amount
     );
     assert_eq!(quote.amount, payment_amount);
+    assert_eq!(quote.address, receiver_address);
+    // Legacy budgets both the contract publication and the contract spend, so
+    // it is the larger of the two protocols.
+    assert!(
+        quote.settlement_budget > Amount::from_sat(TAPROOT_SETTLEMENT_BUDGET_SATS),
+        "legacy settlement budget {} must exceed the taproot script-path budget",
+        quote.settlement_budget
+    );
+    assert!(
+        summary.send_amount > payment_amount + quote.settlement_budget,
+        "gross route amount must cover the receiver amount, settlement budget, and maker fees"
+    );
 
     let report = taker
         .start_coinswap(&summary.swap_id)

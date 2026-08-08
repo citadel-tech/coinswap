@@ -225,6 +225,18 @@ impl Taker {
         let per_hop_mining_fee = estimate_funding_tx_fee_sats() * tx_count;
         let gross = solve_route_gross_sats(&hops, per_hop_mining_fee, final_net)?;
 
+        // Maker selection was sized on the receiver amount, since the gross is
+        // only known once their fees are in hand. Re-check the solved gross
+        // against each maker's advertised limits here: a maker whose max_size
+        // falls between the two would otherwise be rejected mid-negotiation,
+        // where a payment route cannot substitute it.
+        // Every offer was stored on its maker in the loop above.
+        for (i, maker) in self.swap_state()?.makers.iter().enumerate() {
+            if let Some(offer) = maker.offer.as_ref() {
+                Self::validate_offer(offer, i, Amount::from_sat(gross))?;
+            }
+        }
+
         // The prepare-entry balance check saw only the receiver amount; the
         // wallet must fund the gross. Fail before any maker is quoted.
         let available = self.read_wallet()?.get_balances()?.spendable;
