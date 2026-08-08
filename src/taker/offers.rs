@@ -80,6 +80,8 @@ const DISCOVERY_WAIT_MAX: Duration = Duration::from_secs(150);
 #[cfg(feature = "integration-test")]
 const DISCOVERY_WAIT_MAX: Duration = Duration::from_secs(10);
 
+const OFFER_SYNC_WAIT_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+
 /// Represents an offer along with the corresponding maker address.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OfferAndAddress {
@@ -448,12 +450,9 @@ pub struct OfferSyncClient {
 }
 
 impl OfferSyncClient {
-    /// Trigger an offerbook sync and block until it completes.
+    /// Trigger an offerbook sync and wait up to ten minutes for completion.
     pub fn sync_and_wait(&self) -> Result<(), TakerError> {
-        let (done_tx, done_rx) = mpsc::channel();
-        self.cmd_tx.send(SyncCommand::SyncNow(done_tx))?;
-        done_rx.recv()?;
-        Ok(())
+        sync_and_wait(&self.cmd_tx, OFFER_SYNC_WAIT_TIMEOUT)
     }
 
     /// Run a single-maker offer fetch + fidelity verification cycle for `address`
@@ -501,12 +500,9 @@ impl OfferSyncHandle {
         }
     }
 
-    /// Trigger an offerbook sync and block until it completes.
+    /// Trigger an offerbook sync and wait up to ten minutes for completion.
     pub fn sync_and_wait(&self) -> Result<(), TakerError> {
-        let (done_tx, done_rx) = mpsc::channel();
-        self.cmd_tx.send(SyncCommand::SyncNow(done_tx))?;
-        done_rx.recv()?;
-        Ok(())
+        sync_and_wait(&self.cmd_tx, OFFER_SYNC_WAIT_TIMEOUT)
     }
 
     /// Run a single-maker offer fetch + fidelity verification cycle for `address`
@@ -526,6 +522,19 @@ impl OfferSyncHandle {
                 "Maker {address_str} was removed before the poll could record a result"
             ))
         })
+    }
+}
+
+fn sync_and_wait(cmd_tx: &mpsc::Sender<SyncCommand>, timeout: Duration) -> Result<(), TakerError> {
+    let (done_tx, done_rx) = mpsc::channel();
+    cmd_tx.send(SyncCommand::SyncNow(done_tx))?;
+    match done_rx.recv_timeout(timeout) {
+        Ok(()) => Ok(()),
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            log::warn!("Offer sync exceeded {timeout:?}; using the current offerbook");
+            Ok(())
+        }
+        Err(e @ mpsc::RecvTimeoutError::Disconnected) => Err(e.into()),
     }
 }
 
@@ -1454,5 +1463,13 @@ mod tests {
             book.makers[0].state,
             MakerState::Unresponsive { retries: 1 }
         );
+    }
+
+    #[test]
+    fn timed_sync_uses_current_book_when_ack_is_missing() {
+        let (cmd_tx, cmd_rx) = mpsc::channel();
+
+        sync_and_wait(&cmd_tx, Duration::ZERO).unwrap();
+        assert!(matches!(cmd_rx.recv().unwrap(), SyncCommand::SyncNow(_)));
     }
 }
