@@ -60,10 +60,17 @@ pub enum MakerBehavior {
     MalformedLegacyFundingOutput,
     /// Underfund the Taproot contract while claiming the expected amount.
     UnderfundTaprootContract,
+    /// Deduct one extra satoshi beyond the advertised fee.
+    FeeSkimming,
 }
 
 /// Minimum time required to react to contract broadcasts (in blocks).
 pub const MIN_CONTRACT_REACTION_TIME: u16 = 10;
+
+/// Each admitted swap pins a connection thread and liquidity until it settles
+/// or times out. Past this cap, reject new SwapDetails instead of stacking
+/// unfunded admissions.
+pub(crate) const MAX_CONCURRENT_SWAPS: usize = 30;
 
 /// The taker's declared offset is also its claimed reaction window. Too small a
 /// value means neither side can act on the contract.
@@ -298,10 +305,12 @@ pub trait Maker: Send + Sync {
     fn sweep_incoming_swapcoins(&self) -> Result<(), MakerError>;
 
     /// Store connection state for persistence across connections.
+    /// `admission` is set only when storing from a fresh SwapDetails message.
     fn store_connection_state(
         &self,
         swap_id: &str,
         state: &ConnectionState,
+        admission: bool,
     ) -> Result<(), MakerError>;
 
     /// Retrieve stored connection state.
@@ -467,7 +476,7 @@ pub fn handle_message<M: Maker>(
                 id
             );
             if let Some(stored_state) = maker.get_connection_state(id)? {
-                maker.store_connection_state(id, &stored_state)?;
+                maker.store_connection_state(id, &stored_state, false)?;
             }
             state.touch();
             Ok(None)
@@ -575,7 +584,28 @@ fn handle_swap_details<M: Maker>(
     state.service_fee_sats = swap_fee.to_sat();
     state.phase = SwapPhase::AwaitingContractData;
 
-    maker.store_connection_state(&details.id, state)?;
+    // An admission rejection must reach the taker as a message, not a dropped
+    // connection, or it waits out a timeout before trying the next maker.
+    match maker.store_connection_state(&details.id, state, true) {
+        // A param mismatch means the id already belongs to a live swap; both
+        // arms are terminal rejections and get the same reset.
+        Err(MakerError::TooManySwaps | MakerError::SwapParamMismatch) => {
+            // A rejected admission must leave no live phase: with AwaitingContractData
+            // still set, the taker could send ContractData and drive funding for a
+            // swap we refused. Nothing was stored, so restore_state_if_needed stays a no-op.
+            state.phase = SwapPhase::AwaitingSwapDetails;
+            state.swap_id = None;
+            state.swap_amount = Amount::ZERO;
+            state.tx_count = 0;
+            state.timelock = 0;
+            state.refund_locktime_offset = 0;
+            state.service_fee_sats = 0;
+            return Ok(Some(MakerToTakerMessage::AckSwapDetails(
+                AckSwapDetails::reject(),
+            )));
+        }
+        result => result?,
+    }
 
     let (_, tweakable_point, _) = maker.get_tweakable_keypair()?;
 

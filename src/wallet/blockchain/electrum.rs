@@ -38,7 +38,7 @@ use electrum_client::{
 use serde_json::{json, Value};
 
 use super::{network_from_electrum_genesis, BlockRef, Blockchain, HdOrigin, WatchEvent};
-use crate::wallet::error::WalletError;
+use crate::{lock_debug, wallet::error::WalletError};
 
 /// Configuration for connecting to an Electrum-protocol server.
 ///
@@ -433,8 +433,7 @@ impl Electrum {
     /// Outpoints currently holding this script's subscription open. Zero means no
     /// entry exists, so the server was told to unsubscribe.
     pub fn subscription_watchers(&self, spk: &Script) -> usize {
-        self.notifier
-            .lock()
+        lock_debug!(self.notifier.lock())
             .unwrap_or_else(|e| {
                 log::warn!("electrum notifier lock poisoned; recovering");
                 e.into_inner()
@@ -530,7 +529,7 @@ impl Electrum {
         &self,
         f: &impl Fn(&ElectrumClient) -> Result<T, electrum_client::Error>,
     ) -> Result<T, electrum_client::Error> {
-        let client = self.inner.read().unwrap_or_else(|e| e.into_inner());
+        let client = lock_debug!(self.inner.read()).unwrap_or_else(|e| e.into_inner());
         f(&client)
     }
 
@@ -538,7 +537,7 @@ impl Electrum {
     /// for re-arming, since the new socket carries none.
     fn reconnect_client(&self) -> Result<(), electrum_client::Error> {
         let fresh = ElectrumClient::from_config(&self.config.url, client_config(&self.config))?;
-        let mut guard = self.inner.write().unwrap_or_else(|e| e.into_inner());
+        let mut guard = lock_debug!(self.inner.write()).unwrap_or_else(|e| e.into_inner());
         *guard = fresh;
         self.needs_rearm.store(true, Ordering::SeqCst);
         self.reconnects.fetch_add(1, Ordering::Relaxed);
@@ -943,9 +942,7 @@ impl Blockchain for Electrum {
         minconf: Option<usize>,
         maxconf: Option<usize>,
     ) -> Result<Vec<ListUnspentResultEntry>, WalletError> {
-        let watched: Vec<ScriptBuf> = self
-            .watched
-            .lock()
+        let watched: Vec<ScriptBuf> = lock_debug!(self.watched.lock())
             .map_err(poisoned)?
             .iter()
             .cloned()
@@ -1039,9 +1036,7 @@ impl Blockchain for Electrum {
         skip: Option<usize>,
         _include_watchonly: Option<bool>,
     ) -> Result<Vec<ListTransactionResult>, WalletError> {
-        let watched: Vec<ScriptBuf> = self
-            .watched
-            .lock()
+        let watched: Vec<ScriptBuf> = lock_debug!(self.watched.lock())
             .map_err(poisoned)?
             .iter()
             .cloned()
@@ -1192,14 +1187,14 @@ impl Blockchain for Electrum {
     fn watch_script(&self, script: &Script, hd: Option<HdOrigin>) {
         // Skipping the insert on a poisoned lock hides this script's UTXOs from
         // `list_unspent` for the rest of the process, with nothing in the log.
-        let mut watched = self.watched.lock().unwrap_or_else(|e| {
+        let mut watched = lock_debug!(self.watched.lock()).unwrap_or_else(|e| {
             log::warn!("electrum watched-scripts lock poisoned; recovering");
             e.into_inner()
         });
         watched.insert(script.to_owned());
         drop(watched);
         if let Some(hd) = hd {
-            let mut paths = self.hd_paths.lock().unwrap_or_else(|e| {
+            let mut paths = lock_debug!(self.hd_paths.lock()).unwrap_or_else(|e| {
                 log::warn!("electrum hd-paths lock poisoned; recovering");
                 e.into_inner()
             });
@@ -1208,8 +1203,7 @@ impl Blockchain for Electrum {
     }
 
     fn hd_origin_for_script(&self, script: &Script) -> Option<HdOrigin> {
-        self.hd_paths
-            .lock()
+        lock_debug!(self.hd_paths.lock())
             .unwrap_or_else(|e| {
                 log::warn!("electrum hd-paths lock poisoned; recovering");
                 e.into_inner()
@@ -1219,7 +1213,7 @@ impl Blockchain for Electrum {
     }
 
     fn subscribe_script(&self, spk: &Script, watch: OutPoint) -> Result<(), WalletError> {
-        let mut guard = self.notifier.lock().map_err(poisoned)?;
+        let mut guard = lock_debug!(self.notifier.lock()).map_err(poisoned)?;
         let state = &mut *guard;
         // Arm the server side first, even when a local entry already exists: a
         // reconnect leaves the entry behind with no subscription under it.
@@ -1266,7 +1260,7 @@ impl Blockchain for Electrum {
     }
 
     fn unsubscribe_script(&self, spk: &Script, watch: OutPoint) -> Result<(), WalletError> {
-        let mut guard = self.notifier.lock().map_err(poisoned)?;
+        let mut guard = lock_debug!(self.notifier.lock()).map_err(poisoned)?;
         if let Some(sub) = guard.subscriptions.get_mut(spk) {
             sub.watchers.remove(&watch);
             // Another watched outpoint still shares this script and needs the
@@ -1294,7 +1288,7 @@ impl Blockchain for Electrum {
     fn poll_event(&self) -> Option<WatchEvent> {
         // Recover a poisoned lock like `try_call` does; bailing here would
         // silence the watchtower for the process lifetime with no log line.
-        let mut guard = self.notifier.lock().unwrap_or_else(|e| {
+        let mut guard = lock_debug!(self.notifier.lock()).unwrap_or_else(|e| {
             log::warn!("electrum notifier lock poisoned; recovering");
             e.into_inner()
         });

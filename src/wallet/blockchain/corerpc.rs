@@ -23,7 +23,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use super::{BlockRef, Blockchain, WatchEvent};
-use crate::wallet::error::WalletError;
+use crate::{lock_debug, wallet::error::WalletError};
 
 /// Configuration for connecting to a Bitcoin Core node via JSON-RPC + ZMQ.
 #[derive(Debug, Clone)]
@@ -94,9 +94,7 @@ impl ZmqSubscriber {
     /// scan backstop the handshake window — without it, a transaction landing in
     /// that gap could be missed by both the scan and the ZMQ feed.
     fn ensure_connected(&self) -> Result<(), WalletError> {
-        let mut guard = self
-            .socket
-            .lock()
+        let mut guard = lock_debug!(self.socket.lock())
             .map_err(|_| WalletError::Zmq("ZMQ socket mutex poisoned".to_string()))?;
         if guard.is_some() {
             return Ok(());
@@ -129,7 +127,7 @@ impl ZmqSubscriber {
             log::warn!("ZMQ connect {}: {e:?}", self.addr);
             return None;
         }
-        let mut guard = self.socket.lock().ok()?;
+        let mut guard = lock_debug!(self.socket.lock()).ok()?;
         let received = {
             let socket = guard.as_ref()?;
             socket.recv_multipart(zmq::DONTWAIT)

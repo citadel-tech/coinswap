@@ -837,6 +837,7 @@ impl Taker {
                 "Stored {} receiver contract signatures on incoming swapcoins",
                 receiver_sigs.len()
             );
+            self.persist_incoming_swapcoins()?;
         }
 
         // SP6-L: All makers responded, incoming swapcoins created.

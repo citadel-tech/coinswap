@@ -118,6 +118,13 @@ impl AckSwapDetails {
             tweakable_point: Some(tweakable_point),
         }
     }
+
+    /// Create a rejection response.
+    pub fn reject() -> Self {
+        AckSwapDetails {
+            tweakable_point: None,
+        }
+    }
 }
 
 /// A private key exchanged during swap completion.

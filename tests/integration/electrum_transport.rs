@@ -366,6 +366,17 @@ fn reconnects_after_the_connection_drops() {
     let electrum = Electrum::new(&cfg).expect("connect via forwarder");
 
     let before = electrum.get_block_count().expect("tip before drop");
+    let addr = s
+        .bitcoind
+        .client
+        .get_new_address(None, None)
+        .unwrap()
+        .require_network(bitcoin::Network::Regtest)
+        .unwrap();
+    let spk = addr.script_pubkey();
+    electrum
+        .subscribe_script(&spk, dummy_watch(0))
+        .expect("subscribe before reconnect");
     s.forwarder.drop_connections();
 
     // Same answer, despite the socket having died underneath.
@@ -377,12 +388,23 @@ fn reconnects_after_the_connection_drops() {
         electrum.reconnect_count()
     );
 
-    // Subscriptions are re-armed after a rebuild, so watching still works.
-    let spk = bitcoin::ScriptBuf::new_p2wpkh(&bitcoin::WPubkeyHash::from_byte_array([9u8; 20]));
-    electrum.watch_script(&spk, None);
-    electrum
-        .subscribe_script(&spk, dummy_watch(0))
-        .expect("subscribe after reconnect");
+    send_to_address(&s.bitcoind, &addr, bitcoin::Amount::from_sat(10_000));
+    generate_blocks(&s.bitcoind, 1);
+    wait_for_tip(&s, &electrum);
+    let expected_tip = s.bitcoind.client.get_block_count().unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let (mut saw_tx, mut saw_tip) = (false, false);
+    while !(saw_tx && saw_tip) && std::time::Instant::now() < deadline {
+        if let Some(event) = electrum.poll_event() {
+            let event = format!("{event:?}");
+            saw_tx |= event.starts_with("TxSeen");
+            saw_tip |= event.contains(&format!("height: {expected_tip}"));
+        } else {
+            thread::sleep(std::time::Duration::from_millis(100));
+        }
+    }
+    assert!(saw_tx, "pre-reconnect script subscription was not re-armed");
+    assert!(saw_tip, "header subscription was not re-armed");
 
     drop(electrum);
     let _ = &s.bitcoind;

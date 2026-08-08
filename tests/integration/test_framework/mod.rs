@@ -685,7 +685,7 @@ impl TestFramework {
         if temp_dir.exists() {
             fs::remove_dir_all::<PathBuf>(temp_dir.clone()).unwrap();
         }
-        setup_logger(log::LevelFilter::Info, Some(temp_dir.clone()));
+        setup_logger(log::LevelFilter::Debug, Some(temp_dir.clone()));
         log::info!("📁 temporary directory : {}", temp_dir.display());
         let zmq_addr = format!("tcp://127.0.0.1:{}", 28332 + rand::random::<u16>() % 1000);
         let bitcoind = init_bitcoind(&temp_dir, zmq_addr.clone());

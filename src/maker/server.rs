@@ -14,6 +14,7 @@ use std::{
 #[cfg(not(feature = "integration-test"))]
 use crate::maker::rpc::server::MakerRpc;
 use crate::{
+    lock_debug,
     nostr_coinswap::broadcast_bond_on_nostr,
     protocol::common_messages::{FidelityProof, MakerToTakerMessage, TakerToMakerMessage},
     utill::{HEART_BEAT_INTERVAL, MAX_RPC_MESSAGE_SIZE},
@@ -87,9 +88,7 @@ pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
 
     // Check for unfinished swapcoins from a previous run and start recovery.
     {
-        let (inc, out) = maker
-            .wallet
-            .read()
+        let (inc, out) = lock_debug!(maker.wallet.read())
             .map_err(|_| MakerError::General("Failed to lock wallet"))?
             .find_unfinished_swapcoins();
         if !inc.is_empty() || !out.is_empty() {
@@ -144,9 +143,7 @@ pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
     }
 
     {
-        let wallet = maker
-            .wallet
-            .read()
+        let wallet = lock_debug!(maker.wallet.read())
             .map_err(|_| MakerError::General("Failed to lock wallet"))?;
         log::info!(
             "[{}] Bitcoin Network: {}",
@@ -251,9 +248,7 @@ pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
         std::process::id(),
         maker.config.network_port
     );
-    let save_result = maker
-        .wallet
-        .write()
+    let save_result = lock_debug!(maker.wallet.write())
         .map_err(|_| MakerError::General("Failed to lock wallet"))
         .and_then(|wallet| wallet.save_to_disk().map_err(MakerError::Wallet));
     log::info!(
@@ -533,9 +528,7 @@ fn check_for_idle_states(maker: Arc<MakerServer>) -> Result<(), MakerError> {
                 updated_at: now,
             };
 
-            if let Err(e) = maker
-                .swap_tracker
-                .lock()
+            if let Err(e) = lock_debug!(maker.swap_tracker.lock())
                 .map_err(|_| MakerError::MutexPossion)?
                 .save_record(&record)
             {
@@ -608,9 +601,7 @@ fn fidelity_renewal_loop(maker: Arc<MakerServer>, maker_address: &str) -> Result
         );
 
         // Redeem any expired bonds
-        if let Err(e) = maker
-            .wallet
-            .write()
+        if let Err(e) = lock_debug!(maker.wallet.write())
             .map_err(|_| MakerError::General("Failed to lock wallet"))?
             .redeem_expired_fidelity_bonds(AddressType::P2TR)
         {
@@ -664,20 +655,17 @@ fn check_for_preimage_via_watchtower(
             };
             // Blocking on purpose: we need this pass's fresh answer before
             // choosing timelock over hashlock — a stale miss refunds while a
-            // preimage spend already exists.
-            let reply = match maker.watch_service.watch_request(outpoint) {
-                Ok(reply) => reply,
-                // If something is wrong at watchtower, log the error, don't suppress fully.
-                Err(e) => {
-                    log::error!("watch request for {outpoint} failed (watcher gone): {e}");
-                    continue;
-                }
-            };
+            // preimage spend already exists. A query that fails after retries
+            // is fatal: abort the pass rather than refund blind.
+            let reply = maker.watch_service.watch_request(outpoint).map_err(|e| {
+                log::error!("watch request for {outpoint} failed (watcher gone): {e}");
+                MakerError::General("watchtower query failed, aborting recovery pass")
+            })?;
 
-            if let Some(crate::watch_tower::watcher::WatcherEvent::UtxoSpent {
+            if let crate::watch_tower::watcher::WatcherEvent::UtxoSpent {
                 spending_tx: Some(spending_tx),
                 ..
-            }) = reply
+            } = reply
             {
                 // Extract preimages from the spending transaction's witnesses.
                 for input in &spending_tx.input {
@@ -706,9 +694,7 @@ fn check_for_preimage_via_watchtower(
     );
 
     // Apply extracted preimages to incoming swapcoins in the wallet.
-    let mut wallet = maker
-        .wallet
-        .write()
+    let mut wallet = lock_debug!(maker.wallet.write())
         .map_err(|_| MakerError::General("Failed to lock wallet"))?;
 
     for incoming in incoming_swapcoins {
@@ -766,7 +752,7 @@ fn update_tracker(
     swap_id: &str,
     f: impl FnOnce(&mut super::swap_tracker::MakerSwapRecord),
 ) {
-    let mut tracker = match maker.swap_tracker.lock() {
+    let mut tracker = match lock_debug!(maker.swap_tracker.lock()) {
         Ok(tracker) => tracker,
         Err(_) => {
             log::error!("Swap tracker lock poisoned, skipping update for {swap_id}");
@@ -808,9 +794,7 @@ fn recover_from_swap(
         .and_then(|o| o.get_timelock())
         .ok_or(MakerError::General("missing timelock on outgoing swapcoin"))?;
 
-    let start_height = maker
-        .wallet
-        .read()
+    let start_height = lock_debug!(maker.wallet.read())
         .map_err(|_| MakerError::General("Failed to lock wallet"))?
         .blockchain
         .get_block_count()
@@ -826,9 +810,7 @@ fn recover_from_swap(
     );
 
     let all_swap_contracts_resolved = || -> Result<bool, MakerError> {
-        let wallet = maker
-            .wallet
-            .read()
+        let wallet = lock_debug!(maker.wallet.read())
             .map_err(|_| MakerError::General("Failed to lock wallet"))?;
 
         let contract_txids = outgoing_swapcoins
@@ -853,9 +835,7 @@ fn recover_from_swap(
     // funding_broadcast=false is safe to discard; missing tracker state can
     // happen after a reboot and must not delete persisted recovery material.
     {
-        let funding_broadcast = maker
-            .swap_tracker
-            .lock()
+        let funding_broadcast = lock_debug!(maker.swap_tracker.lock())
             .map_err(|_| MakerError::MutexPossion)?
             .get_record(&swap_id)
             .map(|r| r.funding_broadcast);
@@ -868,9 +848,7 @@ fn recover_from_swap(
             );
 
             {
-                let mut wallet = maker
-                    .wallet
-                    .write()
+                let mut wallet = lock_debug!(maker.wallet.write())
                     .map_err(|_| MakerError::General("Failed to lock wallet"))?;
                 for outgoing in &outgoing_swapcoins {
                     let key = outgoing.contract_tx.compute_txid().to_string();
@@ -906,9 +884,7 @@ fn recover_from_swap(
 
         // Check if all incoming swapcoins now have preimages
         let all_preimages_known = {
-            let wallet = maker
-                .wallet
-                .read()
+            let wallet = lock_debug!(maker.wallet.read())
                 .map_err(|_| MakerError::General("Failed to lock wallet"))?;
             incoming_swapcoins.iter().all(|incoming| {
                 // Wallet stores incoming swapcoins keyed by contract txid.
@@ -919,21 +895,45 @@ fn recover_from_swap(
             })
         };
 
+        let current_height = lock_debug!(maker.wallet.read())
+            .map_err(|_| MakerError::General("Failed to lock wallet"))?
+            .blockchain
+            .get_block_count()
+            .map_err(MakerError::Wallet)? as u32;
+
+        // One connection per pass, shared by both recovery paths below: on Tor
+        // Electrum each fresh connection costs a circuit handshake. Idle passes
+        // that only poll the watchtower pay for none.
+        let chain = if (all_preimages_known && !incoming_swapcoins.is_empty())
+            || current_height >= timelock_expiry
+        {
+            Some(
+                lock_debug!(maker.wallet.read())
+                    .map_err(|_| MakerError::General("Failed to lock wallet"))?
+                    .blockchain
+                    .new_connection()
+                    .map_err(MakerError::Wallet)?,
+            )
+        } else {
+            None
+        };
+
         if all_preimages_known && !incoming_swapcoins.is_empty() {
             log::info!(
                 "[{}] All preimages known, recovering via hashlock path",
                 maker.config.network_port
             );
 
-            maker
-                .wallet
-                .write()
+            lock_debug!(maker.wallet.write())
                 .map_err(|_| MakerError::General("Failed to lock wallet"))?
                 .sync_and_save(&maker.shutdown)
                 .map_err(MakerError::Wallet)?;
 
+            let chain = chain.as_ref().expect("connection created for this branch");
+
             let swept = Wallet::sweep_incoming_swapcoins(
                 &maker.wallet,
+                chain,
                 crate::utill::MIN_FEE_RATE,
                 &maker.shutdown,
             )
@@ -957,9 +957,7 @@ fn recover_from_swap(
                 // someone else (hashlock), so they are no longer recoverable
                 // via timelock. Remove them from the wallet store.
                 {
-                    let mut wallet = maker
-                        .wallet
-                        .write()
+                    let mut wallet = lock_debug!(maker.wallet.write())
                         .map_err(|_| MakerError::General("Failed to lock wallet"))?;
                     for outgoing in &outgoing_swapcoins {
                         // Wallet stores outgoing swapcoins keyed by contract txid.
@@ -976,9 +974,7 @@ fn recover_from_swap(
                 });
 
                 // Emit hashlock recovery reports
-                let network = maker
-                    .wallet
-                    .read()
+                let network = lock_debug!(maker.wallet.read())
                     .map(|w| w.store.network.to_string())
                     .unwrap_or_default();
                 let recovery_txids: Vec<String> = swept
@@ -1001,14 +997,6 @@ fn recover_from_swap(
         }
 
         // --- Timelock path: reclaim outgoing after timelock expires ---
-        let current_height = maker
-            .wallet
-            .read()
-            .map_err(|_| MakerError::General("Failed to lock wallet"))?
-            .blockchain
-            .get_block_count()
-            .map_err(MakerError::Wallet)? as u32;
-
         if current_height >= timelock_expiry {
             log::info!(
                 "[{}] Timelock expired at {} (expiry={}), recovering via timelock path",
@@ -1022,8 +1010,11 @@ fn recover_from_swap(
                 r.recovery.phase = MakerRecoveryPhase::TimelockWaiting;
             });
 
+            let chain = chain.as_ref().expect("connection created for this branch");
+
             let recovered = Wallet::recover_timelocked_swapcoins(
                 &maker.wallet,
+                chain,
                 crate::utill::MIN_FEE_RATE,
                 &maker.shutdown,
             )
@@ -1061,9 +1052,7 @@ fn recover_from_swap(
                     });
 
                     // Emit timelock recovery reports
-                    let network = maker
-                        .wallet
-                        .read()
+                    let network = lock_debug!(maker.wallet.read())
                         .map(|w| w.store.network.to_string())
                         .unwrap_or_default();
                     let recovery_txids: Vec<String> = timelock_recovery_txids

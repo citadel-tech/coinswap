@@ -24,6 +24,7 @@ use nostr::{
 use tungstenite::{stream::MaybeTlsStream, Message};
 
 use crate::{
+    lock_debug,
     nostr_coinswap::{coinswap_kind, connect_nostr_websocket, EXPIRATION_SECS},
     wallet::{AnyBlockchain, Blockchain},
     watch_tower::{
@@ -392,7 +393,7 @@ fn handle_relay_message(
 
             // Claim the txid before any RPC work, so duplicate events and
             // concurrent relay sessions don't repeat the fetch and validation.
-            if !seen_txid.lock()?.claim(txid) {
+            if !lock_debug!(seen_txid.lock())?.claim(txid) {
                 log::info!("Skipping already-seen txid {txid} via {relay_url}");
                 registry.save_nostr_cursor(relay_url, cursor)?;
                 return Ok(false);
@@ -403,14 +404,14 @@ fn handle_relay_message(
                 Err(e) => {
                     log::warn!("Failed to fetch raw tx {txid:?} via {relay_url}: {e}");
                     // A transient fetch failure leaves the txid eligible for retry.
-                    seen_txid.lock()?.release(&txid);
+                    lock_debug!(seen_txid.lock())?.release(&txid);
                     return Ok(false);
                 }
             };
 
             // The txid is marked seen once fetched (regardless of validation outcome) so a relay
             // replaying an invalid txid can't force re-validation every time;
-            seen_txid.lock()?.insert(txid);
+            lock_debug!(seen_txid.lock())?.insert(txid);
             log::info!("Added txid to Nostr discovery cache: {txid}");
 
             match process_fidelity(&tx) {

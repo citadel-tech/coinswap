@@ -16,6 +16,7 @@ use std::{
 use bitcoin::{OutPoint, Txid};
 
 use crate::{
+    lock_debug,
     taker::error::TakerError,
     utill::HEART_BEAT_INTERVAL,
     wallet::{Blockchain, RecoveryReport, Wallet},
@@ -62,45 +63,70 @@ impl RecoveryLoop {
             .spawn(move || {
                 log::info!("Recovery loop started");
                 while !shutdown_clone.load(Relaxed) {
+                    // One connection per pass, shared by all three steps below:
+                    // on Tor Electrum each fresh connection costs a circuit handshake.
+                    let chain = match lock_debug!(wallet.read()) {
+                        Ok(w) => match w.blockchain.new_connection() {
+                            Ok(chain) => chain,
+                            Err(e) => {
+                                log::warn!("Recovery loop: no connection: {:?}", e);
+                                thread::park_timeout(RECOVERY_LOOP_INTERVAL);
+                                continue;
+                            }
+                        },
+                        Err(_) => {
+                            thread::park_timeout(RECOVERY_LOOP_INTERVAL);
+                            continue;
+                        }
+                    };
+
                     // Try hashlock sweep (incoming). It takes the lock itself and drops
                     // it across its waits, so a stuck tx cannot wedge the wallet.
-                    let incoming_result =
-                        match Wallet::sweep_incoming_swapcoins(&wallet, 2.0, &shutdown_clone) {
-                            Ok(ref swept) if !swept.is_empty() => {
-                                log::info!(
-                                    "Recovery loop: swept {} incoming swapcoins",
-                                    swept.resolved.len()
-                                );
-                                Some(swept.clone())
-                            }
-                            Err(e) => {
-                                log::debug!("Recovery loop: incoming sweep: {:?}", e);
-                                None
-                            }
-                            _ => None,
-                        };
+                    let incoming_result = match Wallet::sweep_incoming_swapcoins(
+                        &wallet,
+                        &chain,
+                        2.0,
+                        &shutdown_clone,
+                    ) {
+                        Ok(ref swept) if !swept.is_empty() => {
+                            log::info!(
+                                "Recovery loop: swept {} incoming swapcoins",
+                                swept.resolved.len()
+                            );
+                            Some(swept.clone())
+                        }
+                        Err(e) => {
+                            log::debug!("Recovery loop: incoming sweep: {:?}", e);
+                            None
+                        }
+                        _ => None,
+                    };
 
                     // Try timelock recovery (outgoing). Same deal — it manages the
                     // lock itself and never holds it across a confirmation wait.
-                    let outgoing_result =
-                        match Wallet::recover_timelocked_swapcoins(&wallet, 2.0, &shutdown_clone) {
-                            Ok(ref recovered) if !recovered.is_empty() => {
-                                log::info!(
-                                    "Recovery loop: recovered {} timelocked swapcoins",
-                                    recovered.len()
-                                );
-                                Some(recovered.clone())
-                            }
-                            Err(e) => {
-                                log::debug!("Recovery loop: timelock recovery: {:?}", e);
-                                None
-                            }
-                            _ => None,
-                        };
+                    let outgoing_result = match Wallet::recover_timelocked_swapcoins(
+                        &wallet,
+                        &chain,
+                        2.0,
+                        &shutdown_clone,
+                    ) {
+                        Ok(ref recovered) if !recovered.is_empty() => {
+                            log::info!(
+                                "Recovery loop: recovered {} timelocked swapcoins",
+                                recovered.len()
+                            );
+                            Some(recovered.clone())
+                        }
+                        Err(e) => {
+                            log::debug!("Recovery loop: timelock recovery: {:?}", e);
+                            None
+                        }
+                        _ => None,
+                    };
 
                     // Update tracker outcomes from recovery results
                     if incoming_result.is_some() || outgoing_result.is_some() {
-                        if let Ok(mut tracker) = swap_tracker.lock() {
+                        if let Ok(mut tracker) = lock_debug!(swap_tracker.lock()) {
                             Self::update_tracker_outcomes(
                                 &mut tracker,
                                 incoming_result.as_ref(),
@@ -109,26 +135,20 @@ impl RecoveryLoop {
                         }
                     }
 
-                    // Snapshot the outpoints and a connection, then drop the guard:
-                    // the checks below are backend calls and must not hold the wallet.
-                    let snapshot = match wallet.read() {
+                    // Snapshot the outpoints, then drop the guard: the checks below
+                    // are backend calls and must not hold the wallet.
+                    let outpoints = match lock_debug!(wallet.read()) {
                         Ok(w) => {
                             let mut outpoints = w.outgoing_contract_outpoints();
                             outpoints.extend(w.incoming_contract_outpoints());
-                            match w.blockchain.new_connection() {
-                                Ok(chain) => Some((outpoints, chain)),
-                                Err(e) => {
-                                    log::warn!("Recovery loop: no connection: {:?}", e);
-                                    None
-                                }
-                            }
+                            Some(outpoints)
                         }
                         Err(_) => None,
                     };
 
                     // Check if all contract outpoints are resolved
-                    let all_resolved = match snapshot {
-                        Some((outpoints, chain)) => outpoints.iter().all(|(op, spk)| {
+                    let all_resolved = match outpoints {
+                        Some(outpoints) => outpoints.iter().all(|(op, spk)| {
                             // Only a confirmed spend proves a contract resolved;
                             // a missing output also means evicted or unknown, and
                             // a failed lookup keeps us watching.
@@ -146,8 +166,7 @@ impl RecoveryLoop {
                     if all_resolved {
                         log::info!("Recovery loop: all contracts resolved");
                         // Clean up wallet entries and update tracker
-                        let swap_ids: Vec<String> = swap_tracker
-                            .lock()
+                        let swap_ids: Vec<String> = lock_debug!(swap_tracker.lock())
                             .ok()
                             .map(|t| {
                                 t.incomplete_swaps()
@@ -157,7 +176,7 @@ impl RecoveryLoop {
                             })
                             .unwrap_or_default();
 
-                        if let Ok(mut w) = wallet.write() {
+                        if let Ok(mut w) = lock_debug!(wallet.write()) {
                             for swap_id in &swap_ids {
                                 let keys = w.outgoing_keys_for_swap(swap_id);
                                 for key in &keys {
@@ -168,11 +187,10 @@ impl RecoveryLoop {
                             let _ = w.save_to_disk();
                         }
 
-                        if let Ok(mut tracker) = swap_tracker.lock() {
+                        if let Ok(mut tracker) = lock_debug!(swap_tracker.lock()) {
                             // Emit recovery reports before marking as cleaned up
                             for record in tracker.incomplete_swaps() {
-                                let network = wallet
-                                    .read()
+                                let network = lock_debug!(wallet.read())
                                     .map(|w| w.store.network.to_string())
                                     .unwrap_or_default();
                                 let all_outcomes = record
@@ -416,13 +434,14 @@ impl BreachDetector {
                         break;
                     }
 
-                    let current_sentinels = match sentinels_clone.lock() {
+                    let current_sentinels = match lock_debug!(sentinels_clone.lock()) {
                         Ok(guard) => guard.clone(),
                         Err(_) => continue,
                     };
 
                     for (outpoint, expected_contract_txid) in &current_sentinels {
-                        // If a watch request fails, log the error, don't panic.
+                        // The poll loop is the retry here: a failed query is
+                        // logged and re-asked on the next pass.
                         let reply = match watch_service.watch_request(*outpoint) {
                             Ok(reply) => reply,
                             Err(e) => {
@@ -432,10 +451,10 @@ impl BreachDetector {
                                 continue;
                             }
                         };
-                        if let Some(WatcherEvent::UtxoSpent {
+                        if let WatcherEvent::UtxoSpent {
                             spending_tx: Some(ref tx),
                             ..
-                        }) = reply
+                        } = reply
                         {
                             let actual_txid = tx.compute_txid();
                             if actual_txid == *expected_contract_txid {
@@ -490,7 +509,7 @@ impl BreachDetector {
                     ))
                 })?;
         }
-        if let Ok(mut guard) = self.sentinels.lock() {
+        if let Ok(mut guard) = lock_debug!(self.sentinels.lock()) {
             #[cfg(debug_assertions)]
             log::debug!(
                 "[WATCH_STATE] Source: taker::background_services::add_sentinels | Action: register_breach_sentinels | Added: {} | Total: {}",

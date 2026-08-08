@@ -5,6 +5,8 @@ use std::sync::Arc;
 use bitcoin::{Amount, OutPoint, PublicKey};
 use bitcoind::bitcoincore_rpc::{jsonrpc::error::Error as JsonRpcError, Error as BitcoinRpcError};
 
+#[cfg(feature = "integration-test")]
+use super::handlers::MakerBehavior;
 use super::{
     error::MakerError,
     handlers::{
@@ -273,7 +275,17 @@ fn process_taproot_contract<M: Maker>(
 
     let base_excluded = maker.collect_excluded_utxos(&data.id)?;
 
-    for &outgoing_amount in &outgoing_amounts {
+    for &expected_outgoing_amount in &outgoing_amounts {
+        #[cfg(feature = "integration-test")]
+        let outgoing_amount = if maker.behavior() == MakerBehavior::FeeSkimming {
+            expected_outgoing_amount
+                .checked_sub(Amount::from_sat(1))
+                .ok_or(MakerError::General("Test fee skim exceeds outgoing amount"))?
+        } else {
+            expected_outgoing_amount
+        };
+        #[cfg(not(feature = "integration-test"))]
+        let outgoing_amount = expected_outgoing_amount;
         let outgoing_nonce =
             bitcoin::secp256k1::SecretKey::new(&mut bitcoin::secp256k1::rand::thread_rng());
         let outgoing_privkey = tweakable_privkey
@@ -421,7 +433,7 @@ fn process_taproot_contract<M: Maker>(
             for outgoing in &outgoing_swapcoins {
                 maker.save_outgoing_swapcoin(outgoing)?;
             }
-            maker.store_connection_state(&data.id, state)?;
+            maker.store_connection_state(&data.id, state, false)?;
             return Err(MakerError::General("Test: skipped funding broadcast"));
         }
     }
@@ -498,7 +510,7 @@ fn process_taproot_contract<M: Maker>(
     state.funding_broadcast = true;
     state.phase = SwapPhase::AwaitingPrivateKeyHandover;
 
-    maker.store_connection_state(&data.id, state)?;
+    maker.store_connection_state(&data.id, state, false)?;
 
     #[cfg(feature = "integration-test")]
     {

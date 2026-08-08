@@ -29,6 +29,7 @@ use bitcoin::{
 use bitcoind::bitcoincore_rpc::json::ListUnspentResultEntry;
 
 use crate::{
+    lock_debug,
     nostr_coinswap::NOSTR_RELAYS,
     protocol::{
         common_messages::{
@@ -456,7 +457,8 @@ impl Drop for Taker {
             if let Ok(record) = self.persist_build_record(swap) {
                 // Drop can't propagate; a poisoned tracker must not abort the
                 // process while we're already unwinding.
-                let mut tracker = self.swap_tracker.lock().unwrap_or_else(|e| e.into_inner());
+                let mut tracker =
+                    lock_debug!(self.swap_tracker.lock()).unwrap_or_else(|e| e.into_inner());
                 if let Err(e) = tracker.save_record(&record) {
                     log::error!("Failed to flush swap tracker on shutdown: {:?}", e);
                 }
@@ -485,7 +487,7 @@ impl Drop for Taker {
             log::error!("Failed to persist offerbook: {:?}", e);
             save_ok = false;
         }
-        if let Ok(wallet) = self.wallet.write() {
+        if let Ok(wallet) = lock_debug!(self.wallet.write()) {
             if let Err(e) = wallet.save_to_disk() {
                 log::error!("Failed to save wallet: {:?}", e);
                 save_ok = false;
@@ -509,15 +511,13 @@ impl Role for Taker {
 impl Taker {
     /// Acquire a read lock on the wallet.
     pub(crate) fn read_wallet(&self) -> Result<RwLockReadGuard<'_, Wallet>, TakerError> {
-        self.wallet
-            .read()
+        lock_debug!(self.wallet.read())
             .map_err(|_| TakerError::General("Failed to lock wallet".to_string()))
     }
 
     /// Acquire a write lock on the wallet.
     pub(crate) fn write_wallet(&self) -> Result<RwLockWriteGuard<'_, Wallet>, TakerError> {
-        self.wallet
-            .write()
+        lock_debug!(self.wallet.write())
             .map_err(|_| TakerError::General("Failed to lock wallet".to_string()))
     }
 
@@ -570,10 +570,12 @@ impl Taker {
         let mut watches = wallet.incoming_contract_outpoints();
         watches.extend(wallet.outgoing_contract_outpoints());
         watches.extend(wallet.watchonly_contract_outpoints());
+        // Contracts we cannot watch are contracts we cannot defend: a dead
+        // watcher at startup is fatal, not a warning.
         if !watches.is_empty() {
-            if let Err(e) = watch_service.rebuild_watches(watches) {
-                log::error!("could not rebuild watches on startup: {e}");
-            }
+            watch_service.rebuild_watches(watches).map_err(|e| {
+                TakerError::General(format!("could not rebuild watches on startup: {e}"))
+            })?;
         }
 
         Self::init_taker_config(&config, &data_dir)?;
@@ -592,8 +594,7 @@ impl Taker {
             shutdown.clone(),
         )?;
         let swap_tracker = Arc::new(Mutex::new(SwapTracker::load_or_create(&data_dir)?));
-        swap_tracker
-            .lock()
+        lock_debug!(swap_tracker.lock())
             .map_err(|_| TakerError::General("swap tracker lock poisoned".into()))?
             .cleanup_incomplete();
 
@@ -624,29 +625,56 @@ impl Taker {
     fn init_recover_wallet(&mut self) {
         log::info!("Checking wallet for unresolved swap contracts...");
 
-        // The sweep takes the lock itself and drops it across its waits, so a stuck
-        // counterparty tx cannot wedge taker startup.
-        match Wallet::sweep_incoming_swapcoins(&self.wallet, 2.0, &crate::utill::NO_SHUTDOWN) {
-            Ok(ref swept) if !swept.is_empty() => {
-                log::info!(
-                    "Startup recovery: swept {} incoming swapcoins",
-                    swept.resolved.len()
-                );
+        // One connection serves both startup recovery passes; the sweep and
+        // timelock recovery each take the lock themselves and drop it across
+        // their waits, so a stuck counterparty tx cannot wedge taker startup.
+        let chain = match self.read_wallet() {
+            Ok(w) => match w.blockchain.new_connection() {
+                Ok(chain) => Some(chain),
+                Err(e) => {
+                    log::warn!("Startup recovery: no backend connection: {:?}", e);
+                    None
+                }
+            },
+            Err(e) => {
+                log::warn!("Startup recovery: failed to lock wallet: {:?}", e);
+                None
             }
-            Ok(_) => {}
-            Err(e) => log::warn!("Startup incoming sweep failed: {:?}", e),
-        }
+        };
 
-        // Wallet-driven recovery: recover timelocked. Also takes the lock itself.
-        match Wallet::recover_timelocked_swapcoins(&self.wallet, 2.0, &crate::utill::NO_SHUTDOWN) {
-            Ok(ref recovered) if !recovered.is_empty() => {
-                log::info!(
-                    "Startup recovery: recovered {} timelocked outgoing swapcoins",
-                    recovered.len()
-                );
+        if let Some(chain) = &chain {
+            match Wallet::sweep_incoming_swapcoins(
+                &self.wallet,
+                chain,
+                2.0,
+                &crate::utill::NO_SHUTDOWN,
+            ) {
+                Ok(ref swept) if !swept.is_empty() => {
+                    log::info!(
+                        "Startup recovery: swept {} incoming swapcoins",
+                        swept.resolved.len()
+                    );
+                }
+                Ok(_) => {}
+                Err(e) => log::warn!("Startup incoming sweep failed: {:?}", e),
             }
-            Ok(_) => {}
-            Err(e) => log::warn!("Startup timelock recovery failed: {:?}", e),
+
+            // Wallet-driven recovery: recover timelocked. Also takes the lock itself.
+            match Wallet::recover_timelocked_swapcoins(
+                &self.wallet,
+                chain,
+                2.0,
+                &crate::utill::NO_SHUTDOWN,
+            ) {
+                Ok(ref recovered) if !recovered.is_empty() => {
+                    log::info!(
+                        "Startup recovery: recovered {} timelocked outgoing swapcoins",
+                        recovered.len()
+                    );
+                }
+                Ok(_) => {}
+                Err(e) => log::warn!("Startup timelock recovery failed: {:?}", e),
+            }
         }
 
         let has_remaining = match self.write_wallet() {
@@ -785,7 +813,7 @@ impl Taker {
     /// Log the current swap tracker state at INFO level.
     pub fn log_tracker_state(&self) {
         // Info-only path; a poisoned tracker should not kill the caller.
-        let Ok(tracker) = self.swap_tracker.lock() else {
+        let Ok(tracker) = lock_debug!(self.swap_tracker.lock()) else {
             log::error!("swap tracker lock poisoned; skipping tracker state log");
             return;
         };
@@ -1018,9 +1046,7 @@ impl Taker {
                             }
                         } else {
                             log::info!("No funds on-chain — safe to abort");
-                            let _ = self
-                                .swap_tracker
-                                .lock()
+                            let _ = lock_debug!(self.swap_tracker.lock())
                                 .map_err(|_| {
                                     TakerError::General("swap tracker lock poisoned".into())
                                 })?
@@ -1050,9 +1076,7 @@ impl Taker {
                         }
                     } else {
                         log::info!("No funds on-chain — safe to abort");
-                        let _ = self
-                            .swap_tracker
-                            .lock()
+                        let _ = lock_debug!(self.swap_tracker.lock())
                             .map_err(|_| TakerError::General("swap tracker lock poisoned".into()))?
                             .remove_record(
                                 &self.swap_state().map(|s| s.id.clone()).unwrap_or_default(),
@@ -1097,7 +1121,15 @@ impl Taker {
             return Err(err);
         }
 
-        self.finalize_persist_incoming()?;
+        // Die with the contracts accepted but nothing settled and no recovery
+        // run — the window where incoming coins would exist only in memory.
+        #[cfg(feature = "integration-test")]
+        if self.behavior == TakerBehavior::CrashAfterContractExchange {
+            log::warn!("Test behavior: crashing after contract exchange");
+            let err = TakerError::General("Test: crashed after contract exchange".to_string());
+            self.persist_failure(SwapPhase::ContractsExchanged, &err);
+            return Err(err);
+        }
 
         // SP7: Finalization starts.
         self.persist_swap(SwapPhase::Finalizing)?;
@@ -1133,8 +1165,15 @@ impl Taker {
         // Success path: sweep + report (shared by both protocols)
         let swap_id_owned = swap_id.to_string();
         let expected_incoming_swapcoins = self.swap_state()?.incoming_swapcoins.len();
-        let swept =
-            Wallet::sweep_incoming_swapcoins(&self.wallet, 2.0, &crate::utill::NO_SHUTDOWN)?;
+        // Hoist connection creation so the read guard drops before sweep
+        // takes the write lock on the same wallet.
+        let chain = self.read_wallet()?.blockchain.new_connection()?;
+        let swept = Wallet::sweep_incoming_swapcoins(
+            &self.wallet,
+            &chain,
+            2.0,
+            &crate::utill::NO_SHUTDOWN,
+        )?;
         log::info!("Swept {} incoming swapcoins", swept.resolved.len());
         self.write_wallet()?
             .sync_and_save(&crate::utill::NO_SHUTDOWN)?;
@@ -1915,7 +1954,7 @@ impl Taker {
 
         self.persist_swap(SwapPhase::PrivkeysForwarded)?;
 
-        self.finalize_persist_incoming()?;
+        self.persist_incoming_swapcoins()?;
 
         log::info!("Swap finalized successfully");
         Ok(())
@@ -2070,9 +2109,10 @@ impl Taker {
         Ok(())
     }
 
-    /// Persist the taker's incoming swapcoins to the wallet.
-    /// Preimage is already stamped at swapcoin creation time.
-    fn finalize_persist_incoming(&mut self) -> Result<(), TakerError> {
+    /// Persist incoming swapcoins, keyed by contract txid so repeats overwrite.
+    /// Called when contracts are accepted — a crash before finalization must not
+    /// lose what the taker is owed — and again after the privkey handover.
+    pub(crate) fn persist_incoming_swapcoins(&mut self) -> Result<(), TakerError> {
         let incoming = self.swap_state()?.incoming_swapcoins.clone();
         let mut wallet = self.write_wallet()?;
         for swapcoin in &incoming {
@@ -2082,7 +2122,7 @@ impl Taker {
         wallet.save_to_disk()?;
         #[cfg(debug_assertions)]
         log::debug!(
-            "[WALLET_STATE] Action: persist_final_incoming | Added: {} | IncomingStored: {}",
+            "[WALLET_STATE] Action: persist_incoming | Added: {} | IncomingStored: {}",
             incoming.len(),
             wallet.get_incoming_swapcoins_count()
         );
@@ -2175,9 +2215,7 @@ impl Taker {
 
         // Snapshot preserved fields from any existing record.
         let swap_id = self.swap_state()?.id.clone();
-        let tracker_guard = self
-            .swap_tracker
-            .lock()
+        let tracker_guard = lock_debug!(self.swap_tracker.lock())
             .map_err(|_| TakerError::General("swap tracker lock poisoned".into()))?;
         let existing = tracker_guard.get_record(&swap_id);
         let created_at = existing.map(|r| r.created_at);
@@ -2204,8 +2242,7 @@ impl Taker {
             record.failure_reason = Some(reason);
         }
 
-        self.swap_tracker
-            .lock()
+        lock_debug!(self.swap_tracker.lock())
             .map_err(|_| TakerError::General("swap tracker lock poisoned".into()))?
             .save_record(&record)
     }
@@ -2227,7 +2264,7 @@ impl Taker {
                 record.updated_at = now_secs();
                 // The failure was already reported to the caller; a poisoned
                 // tracker here is no reason to panic.
-                let Ok(mut tracker) = self.swap_tracker.lock() else {
+                let Ok(mut tracker) = lock_debug!(self.swap_tracker.lock()) else {
                     log::error!("swap tracker lock poisoned; skipping failure persist");
                     return;
                 };
@@ -2555,8 +2592,7 @@ impl Taker {
                 })?
         };
 
-        self.swap_tracker
-            .lock()
+        lock_debug!(self.swap_tracker.lock())
             .map_err(|_| TakerError::General("swap tracker lock poisoned".into()))?
             .update_and_save(&swap_id, |record| {
                 record.phase = SwapPhase::Failed;
@@ -2627,8 +2663,7 @@ impl Taker {
             }
         }
 
-        self.swap_tracker
-            .lock()
+        lock_debug!(self.swap_tracker.lock())
             .map_err(|_| TakerError::General("swap tracker lock poisoned".into()))?
             .update_and_save(swap_id, |r| {
                 r.recovery.incoming = incoming_outcomes;
@@ -2641,8 +2676,7 @@ impl Taker {
 
     /// Verify the deniability proof for a specific swap.
     pub fn verify_deniability(&self, swap_id: &str) -> Result<bool, std::io::Error> {
-        self.wallet
-            .read()
+        lock_debug!(self.wallet.read())
             .map_err(|e| std::io::Error::other(format!("wallet lock poisoned: {e}")))?
             .verify_deniability(swap_id)
     }
@@ -2753,4 +2787,8 @@ pub enum TakerBehavior {
     /// no key handed over and no recovery run. Leaves every party's contract
     /// unclaimed so only a restart can settle them (restart_rebuilds_watches).
     CrashBeforeRecovery,
+    /// Die right after the contract exchange, before finalization and with no
+    /// recovery run — the window where incoming coins would otherwise exist only
+    /// in memory (crash_after_contract_exchange).
+    CrashAfterContractExchange,
 }
