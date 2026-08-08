@@ -584,6 +584,16 @@ fn handle_swap_details<M: Maker>(
     // connection, or it waits out a timeout before trying the next maker.
     match maker.store_connection_state(&details.id, state) {
         Err(MakerError::TooManySwaps) => {
+            // A rejected admission must leave no live phase: with AwaitingContractData
+            // still set, the taker could send ContractData and drive funding for a
+            // swap we refused. Nothing was stored, so restore_state_if_needed stays a no-op.
+            state.phase = SwapPhase::AwaitingSwapDetails;
+            state.swap_id = None;
+            state.swap_amount = Amount::ZERO;
+            state.tx_count = 0;
+            state.timelock = 0;
+            state.refund_locktime_offset = 0;
+            state.service_fee_sats = 0;
             return Ok(Some(MakerToTakerMessage::AckSwapDetails(
                 AckSwapDetails::reject(),
             )));

@@ -1170,9 +1170,12 @@ impl Taker {
         // Success path: sweep + report (shared by both protocols)
         let swap_id_owned = swap_id.to_string();
         let expected_incoming_swapcoins = self.swap_state()?.incoming_swapcoins.len();
+        // Hoist connection creation so the read guard drops before sweep
+        // takes the write lock on the same wallet.
+        let chain = self.read_wallet()?.blockchain.new_connection()?;
         let swept = Wallet::sweep_incoming_swapcoins(
             &self.wallet,
-            &self.read_wallet()?.blockchain.new_connection()?,
+            &chain,
             2.0,
             &crate::utill::NO_SHUTDOWN,
         )?;

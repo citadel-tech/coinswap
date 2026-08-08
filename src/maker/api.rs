@@ -1369,7 +1369,23 @@ impl MakerTrait for MakerServer {
         };
 
         let mut swaps = self.ongoing_swaps.lock()?;
-        if let Some(swap_liquidity) = swap_liquidity.filter(|_| !swaps.contains_key(swap_id)) {
+        let is_new = !swaps.contains_key(swap_id);
+        // The entry can vanish between the two locks (idle drainer, connection
+        // cleanup), making the first-lock classification stale. Re-read the
+        // balance here so admission checks are not skipped for a new swap.
+        let swap_liquidity = match swap_liquidity {
+            Some(liquidity) if is_new => Some(liquidity),
+            None if is_new => {
+                let wallet = self
+                    .wallet
+                    .read()
+                    .map_err(|_| MakerError::General("Failed to lock wallet"))?;
+                let balances = wallet.get_balances().map_err(MakerError::Wallet)?;
+                Some(balances.regular + balances.swap)
+            }
+            _ => None,
+        };
+        if let Some(swap_liquidity) = swap_liquidity {
             let active_swaps = swaps
                 .values()
                 .filter(|state| state.phase != SwapPhase::Completed)

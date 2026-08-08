@@ -916,6 +916,33 @@ fn recover_from_swap(
             })
         };
 
+        let current_height = maker
+            .wallet
+            .read()
+            .map_err(|_| MakerError::General("Failed to lock wallet"))?
+            .blockchain
+            .get_block_count()
+            .map_err(MakerError::Wallet)? as u32;
+
+        // One connection per pass, shared by both recovery paths below: on Tor
+        // Electrum each fresh connection costs a circuit handshake. Idle passes
+        // that only poll the watchtower pay for none.
+        let chain = if (all_preimages_known && !incoming_swapcoins.is_empty())
+            || current_height >= timelock_expiry
+        {
+            Some(
+                maker
+                    .wallet
+                    .read()
+                    .map_err(|_| MakerError::General("Failed to lock wallet"))?
+                    .blockchain
+                    .new_connection()
+                    .map_err(MakerError::Wallet)?,
+            )
+        } else {
+            None
+        };
+
         if all_preimages_known && !incoming_swapcoins.is_empty() {
             log::info!(
                 "[{}] All preimages known, recovering via hashlock path",
@@ -929,17 +956,11 @@ fn recover_from_swap(
                 .sync_and_save(&maker.shutdown)
                 .map_err(MakerError::Wallet)?;
 
-            let chain = maker
-                .wallet
-                .read()
-                .map_err(|_| MakerError::General("Failed to lock wallet"))?
-                .blockchain
-                .new_connection()
-                .map_err(MakerError::Wallet)?;
+            let chain = chain.as_ref().expect("connection created for this branch");
 
             let swept = Wallet::sweep_incoming_swapcoins(
                 &maker.wallet,
-                &chain,
+                chain,
                 crate::utill::MIN_FEE_RATE,
                 &maker.shutdown,
             )
@@ -1007,14 +1028,6 @@ fn recover_from_swap(
         }
 
         // --- Timelock path: reclaim outgoing after timelock expires ---
-        let current_height = maker
-            .wallet
-            .read()
-            .map_err(|_| MakerError::General("Failed to lock wallet"))?
-            .blockchain
-            .get_block_count()
-            .map_err(MakerError::Wallet)? as u32;
-
         if current_height >= timelock_expiry {
             log::info!(
                 "[{}] Timelock expired at {} (expiry={}), recovering via timelock path",
@@ -1028,17 +1041,11 @@ fn recover_from_swap(
                 r.recovery.phase = MakerRecoveryPhase::TimelockWaiting;
             });
 
-            let chain = maker
-                .wallet
-                .read()
-                .map_err(|_| MakerError::General("Failed to lock wallet"))?
-                .blockchain
-                .new_connection()
-                .map_err(MakerError::Wallet)?;
+            let chain = chain.as_ref().expect("connection created for this branch");
 
             let recovered = Wallet::recover_timelocked_swapcoins(
                 &maker.wallet,
-                &chain,
+                chain,
                 crate::utill::MIN_FEE_RATE,
                 &maker.shutdown,
             )

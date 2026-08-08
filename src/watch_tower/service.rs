@@ -103,6 +103,13 @@ impl WatchService {
                 })
                 .map_err(|_| WatcherError::SendError)?;
             match reply_rx.recv_timeout(WATCH_REPLY_TIMEOUT) {
+                Ok(WatcherEvent::Error(error)) => {
+                    // The watcher answered with an error; callers must not read
+                    // it as "not spent".
+                    return Err(WatcherError::General(format!(
+                        "watcher could not answer request for {outpoint}: {error}"
+                    )));
+                }
                 Ok(event) => return Ok(event),
                 Err(RecvTimeoutError::Disconnected) => return Err(WatcherError::SendError),
                 Err(RecvTimeoutError::Timeout) => {
@@ -238,5 +245,19 @@ mod tests {
         let service = WatchService::new(tx, handle, Arc::new(AtomicBool::new(false)));
         let event = service.watch_request(OutPoint::null()).unwrap();
         assert!(matches!(event, WatcherEvent::NoOutpoint));
+    }
+
+    #[test]
+    fn error_event_is_returned_as_error() {
+        let (tx, rx) = mpsc::channel();
+        let handle = thread::spawn(move || {
+            if let Ok(WatcherCommand::WatchRequest { reply, .. }) = rx.recv() {
+                _ = reply.send(WatcherEvent::Error("registry lock poisoned".to_string()));
+            }
+            Ok(())
+        });
+        let service = WatchService::new(tx, handle, Arc::new(AtomicBool::new(false)));
+        let err = service.watch_request(OutPoint::null()).unwrap_err();
+        assert!(matches!(err, WatcherError::General(_)));
     }
 }
