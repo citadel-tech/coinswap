@@ -21,6 +21,7 @@ mod malice1;
 mod malice2;
 mod mixed_protocol_concurrent_swaps;
 mod multi_taker;
+mod payswap;
 mod skip_funding_recovery;
 mod standard_swap;
 mod taproot_hashlock_recovery;

@@ -106,6 +106,23 @@ pub struct MakerFeeInfo {
 // Report structs
 // ---------------------------------------------------------------------------
 
+/// Outcome of a PaySwap payment. Reported confirmed only after the settlement
+/// transactions reached the confirmation target — never merely because
+/// private-key handover completed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PaymentResult {
+    /// Receiver address the payment was pinned to.
+    pub receiver_address: String,
+    /// Exact amount requested for the receiver (satoshis).
+    pub requested_amount: u64,
+    /// Amount actually delivered (satoshis); 0 until settlement confirms.
+    pub delivered_amount: u64,
+    /// Settlement transaction IDs paying the receiver.
+    pub settlement_txids: Vec<String>,
+    /// Whether every settlement transaction reached the confirmation target.
+    pub confirmed: bool,
+}
+
 /// Taker-perspective record for one swap (success or failed).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TakerReport {
@@ -163,6 +180,9 @@ pub struct TakerReport {
     pub output_swap_utxos: Vec<(u64, String)>,
     /// Deniability proof for this swap, if successfully generated.
     pub deniability_proof: Option<DeniabilityProof>,
+    /// PaySwap outcome; present only when the swap paid a third-party receiver.
+    #[serde(default)]
+    pub payment: Option<PaymentResult>,
 }
 
 impl TakerReport {
@@ -236,6 +256,25 @@ impl TakerReport {
             );
         }
         println!("\x1b[1;37mNetwork           :\x1b[0m {}", self.network);
+        if let Some(ref payment) = self.payment {
+            println!(
+                "\x1b[1;37mPayment To        :\x1b[0m {}",
+                payment.receiver_address
+            );
+            println!(
+                "\x1b[1;37mPayment Delivered :\x1b[0m {} / {} sats ({})",
+                payment.delivered_amount,
+                payment.requested_amount,
+                if payment.confirmed {
+                    "confirmed"
+                } else {
+                    "pending"
+                }
+            );
+            for txid in &payment.settlement_txids {
+                println!("  Settlement Tx   : {}", txid);
+            }
+        }
         println!("\x1b[1;37mMakers Used       :\x1b[0m {}", self.makers_count);
         for (i, addr) in self.maker_addresses.iter().enumerate() {
             println!("  Maker {}         : {}", i + 1, addr);
@@ -807,6 +846,7 @@ mod tests {
             output_change_utxos: vec![],
             output_swap_utxos: vec![],
             deniability_proof: None,
+            payment: None,
         }
     }
 

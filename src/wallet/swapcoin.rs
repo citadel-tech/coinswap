@@ -51,6 +51,19 @@ mod option_scalar_serde {
     }
 }
 
+/// Exact settlement destination for a PaySwap incoming swapcoin.
+///
+/// When set, every claim path pays exactly `amount` to `script_pubkey` and
+/// spends the remaining input value as miner fee — the output never absorbs
+/// a fee.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PaymentTarget {
+    /// The receiver's locking script.
+    pub script_pubkey: ScriptBuf,
+    /// Exact amount the settlement output must carry.
+    pub amount: Amount,
+}
+
 /// Incoming swap coin for both protocol versions.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct IncomingSwapCoin {
@@ -96,6 +109,8 @@ pub struct IncomingSwapCoin {
     pub internal_key: Option<XOnlyPublicKey>,
     /// Spending transaction (Taproot only, for preimage extraction).
     pub spending_tx: Option<Transaction>,
+    /// PaySwap settlement destination; `None` sweeps to a wallet-internal address.
+    pub payment_target: Option<PaymentTarget>,
 }
 
 impl IncomingSwapCoin {
@@ -136,6 +151,7 @@ impl IncomingSwapCoin {
             tap_tweak: None,
             internal_key: None,
             spending_tx: None,
+            payment_target: None,
         }
     }
 
@@ -167,6 +183,7 @@ impl IncomingSwapCoin {
             tap_tweak: None,
             internal_key: None,
             spending_tx: None,
+            payment_target: None,
         }
     }
 
@@ -325,11 +342,40 @@ impl IncomingSwapCoin {
         output_script: &ScriptBuf,
         feerate: f64,
     ) -> Result<Transaction, WalletError> {
+        let vsize = contract_and_timelock_vsize(
+            self.protocol,
+            SpendKind::ContractSpend {
+                cooperative: self.other_privkey.is_some(),
+            },
+        );
+
+        let fee = Amount::from_sat((feerate * vsize as f64) as u64);
+        let output_value = input_value
+            .checked_sub(fee)
+            .ok_or_else(|| WalletError::General("Fee exceeds input value".to_string()))?;
+
+        self.sign_spend_transaction_with_output_value(input_value, output_value, output_script)
+    }
+
+    /// Like [`Self::sign_spend_transaction`], but pins the output to an exact
+    /// value; the input surplus is paid as miner fee. Used for PaySwap settlements.
+    pub(crate) fn sign_spend_transaction_with_output_value(
+        &self,
+        input_value: Amount,
+        output_value: Amount,
+        output_script: &ScriptBuf,
+    ) -> Result<Transaction, WalletError> {
         use bitcoin::{
             absolute::LockTime,
             transaction::{Transaction as BtcTransaction, TxIn, TxOut, Version},
             OutPoint, Sequence, Witness,
         };
+
+        if output_value >= input_value {
+            return Err(WalletError::General(format!(
+                "Spend output {output_value} leaves no fee from input {input_value}"
+            )));
+        }
 
         // Determine which outpoint to spend from based on protocol version:
         let previous_output = match self.protocol {
@@ -383,18 +429,6 @@ impl IncomingSwapCoin {
             sequence,
             witness: Witness::default(),
         };
-
-        let vsize = contract_and_timelock_vsize(
-            self.protocol,
-            SpendKind::ContractSpend {
-                cooperative: self.other_privkey.is_some(),
-            },
-        );
-
-        let fee = Amount::from_sat((feerate * vsize as f64) as u64);
-        let output_value = input_value
-            .checked_sub(fee)
-            .ok_or_else(|| WalletError::General("Fee exceeds input value".to_string()))?;
 
         let tx_output = TxOut {
             value: output_value,

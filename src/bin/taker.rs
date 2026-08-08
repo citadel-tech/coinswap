@@ -159,6 +159,10 @@ enum Commands {
         /// Automatically select UTXOs instead of interactive picker.
         #[clap(long)]
         auto_select: bool,
+        /// PaySwap: settle the swap to this third-party address. The swap
+        /// amount then means the exact amount the receiver gets.
+        #[clap(long = "payment-address")]
+        payment_address: Option<String>,
         /// Skip the confirmation prompt and proceed immediately.
         #[clap(long, short = 'y')]
         yes: bool,
@@ -544,6 +548,7 @@ fn main() -> Result<(), TakerError> {
             protocol,
             maker_addresses,
             auto_select,
+            payment_address,
             yes,
         } => {
             let protocol_version = parse_protocol(protocol)?;
@@ -577,6 +582,11 @@ fn main() -> Result<(), TakerError> {
             if !maker_addresses.is_empty() {
                 swap_params.preferred_makers = Some(maker_addresses.clone());
             }
+            if let Some(address) = payment_address {
+                swap_params.payment_address = Some(address.parse().map_err(|e| {
+                    TakerError::General(format!("Invalid payment address '{address}': {e}"))
+                })?);
+            }
 
             // Phase 1: Prepare — discover makers, negotiate, get fee summary.
             let summary = taker.prepare_coinswap(swap_params)?;
@@ -600,6 +610,22 @@ fn main() -> Result<(), TakerError> {
             println!();
             println!("Total estimated fee: {}", summary.total_estimated_fee);
             println!("Estimated receive:   {}", summary.estimated_receive_amount);
+            if let Some(payment) = &summary.payment {
+                println!();
+                println!("--- Payment (PaySwap) ---");
+                println!("Receiver:            {}", payment.address);
+                println!("Receiver gets:       {} (exact)", payment.amount);
+                println!("Settlement budget:   {}", payment.settlement_budget);
+                println!("Route amount:        {}", summary.send_amount);
+                println!(
+                    "Funding fee (est.):  {}",
+                    payment.taker_funding_fee_estimate
+                );
+                println!(
+                    "Total coinswap cost: {}",
+                    summary.send_amount + payment.taker_funding_fee_estimate
+                );
+            }
             println!("==================================\n");
 
             // In integration tests, skip the confirmation prompt.

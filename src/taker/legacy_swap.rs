@@ -807,6 +807,9 @@ impl Taker {
                 self.swap_state_mut()?.incoming_swapcoins.push(incoming);
             }
 
+            // PaySwap: pin the receiver before the coins are persisted.
+            self.payment_stamp_targets()?;
+
             log::info!(
                 "Created {} incoming swapcoins from last maker",
                 self.swap_state()?.incoming_swapcoins.len()
