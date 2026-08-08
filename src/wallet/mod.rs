@@ -14,7 +14,8 @@ mod storage;
 pub(crate) mod swapcoin;
 
 pub(crate) use api::{
-    contract_and_timelock_vsize, infer_address_type, wait_for_tx_confirmation, SpendKind,
+    contract_and_timelock_vsize, infer_address_type, payment_settlement_budget_sats,
+    wait_for_tx_confirmation, SpendKind,
 };
 pub use api::{Balances, RecoveryOutcome, SecretMnemonic, UTXOSpendInfo, Wallet};
 pub use backup::WalletBackup;
@@ -28,6 +29,8 @@ pub use fidelity::FidelityBond;
 pub(crate) use fidelity::{
     verify_fidelity_checks, FidelityError, MAX_FIDELITY_TIMELOCK, MIN_FIDELITY_TIMELOCK,
 };
-pub use report::{MakerFeeInfo, MakerReport, RecoveryReport, SwapRole, SwapStatus, TakerReport};
+pub use report::{
+    MakerFeeInfo, MakerReport, PaymentResult, RecoveryReport, SwapRole, SwapStatus, TakerReport,
+};
 pub use spend::Destination;
 pub use storage::AddressType;

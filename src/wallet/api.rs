@@ -275,6 +275,26 @@ pub(crate) enum SpendKind {
     Timelock,
 }
 
+/// Per-swapcoin fee budget a PaySwap taker reserves on the final hop, sized
+/// for the most expensive settlement path: legacy publishes the contract tx
+/// and spends via hashlock; taproot is the script-path spend. Cheaper paths
+/// pay the surplus as extra miner fee — a change output back to the taker
+/// would link it to the settlement.
+/// On the common cooperative path the taker
+/// loses the worst-vs-cheap vsize gap per swapcoin: 43 vB for taproot
+/// (key-path, ~86 sats at the minimum feerate) and 150 vB for legacy
+/// (2-of-2 spend, ~300 sats).
+pub(crate) fn payment_settlement_budget_sats(protocol: crate::protocol::ProtocolVersion) -> u64 {
+    use crate::utill::calculate_fee_sats;
+    match protocol {
+        crate::protocol::ProtocolVersion::Legacy => {
+            calculate_fee_sats(crate::protocol::contract::CONTRACT_TX_VSIZE)
+                + calculate_fee_sats(LEGACY_CONTRACT_SPEND_VSIZE)
+        }
+        crate::protocol::ProtocolVersion::Taproot => calculate_fee_sats(TAPROOT_SCRIPTPATH_VSIZE),
+    }
+}
+
 /// Returns the estimated vsize (virtual bytes) for cooperative keypath, preimage (hashlock),
 /// and timelock recovery spend transactions only.
 pub(crate) fn contract_and_timelock_vsize(
@@ -2947,35 +2967,70 @@ impl Wallet {
                 }
             }
 
-            // Allocate the address only for a coin actually being swept; a coin
+            // A PaySwap coin settles to the receiver's own script — nothing is
+            // allocated or tracked in this wallet. Otherwise, allocate the
+            // internal address only for a coin actually being swept; a coin
             // skipped every pass would otherwise burn an index each time and
             // grow the watch window forever. Take the guard just for this, so
             // nothing below waits with it held.
-            let internal_address = {
-                let mut w = lock_debug!(wallet.write())
-                    .map_err(|_| WalletError::General("wallet lock poisoned".to_string()))?;
-                let addr = w.get_next_internal_addresses(1, AddressType::P2TR)?[0].clone();
-                // Mark the sweep target before broadcast, not after confirmation: a
-                // sync inside the confirmation window must not see it as a seed coin.
-                w.store
-                    .swept_incoming_swapcoins
-                    .insert(addr.script_pubkey());
-                addr
+            let (internal_address, spend_result) = match &swapcoin.payment_target {
+                Some(target) => {
+                    log::info!(
+                        "Settling incoming swap coin {} (utxo: {}:{}) to payment receiver, exact output {}",
+                        swap_id,
+                        utxo_txid,
+                        utxo_vout,
+                        target.amount
+                    );
+                    let spend = swapcoin.sign_spend_transaction_with_output_value(
+                        input_value,
+                        target.amount,
+                        &target.script_pubkey,
+                    );
+                    (None, spend)
+                }
+                None => {
+                    let address = {
+                        let mut w = lock_debug!(wallet.write()).map_err(|_| {
+                            WalletError::General("wallet lock poisoned".to_string())
+                        })?;
+                        let addr = w.get_next_internal_addresses(1, AddressType::P2TR)?[0].clone();
+                        // Mark the sweep target before broadcast, not after confirmation: a
+                        // sync inside the confirmation window must not see it as a seed coin.
+                        w.store
+                            .swept_incoming_swapcoins
+                            .insert(addr.script_pubkey());
+                        addr
+                    };
+                    log::info!(
+                        "Sweeping incoming swap coin {} (utxo: {}:{}) to internal address {}",
+                        swap_id,
+                        utxo_txid,
+                        utxo_vout,
+                        address
+                    );
+                    let spend = swapcoin.sign_spend_transaction(
+                        input_value,
+                        &address.script_pubkey(),
+                        feerate,
+                    );
+                    (Some(address), spend)
+                }
             };
 
-            log::info!(
-                "Sweeping incoming swap coin {} (utxo: {}:{}) to internal address {}",
-                swap_id,
-                utxo_txid,
-                utxo_vout,
-                internal_address
-            );
+            // Sweep never happened; unmark the address.
+            let unmark_on_failure = |addr: &Option<Address>| -> Result<(), WalletError> {
+                if let Some(addr) = addr {
+                    lock_debug!(wallet.write())
+                        .map_err(|_| WalletError::General("wallet lock poisoned".to_string()))?
+                        .store
+                        .swept_incoming_swapcoins
+                        .remove(&addr.script_pubkey());
+                }
+                Ok(())
+            };
 
-            match swapcoin.sign_spend_transaction(
-                input_value,
-                &internal_address.script_pubkey(),
-                feerate,
-            ) {
+            match spend_result {
                 Ok(spend_tx) => {
                     match chain.send_raw_transaction(&spend_tx) {
                         Ok(txid) => {
@@ -3008,14 +3063,7 @@ impl Wallet {
                                 swap_id,
                                 e
                             );
-                            // Sweep never happened; unmark the address.
-                            lock_debug!(wallet.write())
-                                .map_err(|_| {
-                                    WalletError::General("wallet lock poisoned".to_string())
-                                })?
-                                .store
-                                .swept_incoming_swapcoins
-                                .remove(&internal_address.script_pubkey());
+                            unmark_on_failure(&internal_address)?;
                         }
                     }
                 }
@@ -3025,12 +3073,7 @@ impl Wallet {
                         swap_id,
                         e
                     );
-                    // Sweep never happened; unmark the address.
-                    lock_debug!(wallet.write())
-                        .map_err(|_| WalletError::General("wallet lock poisoned".to_string()))?
-                        .store
-                        .swept_incoming_swapcoins
-                        .remove(&internal_address.script_pubkey());
+                    unmark_on_failure(&internal_address)?;
                 }
             }
         }
