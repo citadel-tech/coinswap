@@ -29,6 +29,7 @@ use bitcoin::{
 use bitcoind::bitcoincore_rpc::json::ListUnspentResultEntry;
 
 use crate::{
+    lock_debug,
     nostr_coinswap::NOSTR_RELAYS,
     protocol::{
         common_messages::{
@@ -456,7 +457,8 @@ impl Drop for Taker {
             if let Ok(record) = self.persist_build_record(swap) {
                 // Drop can't propagate; a poisoned tracker must not abort the
                 // process while we're already unwinding.
-                let mut tracker = self.swap_tracker.lock().unwrap_or_else(|e| e.into_inner());
+                let mut tracker =
+                    lock_debug!(self.swap_tracker.lock()).unwrap_or_else(|e| e.into_inner());
                 if let Err(e) = tracker.save_record(&record) {
                     log::error!("Failed to flush swap tracker on shutdown: {:?}", e);
                 }
@@ -485,7 +487,7 @@ impl Drop for Taker {
             log::error!("Failed to persist offerbook: {:?}", e);
             save_ok = false;
         }
-        if let Ok(wallet) = self.wallet.write() {
+        if let Ok(wallet) = lock_debug!(self.wallet.write()) {
             if let Err(e) = wallet.save_to_disk() {
                 log::error!("Failed to save wallet: {:?}", e);
                 save_ok = false;
@@ -509,15 +511,13 @@ impl Role for Taker {
 impl Taker {
     /// Acquire a read lock on the wallet.
     pub(crate) fn read_wallet(&self) -> Result<RwLockReadGuard<'_, Wallet>, TakerError> {
-        self.wallet
-            .read()
+        lock_debug!(self.wallet.read())
             .map_err(|_| TakerError::General("Failed to lock wallet".to_string()))
     }
 
     /// Acquire a write lock on the wallet.
     pub(crate) fn write_wallet(&self) -> Result<RwLockWriteGuard<'_, Wallet>, TakerError> {
-        self.wallet
-            .write()
+        lock_debug!(self.wallet.write())
             .map_err(|_| TakerError::General("Failed to lock wallet".to_string()))
     }
 
@@ -594,8 +594,7 @@ impl Taker {
             shutdown.clone(),
         )?;
         let swap_tracker = Arc::new(Mutex::new(SwapTracker::load_or_create(&data_dir)?));
-        swap_tracker
-            .lock()
+        lock_debug!(swap_tracker.lock())
             .map_err(|_| TakerError::General("swap tracker lock poisoned".into()))?
             .cleanup_incomplete();
 
@@ -814,7 +813,7 @@ impl Taker {
     /// Log the current swap tracker state at INFO level.
     pub fn log_tracker_state(&self) {
         // Info-only path; a poisoned tracker should not kill the caller.
-        let Ok(tracker) = self.swap_tracker.lock() else {
+        let Ok(tracker) = lock_debug!(self.swap_tracker.lock()) else {
             log::error!("swap tracker lock poisoned; skipping tracker state log");
             return;
         };
@@ -1047,9 +1046,7 @@ impl Taker {
                             }
                         } else {
                             log::info!("No funds on-chain — safe to abort");
-                            let _ = self
-                                .swap_tracker
-                                .lock()
+                            let _ = lock_debug!(self.swap_tracker.lock())
                                 .map_err(|_| {
                                     TakerError::General("swap tracker lock poisoned".into())
                                 })?
@@ -1079,9 +1076,7 @@ impl Taker {
                         }
                     } else {
                         log::info!("No funds on-chain — safe to abort");
-                        let _ = self
-                            .swap_tracker
-                            .lock()
+                        let _ = lock_debug!(self.swap_tracker.lock())
                             .map_err(|_| TakerError::General("swap tracker lock poisoned".into()))?
                             .remove_record(
                                 &self.swap_state().map(|s| s.id.clone()).unwrap_or_default(),
@@ -2220,9 +2215,7 @@ impl Taker {
 
         // Snapshot preserved fields from any existing record.
         let swap_id = self.swap_state()?.id.clone();
-        let tracker_guard = self
-            .swap_tracker
-            .lock()
+        let tracker_guard = lock_debug!(self.swap_tracker.lock())
             .map_err(|_| TakerError::General("swap tracker lock poisoned".into()))?;
         let existing = tracker_guard.get_record(&swap_id);
         let created_at = existing.map(|r| r.created_at);
@@ -2249,8 +2242,7 @@ impl Taker {
             record.failure_reason = Some(reason);
         }
 
-        self.swap_tracker
-            .lock()
+        lock_debug!(self.swap_tracker.lock())
             .map_err(|_| TakerError::General("swap tracker lock poisoned".into()))?
             .save_record(&record)
     }
@@ -2272,7 +2264,7 @@ impl Taker {
                 record.updated_at = now_secs();
                 // The failure was already reported to the caller; a poisoned
                 // tracker here is no reason to panic.
-                let Ok(mut tracker) = self.swap_tracker.lock() else {
+                let Ok(mut tracker) = lock_debug!(self.swap_tracker.lock()) else {
                     log::error!("swap tracker lock poisoned; skipping failure persist");
                     return;
                 };
@@ -2600,8 +2592,7 @@ impl Taker {
                 })?
         };
 
-        self.swap_tracker
-            .lock()
+        lock_debug!(self.swap_tracker.lock())
             .map_err(|_| TakerError::General("swap tracker lock poisoned".into()))?
             .update_and_save(&swap_id, |record| {
                 record.phase = SwapPhase::Failed;
@@ -2672,8 +2663,7 @@ impl Taker {
             }
         }
 
-        self.swap_tracker
-            .lock()
+        lock_debug!(self.swap_tracker.lock())
             .map_err(|_| TakerError::General("swap tracker lock poisoned".into()))?
             .update_and_save(swap_id, |r| {
                 r.recovery.incoming = incoming_outcomes;
@@ -2686,8 +2676,7 @@ impl Taker {
 
     /// Verify the deniability proof for a specific swap.
     pub fn verify_deniability(&self, swap_id: &str) -> Result<bool, std::io::Error> {
-        self.wallet
-            .read()
+        lock_debug!(self.wallet.read())
             .map_err(|e| std::io::Error::other(format!("wallet lock poisoned: {e}")))?
             .verify_deniability(swap_id)
     }

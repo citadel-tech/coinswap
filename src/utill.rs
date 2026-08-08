@@ -51,6 +51,7 @@ pub(crate) fn global_secp() -> &'static Secp256k1<All> {
 
 use crate::{
     error::NetError,
+    lock_debug,
     protocol::{contract::derive_maker_pubkey_and_nonce, error::ProtocolError},
     wallet::{SecretMnemonic, UTXOSpendInfo, WalletError},
 };
@@ -801,7 +802,7 @@ pub fn prompt_password(message: String) -> io::Result<String> {
     let mut password = String::new();
     let mut buf = [0u8; 1];
 
-    while stdin.lock().read(&mut buf)? == 1 {
+    while lock_debug!(stdin.lock()).read(&mut buf)? == 1 {
         let c = buf[0] as char;
 
         match c {
@@ -839,7 +840,7 @@ pub fn prompt_password(message: String) -> io::Result<String> {
 /// Writes a new wallet's seed phrase to stdout, shown once at wallet creation.
 /// Returns write errors instead of panicking like `println!`.
 pub fn print_new_wallet_seed(mnemonic: &SecretMnemonic) -> io::Result<()> {
-    let mut out = io::stdout().lock();
+    let mut out = lock_debug!(io::stdout().lock());
     writeln!(out, "\n========== New Wallet Seed Phrase ==========")?;
     writeln!(out, "{}", mnemonic.words())?;
     writeln!(

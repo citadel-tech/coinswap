@@ -2,6 +2,7 @@ use bitcoin::Amount;
 use bitcoind::bitcoincore_rpc::Auth;
 use clap::Parser;
 use coinswap::{
+    lock_debug,
     protocol::ProtocolVersion,
     taker::{
         error::TakerError, format_state, MakerOfferCandidate, MakerState, SwapParams, Taker,
@@ -384,7 +385,10 @@ fn main() -> Result<(), TakerError> {
     let mut taker = Taker::init(config)?;
 
     // Display and consume the mnemonic phrase. On failure, create a new wallet to get a new phrase.
-    if let Some(mnemonic) = taker.get_wallet().write().unwrap().take_new_mnemonic() {
+    if let Some(mnemonic) = lock_debug!(taker.get_wallet().write())
+        .unwrap()
+        .take_new_mnemonic()
+    {
         print_new_wallet_seed(&mnemonic).inspect_err(|e| {
             log::error!(
                 "Failed to display new wallet seed phrase: {e}. \
@@ -394,15 +398,13 @@ fn main() -> Result<(), TakerError> {
     }
 
     // Sync wallet after initialization
-    taker
-        .get_wallet()
-        .write()
+    lock_debug!(taker.get_wallet().write())
         .unwrap()
         .sync_and_save(&coinswap::utill::NO_SHUTDOWN)?;
 
     match &args.command {
         Commands::ListUtxo => {
-            let wallet = taker.get_wallet().read().unwrap();
+            let wallet = lock_debug!(taker.get_wallet().read()).unwrap();
             let utxos = wallet.list_all_utxo_spend_info();
             for utxo in utxos {
                 let utxo = UTXO::from_utxo_data(utxo);
@@ -410,7 +412,7 @@ fn main() -> Result<(), TakerError> {
             }
         }
         Commands::ListUtxoRegular => {
-            let wallet = taker.get_wallet().read().unwrap();
+            let wallet = lock_debug!(taker.get_wallet().read()).unwrap();
             let utxos = wallet.list_descriptor_utxo_spend_info();
             for utxo in utxos {
                 let utxo = UTXO::from_utxo_data(utxo);
@@ -418,7 +420,7 @@ fn main() -> Result<(), TakerError> {
             }
         }
         Commands::ListUtxoSwap => {
-            let wallet = taker.get_wallet().read().unwrap();
+            let wallet = lock_debug!(taker.get_wallet().read()).unwrap();
             let utxos = wallet.list_incoming_swap_coin_utxo_spend_info();
             for utxo in utxos {
                 let utxo = UTXO::from_utxo_data(utxo);
@@ -426,7 +428,7 @@ fn main() -> Result<(), TakerError> {
             }
         }
         Commands::ListUtxoContract => {
-            let wallet = taker.get_wallet().read().unwrap();
+            let wallet = lock_debug!(taker.get_wallet().read()).unwrap();
             let utxos = wallet.list_live_timelock_contract_spend_info();
             for utxo in utxos {
                 let utxo = UTXO::from_utxo_data(utxo);
@@ -434,7 +436,7 @@ fn main() -> Result<(), TakerError> {
             }
         }
         Commands::GetBalances => {
-            let wallet = taker.get_wallet().read().unwrap();
+            let wallet = lock_debug!(taker.get_wallet().read()).unwrap();
             let balances = wallet.get_balances()?;
             println!(
                 "{}",
@@ -448,7 +450,7 @@ fn main() -> Result<(), TakerError> {
             );
         }
         Commands::GetNewAddress => {
-            let mut wallet = taker.get_wallet().write().unwrap();
+            let mut wallet = lock_debug!(taker.get_wallet().write()).unwrap();
             let address = wallet.get_next_external_address(AddressType::P2TR)?;
             println!("{address:?}");
         }
@@ -461,7 +463,7 @@ fn main() -> Result<(), TakerError> {
 
             #[cfg(not(feature = "integration-test"))]
             let manually_selected_outpoints = {
-                let wallet = taker.get_wallet().read().unwrap();
+                let wallet = lock_debug!(taker.get_wallet().read()).unwrap();
                 Some(
                     coinswap::utill::interactive_select(wallet.list_all_utxo_spend_info(), amount)?
                         .iter()
@@ -472,7 +474,7 @@ fn main() -> Result<(), TakerError> {
             #[cfg(feature = "integration-test")]
             let manually_selected_outpoints = None;
 
-            let mut wallet = taker.get_wallet().write().unwrap();
+            let mut wallet = lock_debug!(taker.get_wallet().write()).unwrap();
             let txid = wallet.send_to_address(
                 amount.to_sat(),
                 address.clone(),
@@ -502,7 +504,7 @@ fn main() -> Result<(), TakerError> {
 
             println!("\nDiscovered {} makers\n", makers.len());
 
-            let wallet = taker.get_wallet().read().unwrap();
+            let wallet = lock_debug!(taker.get_wallet().read()).unwrap();
             display_makers_with_summary(&wallet, &makers)?;
         }
         Commands::ListOffers => {
@@ -518,12 +520,12 @@ fn main() -> Result<(), TakerError> {
 
             println!("\n{} makers in local offerbook\n", makers.len());
 
-            let wallet = taker.get_wallet().read().unwrap();
+            let wallet = lock_debug!(taker.get_wallet().read()).unwrap();
             display_makers_with_summary(&wallet, &makers)?;
         }
         Commands::PollMaker { address } => {
             let result = taker.poll_maker(address.clone())?;
-            let wallet = taker.get_wallet().read().unwrap();
+            let wallet = lock_debug!(taker.get_wallet().read()).unwrap();
             let (tip_height, tip_time) = wallet.chain_tip()?;
             println!("{}", display_offer(&wallet, &result, tip_height, tip_time)?);
         }
@@ -549,7 +551,7 @@ fn main() -> Result<(), TakerError> {
             #[cfg(not(feature = "integration-test"))]
             let manually_selected_outpoints = if !auto_select {
                 let target_amount = Amount::from_sat(*amount);
-                let wallet = taker.get_wallet().read().unwrap();
+                let wallet = lock_debug!(taker.get_wallet().read()).unwrap();
                 Some(
                     coinswap::utill::interactive_select(
                         wallet.list_all_utxo_spend_info(),
@@ -625,7 +627,7 @@ fn main() -> Result<(), TakerError> {
             taker.recover_active_swap()?;
         }
         Commands::Backup { encrypt } => {
-            let wallet = taker.get_wallet().read().unwrap();
+            let wallet = lock_debug!(taker.get_wallet().read()).unwrap();
             Wallet::backup_interactive(&wallet, *encrypt);
         }
         Commands::Restore { .. } => {

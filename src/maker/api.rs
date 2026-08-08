@@ -17,6 +17,7 @@ use std::{
 use bitcoin::{bip32::ChainCode, Amount, Network, OutPoint, PublicKey, Transaction};
 
 use crate::{
+    lock_debug,
     nostr_coinswap::NOSTR_RELAYS,
     protocol::common_messages::{FidelityProof, ProtocolVersion, SwapDetails},
     taker::api::REFUND_LOCKTIME_STEP,
@@ -380,9 +381,7 @@ impl ThreadPool {
         stream: Option<Weak<TcpStream>>,
     ) -> Result<(), MakerError> {
         let finished = {
-            let mut threads = self
-                .threads
-                .lock()
+            let mut threads = lock_debug!(self.threads.lock())
                 .map_err(|_| MakerError::General("thread pool lock poisoned"))?;
             let (finished, mut running): (Vec<_>, Vec<_>) = std::mem::take(&mut *threads)
                 .into_iter()
@@ -401,9 +400,7 @@ impl ThreadPool {
     pub fn join_all_threads(&self) -> Result<(), MakerError> {
         loop {
             let mut threads = {
-                let mut owned = self
-                    .threads
-                    .lock()
+                let mut owned = lock_debug!(self.threads.lock())
                     .map_err(|_| MakerError::General("Failed to lock threads"))?;
                 std::mem::take(&mut *owned)
             };
@@ -638,23 +635,17 @@ impl MakerServer {
     pub fn setup_fidelity_bond(&self, maker_address: &str) -> Result<FidelityProof, MakerError> {
         use bitcoin::absolute::LockTime;
 
-        let highest_index = self
-            .wallet
-            .read()
+        let highest_index = lock_debug!(self.wallet.read())
             .map_err(|_| MakerError::General("Failed to lock wallet"))?
             .get_highest_fidelity_index()
             .map_err(MakerError::Wallet)?;
 
-        let mut proof = self
-            .highest_fidelity_proof
-            .write()
+        let mut proof = lock_debug!(self.highest_fidelity_proof.write())
             .map_err(|_| MakerError::General("Failed to lock fidelity proof"))?;
 
         if let Some(i) = highest_index {
             // Existing fidelity bond found
-            let wallet_read = self
-                .wallet
-                .read()
+            let wallet_read = lock_debug!(self.wallet.read())
                 .map_err(|_| MakerError::General("Failed to lock wallet"))?;
             let bond = wallet_read
                 .store
@@ -669,9 +660,7 @@ impl MakerServer {
                 .to_sat();
             drop(wallet_read);
 
-            let highest_proof = self
-                .wallet
-                .read()
+            let highest_proof = lock_debug!(self.wallet.read())
                 .map_err(|_| MakerError::General("Failed to lock wallet"))?
                 .generate_fidelity_proof(i, maker_address)
                 .map_err(MakerError::Wallet)?;
@@ -695,9 +684,7 @@ impl MakerServer {
             let amount = Amount::from_sat(self.config.fidelity_amount);
             log::info!("Fidelity value chosen = {:?} sats", amount.to_sat());
 
-            let current_height = self
-                .wallet
-                .read()
+            let current_height = lock_debug!(self.wallet.read())
                 .map_err(|_| MakerError::General("Failed to lock wallet"))?
                 .blockchain
                 .get_block_count()
@@ -743,15 +730,12 @@ impl MakerServer {
                 sleep_multiplier += 1;
 
                 log::info!("Sync at:----setup_fidelity_bond----");
-                self.wallet
-                    .write()
+                lock_debug!(self.wallet.write())
                     .map_err(|_| MakerError::General("Failed to lock wallet"))?
                     .sync_and_save(&self.shutdown)
                     .map_err(MakerError::Wallet)?;
 
-                let fidelity_result = self
-                    .wallet
-                    .write()
+                let fidelity_result = lock_debug!(self.wallet.write())
                     .map_err(|_| MakerError::General("Failed to lock wallet"))?
                     .create_fidelity(
                         amount,
@@ -770,9 +754,7 @@ impl MakerServer {
                         {
                             log::warn!("Insufficient funds to create fidelity bond.");
                             let needed = required - available;
-                            let addr = self
-                                .wallet
-                                .write()
+                            let addr = lock_debug!(self.wallet.write())
                                 .map_err(|_| MakerError::General("Failed to lock wallet"))?
                                 .get_next_external_address(AddressType::P2TR)
                                 .map_err(MakerError::Wallet)?;
@@ -804,16 +786,13 @@ impl MakerServer {
                             self.config.network_port,
                             txid
                         );
-                        let conf_height = self
-                            .wallet
-                            .read()
+                        let conf_height = lock_debug!(self.wallet.read())
                             .map_err(|_| MakerError::General("Failed to lock wallet"))?
                             .wait_for_tx_confirmation(&[txid], 1, Some(&self.shutdown), None)
                             .map_err(MakerError::Wallet)?;
 
                         // Re-acquire write lock briefly to finalize
-                        self.wallet
-                            .write()
+                        lock_debug!(self.wallet.write())
                             .map_err(|_| MakerError::General("Failed to lock wallet"))?
                             .update_fidelity_bond_conf_details(index, conf_height)
                             .map_err(MakerError::Wallet)?;
@@ -822,9 +801,7 @@ impl MakerServer {
                             "[{}] Successfully created fidelity bond",
                             self.config.network_port
                         );
-                        let highest_proof = self
-                            .wallet
-                            .read()
+                        let highest_proof = lock_debug!(self.wallet.read())
                             .map_err(|_| MakerError::General("Failed to lock wallet"))?
                             .generate_fidelity_proof(index, maker_address)
                             .map_err(MakerError::Wallet)?;
@@ -832,8 +809,7 @@ impl MakerServer {
                         *proof = Some(highest_proof);
 
                         log::info!("Sync at end:----setup_fidelity_bond----");
-                        self.wallet
-                            .write()
+                        lock_debug!(self.wallet.write())
                             .map_err(|_| MakerError::General("Failed to lock wallet"))?
                             .sync_and_save(&self.shutdown)
                             .map_err(MakerError::Wallet)?;
@@ -853,24 +829,19 @@ impl MakerServer {
         let sleep_increment = 10u64;
         let mut sleep_duration = 0u64;
 
-        let addr = self
-            .wallet
-            .write()
+        let addr = lock_debug!(self.wallet.write())
             .map_err(|_| MakerError::General("Failed to lock wallet"))?
             .get_next_external_address(AddressType::P2TR)
             .map_err(MakerError::Wallet)?;
 
         while !self.shutdown.load(Ordering::Relaxed) {
             log::info!("Sync at:----check_swap_liquidity----");
-            self.wallet
-                .write()
+            lock_debug!(self.wallet.write())
                 .map_err(|_| MakerError::General("Failed to lock wallet"))?
                 .sync_and_save(&self.shutdown)
                 .map_err(MakerError::Wallet)?;
 
-            let offer_max_size = self
-                .wallet
-                .read()
+            let offer_max_size = lock_debug!(self.wallet.read())
                 .map_err(|_| MakerError::General("Failed to lock wallet"))?
                 .store
                 .offer_maxsize;
@@ -916,10 +887,8 @@ impl MakerServer {
             }
         };
 
-        let mut swaps = self
-            .ongoing_swaps
-            .lock()
-            .map_err(|_| MakerError::MutexPossion)?;
+        let mut swaps =
+            lock_debug!(self.ongoing_swaps.lock()).map_err(|_| MakerError::MutexPossion)?;
         let mut idle = Vec::new();
 
         // An accepted swap with no funding material only reserves liquidity;
@@ -992,27 +961,22 @@ impl MakerServer {
 
     /// Remove a completed swap's entry from `ongoing_swaps`.
     pub fn remove_swap_state(&self, swap_id: &str) -> Result<(), MakerError> {
-        let mut swaps = self
-            .ongoing_swaps
-            .lock()
-            .map_err(|_| MakerError::MutexPossion)?;
+        let mut swaps =
+            lock_debug!(self.ongoing_swaps.lock()).map_err(|_| MakerError::MutexPossion)?;
         swaps.remove(swap_id);
         Ok(())
     }
 
     /// Check if any swaps are currently in progress.
     pub fn has_ongoing_swaps(&self) -> Result<bool, MakerError> {
-        Ok(!self
-            .ongoing_swaps
-            .lock()
+        Ok(!lock_debug!(self.ongoing_swaps.lock())
             .map_err(|_| MakerError::MutexPossion)?
             .is_empty())
     }
 
     /// Verify the deniability proof for a specific swap.
     pub fn verify_deniability(&self, swap_id: &str) -> Result<bool, std::io::Error> {
-        self.wallet
-            .read()
+        lock_debug!(self.wallet.read())
             .map_err(|e| std::io::Error::other(format!("wallet lock poisoned: {e}")))?
             .verify_deniability(swap_id)
     }
@@ -1026,17 +990,13 @@ impl MakerTrait for MakerServer {
     fn get_tweakable_keypair(
         &self,
     ) -> Result<(bitcoin::secp256k1::SecretKey, PublicKey, ChainCode), MakerError> {
-        let wallet = self
-            .wallet
-            .read()
+        let wallet = lock_debug!(self.wallet.read())
             .map_err(|_| MakerError::General("Failed to lock wallet"))?;
         wallet.get_tweakable_keypair().map_err(MakerError::Wallet)
     }
 
     fn get_fidelity_proof(&self) -> Result<FidelityProof, MakerError> {
-        let proof = self
-            .highest_fidelity_proof
-            .read()
+        let proof = lock_debug!(self.highest_fidelity_proof.read())
             .map_err(|_| MakerError::General("Failed to lock fidelity proof"))?;
         proof
             .clone()
@@ -1049,9 +1009,7 @@ impl MakerTrait for MakerServer {
             amount_relative_fee_pct: self.config.amount_relative_fee_pct,
             time_relative_fee_pct: self.config.time_relative_fee_pct,
             min_swap_amount: self.config.min_swap_amount,
-            max_swap_amount: self
-                .wallet
-                .read()
+            max_swap_amount: lock_debug!(self.wallet.read())
                 .map(|w| w.store.offer_maxsize)
                 .unwrap_or(u64::MAX),
             required_confirms: self.config.required_confirms,
@@ -1083,7 +1041,7 @@ impl MakerTrait for MakerServer {
         }
 
         // Check maker has enough liquidity to fund the outgoing swap
-        if let Ok(wallet) = self.wallet.read() {
+        if let Ok(wallet) = lock_debug!(self.wallet.read()) {
             if let Ok(balances) = wallet.get_balances() {
                 let swap_liquidity = balances.regular + balances.swap;
                 if swap_liquidity < details.amount {
@@ -1163,9 +1121,7 @@ impl MakerTrait for MakerServer {
         address: bitcoin::Address,
         excluded_outpoints: Option<Vec<OutPoint>>,
     ) -> Result<(Transaction, u32), MakerError> {
-        let mut wallet = self
-            .wallet
-            .write()
+        let mut wallet = lock_debug!(self.wallet.write())
             .map_err(|_| MakerError::General("Failed to lock wallet"))?;
 
         let result = wallet
@@ -1194,9 +1150,7 @@ impl MakerTrait for MakerServer {
     }
 
     fn get_current_height(&self) -> Result<u32, MakerError> {
-        let wallet = self
-            .wallet
-            .read()
+        let wallet = lock_debug!(self.wallet.read())
             .map_err(|_| MakerError::General("Failed to lock wallet"))?;
         wallet
             .blockchain
@@ -1220,9 +1174,7 @@ impl MakerTrait for MakerServer {
             required_confirms,
             txid
         );
-        let chain = self
-            .wallet
-            .read()
+        let chain = lock_debug!(self.wallet.read())
             .map_err(|_| MakerError::General("Failed to lock wallet"))?
             .blockchain
             .new_connection()
@@ -1240,17 +1192,14 @@ impl MakerTrait for MakerServer {
     }
 
     fn broadcast_transaction(&self, tx: &Transaction) -> Result<bitcoin::Txid, MakerError> {
-        let wallet = self
-            .wallet
-            .read()
+        let wallet = lock_debug!(self.wallet.read())
             .map_err(|_| MakerError::General("Failed to lock wallet"))?;
 
         wallet.send_tx(tx).map_err(MakerError::Wallet)
     }
 
     fn is_transaction_known(&self, txid: &bitcoin::Txid) -> bool {
-        self.wallet
-            .read()
+        lock_debug!(self.wallet.read())
             .map(|wallet| wallet.blockchain.get_raw_transaction(txid, None).is_ok())
             .unwrap_or(false)
     }
@@ -1259,9 +1208,7 @@ impl MakerTrait for MakerServer {
         &self,
         swapcoin: &crate::wallet::swapcoin::IncomingSwapCoin,
     ) -> Result<(), MakerError> {
-        let mut wallet = self
-            .wallet
-            .write()
+        let mut wallet = lock_debug!(self.wallet.write())
             .map_err(|_| MakerError::General("Failed to lock wallet"))?;
         wallet.add_incoming_swapcoin(swapcoin);
         wallet.save_to_disk().map_err(MakerError::Wallet)
@@ -1271,9 +1218,7 @@ impl MakerTrait for MakerServer {
         &self,
         swapcoin: &crate::wallet::swapcoin::OutgoingSwapCoin,
     ) -> Result<(), MakerError> {
-        let mut wallet = self
-            .wallet
-            .write()
+        let mut wallet = lock_debug!(self.wallet.write())
             .map_err(|_| MakerError::General("Failed to lock wallet"))?;
         wallet.add_outgoing_swapcoin(swapcoin);
         wallet.save_to_disk().map_err(MakerError::Wallet)
@@ -1299,8 +1244,7 @@ impl MakerTrait for MakerServer {
     }
 
     fn sync_and_save_wallet(&self) -> Result<(), MakerError> {
-        self.wallet
-            .write()
+        lock_debug!(self.wallet.write())
             .map_err(|_| MakerError::General("Failed to lock wallet"))?
             .sync_and_save(&self.shutdown)
             .map_err(MakerError::Wallet)
@@ -1314,9 +1258,7 @@ impl MakerTrait for MakerServer {
 
         // Sweep all completed incoming swapcoins. The sweep takes the lock itself and
         // drops it across its waits, so a stuck tx cannot wedge the wallet.
-        let chain = self
-            .wallet
-            .read()
+        let chain = lock_debug!(self.wallet.read())
             .map_err(|_| MakerError::General("Failed to lock wallet"))?
             .blockchain
             .new_connection()
@@ -1338,8 +1280,7 @@ impl MakerTrait for MakerServer {
             "[{}] Sync at:----sweep_incoming_swapcoins----",
             self.config.network_port
         );
-        self.wallet
-            .write()
+        lock_debug!(self.wallet.write())
             .map_err(|_| MakerError::General("Failed to lock wallet"))?
             .sync_and_save(&self.shutdown)
             .map_err(MakerError::Wallet)?;
@@ -1356,9 +1297,7 @@ impl MakerTrait for MakerServer {
         // Fetch the balance before taking the swaps lock: reading the wallet
         // under it would stall every handler thread behind a mid-sync writer.
         let swap_liquidity = if admission {
-            let balances = self
-                .wallet
-                .read()
+            let balances = lock_debug!(self.wallet.read())
                 .map_err(|_| MakerError::General("Failed to lock wallet"))?
                 .get_balances()
                 .map_err(MakerError::Wallet)?;
@@ -1367,7 +1306,7 @@ impl MakerTrait for MakerServer {
             None
         };
 
-        let mut swaps = self.ongoing_swaps.lock()?;
+        let mut swaps = lock_debug!(self.ongoing_swaps.lock())?;
         let is_new = !swaps.contains_key(swap_id);
         if let Some(swap_liquidity) = swap_liquidity.filter(|_| is_new) {
             let active_swaps = swaps
@@ -1479,10 +1418,7 @@ impl MakerTrait for MakerServer {
     }
 
     fn get_connection_state(&self, swap_id: &str) -> Result<Option<ConnectionState>, MakerError> {
-        let swaps = self
-            .ongoing_swaps
-            .lock()
-            .map_err(|_| MakerError::MutexPossion)?;
+        let swaps = lock_debug!(self.ongoing_swaps.lock()).map_err(|_| MakerError::MutexPossion)?;
         Ok(swaps.get(swap_id).map(|s| {
             let mut state = ConnectionState::new(s.protocol);
             state.swap_id = Some(swap_id.to_string());
@@ -1510,10 +1446,7 @@ impl MakerTrait for MakerServer {
 
     fn swap_past_refund_deadline(&self, swap_id: &str) -> Result<bool, MakerError> {
         let current_height = self.get_current_height()?;
-        let swaps = self
-            .ongoing_swaps
-            .lock()
-            .map_err(|_| MakerError::MutexPossion)?;
+        let swaps = lock_debug!(self.ongoing_swaps.lock()).map_err(|_| MakerError::MutexPossion)?;
         Ok(swaps.get(swap_id).is_some_and(|state| {
             past_refund_deadline(
                 state.protocol,
@@ -1533,10 +1466,7 @@ impl MakerTrait for MakerServer {
     }
 
     fn collect_excluded_utxos(&self, current_swap_id: &str) -> Result<Vec<OutPoint>, MakerError> {
-        let swaps = self
-            .ongoing_swaps
-            .lock()
-            .map_err(|_| MakerError::MutexPossion)?;
+        let swaps = lock_debug!(self.ongoing_swaps.lock()).map_err(|_| MakerError::MutexPossion)?;
         Ok(swaps
             .iter()
             .filter(|(id, _)| id.as_str() != current_swap_id)
@@ -1575,8 +1505,7 @@ impl MakerTrait for MakerServer {
                 )
             })
             .collect::<Vec<_>>();
-        self.wallet
-            .write()
+        lock_debug!(self.wallet.write())
             .map_err(|_| MakerError::General("Failed to lock wallet"))?
             .cache_prevout_to_contract(&bindings)?;
 
@@ -1681,9 +1610,7 @@ impl MakerTrait for MakerServer {
                 self.config.required_confirms.max(MIN_REQUIRED_CONFIRM),
             )?;
 
-            let wallet_read = self
-                .wallet
-                .read()
+            let wallet_read = lock_debug!(self.wallet.read())
                 .map_err(|_| MakerError::General("Failed to lock wallet"))?;
 
             // A confirmed txid says nothing about its outputs. Without this the taker
@@ -1747,9 +1674,7 @@ impl MakerTrait for MakerServer {
         // Legacy's refund deadline is counted from this height and nothing later can
         // recover it, so record it while the proof is still in hand.
         if let Some(height) = funding_confirmed_at {
-            if let Some(state) = self
-                .ongoing_swaps
-                .lock()
+            if let Some(state) = lock_debug!(self.ongoing_swaps.lock())
                 .map_err(|_| MakerError::MutexPossion)?
                 .get_mut(&message.id)
             {
@@ -1783,9 +1708,7 @@ impl MakerTrait for MakerServer {
             next_multisig_pubkeys.len()
         );
 
-        let mut wallet = self
-            .wallet
-            .write()
+        let mut wallet = lock_debug!(self.wallet.write())
             .map_err(|_| MakerError::General("Failed to lock wallet"))?;
 
         let (coinswap_addresses, my_multisig_privkeys): (Vec<_>, Vec<_>) = next_multisig_pubkeys
@@ -1867,7 +1790,7 @@ impl MakerTrait for MakerServer {
         multisig_redeemscript: &bitcoin::ScriptBuf,
     ) -> Option<OutgoingSwapCoin> {
         // Check the ongoing swap states for outgoing swapcoins
-        if let Ok(swaps) = self.ongoing_swaps.lock() {
+        if let Ok(swaps) = lock_debug!(self.ongoing_swaps.lock()) {
             for state in swaps.values() {
                 for outgoing in &state.outgoing_swapcoins {
                     if outgoing.protocol == crate::protocol::ProtocolVersion::Legacy {
@@ -1893,7 +1816,7 @@ impl MakerTrait for MakerServer {
         }
 
         // Check outgoing swapcoins in wallet
-        if let Ok(wallet) = self.wallet.read() {
+        if let Ok(wallet) = lock_debug!(self.wallet.read()) {
             if let Some(swapcoin) = wallet.find_outgoing_swapcoin_by_multisig(multisig_redeemscript)
             {
                 log::debug!(
@@ -1936,9 +1859,7 @@ impl MakerRpc for MakerServer {
 
     #[cfg(not(feature = "integration-test"))]
     fn get_tor_hostname(&self) -> Result<String, crate::utill::TorError> {
-        let tor_key_bytes = self
-            .wallet
-            .read()
+        let tor_key_bytes = lock_debug!(self.wallet.read())
             .map_err(|_| crate::utill::TorError::General("wallet lock poisoned".into()))?
             .derive_tor_key();
 

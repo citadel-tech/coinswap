@@ -13,6 +13,7 @@ use std::{
 };
 
 use crate::{
+    lock_debug,
     wallet::{AnyBlockchain, BackendConfig},
     watch_tower::{
         registry_storage::FileRegistry,
@@ -164,7 +165,9 @@ impl WatchService {
     pub fn shutdown(&self) {
         let _ = self.tx.send(WatcherCommand::Shutdown);
         self.watcher_shutdown.store(true, Ordering::Relaxed);
-        let handle = self.handle.lock().ok().and_then(|mut h| h.take());
+        let handle = lock_debug!(self.handle.lock())
+            .ok()
+            .and_then(|mut h| h.take());
         if let Some(handle) = handle {
             let thread = handle.thread().clone();
             crate::utill::log_shutdown_join_start("watch_service", &thread);

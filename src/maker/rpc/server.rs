@@ -16,6 +16,7 @@ use super::messages::{AuthenticatedRpcRequest, RpcMsgReq};
 #[cfg(not(feature = "integration-test"))]
 use crate::utill::TorError;
 use crate::{
+    lock_debug,
     maker::{
         api::{MakerServerConfig, ShutdownSignal},
         error::MakerError,
@@ -96,9 +97,7 @@ fn handle_request<M: MakerRpc>(
     let resp = match rpc_request {
         RpcMsgReq::Ping => RpcMsgResp::Pong,
         RpcMsgReq::ContractUtxo => {
-            let utxos = maker
-                .wallet()
-                .read()?
+            let utxos = lock_debug!(maker.wallet().read())?
                 .list_live_timelock_contract_spend_info()
                 .into_iter()
                 .map(|(utxo, spend_info)| UTXO::from_utxo_data((utxo.clone(), spend_info.clone())))
@@ -106,9 +105,7 @@ fn handle_request<M: MakerRpc>(
             RpcMsgResp::ContractUtxoResp { utxos }
         }
         RpcMsgReq::FidelityUtxo => {
-            let utxos = maker
-                .wallet()
-                .read()?
+            let utxos = lock_debug!(maker.wallet().read())?
                 .list_fidelity_spend_info()
                 .into_iter()
                 .map(|(utxo, spend_info)| UTXO::from_utxo_data((utxo.clone(), spend_info.clone())))
@@ -116,9 +113,7 @@ fn handle_request<M: MakerRpc>(
             RpcMsgResp::FidelityUtxoResp { utxos }
         }
         RpcMsgReq::Utxo => {
-            let utxos = maker
-                .wallet()
-                .read()?
+            let utxos = lock_debug!(maker.wallet().read())?
                 .list_all_utxo_spend_info()
                 .into_iter()
                 .map(|(utxo, spend_info)| UTXO::from_utxo_data((utxo.clone(), spend_info.clone())))
@@ -126,9 +121,7 @@ fn handle_request<M: MakerRpc>(
             RpcMsgResp::UtxoResp { utxos }
         }
         RpcMsgReq::SwapUtxo => {
-            let utxos = maker
-                .wallet()
-                .read()?
+            let utxos = lock_debug!(maker.wallet().read())?
                 .list_incoming_swap_coin_utxo_spend_info()
                 .into_iter()
                 .map(|(utxo, spend_info)| UTXO::from_utxo_data((utxo.clone(), spend_info.clone())))
@@ -136,13 +129,11 @@ fn handle_request<M: MakerRpc>(
             RpcMsgResp::SwapUtxoResp { utxos }
         }
         RpcMsgReq::Balances => {
-            let balances = maker.wallet().read()?.get_balances()?;
+            let balances = lock_debug!(maker.wallet().read())?.get_balances()?;
             RpcMsgResp::TotalBalanceResp(balances)
         }
         RpcMsgReq::NewAddress => {
-            let new_address = maker
-                .wallet()
-                .write()?
+            let new_address = lock_debug!(maker.wallet().write())?
                 .get_next_external_address(AddressType::P2TR)?;
             RpcMsgResp::NewAddressResp(new_address.to_string())
         }
@@ -164,21 +155,23 @@ fn handle_request<M: MakerRpc>(
                 change_address_type: AddressType::P2TR,
             };
 
-            let coins_to_send =
-                maker
-                    .wallet()
-                    .read()?
-                    .coin_select(amount, feerate, address_type, None, None)?;
-            let tx =
-                maker
-                    .wallet()
-                    .write()?
-                    .spend_from_wallet(feerate, destination, &coins_to_send)?;
+            let coins_to_send = lock_debug!(maker.wallet().read())?.coin_select(
+                amount,
+                feerate,
+                address_type,
+                None,
+                None,
+            )?;
+            let tx = lock_debug!(maker.wallet().write())?.spend_from_wallet(
+                feerate,
+                destination,
+                &coins_to_send,
+            )?;
 
-            let txid = maker.wallet().read()?.send_tx(&tx)?;
+            let txid = lock_debug!(maker.wallet().read())?.send_tx(&tx)?;
 
             log::info!("Sync at:----handle_request----");
-            maker.wallet().write()?.sync_and_save(maker.shutdown())?;
+            lock_debug!(maker.wallet().write())?.sync_and_save(maker.shutdown())?;
 
             RpcMsgResp::SendToAddressResp(txid.to_string())
         }
@@ -200,12 +193,12 @@ fn handle_request<M: MakerRpc>(
         }
 
         RpcMsgReq::ListFidelity => {
-            let list = maker.wallet().read()?.display_fidelity_bonds()?;
+            let list = lock_debug!(maker.wallet().read())?.display_fidelity_bonds()?;
             RpcMsgResp::ListBonds(list)
         }
         RpcMsgReq::SyncWallet => {
             log::info!("Initializing wallet sync");
-            let mut wallet = maker.wallet().write()?;
+            let mut wallet = lock_debug!(maker.wallet().write())?;
             if let Err(e) = wallet.sync_and_save(maker.shutdown()) {
                 RpcMsgResp::ServerError(e.to_string())
             } else {
@@ -214,7 +207,7 @@ fn handle_request<M: MakerRpc>(
             }
         }
         RpcMsgReq::VerifyDeniability { swap_id } => {
-            match maker.wallet().read()?.verify_deniability(&swap_id) {
+            match lock_debug!(maker.wallet().read())?.verify_deniability(&swap_id) {
                 Ok(valid) => RpcMsgResp::VerifyDeniabilityResp(valid),
                 Err(e) => RpcMsgResp::ServerError(e.to_string()),
             }

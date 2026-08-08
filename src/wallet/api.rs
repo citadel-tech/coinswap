@@ -36,6 +36,7 @@ use serde_json::{json, Value};
 use std::path::Path;
 
 use crate::{
+    lock_debug,
     protocol::contract::create_multisig_redeemscript,
     utill::{
         compute_checksum, generate_keypair, get_hd_path_from_descriptor,
@@ -882,8 +883,7 @@ impl Wallet {
 
         // Snapshot everything the recovery needs, then drop the guard before any wait.
         let candidates = {
-            let mut w = wallet
-                .write()
+            let mut w = lock_debug!(wallet.write())
                 .map_err(|_| WalletError::General("wallet lock poisoned".to_string()))?;
 
             let candidates: Vec<_> = w
@@ -1007,8 +1007,7 @@ impl Wallet {
             // A retry must rebuild the same transaction. Persist its destination
             // before broadcasting so a failed wait cannot burn another index.
             let recovery_address = {
-                let mut w = wallet
-                    .write()
+                let mut w = lock_debug!(wallet.write())
                     .map_err(|_| WalletError::General("wallet lock poisoned".to_string()))?;
                 let stored = w
                     .store
@@ -1062,7 +1061,7 @@ impl Wallet {
                             outcome.resolved.push((contract_txid, txid));
 
                             // Re-acquire the guard only to record the recovery.
-                            let mut w = wallet.write().map_err(|_| {
+                            let mut w = lock_debug!(wallet.write()).map_err(|_| {
                                 WalletError::General("wallet lock poisoned".to_string())
                             })?;
                             w.remove_outgoing_swapcoin(&swap_id);
@@ -1078,8 +1077,7 @@ impl Wallet {
             }
         }
 
-        let mut w = wallet
-            .write()
+        let mut w = lock_debug!(wallet.write())
             .map_err(|_| WalletError::General("wallet lock poisoned".to_string()))?;
 
         for id in &discarded {
@@ -2769,8 +2767,7 @@ impl Wallet {
 
         // Snapshot everything the sweep needs, then drop the guard before any wait.
         let completed_swapcoins = {
-            let mut w = wallet
-                .write()
+            let mut w = lock_debug!(wallet.write())
                 .map_err(|_| WalletError::General("wallet lock poisoned".to_string()))?;
 
             let completed_swapcoins: Vec<_> = w
@@ -2955,8 +2952,7 @@ impl Wallet {
             // grow the watch window forever. Take the guard just for this, so
             // nothing below waits with it held.
             let internal_address = {
-                let mut w = wallet
-                    .write()
+                let mut w = lock_debug!(wallet.write())
                     .map_err(|_| WalletError::General("wallet lock poisoned".to_string()))?;
                 let addr = w.get_next_internal_addresses(1, AddressType::P2TR)?[0].clone();
                 // Mark the sweep target before broadcast, not after confirmation: a
@@ -3001,7 +2997,7 @@ impl Wallet {
                             log::info!("Successfully swept incoming swap coin: {}", swap_id);
 
                             // Re-acquire the guard only to drop the swept coin.
-                            let mut w = wallet.write().map_err(|_| {
+                            let mut w = lock_debug!(wallet.write()).map_err(|_| {
                                 WalletError::General("wallet lock poisoned".to_string())
                             })?;
                             w.remove_incoming_swapcoin(&swap_id);
@@ -3013,8 +3009,7 @@ impl Wallet {
                                 e
                             );
                             // Sweep never happened; unmark the address.
-                            wallet
-                                .write()
+                            lock_debug!(wallet.write())
                                 .map_err(|_| {
                                     WalletError::General("wallet lock poisoned".to_string())
                                 })?
@@ -3031,8 +3026,7 @@ impl Wallet {
                         e
                     );
                     // Sweep never happened; unmark the address.
-                    wallet
-                        .write()
+                    lock_debug!(wallet.write())
                         .map_err(|_| WalletError::General("wallet lock poisoned".to_string()))?
                         .store
                         .swept_incoming_swapcoins
@@ -3041,8 +3035,7 @@ impl Wallet {
             }
         }
 
-        let w = wallet
-            .write()
+        let w = lock_debug!(wallet.write())
             .map_err(|_| WalletError::General("wallet lock poisoned".to_string()))?;
         w.save_to_disk()?;
         if !outcome.is_empty() {

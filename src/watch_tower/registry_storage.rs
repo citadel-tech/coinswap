@@ -7,7 +7,10 @@ use std::{
 
 use bitcoin::{OutPoint, ScriptBuf, Transaction, Txid};
 
-use crate::watch_tower::{utils::FidelityAnnouncement, watcher_error::WatcherError};
+use crate::{
+    lock_debug,
+    watch_tower::{utils::FidelityAnnouncement, watcher_error::WatcherError},
+};
 
 /// Represents a UTXO being watched and records when it gets spent.
 #[derive(Debug, Clone)]
@@ -187,7 +190,7 @@ impl FileRegistry {
     where
         F: FnOnce(&mut RegistryData) -> T,
     {
-        let mut data = self.data.lock()?;
+        let mut data = lock_debug!(self.data.lock())?;
         Ok(f(&mut data))
     }
 }

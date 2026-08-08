@@ -1,6 +1,7 @@
 use bitcoind::bitcoincore_rpc::Auth;
 use clap::Parser;
 use coinswap::{
+    lock_debug,
     maker::{bind_port_retry, start_server, MakerError, MakerServer, MakerServerConfig},
     utill::{parse_proxy_auth, print_new_wallet_seed, setup_maker_logger},
     wallet::{BackendConfig, CoreRpcConfig, ElectrumConfig},
@@ -134,7 +135,10 @@ fn main() -> Result<(), MakerError> {
     let maker = Arc::new(MakerServer::init(config)?);
 
     // Display and consume the mnemonic phrase. On failure, create a new wallet to get a new phrase.
-    if let Some(mnemonic) = maker.wallet.write().unwrap().take_new_mnemonic() {
+    if let Some(mnemonic) = lock_debug!(maker.wallet.write())
+        .unwrap()
+        .take_new_mnemonic()
+    {
         print_new_wallet_seed(&mnemonic).inspect_err(|e| {
             log::error!(
                 "Failed to display new wallet seed phrase: {e}. \

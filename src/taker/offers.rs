@@ -23,6 +23,7 @@ use bitcoin::{OutPoint, Txid};
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    lock_debug,
     protocol::{
         common_messages::{
             FidelityProof, GetOffer as RouterGetOffer,
@@ -273,9 +274,7 @@ impl OfferBookHandle {
 
     /// Gets the current snapshot of whole offerbook
     pub fn snapshot(&self) -> Result<OfferBook, TakerError> {
-        Ok(self
-            .inner
-            .read()
+        Ok(lock_debug!(self.inner.read())
             .map_err(|_| TakerError::General("offerbook lock poisoned".into()))?
             .clone())
     }
@@ -283,8 +282,7 @@ impl OfferBookHandle {
     /// Tag a maker as bad
     pub fn add_bad_maker(&self, maker: &OfferAndAddress) -> Result<(), TakerError> {
         log::info!("Bad Maker added: {}", maker.address);
-        self.inner
-            .write()
+        lock_debug!(self.inner.write())
             .map_err(|_| TakerError::General("offerbook lock poisoned".into()))?
             .mark_bad(&maker.address);
         Ok(())
@@ -295,18 +293,14 @@ impl OfferBookHandle {
         &self,
         protocol: &MakerProtocol,
     ) -> Result<Vec<OfferAndAddress>, TakerError> {
-        Ok(self
-            .inner
-            .read()
+        Ok(lock_debug!(self.inner.read())
             .map_err(|_| TakerError::General("offerbook lock poisoned".into()))?
             .active_makers(protocol))
     }
 
     /// Fetch all good makers
     pub fn good_makers(&self) -> Result<Vec<OfferAndAddress>, TakerError> {
-        Ok(self
-            .inner
-            .read()
+        Ok(lock_debug!(self.inner.read())
             .map_err(|_| TakerError::General("offerbook lock poisoned".into()))?
             .good_makers())
     }
@@ -316,27 +310,21 @@ impl OfferBookHandle {
         &self,
         protocol: &MakerProtocol,
     ) -> Result<Vec<OfferAndAddress>, TakerError> {
-        Ok(self
-            .inner
-            .read()
+        Ok(lock_debug!(self.inner.read())
             .map_err(|_| TakerError::General("offerbook lock poisoned".into()))?
             .get_bad_makers(protocol))
     }
 
     /// Fetch all makers good, bad, and unresponsive
     pub fn all_makers(&self) -> Result<Vec<MakerOfferCandidate>, TakerError> {
-        Ok(self
-            .inner
-            .read()
+        Ok(lock_debug!(self.inner.read())
             .map_err(|_| TakerError::General("offerbook lock poisoned".into()))?
             .all_makers())
     }
 
     /// Checks if an address is bad or not
     pub fn is_bad_maker(&self, offer_and_address: &OfferAndAddress) -> Result<bool, TakerError> {
-        let offerbook = self
-            .inner
-            .read()
+        let offerbook = lock_debug!(self.inner.read())
             .map_err(|_| TakerError::General("offerbook lock poisoned".into()))?;
         let value = offerbook
             .makers
@@ -351,8 +339,7 @@ impl OfferBookHandle {
 
     /// Persist offerbook on disk
     pub fn persist(&self) -> Result<(), TakerError> {
-        self.inner
-            .read()
+        lock_debug!(self.inner.read())
             .map_err(|_| TakerError::General("offerbook lock poisoned".into()))?
             .write_to_disk(&self.path)
     }
@@ -360,9 +347,7 @@ impl OfferBookHandle {
     /// Remove a maker from the offerbook by address.
     /// Returns `true` if an entry was removed, `false` if no matching address was found.
     pub fn remove(&self, address: &MakerAddress) -> Result<bool, TakerError> {
-        let mut book = self
-            .inner
-            .write()
+        let mut book = lock_debug!(self.inner.write())
             .map_err(|_| TakerError::General("offerbook lock poisoned".into()))?;
         let before = book.makers.len();
         book.makers.retain(|m| &m.address != address);
@@ -578,10 +563,7 @@ impl OfferSyncService {
         };
         let fidelities = self.registry.list_fidelity(height)?;
         {
-            let mut book = self
-                .offerbook
-                .inner
-                .write()
+            let mut book = lock_debug!(self.offerbook.inner.write())
                 .map_err(|_| TakerError::General("offerbook lock poisoned".into()))?;
             for fidelity in fidelities {
                 match MakerAddress::try_from(fidelity.onion_address) {
@@ -593,10 +575,7 @@ impl OfferSyncService {
             }
         }
 
-        let to_poll = self
-            .offerbook
-            .inner
-            .read()
+        let to_poll = lock_debug!(self.offerbook.inner.read())
             .map_err(|_| TakerError::General("offerbook lock poisoned".into()))?
             .makers_to_poll(now);
 
@@ -650,7 +629,7 @@ impl OfferSyncService {
         });
         // Poison means a worker panicked mid-update; skip this maker instead
         // of panicking the whole worker pool.
-        let mut book = match offerbook.write() {
+        let mut book = match lock_debug!(offerbook.write()) {
             Ok(book) => book,
             Err(_) => {
                 log::error!("offerbook lock poisoned; skipping maker {addr}");
@@ -683,7 +662,7 @@ impl OfferSyncService {
 
         // Ensure the maker is present in the offerbook before polling.
         // Same poison policy as fetch_and_record_one: skip this poll.
-        match self.offerbook.inner.write() {
+        match lock_debug!(self.offerbook.inner.write()) {
             Ok(mut book) => book.upsert_address(address.clone(), None),
             Err(_) => {
                 log::error!("offerbook lock poisoned; skipping poll of {address}");
@@ -749,7 +728,9 @@ impl OfferSyncService {
                             break;
                         }
                         let addr = {
-                            let Ok(mut guard) = queue.lock() else { break };
+                            let Ok(mut guard) = lock_debug!(queue.lock()) else {
+                                break;
+                            };
                             guard.next()
                         };
                         let Some(addr) = addr else { break };
