@@ -870,17 +870,18 @@ impl Wallet {
 
     /// Attempt to recover timelocked outgoing swapcoins.
     ///
-    /// Takes the wallet lock, not a guard: the confirmation waits run on a fresh
-    /// backend connection with no guard held, so a slow tx cannot wedge the wallet.
+    /// The caller supplies the backend connection: the confirmation waits run
+    /// on it with no wallet guard held, so a slow tx cannot wedge the wallet.
     pub fn recover_timelocked_swapcoins(
         wallet: &std::sync::RwLock<Wallet>,
+        chain: &AnyBlockchain,
         fee_rate: f64,
         shutdown: &std::sync::atomic::AtomicBool,
     ) -> Result<RecoveryOutcome, WalletError> {
         let mut outcome = RecoveryOutcome::default();
 
         // Snapshot everything the recovery needs, then drop the guard before any wait.
-        let (candidates, chain) = {
+        let candidates = {
             let mut w = wallet
                 .write()
                 .map_err(|_| WalletError::General("wallet lock poisoned".to_string()))?;
@@ -902,8 +903,7 @@ impl Wallet {
 
             w.sync_and_save(shutdown)?;
 
-            let chain = w.blockchain.new_connection()?;
-            (candidates, chain)
+            candidates
         };
 
         let current_height = chain.get_block_count()? as u32;
@@ -953,7 +953,7 @@ impl Wallet {
         for (swap_id, swapcoin, timelock) in to_recover {
             let contract_txid = swapcoin.contract_tx.compute_txid();
             let contract_vout = swapcoin.get_contract_output_vout();
-            match Self::ensure_contract_on_chain(&chain, &swap_id, &swapcoin)? {
+            match Self::ensure_contract_on_chain(chain, &swap_id, &swapcoin)? {
                 ContractChainState::OnChain => {}
                 ContractChainState::Discarded => {
                     discarded.push(swap_id.clone());
@@ -1046,7 +1046,7 @@ impl Wallet {
                             // leaves it for the next pass to rebroadcast; dropping it
                             // here would strand the funds if this tx never confirms.
                             let conf_height = wait_for_tx_confirmation(
-                                &chain,
+                                chain,
                                 &[txid],
                                 1,
                                 TX_BROADCAST_TIMEOUT,
@@ -2757,17 +2757,18 @@ impl Wallet {
     /// preimage cascade, the taker may end up with both the incoming sweep and
     /// its own timelock refund — the double cost lands on the faulty maker.
     ///
-    /// Takes the wallet lock, not a guard: the confirmation waits run on a fresh
-    /// backend connection with no guard held, so a slow tx cannot wedge the wallet.
+    /// The caller supplies the backend connection: the confirmation waits run
+    /// on it with no wallet guard held, so a slow tx cannot wedge the wallet.
     pub fn sweep_incoming_swapcoins(
         wallet: &std::sync::RwLock<Wallet>,
+        chain: &AnyBlockchain,
         feerate: f64,
         shutdown: &std::sync::atomic::AtomicBool,
     ) -> Result<RecoveryOutcome, WalletError> {
         let mut outcome = RecoveryOutcome::default();
 
         // Snapshot everything the sweep needs, then drop the guard before any wait.
-        let (completed_swapcoins, chain) = {
+        let completed_swapcoins = {
             let mut w = wallet
                 .write()
                 .map_err(|_| WalletError::General("wallet lock poisoned".to_string()))?;
@@ -2789,8 +2790,7 @@ impl Wallet {
 
             w.sync_and_save(shutdown)?;
 
-            let chain = w.blockchain.new_connection()?;
-            (completed_swapcoins, chain)
+            completed_swapcoins
         };
 
         log::info!(
@@ -2871,7 +2871,7 @@ impl Wallet {
                         swap_id
                     );
                     match wait_for_tx_confirmation(
-                        &chain,
+                        chain,
                         &[utxo_txid],
                         1,
                         TX_BROADCAST_TIMEOUT,
@@ -2984,7 +2984,7 @@ impl Wallet {
                     match chain.send_raw_transaction(&spend_tx) {
                         Ok(txid) => {
                             let conf_height = wait_for_tx_confirmation(
-                                &chain,
+                                chain,
                                 &[txid],
                                 1,
                                 TX_BROADCAST_TIMEOUT,

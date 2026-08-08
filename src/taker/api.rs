@@ -624,29 +624,56 @@ impl Taker {
     fn init_recover_wallet(&mut self) {
         log::info!("Checking wallet for unresolved swap contracts...");
 
-        // The sweep takes the lock itself and drops it across its waits, so a stuck
-        // counterparty tx cannot wedge taker startup.
-        match Wallet::sweep_incoming_swapcoins(&self.wallet, 2.0, &crate::utill::NO_SHUTDOWN) {
-            Ok(ref swept) if !swept.is_empty() => {
-                log::info!(
-                    "Startup recovery: swept {} incoming swapcoins",
-                    swept.resolved.len()
-                );
+        // One connection serves both startup recovery passes; the sweep and
+        // timelock recovery each take the lock themselves and drop it across
+        // their waits, so a stuck counterparty tx cannot wedge taker startup.
+        let chain = match self.read_wallet() {
+            Ok(w) => match w.blockchain.new_connection() {
+                Ok(chain) => Some(chain),
+                Err(e) => {
+                    log::warn!("Startup recovery: no backend connection: {:?}", e);
+                    None
+                }
+            },
+            Err(e) => {
+                log::warn!("Startup recovery: failed to lock wallet: {:?}", e);
+                None
             }
-            Ok(_) => {}
-            Err(e) => log::warn!("Startup incoming sweep failed: {:?}", e),
-        }
+        };
 
-        // Wallet-driven recovery: recover timelocked. Also takes the lock itself.
-        match Wallet::recover_timelocked_swapcoins(&self.wallet, 2.0, &crate::utill::NO_SHUTDOWN) {
-            Ok(ref recovered) if !recovered.is_empty() => {
-                log::info!(
-                    "Startup recovery: recovered {} timelocked outgoing swapcoins",
-                    recovered.len()
-                );
+        if let Some(chain) = &chain {
+            match Wallet::sweep_incoming_swapcoins(
+                &self.wallet,
+                chain,
+                2.0,
+                &crate::utill::NO_SHUTDOWN,
+            ) {
+                Ok(ref swept) if !swept.is_empty() => {
+                    log::info!(
+                        "Startup recovery: swept {} incoming swapcoins",
+                        swept.resolved.len()
+                    );
+                }
+                Ok(_) => {}
+                Err(e) => log::warn!("Startup incoming sweep failed: {:?}", e),
             }
-            Ok(_) => {}
-            Err(e) => log::warn!("Startup timelock recovery failed: {:?}", e),
+
+            // Wallet-driven recovery: recover timelocked. Also takes the lock itself.
+            match Wallet::recover_timelocked_swapcoins(
+                &self.wallet,
+                chain,
+                2.0,
+                &crate::utill::NO_SHUTDOWN,
+            ) {
+                Ok(ref recovered) if !recovered.is_empty() => {
+                    log::info!(
+                        "Startup recovery: recovered {} timelocked outgoing swapcoins",
+                        recovered.len()
+                    );
+                }
+                Ok(_) => {}
+                Err(e) => log::warn!("Startup timelock recovery failed: {:?}", e),
+            }
         }
 
         let has_remaining = match self.write_wallet() {
@@ -1133,8 +1160,12 @@ impl Taker {
         // Success path: sweep + report (shared by both protocols)
         let swap_id_owned = swap_id.to_string();
         let expected_incoming_swapcoins = self.swap_state()?.incoming_swapcoins.len();
-        let swept =
-            Wallet::sweep_incoming_swapcoins(&self.wallet, 2.0, &crate::utill::NO_SHUTDOWN)?;
+        let swept = Wallet::sweep_incoming_swapcoins(
+            &self.wallet,
+            &self.read_wallet()?.blockchain.new_connection()?,
+            2.0,
+            &crate::utill::NO_SHUTDOWN,
+        )?;
         log::info!("Swept {} incoming swapcoins", swept.resolved.len());
         self.write_wallet()?
             .sync_and_save(&crate::utill::NO_SHUTDOWN)?;

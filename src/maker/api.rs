@@ -1310,8 +1310,15 @@ impl MakerTrait for MakerServer {
 
         // Sweep all completed incoming swapcoins. The sweep takes the lock itself and
         // drops it across its waits, so a stuck tx cannot wedge the wallet.
+        let chain = self
+            .wallet
+            .read()
+            .map_err(|_| MakerError::General("Failed to lock wallet"))?
+            .blockchain
+            .new_connection()
+            .map_err(MakerError::Wallet)?;
         let sweep_outcome =
-            Wallet::sweep_incoming_swapcoins(&self.wallet, MIN_FEE_RATE, &self.shutdown)
+            Wallet::sweep_incoming_swapcoins(&self.wallet, &chain, MIN_FEE_RATE, &self.shutdown)
                 .map_err(MakerError::Wallet)?;
 
         if !sweep_outcome.is_empty() {

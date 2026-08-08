@@ -932,8 +932,17 @@ fn recover_from_swap(
                 .sync_and_save(&maker.shutdown)
                 .map_err(MakerError::Wallet)?;
 
+            let chain = maker
+                .wallet
+                .read()
+                .map_err(|_| MakerError::General("Failed to lock wallet"))?
+                .blockchain
+                .new_connection()
+                .map_err(MakerError::Wallet)?;
+
             let swept = Wallet::sweep_incoming_swapcoins(
                 &maker.wallet,
+                &chain,
                 crate::utill::MIN_FEE_RATE,
                 &maker.shutdown,
             )
@@ -1022,8 +1031,17 @@ fn recover_from_swap(
                 r.recovery.phase = MakerRecoveryPhase::TimelockWaiting;
             });
 
+            let chain = maker
+                .wallet
+                .read()
+                .map_err(|_| MakerError::General("Failed to lock wallet"))?
+                .blockchain
+                .new_connection()
+                .map_err(MakerError::Wallet)?;
+
             let recovered = Wallet::recover_timelocked_swapcoins(
                 &maker.wallet,
+                &chain,
                 crate::utill::MIN_FEE_RATE,
                 &maker.shutdown,
             )

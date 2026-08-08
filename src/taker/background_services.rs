@@ -62,41 +62,66 @@ impl RecoveryLoop {
             .spawn(move || {
                 log::info!("Recovery loop started");
                 while !shutdown_clone.load(Relaxed) {
+                    // One connection per pass, shared by all three steps below:
+                    // on Tor Electrum each fresh connection costs a circuit handshake.
+                    let chain = match wallet.read() {
+                        Ok(w) => match w.blockchain.new_connection() {
+                            Ok(chain) => chain,
+                            Err(e) => {
+                                log::warn!("Recovery loop: no connection: {:?}", e);
+                                thread::park_timeout(RECOVERY_LOOP_INTERVAL);
+                                continue;
+                            }
+                        },
+                        Err(_) => {
+                            thread::park_timeout(RECOVERY_LOOP_INTERVAL);
+                            continue;
+                        }
+                    };
+
                     // Try hashlock sweep (incoming). It takes the lock itself and drops
                     // it across its waits, so a stuck tx cannot wedge the wallet.
-                    let incoming_result =
-                        match Wallet::sweep_incoming_swapcoins(&wallet, 2.0, &shutdown_clone) {
-                            Ok(ref swept) if !swept.is_empty() => {
-                                log::info!(
-                                    "Recovery loop: swept {} incoming swapcoins",
-                                    swept.resolved.len()
-                                );
-                                Some(swept.clone())
-                            }
-                            Err(e) => {
-                                log::debug!("Recovery loop: incoming sweep: {:?}", e);
-                                None
-                            }
-                            _ => None,
-                        };
+                    let incoming_result = match Wallet::sweep_incoming_swapcoins(
+                        &wallet,
+                        &chain,
+                        2.0,
+                        &shutdown_clone,
+                    ) {
+                        Ok(ref swept) if !swept.is_empty() => {
+                            log::info!(
+                                "Recovery loop: swept {} incoming swapcoins",
+                                swept.resolved.len()
+                            );
+                            Some(swept.clone())
+                        }
+                        Err(e) => {
+                            log::debug!("Recovery loop: incoming sweep: {:?}", e);
+                            None
+                        }
+                        _ => None,
+                    };
 
                     // Try timelock recovery (outgoing). Same deal — it manages the
                     // lock itself and never holds it across a confirmation wait.
-                    let outgoing_result =
-                        match Wallet::recover_timelocked_swapcoins(&wallet, 2.0, &shutdown_clone) {
-                            Ok(ref recovered) if !recovered.is_empty() => {
-                                log::info!(
-                                    "Recovery loop: recovered {} timelocked swapcoins",
-                                    recovered.len()
-                                );
-                                Some(recovered.clone())
-                            }
-                            Err(e) => {
-                                log::debug!("Recovery loop: timelock recovery: {:?}", e);
-                                None
-                            }
-                            _ => None,
-                        };
+                    let outgoing_result = match Wallet::recover_timelocked_swapcoins(
+                        &wallet,
+                        &chain,
+                        2.0,
+                        &shutdown_clone,
+                    ) {
+                        Ok(ref recovered) if !recovered.is_empty() => {
+                            log::info!(
+                                "Recovery loop: recovered {} timelocked swapcoins",
+                                recovered.len()
+                            );
+                            Some(recovered.clone())
+                        }
+                        Err(e) => {
+                            log::debug!("Recovery loop: timelock recovery: {:?}", e);
+                            None
+                        }
+                        _ => None,
+                    };
 
                     // Update tracker outcomes from recovery results
                     if incoming_result.is_some() || outgoing_result.is_some() {
@@ -109,26 +134,20 @@ impl RecoveryLoop {
                         }
                     }
 
-                    // Snapshot the outpoints and a connection, then drop the guard:
-                    // the checks below are backend calls and must not hold the wallet.
-                    let snapshot = match wallet.read() {
+                    // Snapshot the outpoints, then drop the guard: the checks below
+                    // are backend calls and must not hold the wallet.
+                    let outpoints = match wallet.read() {
                         Ok(w) => {
                             let mut outpoints = w.outgoing_contract_outpoints();
                             outpoints.extend(w.incoming_contract_outpoints());
-                            match w.blockchain.new_connection() {
-                                Ok(chain) => Some((outpoints, chain)),
-                                Err(e) => {
-                                    log::warn!("Recovery loop: no connection: {:?}", e);
-                                    None
-                                }
-                            }
+                            Some(outpoints)
                         }
                         Err(_) => None,
                     };
 
                     // Check if all contract outpoints are resolved
-                    let all_resolved = match snapshot {
-                        Some((outpoints, chain)) => outpoints.iter().all(|(op, spk)| {
+                    let all_resolved = match outpoints {
+                        Some(outpoints) => outpoints.iter().all(|(op, spk)| {
                             // Only a confirmed spend proves a contract resolved;
                             // a missing output also means evicted or unknown, and
                             // a failed lookup keeps us watching.
