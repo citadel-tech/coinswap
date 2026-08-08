@@ -456,6 +456,7 @@ impl Taker {
                     if is_last_maker {
                         // Only the last maker's contract is addressed to the taker.
                         self.exchange_create_incoming(&maker_contract, my_privkey)?;
+                        self.persist_incoming_swapcoins()?;
                     } else {
                         // Intermediate contracts (maker→maker) are watch-only for the taker.
                         let mut watchonly = Vec::new();

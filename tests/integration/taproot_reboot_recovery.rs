@@ -221,14 +221,17 @@ fn test_taproot_maker_reboot_recovery_preserves_funded_swapcoins() {
 /// t~20s restart both makers -> rebuild -> each reads the preimage revealed by
 ///       the party downstream and claims via hashlock in turn
 /// ```
-pub(crate) fn run_restart_rebuilds_watches<B: TestBackend>(protocol: ProtocolVersion) {
-    warn!("Running Test: Restart Rebuilds Watches ({protocol:?})");
+pub(crate) fn run_restart_rebuilds_watches<B: TestBackend>(
+    protocol: ProtocolVersion,
+    crash_behavior: TakerBehavior,
+) {
+    warn!("Running Test: Restart Rebuilds Watches ({protocol:?}, {crash_behavior:?})");
 
     // The framework assigns real ports itself; these entries only set the count.
     let makers_config_map = vec![(0, None), (0, None)];
     // All three die holding unclaimed contracts, none of them recovering in
     // process, so only the restarts can settle anything.
-    let taker_behavior = vec![TakerBehavior::CrashBeforeRecovery];
+    let taker_behavior = vec![crash_behavior];
     let maker_behaviors = vec![
         MakerBehavior::CrashBeforeRecovery,
         MakerBehavior::CrashBeforeRecovery,
@@ -513,10 +516,35 @@ pub(crate) fn run_restart_rebuilds_watches<B: TestBackend>(protocol: ProtocolVer
 
 #[test]
 fn test_taproot_restart_rebuilds_watches() {
-    run_restart_rebuilds_watches::<BitcoindBackend>(ProtocolVersion::Taproot);
+    run_restart_rebuilds_watches::<BitcoindBackend>(
+        ProtocolVersion::Taproot,
+        TakerBehavior::CrashBeforeRecovery,
+    );
 }
 
 #[test]
 fn test_legacy_electrum_restart_rebuilds_watches() {
-    run_restart_rebuilds_watches::<ElectrumBackend>(ProtocolVersion::Legacy);
+    run_restart_rebuilds_watches::<ElectrumBackend>(
+        ProtocolVersion::Legacy,
+        TakerBehavior::CrashBeforeRecovery,
+    );
+}
+
+// The taker dies right after the contract exchange — before the old code ever
+// persisted what it was owed. The pre-restart `incoming count > 0` assertion
+// above is the proof: red without acceptance-time persistence, green with it.
+#[test]
+fn test_taproot_crash_after_contract_exchange() {
+    run_restart_rebuilds_watches::<BitcoindBackend>(
+        ProtocolVersion::Taproot,
+        TakerBehavior::CrashAfterContractExchange,
+    );
+}
+
+#[test]
+fn test_legacy_electrum_crash_after_contract_exchange() {
+    run_restart_rebuilds_watches::<ElectrumBackend>(
+        ProtocolVersion::Legacy,
+        TakerBehavior::CrashAfterContractExchange,
+    );
 }

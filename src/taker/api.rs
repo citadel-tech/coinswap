@@ -1124,7 +1124,15 @@ impl Taker {
             return Err(err);
         }
 
-        self.finalize_persist_incoming()?;
+        // Die with the contracts accepted but nothing settled and no recovery
+        // run — the window where incoming coins would exist only in memory.
+        #[cfg(feature = "integration-test")]
+        if self.behavior == TakerBehavior::CrashAfterContractExchange {
+            log::warn!("Test behavior: crashing after contract exchange");
+            let err = TakerError::General("Test: crashed after contract exchange".to_string());
+            self.persist_failure(SwapPhase::ContractsExchanged, &err);
+            return Err(err);
+        }
 
         // SP7: Finalization starts.
         self.persist_swap(SwapPhase::Finalizing)?;
@@ -1946,7 +1954,7 @@ impl Taker {
 
         self.persist_swap(SwapPhase::PrivkeysForwarded)?;
 
-        self.finalize_persist_incoming()?;
+        self.persist_incoming_swapcoins()?;
 
         log::info!("Swap finalized successfully");
         Ok(())
@@ -2101,9 +2109,10 @@ impl Taker {
         Ok(())
     }
 
-    /// Persist the taker's incoming swapcoins to the wallet.
-    /// Preimage is already stamped at swapcoin creation time.
-    fn finalize_persist_incoming(&mut self) -> Result<(), TakerError> {
+    /// Persist incoming swapcoins, keyed by contract txid so repeats overwrite.
+    /// Called when contracts are accepted — a crash before finalization must not
+    /// lose what the taker is owed — and again after the privkey handover.
+    pub(crate) fn persist_incoming_swapcoins(&mut self) -> Result<(), TakerError> {
         let incoming = self.swap_state()?.incoming_swapcoins.clone();
         let mut wallet = self.write_wallet()?;
         for swapcoin in &incoming {
@@ -2113,7 +2122,7 @@ impl Taker {
         wallet.save_to_disk()?;
         #[cfg(debug_assertions)]
         log::debug!(
-            "[WALLET_STATE] Action: persist_final_incoming | Added: {} | IncomingStored: {}",
+            "[WALLET_STATE] Action: persist_incoming | Added: {} | IncomingStored: {}",
             incoming.len(),
             wallet.get_incoming_swapcoins_count()
         );
@@ -2784,4 +2793,8 @@ pub enum TakerBehavior {
     /// no key handed over and no recovery run. Leaves every party's contract
     /// unclaimed so only a restart can settle them (restart_rebuilds_watches).
     CrashBeforeRecovery,
+    /// Die right after the contract exchange, before finalization and with no
+    /// recovery run — the window where incoming coins would otherwise exist only
+    /// in memory (crash_after_contract_exchange).
+    CrashAfterContractExchange,
 }
