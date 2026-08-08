@@ -1578,4 +1578,32 @@ mod tests {
             assert!(msg.contains("Details"));
         }
     }
+
+    #[test]
+    fn test_parse_field() {
+        let present = "42".to_string();
+        let malformed = "not-a-number".to_string();
+
+        // A present, well-formed value parses to itself.
+        assert_eq!(parse_field::<u32>(Some(&present), 7), 42);
+
+        // A missing value falls back to the default.
+        assert_eq!(parse_field::<u32>(None, 7), 7);
+
+        // A present but unparseable value falls back to the default *silently* -
+        // there is no error. This is the behavior the maker config relies on in
+        // `maker/api.rs` (network_port, base_fee, etc.), so a typo'd config entry
+        // quietly uses the default rather than failing. Pin it so a future change
+        // to error-on-malformed is a conscious, reviewed decision.
+        assert_eq!(parse_field::<u32>(Some(&malformed), 7), 7);
+
+        // The same silent fallback holds for other FromStr types. The malformed
+        // and missing cases use `true` - a non-default for `bool` - so the
+        // assertions pin "returns the caller's default" specifically: a
+        // regression to `unwrap_or_default()` would yield `false` and fail here.
+        let not_a_bool = "yes".to_string();
+        assert!(!parse_field::<bool>(Some(&"false".to_string()), true)); // valid parse wins over the default
+        assert!(parse_field::<bool>(Some(&not_a_bool), true)); // malformed -> caller default, not type default
+        assert!(parse_field::<bool>(None, true)); // missing -> caller default
+    }
 }
