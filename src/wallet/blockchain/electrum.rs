@@ -11,7 +11,7 @@ use std::{
     collections::{HashMap, HashSet, VecDeque},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
-        Arc, Mutex, RwLock,
+        Arc, Mutex,
     },
     time::Duration,
 };
@@ -246,10 +246,11 @@ struct NotifierState {
 /// Electrum-protocol backend. One owned connection serves both the wallet's
 /// queries and the watchtower's notifications for a given consumer.
 pub struct Electrum {
-    /// Held for the process lifetime and reused by every call. Swappable only so
-    /// [`Electrum::call`] can replace a dead connection in place — never
-    /// re-established per call.
-    inner: RwLock<ElectrumClient>,
+    /// Held for the process lifetime and reused by every call. Calls are
+    /// serialized because `electrum_client::RawClient` can strand a concurrent
+    /// caller on its response channel if that caller loses the reader-lock race.
+    /// The mutex also lets [`Electrum::call`] replace a dead connection in place.
+    inner: Mutex<ElectrumClient>,
     /// Connection config, retained so a fresh independent connection can be
     /// built via [`Electrum::reconnect`] (the watchtower needs its own).
     config: ElectrumConfig,
@@ -315,7 +316,7 @@ impl Electrum {
         })?;
         let ping_interval = derive_ping_interval(cfg);
         Ok(Self {
-            inner: RwLock::new(inner),
+            inner: Mutex::new(inner),
             config,
             ping_interval,
             needs_rearm: AtomicBool::new(false),
@@ -456,8 +457,10 @@ impl Electrum {
     /// restarted server must not abort a swap, so we reconnect and retry up to
     /// `max_retries` times with a widening backoff before failing loudly.
     ///
-    /// The happy path takes only a read lock, so the held connection is shared
-    /// by every caller and a successful call never reconnects.
+    /// The happy path serializes requests on the held connection. The upstream
+    /// client multiplexes concurrent calls through a reader-election channel,
+    /// where a missed wakeup can otherwise block a caller forever. A successful
+    /// call never reconnects.
     fn call<T>(
         &self,
         f: impl Fn(&ElectrumClient) -> Result<T, electrum_client::Error>,
@@ -529,7 +532,7 @@ impl Electrum {
         &self,
         f: &impl Fn(&ElectrumClient) -> Result<T, electrum_client::Error>,
     ) -> Result<T, electrum_client::Error> {
-        let client = lock_debug!(self.inner.read()).unwrap_or_else(|e| e.into_inner());
+        let client = lock_debug!(self.inner.lock()).unwrap_or_else(|e| e.into_inner());
         f(&client)
     }
 
@@ -537,7 +540,7 @@ impl Electrum {
     /// for re-arming, since the new socket carries none.
     fn reconnect_client(&self) -> Result<(), electrum_client::Error> {
         let fresh = ElectrumClient::from_config(&self.config.url, client_config(&self.config))?;
-        let mut guard = lock_debug!(self.inner.write()).unwrap_or_else(|e| e.into_inner());
+        let mut guard = lock_debug!(self.inner.lock()).unwrap_or_else(|e| e.into_inner());
         *guard = fresh;
         self.needs_rearm.store(true, Ordering::SeqCst);
         self.reconnects.fetch_add(1, Ordering::Relaxed);
@@ -1418,7 +1421,14 @@ impl Blockchain for Electrum {
 
 #[cfg(test)]
 mod tests {
-    use bitcoin::Amount;
+    use std::{
+        io::{BufRead, BufReader, Write},
+        net::TcpListener,
+        sync::{Arc, Barrier},
+        thread,
+    };
+
+    use bitcoin::{consensus::encode::serialize_hex, Amount};
     use electrum_client::Error;
 
     use super::*;
@@ -1429,6 +1439,128 @@ mod tests {
             socks5: socks5.map(str::to_string),
             ..Default::default()
         }
+    }
+
+    fn read_request(reader: &mut BufReader<std::net::TcpStream>) -> Value {
+        let mut line = String::new();
+        reader.read_line(&mut line).expect("read electrum request");
+        serde_json::from_str(&line).expect("parse electrum request")
+    }
+
+    fn write_result(stream: &mut std::net::TcpStream, request: &Value, result: Value) {
+        serde_json::to_writer(
+            &mut *stream,
+            &json!({ "jsonrpc": "2.0", "id": request["id"], "result": result }),
+        )
+        .expect("write electrum response");
+        stream.write_all(b"\n").expect("terminate response");
+        stream.flush().expect("flush electrum response");
+    }
+
+    /// A concurrent call can enter `RawClient::recv` after the elected reader
+    /// checked an empty waiter map but before it released the reader lock. It
+    /// then sleeps on a channel that nobody will wake. Keep calls on one socket
+    /// serialized so every request is its own reader and gets the socket timeout.
+    #[test]
+    fn calls_on_one_electrum_socket_are_serialized() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock electrum");
+        let addr = listener.local_addr().unwrap();
+        let header_hex =
+            serialize_hex(&bitcoin::constants::genesis_block(bitcoin::Network::Regtest).header);
+
+        let server = thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept electrum client");
+            stream
+                .set_read_timeout(Some(Duration::from_millis(250)))
+                .unwrap();
+            let mut writer = stream.try_clone().unwrap();
+            let mut reader = BufReader::new(stream);
+
+            // Opening handshake: reject server.features so the backend falls
+            // back to the genesis header, then answer its header subscription.
+            let features = read_request(&mut reader);
+            serde_json::to_writer(
+                &mut writer,
+                &json!({
+                    "jsonrpc": "2.0",
+                    "id": features["id"],
+                    "error": { "code": -32601, "message": "method not found" }
+                }),
+            )
+            .unwrap();
+            writer.write_all(b"\n").unwrap();
+            writer.flush().unwrap();
+            let genesis = read_request(&mut reader);
+            write_result(&mut writer, &genesis, json!(header_hex));
+            let subscribe = read_request(&mut reader);
+            write_result(
+                &mut writer,
+                &subscribe,
+                json!({ "height": 0, "hex": header_hex }),
+            );
+
+            let first = read_request(&mut reader);
+            let mut second_line = String::new();
+            let (overlapped, second) = match reader.read_line(&mut second_line) {
+                Ok(n) if n > 0 => (
+                    true,
+                    Some(serde_json::from_str::<Value>(&second_line).unwrap()),
+                ),
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    (false, None)
+                }
+                other => panic!("unexpected second-request read: {:?}", other),
+            };
+            write_result(
+                &mut writer,
+                &first,
+                json!({ "height": 0, "hex": header_hex }),
+            );
+            let second = second.unwrap_or_else(|| {
+                reader
+                    .get_mut()
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                read_request(&mut reader)
+            });
+            write_result(
+                &mut writer,
+                &second,
+                json!({ "height": 0, "hex": header_hex }),
+            );
+            overlapped
+        });
+
+        let mut config = cfg(&format!("tcp://{addr}"), None);
+        config.max_retries = 0;
+        let backend = Electrum::new(&config).expect("connect to mock electrum");
+        let start = Arc::new(Barrier::new(3));
+        thread::scope(|scope| {
+            let calls = (0..2)
+                .map(|_| {
+                    let start = start.clone();
+                    let backend = &backend;
+                    scope.spawn(move || {
+                        start.wait();
+                        backend.get_block_count()
+                    })
+                })
+                .collect::<Vec<_>>();
+            start.wait();
+            for call in calls {
+                assert_eq!(call.join().unwrap().unwrap(), 0);
+            }
+        });
+        let overlapped = server.join().unwrap();
+        assert!(
+            !overlapped,
+            "two requests reached the shared electrum socket concurrently"
+        );
     }
 
     #[test]
