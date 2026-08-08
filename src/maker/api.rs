@@ -1351,6 +1351,7 @@ impl MakerTrait for MakerServer {
         &self,
         swap_id: &str,
         state: &ConnectionState,
+        admission: bool,
     ) -> Result<(), MakerError> {
         let should_check_liquidity = {
             let swaps = self.ongoing_swaps.lock()?;
@@ -1422,6 +1423,30 @@ impl MakerTrait for MakerServer {
                     requested: state.swap_amount,
                 });
             }
+        }
+
+        // A resent SwapDetails for a live swap is a reconnect after a dropped
+        // connection: identical parameters just refresh the idle timer, while
+        // different ones must never overwrite the stored swap.
+        if admission && !is_new {
+            let swap_state = swaps
+                .get_mut(swap_id)
+                .expect("entry exists under this lock when !is_new");
+            if swap_state.swap_amount != state.swap_amount
+                || swap_state.tx_count != state.tx_count
+                || swap_state.timelock != state.timelock
+                || swap_state.protocol != state.protocol
+                || swap_state.refund_locktime_offset != state.refund_locktime_offset
+            {
+                log::warn!(
+                    "[{}] Rejecting duplicate SwapDetails for {}: parameters differ from stored swap",
+                    self.config.network_port,
+                    swap_id,
+                );
+                return Err(MakerError::SwapParamMismatch);
+            }
+            swap_state.last_activity = Instant::now();
+            return Ok(());
         }
 
         let swap_state = swaps.entry(swap_id.to_string()).or_default();

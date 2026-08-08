@@ -303,10 +303,12 @@ pub trait Maker: Send + Sync {
     fn sweep_incoming_swapcoins(&self) -> Result<(), MakerError>;
 
     /// Store connection state for persistence across connections.
+    /// `admission` is set only when storing from a fresh SwapDetails message.
     fn store_connection_state(
         &self,
         swap_id: &str,
         state: &ConnectionState,
+        admission: bool,
     ) -> Result<(), MakerError>;
 
     /// Retrieve stored connection state.
@@ -472,7 +474,7 @@ pub fn handle_message<M: Maker>(
                 id
             );
             if let Some(stored_state) = maker.get_connection_state(id)? {
-                maker.store_connection_state(id, &stored_state)?;
+                maker.store_connection_state(id, &stored_state, false)?;
             }
             state.touch();
             Ok(None)
@@ -580,10 +582,12 @@ fn handle_swap_details<M: Maker>(
     state.service_fee_sats = swap_fee.to_sat();
     state.phase = SwapPhase::AwaitingContractData;
 
-    // A capacity rejection must reach the taker as a message, not a dropped
+    // An admission rejection must reach the taker as a message, not a dropped
     // connection, or it waits out a timeout before trying the next maker.
-    match maker.store_connection_state(&details.id, state) {
-        Err(MakerError::TooManySwaps) => {
+    match maker.store_connection_state(&details.id, state, true) {
+        // A param mismatch means the id already belongs to a live swap; both
+        // arms are terminal rejections and get the same reset.
+        Err(MakerError::TooManySwaps | MakerError::SwapParamMismatch) => {
             // A rejected admission must leave no live phase: with AwaitingContractData
             // still set, the taker could send ContractData and drive funding for a
             // swap we refused. Nothing was stored, so restore_state_if_needed stays a no-op.

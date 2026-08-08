@@ -41,6 +41,8 @@ pub enum MakerError {
     },
     /// Represents a maker-side rejection because the concurrent swap cap is reached.
     TooManySwaps,
+    /// Represents a resent SwapDetails whose admission parameters differ from the stored swap.
+    SwapParamMismatch,
     /// Represents a mutex poisoning error.
     MutexPossion,
     /// Represents an error related to secp256k1 operations.

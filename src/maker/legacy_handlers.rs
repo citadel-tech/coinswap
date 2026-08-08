@@ -118,7 +118,7 @@ fn process_req_contract_sigs_for_sender<M: Maker>(
     );
 
     // Store connection state for persistence
-    maker.store_connection_state(&req.id, state)?;
+    maker.store_connection_state(&req.id, state, false)?;
 
     let response = crate::protocol::legacy_messages::RespContractSigsForSender { id: req.id, sigs };
 
@@ -462,7 +462,7 @@ fn process_proof_of_funding<M: Maker>(
     }
 
     state.phase = SwapPhase::AwaitingSignaturesOrPreimage;
-    maker.store_connection_state(&pof.id, state)?;
+    maker.store_connection_state(&pof.id, state, false)?;
 
     log::info!(
         "[{}] Created {} outgoing swapcoins, requesting signatures",
@@ -565,7 +565,7 @@ fn process_resp_contract_sigs_for_recvr_and_sender<M: Maker>(
             for outgoing in &state.outgoing_swapcoins {
                 maker.save_outgoing_swapcoin(outgoing)?;
             }
-            maker.store_connection_state(&resp.id, state)?;
+            maker.store_connection_state(&resp.id, state, false)?;
             return Err(MakerError::General("Test: skipped funding broadcast"));
         }
     }
@@ -653,7 +653,7 @@ fn process_resp_contract_sigs_for_recvr_and_sender<M: Maker>(
     state.funding_broadcast = true;
     state.phase = SwapPhase::AwaitingPrivateKeyHandover;
 
-    maker.store_connection_state(&resp.id, state)?;
+    maker.store_connection_state(&resp.id, state, false)?;
 
     #[cfg(feature = "integration-test")]
     {
