@@ -36,6 +36,7 @@ use super::{
     error::MakerError,
     handlers::{
         past_refund_deadline, ConnectionState, Maker as MakerTrait, MakerConfig, SwapPhase,
+        MAX_CONCURRENT_SWAPS,
     },
     rpc::server::MakerRpc,
     swap_tracker::MakerSwapTracker,
@@ -1366,6 +1367,21 @@ impl MakerTrait for MakerServer {
 
         let mut swaps = self.ongoing_swaps.lock()?;
         if let Some(swap_liquidity) = swap_liquidity.filter(|_| !swaps.contains_key(swap_id)) {
+            let active_swaps = swaps
+                .values()
+                .filter(|state| state.phase != SwapPhase::Completed)
+                .count();
+            if active_swaps >= MAX_CONCURRENT_SWAPS {
+                log::warn!(
+                    "[{}] Rejecting swap {}: {} active swaps at the {} cap",
+                    self.config.network_port,
+                    swap_id,
+                    active_swaps,
+                    MAX_CONCURRENT_SWAPS
+                );
+                return Err(MakerError::TooManySwaps);
+            }
+
             let reserved_liquidity = swaps
                 .values()
                 .filter(|state| state.phase != SwapPhase::Completed)

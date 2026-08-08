@@ -65,6 +65,11 @@ pub enum MakerBehavior {
 /// Minimum time required to react to contract broadcasts (in blocks).
 pub const MIN_CONTRACT_REACTION_TIME: u16 = 10;
 
+/// Each admitted swap pins a connection thread and liquidity until it settles
+/// or times out. Past this cap, reject new SwapDetails instead of stacking
+/// unfunded admissions.
+pub(crate) const MAX_CONCURRENT_SWAPS: usize = 30;
+
 /// The taker's declared offset is also its claimed reaction window. Too small a
 /// value means neither side can act on the contract.
 pub(crate) fn offset_meets_reaction_time(refund_locktime_offset: u16) -> bool {
@@ -575,7 +580,16 @@ fn handle_swap_details<M: Maker>(
     state.service_fee_sats = swap_fee.to_sat();
     state.phase = SwapPhase::AwaitingContractData;
 
-    maker.store_connection_state(&details.id, state)?;
+    // A capacity rejection must reach the taker as a message, not a dropped
+    // connection, or it waits out a timeout before trying the next maker.
+    match maker.store_connection_state(&details.id, state) {
+        Err(MakerError::TooManySwaps) => {
+            return Ok(Some(MakerToTakerMessage::AckSwapDetails(
+                AckSwapDetails::reject(),
+            )));
+        }
+        result => result?,
+    }
 
     let (_, tweakable_point, _) = maker.get_tweakable_keypair()?;
 

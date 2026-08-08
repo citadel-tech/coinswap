@@ -39,6 +39,8 @@ pub enum MakerError {
         /// Liquidity requested by the new swap.
         requested: Amount,
     },
+    /// Represents a maker-side rejection because the concurrent swap cap is reached.
+    TooManySwaps,
     /// Represents a mutex poisoning error.
     MutexPossion,
     /// Represents an error related to secp256k1 operations.
