@@ -1353,17 +1353,15 @@ impl MakerTrait for MakerServer {
         state: &ConnectionState,
         admission: bool,
     ) -> Result<(), MakerError> {
-        let should_check_liquidity = {
-            let swaps = self.ongoing_swaps.lock()?;
-            !swaps.contains_key(swap_id)
-        };
-
-        let swap_liquidity = if should_check_liquidity {
-            let wallet = self
+        // Fetch the balance before taking the swaps lock: reading the wallet
+        // under it would stall every handler thread behind a mid-sync writer.
+        let swap_liquidity = if admission {
+            let balances = self
                 .wallet
                 .read()
-                .map_err(|_| MakerError::General("Failed to lock wallet"))?;
-            let balances = wallet.get_balances().map_err(MakerError::Wallet)?;
+                .map_err(|_| MakerError::General("Failed to lock wallet"))?
+                .get_balances()
+                .map_err(MakerError::Wallet)?;
             Some(balances.regular + balances.swap)
         } else {
             None
@@ -1371,22 +1369,7 @@ impl MakerTrait for MakerServer {
 
         let mut swaps = self.ongoing_swaps.lock()?;
         let is_new = !swaps.contains_key(swap_id);
-        // The entry can vanish between the two locks (idle drainer, connection
-        // cleanup), making the first-lock classification stale. Re-read the
-        // balance here so admission checks are not skipped for a new swap.
-        let swap_liquidity = match swap_liquidity {
-            Some(liquidity) if is_new => Some(liquidity),
-            None if is_new => {
-                let wallet = self
-                    .wallet
-                    .read()
-                    .map_err(|_| MakerError::General("Failed to lock wallet"))?;
-                let balances = wallet.get_balances().map_err(MakerError::Wallet)?;
-                Some(balances.regular + balances.swap)
-            }
-            _ => None,
-        };
-        if let Some(swap_liquidity) = swap_liquidity {
+        if let Some(swap_liquidity) = swap_liquidity.filter(|_| is_new) {
             let active_swaps = swaps
                 .values()
                 .filter(|state| state.phase != SwapPhase::Completed)
