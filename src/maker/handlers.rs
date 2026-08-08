@@ -60,6 +60,8 @@ pub enum MakerBehavior {
     MalformedLegacyFundingOutput,
     /// Underfund the Taproot contract while claiming the expected amount.
     UnderfundTaprootContract,
+    /// Deduct one extra satoshi beyond the advertised fee.
+    FeeSkimming,
 }
 
 /// Minimum time required to react to contract broadcasts (in blocks).

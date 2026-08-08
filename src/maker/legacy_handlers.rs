@@ -323,6 +323,14 @@ fn process_proof_of_funding<M: Maker>(
         .checked_sub(swap_fee)
         .and_then(|amt| amt.checked_sub(mining_fee))
         .ok_or(MakerError::General("Swap fee exceeds incoming amount"))?;
+    #[cfg(feature = "integration-test")]
+    let outgoing_amount = if maker.behavior() == super::handlers::MakerBehavior::FeeSkimming {
+        outgoing_amount
+            .checked_sub(Amount::from_sat(1))
+            .ok_or(MakerError::General("Test fee skim exceeds outgoing amount"))?
+    } else {
+        outgoing_amount
+    };
 
     log::info!(
         "[{}] Incoming: {}, Fee: {}, MiningFee: {}, Outgoing: {}",

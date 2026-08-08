@@ -114,3 +114,66 @@ fn test_taproot_rejects_underfunded_maker_contract() {
     test_framework.stop();
     block_generation_handle.join().unwrap();
 }
+
+#[test]
+fn test_taproot_rejects_fee_skimming_maker() {
+    test_taproot_rejection(MakerBehavior::FeeSkimming, "does not match expected");
+}
+
+fn test_taproot_rejection(behavior: MakerBehavior, expected_error: &str) {
+    let makers_config_map = vec![(7103, Some(19062))];
+    let (test_framework, mut takers, makers, block_generation_handle) =
+        TestFramework::init::<BitcoindBackend>(
+            makers_config_map,
+            vec![TakerBehavior::Normal],
+            vec![behavior],
+        );
+    let bitcoind = &test_framework.bitcoind;
+    let taker = takers.get_mut(0).unwrap();
+    fund_taker(
+        taker,
+        bitcoind,
+        3,
+        Amount::from_btc(0.05).unwrap(),
+        AddressType::P2TR,
+    );
+    fund_makers(
+        &makers,
+        bitcoind,
+        4,
+        Amount::from_btc(0.05).unwrap(),
+        AddressType::P2TR,
+    );
+    let maker_threads = makers
+        .iter()
+        .map(|maker| {
+            let maker = maker.clone();
+            thread::spawn(move || start_server(maker).unwrap())
+        })
+        .collect::<Vec<_>>();
+    wait_for_makers_setup(&makers, 120);
+    generate_blocks(bitcoind, 1);
+    let summary = taker
+        .prepare_coinswap(
+            SwapParams::new(ProtocolVersion::Taproot, Amount::from_sat(30_000), 1)
+                .with_tx_count(3)
+                .with_required_confirms(1),
+        )
+        .expect("prepare Taproot swap");
+    let error = taker
+        .start_coinswap(&summary.swap_id)
+        .expect_err("reject fee skim");
+    assert!(
+        format!("{error:?}").contains(expected_error),
+        "unexpected error: {:?}",
+        error
+    );
+    makers
+        .iter()
+        .for_each(|maker| maker.shutdown.store(true, Relaxed));
+    maker_threads
+        .into_iter()
+        .for_each(|thread| thread.join().unwrap());
+    test_framework.stop();
+    block_generation_handle.join().unwrap();
+}
