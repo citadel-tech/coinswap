@@ -2575,35 +2575,43 @@ impl Taker {
             None
         };
 
-        // Delivery is claimed only on success: the sweep confirmed each
-        // settlement, and the outputs are pinned by construction. The sweep
-        // resolves every claimable incoming coin in the wallet, so keep only
-        // spends of this swap's incoming contracts.
+        // The sweep confirms each settlement before reporting it resolved, and
+        // it resolves every claimable incoming coin in the wallet — so match
+        // its outcomes against this swap's own incoming contracts, and read the
+        // delivered total off the pinned outputs those spends actually paid
+        // rather than restating what was requested.
         let payment = swap.payment.as_ref().map(|p| {
-            let incoming_contracts: HashSet<bitcoin::Txid> = swap
-                .incoming_swapcoins
-                .iter()
-                .map(|sc| sc.contract_tx.compute_txid())
-                .collect();
+            let resolved = swept
+                .map(|outcome| outcome.resolved.as_slice())
+                .unwrap_or(&[]);
+            // Pair each of this swap's incoming coins with the spend that
+            // settled it, dropping any the sweep did not resolve.
+            let settled = swap.incoming_swapcoins.iter().filter_map(|swapcoin| {
+                let contract_txid = swapcoin.contract_tx.compute_txid();
+                resolved
+                    .iter()
+                    .find(|(resolved_txid, _)| *resolved_txid == contract_txid)
+                    .map(|(_, spending_txid)| (swapcoin, spending_txid))
+            });
+
+            let (settlement_txids, delivered_amount) = settled.fold(
+                (Vec::new(), 0u64),
+                |(mut txids, delivered), (swapcoin, spending_txid)| {
+                    txids.push(spending_txid.to_string());
+                    let paid = swapcoin
+                        .payment_target
+                        .as_ref()
+                        .map_or(0, |target| target.amount.to_sat());
+                    (txids, delivered + paid)
+                },
+            );
+
             crate::wallet::PaymentResult {
                 receiver_address: p.address.to_string(),
                 requested_amount: p.amount.to_sat(),
-                delivered_amount: if status == SwapStatus::Success {
-                    p.amount.to_sat()
-                } else {
-                    0
-                },
-                settlement_txids: swept
-                    .map(|outcome| {
-                        outcome
-                            .resolved
-                            .iter()
-                            .filter(|(contract_txid, _)| incoming_contracts.contains(contract_txid))
-                            .map(|(_, spending_txid)| spending_txid.to_string())
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-                confirmed: status == SwapStatus::Success,
+                delivered_amount,
+                settlement_txids,
+                confirmed: status == SwapStatus::Success && delivered_amount == p.amount.to_sat(),
             }
         });
 

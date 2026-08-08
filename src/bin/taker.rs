@@ -609,8 +609,8 @@ fn main() -> Result<(), TakerError> {
             }
             println!();
             println!("Total estimated fee: {}", summary.total_estimated_fee);
-            println!("Estimated receive:   {}", summary.estimated_receive_amount);
             if let Some(payment) = &summary.payment {
+                println!("Estimated receive:   0 (settled to the payment receiver)");
                 println!();
                 println!("--- Payment (PaySwap) ---");
                 println!("Receiver:            {}", payment.address);
@@ -625,6 +625,8 @@ fn main() -> Result<(), TakerError> {
                     "Total coinswap cost: {}",
                     summary.send_amount + payment.taker_funding_fee_estimate
                 );
+            } else {
+                println!("Estimated receive:   {}", summary.estimated_receive_amount);
             }
             println!("==================================\n");
 
