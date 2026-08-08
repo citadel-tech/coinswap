@@ -80,6 +80,9 @@ pub enum WatcherCommand {
     RebuildWatches {
         /// Contract outpoints and their `scriptPubKey`s.
         watches: Vec<(OutPoint, ScriptBuf)>,
+        /// Answered once the rebuild (Core rescan included) finishes, so
+        /// startup blocks until the watches are armed instead of racing it.
+        reply: CbSender<Result<(), String>>,
     },
     /// Query whether an outpoint has been spent.
     WatchRequest {
@@ -277,10 +280,12 @@ impl<R: Role> Watcher<R> {
                     self.pending_subscribes.push((outpoint, script_pubkey));
                 }
             }
-            WatcherCommand::RebuildWatches { watches } => {
+            WatcherCommand::RebuildWatches { watches, reply } => {
                 log::info!("Rebuilding {} watches from the wallet", watches.len());
                 for (outpoint, spk) in &watches {
                     if self.shutdown.load(Ordering::Relaxed) {
+                        // Reply before bailing out: the caller blocks on it.
+                        _ = reply.send(Ok(()));
                         return false;
                     }
                     if let Err(e) = self.registry.register_watch(*outpoint, spk.clone()) {
@@ -294,9 +299,12 @@ impl<R: Role> Watcher<R> {
                 // Electrum replays each script's whole history as `TxSeen`, so a
                 // spend from while we were down records itself. Core has no such
                 // feed and needs the blocks read back.
-                if !self.blockchain.is_electrum() {
-                    self.rescan_for_missed_spends(&watches);
-                }
+                let result = if self.blockchain.is_electrum() {
+                    Ok(())
+                } else {
+                    self.rescan_for_missed_spends(&watches)
+                };
+                _ = reply.send(result);
             }
             WatcherCommand::WatchRequest { outpoint, reply } => {
                 log::info!("Intercepted watch request: {outpoint}");
@@ -382,12 +390,15 @@ impl<R: Role> Watcher<R> {
 
     /// Reads blocks back from the oldest rebuilt contract to the tip, looking for
     /// spends that confirmed while we were down. Bitcoin Core only.
-    fn rescan_for_missed_spends(&mut self, watches: &[(OutPoint, ScriptBuf)]) {
+    fn rescan_for_missed_spends(
+        &mut self,
+        watches: &[(OutPoint, ScriptBuf)],
+    ) -> Result<(), String> {
         let mut oldest: Option<u64> = None;
         for (outpoint, _) in watches {
             if self.shutdown.load(Ordering::Relaxed) {
                 log::info!("watch rebuild rescan aborted before funding lookup: shutdown");
-                return;
+                return Ok(());
             }
             match self.blockchain.tx_block_height(&outpoint.txid) {
                 Ok(Some(height)) => {
@@ -400,10 +411,11 @@ impl<R: Role> Watcher<R> {
                 Err(e) => log::warn!("funding height lookup failed for {outpoint}: {e}"),
             }
         }
-        let Some(from) = oldest else { return };
-        if let Err(e) = self.scan_blocks(from) {
+        let Some(from) = oldest else { return Ok(()) };
+        self.scan_blocks(from).map_err(|e| {
             log::error!("block rescan from height {from} failed: {e:?}");
-        }
+            format!("block rescan from height {from} failed: {e:?}")
+        })
     }
 
     fn scan_blocks(&mut self, from: u64) -> Result<(), WatcherError> {

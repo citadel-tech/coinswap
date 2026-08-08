@@ -79,13 +79,29 @@ impl WatchService {
     }
 
     /// Re-arms the watches for every live contract in the wallet. The registry
-    /// is memory-only, so a restart begins with nothing watched.
-    /// Errs if the watcher thread is gone.
-    pub fn rebuild_watches(
-        &self,
-        watches: Vec<(OutPoint, ScriptBuf)>,
-    ) -> Result<(), SendError<WatcherCommand>> {
-        self.tx.send(WatcherCommand::RebuildWatches { watches })
+    /// is memory-only, so a restart begins with nothing watched. Blocks until
+    /// the rebuild (Core rescan included) replies, so startup never runs unwatched.
+    pub fn rebuild_watches(&self, watches: Vec<(OutPoint, ScriptBuf)>) -> Result<(), WatcherError> {
+        let (reply_tx, reply_rx) = unbounded();
+        self.tx
+            .send(WatcherCommand::RebuildWatches {
+                watches,
+                reply: reply_tx,
+            })
+            .map_err(|_| WatcherError::SendError)?;
+        // No total cap: a deep Core rescan legitimately takes minutes. The loop
+        // only exists so teardown can still cut the wait short.
+        loop {
+            match reply_rx.recv_timeout(WATCH_REPLY_TIMEOUT) {
+                Ok(result) => return result.map_err(WatcherError::General),
+                Err(RecvTimeoutError::Disconnected) => return Err(WatcherError::SendError),
+                Err(RecvTimeoutError::Timeout) => {
+                    if self.watcher_shutdown.load(Ordering::Relaxed) {
+                        return Err(WatcherError::Shutdown);
+                    }
+                }
+            }
+        }
     }
 
     /// Queries whether a previously registered outpoint has been spent and
@@ -259,5 +275,36 @@ mod tests {
         let service = WatchService::new(tx, handle, Arc::new(AtomicBool::new(false)));
         let err = service.watch_request(OutPoint::null()).unwrap_err();
         assert!(matches!(err, WatcherError::General(_)));
+    }
+
+    #[test]
+    fn rebuild_watches_blocks_until_reply() {
+        let (tx, rx) = mpsc::channel();
+        let (reply_hold_tx, reply_hold_rx) = mpsc::channel();
+        let handle = thread::spawn(move || {
+            if let Ok(WatcherCommand::RebuildWatches { reply, .. }) = rx.recv() {
+                _ = reply_hold_tx.send(reply);
+            }
+            Ok(())
+        });
+        let service = WatchService::new(tx, handle, Arc::new(AtomicBool::new(false)));
+        let (done_tx, done_rx) = mpsc::channel();
+        let svc = service.clone();
+        let waiter = thread::spawn(move || _ = done_tx.send(svc.rebuild_watches(Vec::new())));
+        let reply = reply_hold_rx.recv().unwrap();
+        // The watcher has the command but has not replied, so the caller must
+        // still be blocked.
+        assert!(done_rx.recv_timeout(Duration::from_millis(100)).is_err());
+        _ = reply.send(Ok(()));
+        assert!(done_rx.recv().unwrap().is_ok());
+        waiter.join().unwrap();
+    }
+
+    #[test]
+    fn rebuild_watches_returns_shutdown_without_reply() {
+        let (tx, _rx) = mpsc::channel();
+        let service = WatchService::new(tx, dummy_handle(), Arc::new(AtomicBool::new(true)));
+        let err = service.rebuild_watches(Vec::new()).unwrap_err();
+        assert!(matches!(err, WatcherError::Shutdown));
     }
 }
