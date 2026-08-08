@@ -441,7 +441,8 @@ impl BreachDetector {
                     };
 
                     for (outpoint, expected_contract_txid) in &current_sentinels {
-                        // If a watch request fails, log the error, don't panic.
+                        // The poll loop is the retry here: a failed query is
+                        // logged and re-asked on the next pass.
                         let reply = match watch_service.watch_request(*outpoint) {
                             Ok(reply) => reply,
                             Err(e) => {
@@ -451,10 +452,10 @@ impl BreachDetector {
                                 continue;
                             }
                         };
-                        if let Some(WatcherEvent::UtxoSpent {
+                        if let WatcherEvent::UtxoSpent {
                             spending_tx: Some(ref tx),
                             ..
-                        }) = reply
+                        } = reply
                         {
                             let actual_txid = tx.compute_txid();
                             if actual_txid == *expected_contract_txid {

@@ -577,10 +577,13 @@ impl MakerServer {
         // wallet. Without this a restart leaves them undefended.
         let mut watches = wallet.incoming_contract_outpoints();
         watches.extend(wallet.outgoing_contract_outpoints());
+        // Contracts we cannot watch are contracts we cannot defend: a dead
+        // watcher at startup is fatal, not a warning.
         if !watches.is_empty() {
-            if let Err(e) = watch_service.rebuild_watches(watches) {
+            watch_service.rebuild_watches(watches).map_err(|e| {
                 log::error!("could not rebuild watches on startup: {e}");
-            }
+                MakerError::General("watch rebuild failed on startup")
+            })?;
         }
 
         let swap_tracker = MakerSwapTracker::load_or_create(&data_dir)?;

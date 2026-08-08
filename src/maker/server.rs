@@ -664,20 +664,17 @@ fn check_for_preimage_via_watchtower(
             };
             // Blocking on purpose: we need this pass's fresh answer before
             // choosing timelock over hashlock — a stale miss refunds while a
-            // preimage spend already exists.
-            let reply = match maker.watch_service.watch_request(outpoint) {
-                Ok(reply) => reply,
-                // If something is wrong at watchtower, log the error, don't suppress fully.
-                Err(e) => {
-                    log::error!("watch request for {outpoint} failed (watcher gone): {e}");
-                    continue;
-                }
-            };
+            // preimage spend already exists. A query that fails after retries
+            // is fatal: abort the pass rather than refund blind.
+            let reply = maker.watch_service.watch_request(outpoint).map_err(|e| {
+                log::error!("watch request for {outpoint} failed (watcher gone): {e}");
+                MakerError::General("watchtower query failed, aborting recovery pass")
+            })?;
 
-            if let Some(crate::watch_tower::watcher::WatcherEvent::UtxoSpent {
+            if let crate::watch_tower::watcher::WatcherEvent::UtxoSpent {
                 spending_tx: Some(spending_tx),
                 ..
-            }) = reply
+            } = reply
             {
                 // Extract preimages from the spending transaction's witnesses.
                 for input in &spending_tx.input {

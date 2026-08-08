@@ -570,10 +570,12 @@ impl Taker {
         let mut watches = wallet.incoming_contract_outpoints();
         watches.extend(wallet.outgoing_contract_outpoints());
         watches.extend(wallet.watchonly_contract_outpoints());
+        // Contracts we cannot watch are contracts we cannot defend: a dead
+        // watcher at startup is fatal, not a warning.
         if !watches.is_empty() {
-            if let Err(e) = watch_service.rebuild_watches(watches) {
-                log::error!("could not rebuild watches on startup: {e}");
-            }
+            watch_service.rebuild_watches(watches).map_err(|e| {
+                TakerError::General(format!("could not rebuild watches on startup: {e}"))
+            })?;
         }
 
         Self::init_taker_config(&config, &data_dir)?;
