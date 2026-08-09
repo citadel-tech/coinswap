@@ -26,10 +26,8 @@ use crate::{
 /// The `Option` is taken by whichever clone shuts down first.
 type WatcherHandle = Arc<Mutex<Option<JoinHandle<Result<(), WatcherError>>>>>;
 
-/// Attempts per watch query before an unanswered watcher is treated as fatal.
-const WATCH_REQUEST_ATTEMPTS: u32 = 3;
-
-/// Reply wait per attempt. Short in tests so the retry test stays fast.
+/// Interval between shutdown checks while waiting for a watcher reply.
+/// Short in tests so the blocking tests stay fast.
 #[cfg(not(test))]
 const WATCH_REPLY_TIMEOUT: Duration = crate::utill::HEART_BEAT_INTERVAL;
 #[cfg(test)]
@@ -108,17 +106,22 @@ impl WatchService {
     /// Queries whether a previously registered outpoint has been spent and
     /// waits for this query's own reply. The private channel is what stops
     /// concurrent callers from consuming each other's answers.
-    /// The watcher answers every request, so silence means wedged or dead:
-    /// retried, then fatal — never readable as "not spent".
+    ///
+    /// Send the command once and keep waiting while the watcher is alive. A
+    /// backend call can legitimately take longer than a few heartbeats over
+    /// Tor; re-sending on each timeout only queues duplicate work behind the
+    /// slow call. Backend errors arrive as `WatcherEvent::Error`, a dead
+    /// watcher disconnects the reply channel, and shutdown cuts the wait short.
     pub fn watch_request(&self, outpoint: OutPoint) -> Result<WatcherEvent, WatcherError> {
-        for attempt in 1..=WATCH_REQUEST_ATTEMPTS {
-            let (reply_tx, reply_rx) = unbounded();
-            self.tx
-                .send(WatcherCommand::WatchRequest {
-                    outpoint,
-                    reply: reply_tx,
-                })
-                .map_err(|_| WatcherError::SendError)?;
+        let (reply_tx, reply_rx) = unbounded();
+        self.tx
+            .send(WatcherCommand::WatchRequest {
+                outpoint,
+                reply: reply_tx,
+            })
+            .map_err(|_| WatcherError::SendError)?;
+
+        loop {
             match reply_rx.recv_timeout(WATCH_REPLY_TIMEOUT) {
                 Ok(WatcherEvent::Error(error)) => {
                     // The watcher answered with an error; callers must not read
@@ -131,18 +134,12 @@ impl WatchService {
                 Err(RecvTimeoutError::Disconnected) => return Err(WatcherError::SendError),
                 Err(RecvTimeoutError::Timeout) => {
                     if self.watcher_shutdown.load(Ordering::Relaxed) {
-                        // Teardown must not sit through the remaining attempts.
                         return Err(WatcherError::Shutdown);
                     }
-                    log::warn!(
-                        "watch request for {outpoint} unanswered (attempt {attempt}/{WATCH_REQUEST_ATTEMPTS})"
-                    );
+                    log::debug!("still waiting for watcher reply for {outpoint}");
                 }
             }
         }
-        Err(WatcherError::General(format!(
-            "watcher silent after {WATCH_REQUEST_ATTEMPTS} attempts"
-        )))
     }
 
     /// Stops monitoring an outpoint by removing its watch entry from the
@@ -225,22 +222,27 @@ mod tests {
     }
 
     #[test]
-    fn silent_watcher_gets_three_attempts_then_error() {
+    fn slow_watcher_gets_one_request_and_can_reply_late() {
         let (tx, rx) = mpsc::channel();
-        let service = WatchService::new(tx, dummy_handle(), Arc::new(AtomicBool::new(false)));
-        let err = service.watch_request(OutPoint::null()).unwrap_err();
-        assert!(matches!(err, WatcherError::General(_)));
-        // The receiver never answered, so every attempt landed in the queue.
-        assert_eq!(rx.try_iter().count(), WATCH_REQUEST_ATTEMPTS as usize);
+        let handle = thread::spawn(move || {
+            if let Ok(WatcherCommand::WatchRequest { reply, .. }) = rx.recv() {
+                thread::sleep(WATCH_REPLY_TIMEOUT * 3);
+                _ = reply.send(WatcherEvent::NoOutpoint);
+            }
+            Ok(())
+        });
+        let service = WatchService::new(tx, handle, Arc::new(AtomicBool::new(false)));
+        let event = service.watch_request(OutPoint::null()).unwrap();
+        assert!(matches!(event, WatcherEvent::NoOutpoint));
     }
 
     #[test]
-    fn shutdown_flag_cuts_retries_short() {
+    fn shutdown_flag_cuts_wait_short() {
         let (tx, rx) = mpsc::channel();
         let service = WatchService::new(tx, dummy_handle(), Arc::new(AtomicBool::new(true)));
         let err = service.watch_request(OutPoint::null()).unwrap_err();
         assert!(matches!(err, WatcherError::Shutdown));
-        assert!(rx.try_iter().count() < WATCH_REQUEST_ATTEMPTS as usize);
+        assert_eq!(rx.try_iter().count(), 1);
     }
 
     #[test]

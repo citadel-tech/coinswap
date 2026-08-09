@@ -655,11 +655,11 @@ fn check_for_preimage_via_watchtower(
             };
             // Blocking on purpose: we need this pass's fresh answer before
             // choosing timelock over hashlock — a stale miss refunds while a
-            // preimage spend already exists. A query that fails after retries
-            // is fatal: abort the pass rather than refund blind.
+            // preimage spend already exists. A failed query aborts this pass;
+            // the recovery loop retries instead of refunding blind.
             let reply = maker.watch_service.watch_request(outpoint).map_err(|e| {
-                log::error!("watch request for {outpoint} failed (watcher gone): {e}");
-                MakerError::General("watchtower query failed, aborting recovery pass")
+                log::warn!("watch request for {outpoint} failed: {e}");
+                MakerError::General("watchtower query failed")
             })?;
 
             if let crate::watch_tower::watcher::WatcherEvent::UtxoSpent {
@@ -880,7 +880,23 @@ fn recover_from_swap(
 
     while !maker.is_shutdown() {
         // --- Hashlock path: check if preimages are available ---
-        check_for_preimage_via_watchtower(&maker, &outgoing_swapcoins, &incoming_swapcoins)?;
+        if let Err(e) =
+            check_for_preimage_via_watchtower(&maker, &outgoing_swapcoins, &incoming_swapcoins)
+        {
+            // A transient backend failure must abort this pass so we never
+            // choose the timelock path from a stale "not spent" answer. It must
+            // not terminate the maker's only recovery thread: the next pass can
+            // observe a preimage once the backend is reachable again.
+            log::warn!(
+                "[{}] Could not refresh contract watches: {:?}; retrying recovery",
+                maker.config.network_port,
+                e
+            );
+            if !maker.wait_for_shutdown(HEART_BEAT_INTERVAL) {
+                break;
+            }
+            continue;
+        }
 
         // Check if all incoming swapcoins now have preimages
         let all_preimages_known = {

@@ -149,11 +149,17 @@ pub(crate) fn run_abort1<B: TestBackend>(protocol: ProtocolVersion, expected: &E
         .prepare_coinswap(swap_params)
         .expect("Prepare should succeed");
     let swap_result = taker.start_coinswap(&summary.swap_id);
+    let swap_error = swap_result.expect_err("Swap should fail due to test behavior");
     assert!(
-        swap_result.is_err(),
-        "Swap should fail due to DropAfterFundsBroadcast behavior"
+        matches!(
+            &swap_error,
+            coinswap::taker::error::TakerError::General(message)
+                if message == "Test: dropped after contract exchange"
+        ),
+        "Swap failed before the injected abort: {:?}",
+        swap_error
     );
-    info!("Swap failed as expected: {:?}", swap_result.err().unwrap());
+    info!("Swap failed as expected: {swap_error:?}");
     taker.log_tracker_state();
 
     // Wait for makers to detect the drop and the outer timelock to mature;
