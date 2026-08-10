@@ -2,7 +2,8 @@
 //!
 //! These tests verify recovery when the last maker skips broadcasting
 //! its funding transaction, forcing timelock-only recovery (hashlock
-//! recovery is impossible since the funding is never on-chain).
+//! recovery is impossible since the funding is never on-chain). The Legacy
+//! case also verifies that a funded maker recovers after its watcher exits.
 
 use bitcoin::Amount;
 use coinswap::{
@@ -122,6 +123,9 @@ fn test_legacy_timelock_only_recovery() {
     );
     info!("Swap failed as expected: {:?}", swap_result.err().unwrap());
     taker.log_tracker_state();
+
+    makers[0].watch_service.stop_watcher_for_test();
+    assert!(!makers[0].watch_service.is_alive());
 
     // Sleep budget: 60s maker idle timeout (test builds) + 225-block outer-hop
     // timelock (REFUND_LOCKTIME_BASE 150 + STEP 75, 2 makers) ≈ 135s at

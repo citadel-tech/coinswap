@@ -57,6 +57,16 @@ const FIDELITY_BOND_UPDATE_INTERVAL: Duration = Duration::from_secs(600);
 pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
     log::info!("[{}] Starting maker server", maker.config.network_port);
 
+    #[cfg(feature = "integration-test")]
+    if maker.behavior == super::handlers::MakerBehavior::StopWatcherOnStartup {
+        maker.watch_service.stop_watcher_for_test();
+    }
+    if !maker.watch_service.is_alive() {
+        return Err(MakerError::General(
+            "watchtower is down, refusing to start maker server",
+        ));
+    }
+
     let listener = match TcpListener::bind(("127.0.0.1", maker.config.network_port)) {
         Ok(l) => l,
         Err(e) => {

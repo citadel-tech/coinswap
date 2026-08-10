@@ -12,6 +12,33 @@ use std::{sync::atomic::Ordering::Relaxed, thread};
 use super::test_framework::*;
 
 #[test]
+fn maker_server_does_not_start_when_watcher_exits() {
+    let (test_framework, _takers, makers, block_generation_handle) =
+        TestFramework::init::<BitcoindBackend>(
+            vec![(7901, Some(20900))],
+            Vec::new(),
+            vec![MakerBehavior::StopWatcherOnStartup],
+        );
+
+    let maker = makers[0].clone();
+    let error =
+        start_server(maker.clone()).expect_err("maker server started without a live watcher");
+    assert!(
+        format!("{error:?}").contains("watchtower is down, refusing to start maker server"),
+        "unexpected startup error: {:?}",
+        error
+    );
+    assert!(!maker.watch_service.is_alive());
+    assert!(!maker.is_setup_complete.load(Relaxed));
+
+    maker.watch_service.shutdown();
+    drop(maker);
+    drop(makers);
+    test_framework.stop();
+    block_generation_handle.join().unwrap();
+}
+
+#[test]
 fn maker_rejects_new_swaps_after_watcher_exit() {
     let (test_framework, mut takers, makers, block_generation_handle) =
         TestFramework::init::<BitcoindBackend>(

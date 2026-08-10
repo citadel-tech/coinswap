@@ -25,6 +25,8 @@ pub enum MakerBehavior {
     /// Normal operation (no test override).
     #[default]
     Normal,
+    /// Stop the watchtower before the maker's startup readiness barrier.
+    StopWatcherOnStartup,
     /// Receive contract sigs and save swapcoins, but skip funding broadcast
     /// and close the connection. Simulates last-maker misbehavior.
     SkipFundingBroadcast,
