@@ -449,6 +449,7 @@ fn process_taproot_contract<M: Maker>(
                 .clone(),
         )?;
     }
+    super::handlers::ensure_watchtower_alive(maker.as_ref())?;
 
     // Persist swapcoins before broadcasting contract txs. A later broadcast
     // failure can leave earlier Taproot contract txs on-chain, and the wallet

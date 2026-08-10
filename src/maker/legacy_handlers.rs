@@ -593,6 +593,7 @@ fn process_resp_contract_sigs_for_recvr_and_sender<M: Maker>(
             )?;
         }
     }
+    super::handlers::ensure_watchtower_alive(maker.as_ref())?;
 
     // Persist swapcoins (now carrying contract signatures) to the wallet
     // store BEFORE broadcasting funding txs. Without this, a crash after

@@ -7,8 +7,9 @@
 //! 2. Funding transactions are broadcast and confirmed.
 //! 3. Maker2 drops the connection at the taproot contract sigs exchange phase.
 //! 4. Taker detects the failure and calls `recover_active_swap()`.
-//! 5. Everyone falls back to timelock recovery.
-//! 6. After blocks mature, verify: taker recovered funds (minus fees), no contract balance.
+//! 5. Maker1's watcher exits while its funded swap is in flight.
+//! 6. Everyone falls back to timelock recovery.
+//! 7. After blocks mature, verify: taker recovered funds (minus fees), no contract balance.
 
 use bitcoin::Amount;
 use coinswap::{
@@ -118,6 +119,11 @@ fn test_taproot_timelock_recovery() {
     );
     info!("Swap failed as expected: {:?}", swap_result.err().unwrap());
     taker.log_tracker_state();
+
+    // A stopped watcher permanently removes the hashlock observation path, but it
+    // must not prevent this already-funded maker from reaching timelock recovery.
+    makers[0].watch_service.stop_watcher_for_test();
+    assert!(!makers[0].watch_service.is_alive());
 
     // Sleep budget: 60s maker idle timeout (test builds) + 225-block outer-hop
     // timelock (REFUND_LOCKTIME_BASE 150 + STEP 75, 2 makers) ≈ 135s at

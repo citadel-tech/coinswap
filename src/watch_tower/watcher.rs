@@ -234,7 +234,11 @@ impl<R: Role> Watcher<R> {
             }
 
             // Stop and join the discovery thread on exit path.
-            shutdown_clone.store(true, Ordering::SeqCst);
+            // Only the Taker role owns a discovery child that needs this
+            // secondary stop signal. Maker shutdown is driven by its owner.
+            if R::RUN_DISCOVERY {
+                shutdown_clone.store(true, Ordering::SeqCst);
+            }
             if let Some(handle) = discovery_handle {
                 let thread = handle.thread().clone();
                 crate::utill::log_shutdown_join_start("watcher", &thread);

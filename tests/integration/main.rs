@@ -36,6 +36,7 @@ mod taproot_taker_abort2;
 mod taproot_taker_abort3;
 mod taproot_timelock_recovery;
 mod wallet_backup;
+mod watchtower_liveness;
 
 mod concurrent_takers;
 mod duplicate_funding_outpoint;

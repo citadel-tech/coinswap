@@ -878,24 +878,38 @@ fn recover_from_swap(
         r.recovery.phase = MakerRecoveryPhase::Monitoring;
     });
 
+    let mut watchtower_down_logged = false;
     while !maker.is_shutdown() {
         // --- Hashlock path: check if preimages are available ---
-        if let Err(e) =
-            check_for_preimage_via_watchtower(&maker, &outgoing_swapcoins, &incoming_swapcoins)
-        {
-            // A transient backend failure must abort this pass so we never
-            // choose the timelock path from a stale "not spent" answer. It must
-            // not terminate the maker's only recovery thread: the next pass can
-            // observe a preimage once the backend is reachable again.
-            log::warn!(
-                "[{}] Could not refresh contract watches: {:?}; retrying recovery",
-                maker.config.network_port,
-                e
-            );
-            if !maker.wait_for_shutdown(HEART_BEAT_INTERVAL) {
-                break;
+        if maker.watch_service.is_alive() {
+            if let Err(e) =
+                check_for_preimage_via_watchtower(&maker, &outgoing_swapcoins, &incoming_swapcoins)
+            {
+                if maker.watch_service.is_alive() {
+                    // A transient backend failure must abort this pass so we
+                    // never choose the timelock path from a stale answer.
+                    log::warn!(
+                        "[{}] Could not refresh contract watches: {:?}; retrying recovery",
+                        maker.config.network_port,
+                        e
+                    );
+                    if !maker.wait_for_shutdown(HEART_BEAT_INTERVAL) {
+                        break;
+                    }
+                    continue;
+                }
             }
-            continue;
+        }
+        if !maker.watch_service.is_alive() && !watchtower_down_logged {
+            // The hashlock path is unavailable for the rest of this process,
+            // but an in-flight swap must still reclaim any unspent outgoing
+            // contracts once their timelocks mature.
+            log::error!(
+                "[{}] Watchtower is down; continuing in-flight swap {} via timelock recovery",
+                maker.config.network_port,
+                swap_id
+            );
+            watchtower_down_logged = true;
         }
 
         // Check if all incoming swapcoins now have preimages

@@ -740,16 +740,12 @@ impl Taker {
             )),
             shutdown.clone(),
         );
-        let handle = thread::Builder::new()
-            .name("Watcher thread".to_string())
-            .spawn(move || watcher.run(initial_sync_clone))
-            .map_err(|e| TakerError::General(format!("failed to spawn watcher thread: {e}")))?;
+        let watch_service = WatchService::spawn(tx_requests, shutdown, move || {
+            watcher.run(initial_sync_clone)
+        })
+        .map_err(|e| TakerError::General(format!("failed to spawn watcher thread: {e}")))?;
 
-        Ok((
-            WatchService::new(tx_requests, handle, shutdown),
-            registry_clone,
-            initial_sync_complete,
-        ))
+        Ok((watch_service, registry_clone, initial_sync_complete))
     }
 
     /// Load/merge taker config and check Tor status.
