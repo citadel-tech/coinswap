@@ -12,33 +12,6 @@ use std::{sync::atomic::Ordering::Relaxed, thread};
 use super::test_framework::*;
 
 #[test]
-fn maker_server_does_not_start_when_watcher_exits() {
-    let (test_framework, _takers, makers, block_generation_handle) =
-        TestFramework::init::<BitcoindBackend>(
-            vec![(7901, Some(20900))],
-            Vec::new(),
-            vec![MakerBehavior::StopWatcherOnStartup],
-        );
-
-    let maker = makers[0].clone();
-    let error =
-        start_server(maker.clone()).expect_err("maker server started without a live watcher");
-    assert!(
-        format!("{error:?}").contains("watchtower is down, refusing to start maker server"),
-        "unexpected startup error: {:?}",
-        error
-    );
-    assert!(!maker.watch_service.is_alive());
-    assert!(!maker.is_setup_complete.load(Relaxed));
-
-    maker.watch_service.shutdown();
-    drop(maker);
-    drop(makers);
-    test_framework.stop();
-    block_generation_handle.join().unwrap();
-}
-
-#[test]
 fn maker_rejects_new_swaps_after_watcher_exit() {
     let (test_framework, mut takers, makers, block_generation_handle) =
         TestFramework::init::<BitcoindBackend>(
@@ -103,4 +76,79 @@ fn maker_rejects_new_swaps_after_watcher_exit() {
         .for_each(|handle| handle.join().unwrap());
     test_framework.stop();
     block_generation_handle.join().unwrap();
+}
+
+#[test]
+fn taker_refuses_swap_before_funding_after_watcher_exit() {
+    let (test_framework, mut takers, makers, block_generation_handle) =
+        TestFramework::init::<BitcoindBackend>(
+            vec![(7903, Some(20902))],
+            vec![TakerBehavior::Normal],
+            vec![MakerBehavior::Normal],
+        );
+    let bitcoind = &test_framework.bitcoind;
+    let taker = &mut takers[0];
+
+    fund_taker(
+        taker,
+        bitcoind,
+        2,
+        Amount::from_btc(0.05).unwrap(),
+        AddressType::P2TR,
+    );
+    fund_makers(
+        &makers,
+        bitcoind,
+        2,
+        Amount::from_btc(0.05).unwrap(),
+        AddressType::P2TR,
+    );
+
+    let maker_threads = makers
+        .iter()
+        .map(|maker| {
+            let maker = maker.clone();
+            thread::spawn(move || start_server(maker).unwrap())
+        })
+        .collect::<Vec<_>>();
+    wait_for_makers_setup(&makers, 120);
+
+    let summary = taker
+        .prepare_coinswap(
+            SwapParams::new(ProtocolVersion::Legacy, Amount::from_sat(500_000), 1)
+                .with_tx_count(1)
+                .with_required_confirms(1),
+        )
+        .unwrap();
+    taker.behavior = TakerBehavior::StopWatcherBeforeSwap;
+    let error = taker.start_coinswap(&summary.swap_id).unwrap_err();
+    assert!(format!("{error:?}").contains("watchtower is down"));
+    assert_eq!(
+        taker
+            .get_wallet()
+            .read()
+            .unwrap()
+            .get_outgoing_swapcoins_count(),
+        0
+    );
+
+    drop(takers);
+    makers
+        .iter()
+        .for_each(|maker| maker.shutdown.store(true, Relaxed));
+    maker_threads
+        .into_iter()
+        .for_each(|handle| handle.join().unwrap());
+    test_framework.stop();
+    block_generation_handle.join().unwrap();
+}
+
+#[test]
+fn funded_maker_restarts_recovery_only_without_watcher() {
+    super::taproot_reboot_recovery::run_reboot_recovery_without_watcher::<BitcoindBackend>();
+}
+
+#[test]
+fn funded_legacy_maker_reaches_timelock_recovery_without_watcher() {
+    super::skip_funding_recovery::run_legacy_timelock_recovery_without_watcher();
 }

@@ -22,6 +22,7 @@ use super::test_framework::*;
 
 use log::{info, warn};
 use std::{
+    net::TcpStream,
     sync::{atomic::Ordering::Relaxed, Arc},
     thread,
     time::Duration,
@@ -38,6 +39,14 @@ use std::{
 /// maker's watchtower sees that spend and uses the preimage to sweep its
 /// incoming contract from Maker1 — the same end state as a completed swap.
 pub(crate) fn run_reboot_recovery<B: TestBackend>() {
+    run_reboot_recovery_with_watcher::<B>(true);
+}
+
+pub(crate) fn run_reboot_recovery_without_watcher<B: TestBackend>() {
+    run_reboot_recovery_with_watcher::<B>(false);
+}
+
+fn run_reboot_recovery_with_watcher<B: TestBackend>(watcher_available: bool) {
     warn!("Running Test: Taproot Maker Reboot Recovery Preserves Funded Swapcoins");
 
     let makers_config_map = vec![(7602, Some(20601)), (17602, Some(20602))];
@@ -140,7 +149,11 @@ pub(crate) fn run_reboot_recovery<B: TestBackend>() {
     drop(victim);
     drop(makers);
 
-    let restarted = Arc::new(MakerServer::init(victim_config).unwrap());
+    let mut restarted_server = MakerServer::init(victim_config).unwrap();
+    if !watcher_available {
+        restarted_server.behavior = MakerBehavior::StopWatcherOnStartup;
+    }
+    let restarted = Arc::new(restarted_server);
     let restarted_thread = {
         let maker_clone = restarted.clone();
         thread::spawn(move || {
@@ -148,51 +161,84 @@ pub(crate) fn run_reboot_recovery<B: TestBackend>() {
         })
     };
 
-    wait_for_makers_setup(std::slice::from_ref(&restarted), 120);
-    thread::sleep(Duration::from_secs(5));
-
-    let after_incoming = restarted
-        .wallet
-        .read()
-        .unwrap()
-        .get_incoming_swapcoins_count();
     let log_path = format!("{}/taker/debug.log", test_framework.temp_dir.display());
     // Recovery takes longer under parallel load; wait for the markers instead
     // of asserting at a fixed wall-clock point.
-    wait_for_log(
-        &log_path,
-        "Incomplete swaps detected on startup",
-        Duration::from_secs(120),
-    );
-    wait_for_log(
-        &log_path,
-        "recover_from_swap started",
-        Duration::from_secs(120),
-    );
-    wait_for_log(
-        &log_path,
-        "Removed outgoing swapcoin",
-        Duration::from_secs(120),
-    );
-    let log_contents = std::fs::read_to_string(&log_path).unwrap();
-    assert!(
-        !log_contents.contains("Funding was never broadcast for swap"),
-        "reboot recovery took the unsafe discard path"
-    );
-    let recovered_via_hashlock = log_contents.contains("incoming swapcoins via hashlock");
+    if watcher_available {
+        wait_for_makers_setup(std::slice::from_ref(&restarted), 120);
+        thread::sleep(Duration::from_secs(5));
 
-    restarted.shutdown.store(true, Relaxed);
-    restarted_thread.join().unwrap();
+        let after_incoming = restarted
+            .wallet
+            .read()
+            .unwrap()
+            .get_incoming_swapcoins_count();
+        wait_for_log(
+            &log_path,
+            "Incomplete swaps detected on startup",
+            Duration::from_secs(120),
+        );
+        wait_for_log(
+            &log_path,
+            "recover_from_swap started",
+            Duration::from_secs(120),
+        );
+        wait_for_log(
+            &log_path,
+            "Removed outgoing swapcoin",
+            Duration::from_secs(120),
+        );
+        let log_contents = std::fs::read_to_string(&log_path).unwrap();
+        assert!(
+            !log_contents.contains("Funding was never broadcast for swap"),
+            "reboot recovery took the unsafe discard path"
+        );
+        let recovered_via_hashlock = log_contents.contains("incoming swapcoins via hashlock");
+
+        restarted.shutdown.store(true, Relaxed);
+        restarted_thread.join().unwrap();
+        assert!(
+            after_incoming > 0 || recovered_via_hashlock,
+            "maker reboot recovery lost funded incoming swapcoins without hashlock recovery; before={}, after={}",
+            before_incoming,
+            after_incoming
+        );
+    } else {
+        wait_for_log(
+            &log_path,
+            "Incomplete swaps detected on startup",
+            Duration::from_secs(120),
+        );
+        assert!(
+            TcpStream::connect(("127.0.0.1", restarted.config.network_port)).is_err(),
+            "recovery-only maker must not accept swap connections"
+        );
+        wait_for_log(
+            &log_path,
+            &format!(
+                "[{}] Recovered {} incoming swapcoins via hashlock",
+                restarted.config.network_port, before_incoming
+            ),
+            Duration::from_secs(120),
+        );
+        assert!(!restarted.is_setup_complete.load(Relaxed));
+        restarted_thread.join().unwrap();
+
+        let wallet = restarted.wallet.read().unwrap();
+        assert_eq!(
+            wallet.get_incoming_swapcoins_count(),
+            0,
+            "restarted maker did not sweep its incoming contracts"
+        );
+        assert_eq!(
+            wallet.get_outgoing_swapcoins_count(),
+            0,
+            "restarted maker did not clean up its spent outgoing contracts"
+        );
+    }
 
     test_framework.stop();
     block_generation_handle.join().unwrap();
-
-    assert!(
-        after_incoming > 0 || recovered_via_hashlock,
-        "maker reboot recovery lost funded incoming swapcoins without hashlock recovery; before={}, after={}",
-        before_incoming,
-        after_incoming
-    );
 }
 
 #[test]

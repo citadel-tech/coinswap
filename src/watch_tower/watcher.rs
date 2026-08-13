@@ -164,7 +164,7 @@ impl<R: Role> Watcher<R> {
             R::RUN_DISCOVERY
         );
 
-        let discovery_shutdown = self.shutdown.clone();
+        let discovery_shutdown = Arc::new(AtomicBool::new(false));
         let registry = self.registry.clone();
         let nostr_relays = self.nostr_relays.clone();
         let nostr_tor_config = self.nostr_tor_config.clone();
@@ -174,7 +174,9 @@ impl<R: Role> Watcher<R> {
             if R::RUN_DISCOVERY {
                 if let Some(nostr_tor_config) = nostr_tor_config {
                     // Discovery requires it's own dedicated backend to not overlap with regular watch requests.
-                    let chain = self.blockchain.new_connection()?;
+                    let chain = self
+                        .blockchain
+                        .new_connection_with_shutdown(discovery_shutdown.clone())?;
                     // The thread runs until shutdown, so its outcome is only
                     // known at the join below.
                     discovery_handle = Some(s.spawn(move || {
@@ -234,11 +236,7 @@ impl<R: Role> Watcher<R> {
             }
 
             // Stop and join the discovery thread on exit path.
-            // Only the Taker role owns a discovery child that needs this
-            // secondary stop signal. Maker shutdown is driven by its owner.
-            if R::RUN_DISCOVERY {
-                shutdown_clone.store(true, Ordering::SeqCst);
-            }
+            shutdown_clone.store(true, Ordering::SeqCst);
             if let Some(handle) = discovery_handle {
                 let thread = handle.thread().clone();
                 crate::utill::log_shutdown_join_start("watcher", &thread);

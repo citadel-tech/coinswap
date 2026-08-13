@@ -152,11 +152,6 @@ impl Taker {
         // Track the previous hop's confirmation height to verify timelock staggering.
         let mut prev_confirm_height: u32 = 0;
 
-        // Background thread monitors funding outpoints for adversarial contract broadcasts.
-        self.breach_detector = Some(super::background_services::BreachDetector::start(
-            self.watch_service.clone(),
-        )?);
-
         // Flags to skip already-completed steps when retrying a maker iteration
         // after spare substitution (e.g., taker's funding is already on-chain).
         let mut taker_funding_broadcast = false;
@@ -307,6 +302,11 @@ impl Taker {
             }
 
             if is_first_peer && !taker_funding_broadcast {
+                if !self.watch_service.is_alive() {
+                    return Err(TakerError::General(
+                        "watchtower exited before funding".into(),
+                    ));
+                }
                 log::info!("Broadcasting funding transactions and waiting for confirmation");
                 {
                     let mut wallet = self.write_wallet()?;
@@ -389,6 +389,12 @@ impl Taker {
                     .collect::<Result<Vec<_>, TakerError>>()?; // An error here means something big is internally broken
                 if let Some(ref detector) = self.breach_detector {
                     detector.add_sentinels(&self.watch_service, &sentinels)?;
+                }
+                #[cfg(feature = "integration-test")]
+                if self.behavior == super::api::TakerBehavior::StopWatcherAfterSentinels
+                    && self.watch_service.is_alive()
+                {
+                    self.watch_service.stop_watcher_for_test();
                 }
             }
 
@@ -871,7 +877,7 @@ impl Taker {
             Some(&|| {
                 self.breach_detector
                     .as_ref()
-                    .is_some_and(|detector| detector.is_breached())
+                    .is_some_and(|detector| detector.requires_abort())
             }),
         )
         .map_err(breach_or_wallet_error)

@@ -574,13 +574,9 @@ impl MakerServer {
         // wallet. Without this a restart leaves them undefended.
         let mut watches = wallet.incoming_contract_outpoints();
         watches.extend(wallet.outgoing_contract_outpoints());
-        // This is also the watcher readiness barrier when the wallet has no
-        // contracts. A thread that fails during startup must keep the maker
-        // from listening for swaps.
-        watch_service.rebuild_watches(watches).map_err(|e| {
-            log::error!("could not initialize watches on startup: {e}");
-            MakerError::General("watcher initialization failed on startup")
-        })?;
+        if let Err(e) = watch_service.rebuild_watches(watches) {
+            log::error!("could not initialize watches on startup: {e}; recovery-only mode");
+        }
 
         let swap_tracker = MakerSwapTracker::load_or_create(&data_dir)?;
         let incomplete = swap_tracker.incomplete_swaps();
@@ -971,6 +967,17 @@ impl MakerServer {
         Ok(!lock_debug!(self.ongoing_swaps.lock())
             .map_err(|_| MakerError::MutexPossion)?
             .is_empty())
+    }
+
+    /// Whether this maker has an unfinished outgoing swapcoin for `swap_id`.
+    #[cfg(feature = "integration-test")]
+    pub fn has_unfinished_outgoing_swapcoin(&self, swap_id: &str) -> Result<bool, MakerError> {
+        let wallet = lock_debug!(self.wallet.read())
+            .map_err(|_| MakerError::General("Failed to lock wallet"))?;
+        let (_, outgoing) = wallet.find_unfinished_swapcoins();
+        Ok(outgoing
+            .iter()
+            .any(|coin| coin.swap_id.as_deref() == Some(swap_id)))
     }
 
     /// Verify the deniability proof for a specific swap.

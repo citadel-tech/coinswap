@@ -25,7 +25,7 @@ pub enum MakerBehavior {
     /// Normal operation (no test override).
     #[default]
     Normal,
-    /// Stop the watchtower before the maker's startup readiness barrier.
+    /// Stop the watchtower before the maker starts its network services.
     StopWatcherOnStartup,
     /// Receive contract sigs and save swapcoins, but skip funding broadcast
     /// and close the connection. Simulates last-maker misbehavior.
@@ -390,7 +390,7 @@ pub trait Maker: Send + Sync {
     fn behavior(&self) -> MakerBehavior;
 }
 
-/// Fail closed if the watcher exited after this swap was admitted.
+/// Fail closed after admission; persistence limits the check-to-broadcast race.
 pub(super) fn ensure_watchtower_alive(maker: &impl Maker) -> Result<(), MakerError> {
     if maker.is_watchtower_alive() {
         Ok(())

@@ -82,8 +82,8 @@ impl WatchService {
         Ok(Self::from_parts(tx, handle, watcher_shutdown, alive))
     }
 
-    /// Whether the watcher thread is still available. This flag is sticky:
-    /// an exited watcher is never treated as healthy again without a restart.
+    /// Sticky watcher availability; false after exit or failed startup initialization.
+    /// It does not probe backend progress or individual registrations.
     pub fn is_alive(&self) -> bool {
         self.alive.load(Ordering::Acquire)
     }
@@ -125,7 +125,12 @@ impl WatchService {
         // only exists so teardown can still cut the wait short.
         loop {
             match reply_rx.recv_timeout(WATCH_REPLY_TIMEOUT) {
-                Ok(result) => return result.map_err(WatcherError::General),
+                Ok(result) => {
+                    return result.map_err(|error| {
+                        self.alive.store(false, Ordering::Release);
+                        WatcherError::General(error)
+                    })
+                }
                 Err(RecvTimeoutError::Disconnected) => {
                     self.alive.store(false, Ordering::Release);
                     return Err(WatcherError::SendError);
@@ -218,18 +223,12 @@ impl WatchService {
         }
     }
 
-    /// Stops only the watcher, leaving its owner running so integration tests
-    /// can exercise fail-closed maker behavior.
+    /// Makes the watcher unavailable without stopping its owner, allowing
+    /// integration tests to exercise fail-closed behavior.
     #[cfg(feature = "integration-test")]
     pub fn stop_watcher_for_test(&self) {
         let _ = self.send_command(WatcherCommand::Shutdown);
-        for _ in 0..500 {
-            if !self.is_alive() {
-                return;
-            }
-            thread::sleep(Duration::from_millis(10));
-        }
-        panic!("watcher did not stop within the integration-test timeout");
+        self.alive.store(false, Ordering::Release);
     }
 }
 
@@ -240,7 +239,6 @@ fn run_with_liveness(
     alive: Arc<AtomicBool>,
     run: impl FnOnce() -> Result<(), WatcherError>,
 ) -> Result<(), WatcherError> {
-    alive.store(true, Ordering::Release);
     let result = panic::catch_unwind(AssertUnwindSafe(run));
     alive.store(false, Ordering::Release);
     match result {
@@ -309,7 +307,7 @@ mod tests {
 
     #[test]
     fn liveness_tracks_the_complete_thread_lifetime() {
-        let alive = Arc::new(AtomicBool::new(false));
+        let alive = Arc::new(AtomicBool::new(true));
         let thread_alive = alive.clone();
         let (started_tx, started_rx) = mpsc::channel();
         let (release_tx, release_rx) = mpsc::channel();
@@ -409,7 +407,7 @@ mod tests {
     }
 
     #[test]
-    fn rebuild_watches_blocks_until_reply() {
+    fn rebuild_watches_blocks_and_marks_failure_unavailable() {
         let (tx, rx) = mpsc::channel();
         let (reply_hold_tx, reply_hold_rx) = mpsc::channel();
         let handle = thread::spawn(move || {
@@ -426,8 +424,9 @@ mod tests {
         // The watcher has the command but has not replied, so the caller must
         // still be blocked.
         assert!(done_rx.recv_timeout(Duration::from_millis(100)).is_err());
-        _ = reply.send(Ok(()));
-        assert!(done_rx.recv().unwrap().is_ok());
+        _ = reply.send(Err("rescan failed".to_string()));
+        assert!(done_rx.recv().unwrap().is_err());
+        assert!(!service.is_alive());
         waiter.join().unwrap();
     }
 
