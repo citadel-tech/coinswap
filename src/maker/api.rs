@@ -563,7 +563,9 @@ impl MakerServer {
             config.network = wallet_network;
         }
 
-        // Initialize watch service
+        // Initialize watch service. A failure here aborts init instead of
+        // entering recovery-only: that mode polls the same backend that
+        // just failed to build, so there is nothing to degrade to.
         let watch_service = crate::watch_tower::service::start_maker_watch_service(
             &config.backend,
             backend_shutdown,
@@ -571,7 +573,9 @@ impl MakerServer {
         .map_err(MakerError::Watcher)?;
 
         // The watcher starts empty, so re-arm every contract still live in the
-        // wallet. Without this a restart leaves them undefended.
+        // wallet. Without this a restart leaves them undefended. A failed
+        // rescan retries inside the watcher, so an Err here means the watcher
+        // is gone and the server will start in recovery-only mode.
         let mut watches = wallet.incoming_contract_outpoints();
         watches.extend(wallet.outgoing_contract_outpoints());
         if let Err(e) = watch_service.rebuild_watches(watches) {

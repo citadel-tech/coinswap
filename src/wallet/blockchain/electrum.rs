@@ -1364,7 +1364,9 @@ impl Blockchain for Electrum {
         if ping_due {
             state.last_ping = Some(std::time::Instant::now());
             if let Err(e) = self.call(|c| c.ping()) {
-                log::warn!("electrum notification ping failed: {e:?}");
+                // Without the ping the socket is never read and the watcher
+                // goes deaf while looking alive — loud, not a warning.
+                log::error!("electrum notification ping failed: {e:?}");
                 return None;
             }
         }

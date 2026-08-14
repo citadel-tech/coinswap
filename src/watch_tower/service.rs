@@ -82,8 +82,10 @@ impl WatchService {
         Ok(Self::from_parts(tx, handle, watcher_shutdown, alive))
     }
 
-    /// Sticky watcher availability; false after exit or failed startup initialization.
-    /// It does not probe backend progress or individual registrations.
+    /// Sticky watcher availability; false only after channel-level death:
+    /// thread exit, send failure, reply disconnect, or shutdown. A reply —
+    /// even an error — is proof the thread answered. Does not probe backend
+    /// progress or individual registrations.
     pub fn is_alive(&self) -> bool {
         self.alive.load(Ordering::Acquire)
     }
@@ -113,7 +115,9 @@ impl WatchService {
 
     /// Re-arms the watches for every live contract in the wallet. The registry
     /// is memory-only, so a restart begins with nothing watched. Blocks until
-    /// the rebuild (Core rescan included) replies, so startup never runs unwatched.
+    /// the rebuild (Core rescan included) replies, so startup never runs
+    /// unwatched. The watcher retries a failed rescan until it completes, so
+    /// an Err here means the watcher is gone or shutting down.
     pub fn rebuild_watches(&self, watches: Vec<(OutPoint, ScriptBuf)>) -> Result<(), WatcherError> {
         let (reply_tx, reply_rx) = unbounded();
         self.send_command(WatcherCommand::RebuildWatches {
@@ -125,12 +129,7 @@ impl WatchService {
         // only exists so teardown can still cut the wait short.
         loop {
             match reply_rx.recv_timeout(WATCH_REPLY_TIMEOUT) {
-                Ok(result) => {
-                    return result.map_err(|error| {
-                        self.alive.store(false, Ordering::Release);
-                        WatcherError::General(error)
-                    })
-                }
+                Ok(result) => return result.map_err(WatcherError::General),
                 Err(RecvTimeoutError::Disconnected) => {
                     self.alive.store(false, Ordering::Release);
                     return Err(WatcherError::SendError);
@@ -139,6 +138,9 @@ impl WatchService {
                     if self.watcher_shutdown.load(Ordering::Relaxed) {
                         return Err(WatcherError::Shutdown);
                     }
+                    // A rescan legitimately takes minutes, but a stuck one is
+                    // invisible otherwise — keep the wait visible in logs.
+                    log::warn!("still waiting for watch rebuild reply");
                 }
             }
         }
@@ -179,7 +181,9 @@ impl WatchService {
                     if self.watcher_shutdown.load(Ordering::Relaxed) {
                         return Err(WatcherError::Shutdown);
                     }
-                    log::debug!("still waiting for watcher reply for {outpoint}");
+                    // Warn, not debug: an alive watcher that stops answering is
+                    // the wedge case liveness cannot see — it must show in logs.
+                    log::warn!("still waiting for watcher reply for {outpoint}");
                 }
             }
         }
@@ -407,7 +411,7 @@ mod tests {
     }
 
     #[test]
-    fn rebuild_watches_blocks_and_marks_failure_unavailable() {
+    fn rebuild_error_reply_keeps_liveness() {
         let (tx, rx) = mpsc::channel();
         let (reply_hold_tx, reply_hold_rx) = mpsc::channel();
         let handle = thread::spawn(move || {
@@ -426,7 +430,8 @@ mod tests {
         assert!(done_rx.recv_timeout(Duration::from_millis(100)).is_err());
         _ = reply.send(Err("rescan failed".to_string()));
         assert!(done_rx.recv().unwrap().is_err());
-        assert!(!service.is_alive());
+        // An answered reply — even an error — is not channel-level death.
+        assert!(service.is_alive());
         waiter.join().unwrap();
     }
 

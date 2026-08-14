@@ -984,6 +984,9 @@ impl Taker {
 
         log::info!("Starting coinswap execution for id: {}", swap_id);
 
+        // Taproot has no breach case: its contract output cannot be spent
+        // mid-swap — key-path needs both keys, the hashlock needs the
+        // taker's preimage, timelocks are immature — so no detector starts.
         if self.swap_state()?.params.protocol == ProtocolVersion::Legacy {
             let backend = self.read_wallet()?.blockchain.new_connection()?;
             self.breach_detector = Some(super::background_services::BreachDetector::start(

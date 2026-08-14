@@ -751,6 +751,9 @@ impl Taker {
             required_confirms,
             arrival_timeout,
             None,
+            // Inert on taproot: no detector is started for it, and none is
+            // needed — no counterparty can spend the contract output
+            // mid-swap. Kept only for the shared wait helper's signature.
             Some(&|| {
                 self.breach_detector
                     .as_ref()

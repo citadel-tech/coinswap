@@ -222,6 +222,10 @@ impl CoreRPC {
         {
             return Ok(None);
         }
+        // None here means "funding never confirmed" or "node cannot serve
+        // the tx" (fresh, pruned, mid-rescan) — indistinguishable at this
+        // RPC, and only the first makes "no spend" true. Accepted as a rare
+        // silent miss; the real fix passes the caller-known height and errs.
         let Some(start) = self.tx_block_height(&outpoint.txid)? else {
             return Ok(None);
         };
