@@ -33,17 +33,25 @@ const REQUIRED_CONFIRMS: u32 = 15;
 #[test]
 fn test_legacy_multi_confirm_swap() {
     warn!("Running Test: Legacy Swap With required_confirms > 1");
-    run_multi_confirm_swap(ProtocolVersion::Legacy);
+    run_multi_confirm_swap(
+        ProtocolVersion::Legacy,
+        vec![(9102, Some(21401)), (19102, Some(21402))],
+    );
 }
 
 #[test]
 fn test_taproot_multi_confirm_swap() {
     warn!("Running Test: Taproot Swap With required_confirms > 1");
-    run_multi_confirm_swap(ProtocolVersion::Taproot);
+    run_multi_confirm_swap(
+        ProtocolVersion::Taproot,
+        vec![(9202, Some(21501)), (19202, Some(21502))],
+    );
 }
 
-fn run_multi_confirm_swap(protocol: ProtocolVersion) {
-    let makers_config_map = vec![(9102, Some(21401)), (19102, Some(21402))];
+fn run_multi_confirm_swap(
+    protocol: ProtocolVersion,
+    makers_config_map: Vec<(u16, Option<u16>)>,
+) {
     let taker_behavior = vec![TakerBehavior::Normal];
     let maker_behaviors = vec![MakerBehavior::Normal, MakerBehavior::Normal];
 

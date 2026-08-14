@@ -218,6 +218,20 @@ fn run_taker_restart_recovery(protocol: ProtocolVersion, last_maker: MakerBehavi
     );
     assert_eq!(balances.fidelity, Amount::ZERO);
 
+    let wallet = restarted.get_wallet();
+    let wallet = wallet.read().unwrap();
+    assert_eq!(
+        wallet.get_incoming_swapcoins_count(),
+        0,
+        "restarted taker still holds incoming swapcoins; before={before_incoming}"
+    );
+    assert_eq!(
+        wallet.get_outgoing_swapcoins_count(),
+        0,
+        "restarted taker still holds outgoing swapcoins; before={before_outgoing}"
+    );
+    drop(wallet);
+
     // If the cross-session lookup had come up empty, recover_active_swap would
     // have bailed with this instead of recovering.
     let log_path = format!("{}/taker/debug.log", test_framework.temp_dir.display());

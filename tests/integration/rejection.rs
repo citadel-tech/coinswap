@@ -9,7 +9,11 @@
 //! contracts, and fee skimming on either protocol. A fail-closed guard that
 //! lets one through costs someone real funds.
 
-use bitcoin::{consensus::encode::serialize_hex, Amount};
+use bitcoin::{
+    consensus::encode::serialize_hex,
+    secp256k1::{rand::rngs::OsRng, Secp256k1, SecretKey},
+    Address, Amount, Network,
+};
 use bitcoind::bitcoincore_rpc::RpcApi;
 use coinswap::{
     maker::{start_server, MakerBehavior, MakerServer},
@@ -459,12 +463,6 @@ fn test_low_swap_liquidity() {
 }
 
 fn drain_maker_liquidity_after_fidelity(maker: &Arc<MakerServer>, bitcoind: &bitcoind::BitcoinD) {
-    use bitcoin::{
-        secp256k1::{rand::rngs::OsRng, Secp256k1, SecretKey},
-        Address, Network,
-    };
-    use bitcoind::bitcoincore_rpc::RpcApi;
-
     let secp = Secp256k1::new();
     let keypair = bitcoin::key::Keypair::from_secret_key(&secp, &SecretKey::new(&mut OsRng));
     let (xonly, _) = keypair.x_only_public_key();
@@ -1366,6 +1364,96 @@ fn test_taproot_rejection(behavior: MakerBehavior, expected_error: &str) {
     maker_threads
         .into_iter()
         .for_each(|thread| thread.join().unwrap());
+    test_framework.stop();
+    block_generation_handle.join().unwrap();
+}
+
+
+#[test]
+fn test_maker_rejects_insufficient_liquidity_from_active_reservation() {
+    warn!("Running Test: InsufficientLiquidity from active reservation");
+
+    let makers_config_map = vec![(8602, None)];
+    let taker_behavior = vec![TakerBehavior::Normal, TakerBehavior::Normal];
+
+    let (test_framework, mut takers, makers, block_generation_handle) =
+        TestFramework::init::<BitcoindBackend>(makers_config_map, taker_behavior, vec![]);
+
+    let bitcoind = &test_framework.bitcoind;
+    let maker = &makers[0];
+
+    // Fund two takers with enough for a 1 BTC swap each.
+    fund_taker(
+        &takers[0],
+        bitcoind,
+        4,
+        Amount::from_btc(0.05).unwrap(),
+        AddressType::P2TR,
+    );
+    fund_taker(
+        &takers[1],
+        bitcoind,
+        4,
+        Amount::from_btc(0.05).unwrap(),
+        AddressType::P2TR,
+    );
+
+    // Fund the maker with four 0.05 BTC UTXOs. After the fidelity bond, its
+    // spendable liquidity is ~15M sats, so two 9M-sat reservations cannot both
+    // be admitted, while each request is still below the advertised max_size.
+    fund_makers(
+        &makers,
+        bitcoind,
+        4,
+        Amount::from_btc(0.05).unwrap(),
+        AddressType::P2TR,
+    );
+
+    let maker_thread = {
+        let maker = maker.clone();
+        thread::spawn(move || start_server(maker).unwrap())
+    };
+
+    wait_for_makers_setup(std::slice::from_ref(maker), 120);
+    maker
+        .wallet
+        .write()
+        .unwrap()
+        .sync_and_save(&NO_SHUTDOWN)
+        .unwrap();
+
+    let maker_addr = format!("127.0.0.1:{}", maker.config.network_port);
+
+    // Taker 0 admits a swap with the maker. prepare_coinswap only negotiates;
+    // it does not fund, so the maker keeps an active reservation for the amount.
+    let first = SwapParams::new(ProtocolVersion::Taproot, Amount::from_sat(9_000_000), 1)
+        .with_tx_count(1)
+        .with_required_confirms(1)
+        .with_preferred_makers(vec![maker_addr.clone()]);
+    takers[0]
+        .prepare_coinswap(first)
+        .expect("first swap should be admitted and create a reservation");
+
+    // Taker 1 asks for the same amount. The advertised max_size is still large
+    // enough, but the active reservation leaves the maker short of liquidity.
+    let second = SwapParams::new(ProtocolVersion::Taproot, Amount::from_sat(9_000_000), 1)
+        .with_tx_count(1)
+        .with_required_confirms(1)
+        .with_preferred_makers(vec![maker_addr]);
+    let _err = takers[1]
+        .prepare_coinswap(second)
+        .expect_err("second swap should fail due to reserved liquidity");
+
+    // The wire rejection is intentionally terse (AckSwapDetails::reject), so the
+    // precise reason is verified in the shared test log (maker warnings are
+    // emitted through the root appender).
+    let log_path = format!("{}/taker/debug.log", test_framework.temp_dir.display());
+    test_framework.assert_log("Rejecting swap", &log_path);
+    test_framework.assert_log("active reservations", &log_path);
+    test_framework.assert_log("requested", &log_path);
+
+    maker.shutdown.store(true, Relaxed);
+    maker_thread.join().unwrap();
     test_framework.stop();
     block_generation_handle.join().unwrap();
 }

@@ -211,7 +211,9 @@ pub struct SwapParams {
     pub send_amount: Amount,
     /// Number of makers (hops) to use.
     pub maker_count: usize,
-    /// Number of transaction splits (Taproot only, defaults to 1 for Legacy).
+    /// Number of funding transactions per hop. Each funding transaction creates
+    /// one contract transaction, so this also determines the number of contracts
+    /// per hop. Used by both Legacy and Taproot protocols; defaults to 1.
     pub tx_count: u32,
     /// Required confirmations for funding transactions.
     pub required_confirms: u32,
@@ -236,7 +238,7 @@ impl SwapParams {
         }
     }
 
-    /// Set the number of transaction splits.
+    /// Set the number of funding transactions per hop.
     pub fn with_tx_count(mut self, tx_count: u32) -> Self {
         self.tx_count = tx_count;
         self
@@ -1557,16 +1559,25 @@ impl Taker {
                             ));
                         }
                         swap_details.amount += Amount::from_sat(1);
-                        let mutated = self.resend_swap_details(&maker_address, &swap_details)?;
-                        if matches!(mutated, MakerToTakerMessage::AckSwapDetails(ref ack) if ack.tweakable_point.is_none())
+                        return Err(TakerError::General(match self
+                            .resend_swap_details(&maker_address, &swap_details)
                         {
-                            return Err(TakerError::General(
-                                "Maker rejected mutated resent SwapDetails".to_string(),
-                            ));
-                        }
-                        return Err(TakerError::General(
-                            "Maker accepted mutated resent SwapDetails".to_string(),
-                        ));
+                            Ok(MakerToTakerMessage::AckSwapDetails(ack)) => {
+                                if ack.tweakable_point.is_none() {
+                                    "Maker rejected mutated resent SwapDetails".to_string()
+                                } else {
+                                    "Maker accepted mutated resent SwapDetails".to_string()
+                                }
+                            }
+                            Ok(other) => format!(
+                                "Maker rejected mutated resent SwapDetails: {:?}",
+                                other
+                            ),
+                            Err(e) => format!(
+                                "Maker rejected mutated resent SwapDetails: {:?}",
+                                e
+                            ),
+                        }));
                     }
 
                     #[cfg(feature = "integration-test")]

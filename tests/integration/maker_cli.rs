@@ -392,6 +392,12 @@ fn test_maker_rpc_server() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     info!("maker-cli send-ping: {}", stdout.trim());
     assert!(
+        output.status.success(),
+        "maker-cli send-ping exited with {:?}, stderr: {}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
         stdout.contains("success"),
         "maker-cli send-ping should print success, got: {} / stderr: {}",
         stdout,
