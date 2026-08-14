@@ -15,14 +15,30 @@ permissions: {}
 
 jobs:
   dispatch:
-    name: Dispatch downstream compatibility checks
+    name: Dispatch ${{ matrix.downstream }} compatibility check
     if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - downstream: coinswap-ffi
+            repository: citadel-tech/coinswap-ffi
+            secret_name: COINSWAP_FFI_DISPATCH_TOKEN
+          - downstream: maker-dashboard
+            repository: citadel-tech/maker-dashboard
+            secret_name: COINSWAP_MAKER_DASHBOARD_DISPATCH_TOKEN
+          - downstream: taker-app
+            repository: citadel-tech/taker-app
+            secret_name: COINSWAP_TAKER_APP_DISPATCH_TOKEN
     steps:
-      - name: Dispatch coinswap-ffi compatibility build
+      - name: Dispatch compatibility check
         env:
-          GH_TOKEN: ${{ secrets.COINSWAP_FFI_DISPATCH_TOKEN }}
+          GH_TOKEN: ${{ secrets[matrix.secret_name] }}
+          DOWNSTREAM_NAME: ${{ matrix.downstream }}
+          DOWNSTREAM_REPOSITORY: ${{ matrix.repository }}
+          DISPATCH_SECRET_NAME: ${{ matrix.secret_name }}
           COINSWAP_SHA: ${{ github.sha }}
           COINSWAP_REF: ${{ github.ref }}
           COINSWAP_REPOSITORY: ${{ github.repository }}
@@ -33,11 +49,11 @@ jobs:
           set -euo pipefail
 
           if [[ -z "${GH_TOKEN}" ]]; then
-            echo "::error::The COINSWAP_FFI_DISPATCH_TOKEN secret is not configured."
+            echo "::error::The ${DISPATCH_SECRET_NAME} secret is not configured."
             exit 1
           fi
 
-          payload_file="${RUNNER_TEMP}/coinswap-ffi-dispatch.json"
+          payload_file="${RUNNER_TEMP}/${DOWNSTREAM_NAME}-dispatch.json"
           jq -n \
             --arg event_type "coinswap-updated" \
             --arg coinswap_sha "${COINSWAP_SHA}" \
@@ -58,47 +74,5 @@ jobs:
 
           gh api \
             --method POST \
-            repos/citadel-tech/coinswap-ffi/dispatches \
-            --input "${payload_file}"
-
-      - name: Dispatch maker-dashboard compatibility checks
-        if: ${{ !cancelled() }}
-        env:
-          GH_TOKEN: ${{ secrets.COINSWAP_MAKER_DASHBOARD_DISPATCH_TOKEN }}
-          COINSWAP_SHA: ${{ github.sha }}
-          COINSWAP_REF: ${{ github.ref }}
-          COINSWAP_REPOSITORY: ${{ github.repository }}
-          COINSWAP_COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
-          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if [[ -z "${GH_TOKEN}" ]]; then
-            echo "::error::The COINSWAP_MAKER_DASHBOARD_DISPATCH_TOKEN secret is not configured."
-            exit 1
-          fi
-
-          payload_file="${RUNNER_TEMP}/maker-dashboard-dispatch.json"
-          jq -n \
-            --arg event_type "coinswap-updated" \
-            --arg coinswap_sha "${COINSWAP_SHA}" \
-            --arg coinswap_ref "${COINSWAP_REF}" \
-            --arg coinswap_repository "${COINSWAP_REPOSITORY}" \
-            --arg coinswap_commit_url "${COINSWAP_COMMIT_URL}" \
-            --arg triggering_actor "${TRIGGERING_ACTOR}" \
-            '{
-              event_type: $event_type,
-              client_payload: {
-                coinswap_sha: $coinswap_sha,
-                coinswap_ref: $coinswap_ref,
-                coinswap_repository: $coinswap_repository,
-                coinswap_commit_url: $coinswap_commit_url,
-                triggering_actor: $triggering_actor
-              }
-            }' > "${payload_file}"
-
-          gh api \
-            --method POST \
-            repos/citadel-tech/maker-dashboard/dispatches \
+            "repos/${DOWNSTREAM_REPOSITORY}/dispatches" \
             --input "${payload_file}"
