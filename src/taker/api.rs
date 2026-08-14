@@ -2546,40 +2546,10 @@ impl Taker {
             })
             .sum();
 
-        let total_fee = total_input_amount.saturating_sub(total_output_amount);
-        let mining_fee = total_fee.saturating_sub(total_maker_fees);
-        let fee_percentage = (total_fee as f64 / swap.params.send_amount.to_sat() as f64) * 100.0;
-
-        // Contract txids
-        let outgoing_contract_txid = if !swap.outgoing_swapcoins.is_empty() {
-            Some(
-                swap.outgoing_swapcoins
-                    .iter()
-                    .map(|sc| sc.contract_tx.compute_txid().to_string())
-                    .collect::<Vec<_>>()
-                    .join(", "),
-            )
-        } else {
-            None
-        };
-
-        let incoming_contract_txid = if !swap.incoming_swapcoins.is_empty() {
-            Some(
-                swap.incoming_swapcoins
-                    .iter()
-                    .map(|sc| sc.contract_tx.compute_txid().to_string())
-                    .collect::<Vec<_>>()
-                    .join(", "),
-            )
-        } else {
-            None
-        };
-
-        // The sweep confirms each settlement before reporting it resolved, and
-        // it resolves every claimable incoming coin in the wallet — so match
-        // its outcomes against this swap's own incoming contracts, and read the
-        // delivered total off the pinned outputs those spends actually paid
-        // rather than restating what was requested.
+        // A PaySwap settlement pays an external receiver, so it does not appear
+        // among this wallet's outputs. Account for the confirmed receiver output
+        // before deriving fees; otherwise the payment principal is mislabeled as
+        // mining/maker fees in the report.
         let payment = swap.payment.as_ref().map(|p| {
             let resolved = swept
                 .map(|outcome| outcome.resolved.as_slice())
@@ -2614,6 +2584,44 @@ impl Taker {
                 confirmed: status == SwapStatus::Success && delivered_amount == p.amount.to_sat(),
             }
         });
+
+        let delivered_payment = payment.as_ref().map_or(0, |p| p.delivered_amount);
+        let accounted_output_amount = total_output_amount.saturating_add(delivered_payment);
+        let total_fee = total_input_amount.saturating_sub(accounted_output_amount);
+        let mining_fee = total_fee.saturating_sub(total_maker_fees);
+        let fee_denominator = payment
+            .as_ref()
+            .map_or(swap.params.send_amount.to_sat(), |p| p.requested_amount);
+        let fee_percentage = if fee_denominator == 0 {
+            0.0
+        } else {
+            (total_fee as f64 / fee_denominator as f64) * 100.0
+        };
+
+        // Contract txids
+        let outgoing_contract_txid = if !swap.outgoing_swapcoins.is_empty() {
+            Some(
+                swap.outgoing_swapcoins
+                    .iter()
+                    .map(|sc| sc.contract_tx.compute_txid().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            )
+        } else {
+            None
+        };
+
+        let incoming_contract_txid = if !swap.incoming_swapcoins.is_empty() {
+            Some(
+                swap.incoming_swapcoins
+                    .iter()
+                    .map(|sc| sc.contract_tx.compute_txid().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            )
+        } else {
+            None
+        };
 
         let swap_end_ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

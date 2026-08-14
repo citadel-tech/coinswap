@@ -165,6 +165,15 @@ fn test_taproot_payswap() {
     assert!(payment_result.confirmed, "payment must report confirmed");
     assert_eq!(payment_result.requested_amount, payment_amount.to_sat());
     assert_eq!(payment_result.delivered_amount, payment_amount.to_sat());
+    assert!(
+        report.fee_paid < payment_amount.to_sat(),
+        "receiver payment principal must not be reported as a fee"
+    );
+    assert_eq!(
+        report.mining_fee,
+        report.fee_paid.saturating_sub(report.total_maker_fees),
+        "mining fee must be derived after excluding the receiver payment"
+    );
     assert_eq!(
         payment_result.settlement_txids.len(),
         3,
@@ -340,6 +349,15 @@ fn test_legacy_payswap() {
         .expect("payment swap report must carry a payment result");
     assert!(payment_result.confirmed);
     assert_eq!(payment_result.delivered_amount, payment_amount.to_sat());
+    assert!(
+        report.fee_paid < payment_amount.to_sat(),
+        "receiver payment principal must not be reported as a fee"
+    );
+    assert_eq!(
+        report.mining_fee,
+        report.fee_paid.saturating_sub(report.total_maker_fees),
+        "mining fee must be derived after excluding the receiver payment"
+    );
 
     taker
         .get_wallet()
