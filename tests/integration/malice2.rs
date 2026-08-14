@@ -42,11 +42,18 @@ use std::{
 /// `electrum_tor.rs` can reuse the body over Tor.
 /// This is the only scenario driving the taker's breach detector.
 pub(crate) fn run_malice2<B: TestBackend>() {
+    run_malice2_with_taker_behavior::<B>(TakerBehavior::Normal, false);
+}
+
+fn run_malice2_with_taker_behavior<B: TestBackend>(
+    taker_behavior: TakerBehavior,
+    expect_direct_breach_detection: bool,
+) {
     // ---- Setup ----
     warn!("Running Test: Malice2 - Maker Broadcasts Contract After Setup");
 
     let makers_config_map = vec![(6702, Some(19701)), (16702, Some(19702))];
-    let taker_behavior = vec![TakerBehavior::Normal];
+    let taker_behavior = vec![taker_behavior];
     let maker_behaviors = vec![
         MakerBehavior::Normal,
         MakerBehavior::BroadcastContractAfterSetup,
@@ -128,6 +135,13 @@ pub(crate) fn run_malice2<B: TestBackend>() {
         "Swap should fail due to maker BroadcastContractAfterSetup behavior"
     );
     info!("Swap failed as expected: {:?}", swap_result.err().unwrap());
+    if expect_direct_breach_detection {
+        wait_for_log(
+            &format!("{}/taker/debug.log", test_framework.temp_dir.display()),
+            "Breach detector: contract tx",
+            Duration::from_secs(30),
+        );
+    }
     taker.log_tracker_state();
 
     // Wait for makers to detect the drop and the outer timelock to mature;
@@ -256,4 +270,12 @@ pub(crate) fn run_malice2<B: TestBackend>() {
 #[test]
 fn test_malice2_maker_broadcast_contract() {
     run_malice2::<BitcoindBackend>();
+}
+
+#[test]
+fn test_malice2_detects_breach_after_watcher_exit() {
+    run_malice2_with_taker_behavior::<BitcoindBackend>(
+        TakerBehavior::StopWatcherAfterSentinels,
+        true,
+    );
 }

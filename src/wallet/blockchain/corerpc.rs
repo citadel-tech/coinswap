@@ -20,7 +20,7 @@ use bitcoind::bitcoincore_rpc::{
     jsonrpc, Auth, Client, Error as CoreRpcError, RpcApi,
 };
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use super::{BlockRef, Blockchain, WatchEvent};
 use crate::{lock_debug, wallet::error::WalletError};
@@ -168,6 +168,11 @@ pub struct CoreRPC {
     zmq: ZmqSubscriber,
 }
 
+#[derive(Deserialize)]
+struct SpendingPrevout {
+    spendingtxid: Option<Txid>,
+}
+
 impl std::fmt::Debug for CoreRPC {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CoreRPC")
@@ -198,6 +203,42 @@ impl CoreRPC {
     /// its own connection without threading the config around separately.
     pub fn reconnect(&self) -> Result<Self, WalletError> {
         Self::new(&self.config)
+    }
+
+    pub(crate) fn spending_transaction(
+        &self,
+        outpoint: &OutPoint,
+    ) -> Result<Option<Transaction>, WalletError> {
+        let spends: Vec<SpendingPrevout> = self.rpc.call(
+            "gettxspendingprevout",
+            &[json!([{ "txid": outpoint.txid, "vout": outpoint.vout }])],
+        )?;
+        if let Some(txid) = spends.first().and_then(|spend| spend.spendingtxid) {
+            return self.get_raw_transaction(&txid, None).map(Some);
+        }
+        if self
+            .get_tx_out(&outpoint.txid, outpoint.vout, Some(true))?
+            .is_some()
+        {
+            return Ok(None);
+        }
+        // None here means "funding never confirmed" or "node cannot serve
+        // the tx" (fresh, pruned, mid-rescan) — indistinguishable at this
+        // RPC, and only the first makes "no spend" true. Accepted as a rare
+        // silent miss; the real fix passes the caller-known height and errs.
+        let Some(start) = self.tx_block_height(&outpoint.txid)? else {
+            return Ok(None);
+        };
+        for height in start..=self.get_block_count()? {
+            if let Some(tx) = self.block_at_height(height)?.txdata.into_iter().find(|tx| {
+                tx.input
+                    .iter()
+                    .any(|input| input.previous_output == *outpoint)
+            }) {
+                return Ok(Some(tx));
+            }
+        }
+        Ok(None)
     }
 
     /// Name of the Bitcoin Core wallet this backend is bound to.

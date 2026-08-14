@@ -563,7 +563,9 @@ impl MakerServer {
             config.network = wallet_network;
         }
 
-        // Initialize watch service
+        // Initialize watch service. A failure here aborts init instead of
+        // entering recovery-only: that mode polls the same backend that
+        // just failed to build, so there is nothing to degrade to.
         let watch_service = crate::watch_tower::service::start_maker_watch_service(
             &config.backend,
             backend_shutdown,
@@ -571,16 +573,13 @@ impl MakerServer {
         .map_err(MakerError::Watcher)?;
 
         // The watcher starts empty, so re-arm every contract still live in the
-        // wallet. Without this a restart leaves them undefended.
+        // wallet. Without this a restart leaves them undefended. A failed
+        // rescan retries inside the watcher, so an Err here means the watcher
+        // is gone and the server will start in recovery-only mode.
         let mut watches = wallet.incoming_contract_outpoints();
         watches.extend(wallet.outgoing_contract_outpoints());
-        // Contracts we cannot watch are contracts we cannot defend: a dead
-        // watcher at startup is fatal, not a warning.
-        if !watches.is_empty() {
-            watch_service.rebuild_watches(watches).map_err(|e| {
-                log::error!("could not rebuild watches on startup: {e}");
-                MakerError::General("watch rebuild failed on startup")
-            })?;
+        if let Err(e) = watch_service.rebuild_watches(watches) {
+            log::error!("could not initialize watches on startup: {e}; recovery-only mode");
         }
 
         let swap_tracker = MakerSwapTracker::load_or_create(&data_dir)?;
@@ -974,6 +973,17 @@ impl MakerServer {
             .is_empty())
     }
 
+    /// Whether this maker has an unfinished outgoing swapcoin for `swap_id`.
+    #[cfg(feature = "integration-test")]
+    pub fn has_unfinished_outgoing_swapcoin(&self, swap_id: &str) -> Result<bool, MakerError> {
+        let wallet = lock_debug!(self.wallet.read())
+            .map_err(|_| MakerError::General("Failed to lock wallet"))?;
+        let (_, outgoing) = wallet.find_unfinished_swapcoins();
+        Ok(outgoing
+            .iter()
+            .any(|coin| coin.swap_id.as_deref() == Some(swap_id)))
+    }
+
     /// Verify the deniability proof for a specific swap.
     pub fn verify_deniability(&self, swap_id: &str) -> Result<bool, std::io::Error> {
         lock_debug!(self.wallet.read())
@@ -1113,6 +1123,10 @@ impl MakerTrait for MakerServer {
 
     fn network(&self) -> Network {
         self.config.network
+    }
+
+    fn is_watchtower_alive(&self) -> bool {
+        self.watch_service.is_alive()
     }
 
     fn create_funding_transaction(

@@ -382,6 +382,34 @@ impl AnyBlockchain {
             AnyBlockchain::Electrum(b) => Ok(AnyBlockchain::Electrum(b.reconnect()?)),
         }
     }
+
+    /// Open a connection with cancellation owned by the new consumer.
+    pub(crate) fn new_connection_with_shutdown(
+        &self,
+        shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<Self, WalletError> {
+        match self {
+            AnyBlockchain::CoreRPC(b) => Ok(AnyBlockchain::CoreRPC(b.reconnect()?)),
+            AnyBlockchain::Electrum(b) => Ok(AnyBlockchain::Electrum(
+                b.reconnect_with_shutdown(shutdown)?,
+            )),
+        }
+    }
+
+    /// Return the mempool or confirmed transaction spending `outpoint`.
+    pub(crate) fn spending_transaction(
+        &self,
+        outpoint: &OutPoint,
+        script: &Script,
+        expected_txid: Option<&Txid>,
+    ) -> Result<Option<Transaction>, WalletError> {
+        match self {
+            AnyBlockchain::CoreRPC(b) => b.spending_transaction(outpoint).map(|spend| {
+                spend.filter(|tx| expected_txid.is_none_or(|txid| tx.compute_txid() == *txid))
+            }),
+            AnyBlockchain::Electrum(b) => b.spending_transaction(outpoint, script, expected_txid),
+        }
+    }
 }
 
 /// Dispatch each [`Blockchain`] method to the active backend variant.

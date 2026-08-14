@@ -570,12 +570,8 @@ impl Taker {
         let mut watches = wallet.incoming_contract_outpoints();
         watches.extend(wallet.outgoing_contract_outpoints());
         watches.extend(wallet.watchonly_contract_outpoints());
-        // Contracts we cannot watch are contracts we cannot defend: a dead
-        // watcher at startup is fatal, not a warning.
-        if !watches.is_empty() {
-            watch_service.rebuild_watches(watches).map_err(|e| {
-                TakerError::General(format!("could not rebuild watches on startup: {e}"))
-            })?;
+        if let Err(e) = watch_service.rebuild_watches(watches) {
+            log::error!("could not rebuild watches on startup: {e}; recovery remains active");
         }
 
         Self::init_taker_config(&config, &data_dir)?;
@@ -740,16 +736,12 @@ impl Taker {
             )),
             shutdown.clone(),
         );
-        let handle = thread::Builder::new()
-            .name("Watcher thread".to_string())
-            .spawn(move || watcher.run(initial_sync_clone))
-            .map_err(|e| TakerError::General(format!("failed to spawn watcher thread: {e}")))?;
+        let watch_service = WatchService::spawn(tx_requests, shutdown, move || {
+            watcher.run(initial_sync_clone)
+        })
+        .map_err(|e| TakerError::General(format!("failed to spawn watcher thread: {e}")))?;
 
-        Ok((
-            WatchService::new(tx_requests, handle, shutdown),
-            registry_clone,
-            initial_sync_complete,
-        ))
+        Ok((watch_service, registry_clone, initial_sync_complete))
     }
 
     /// Load/merge taker config and check Tor status.
@@ -980,10 +972,28 @@ impl Taker {
                 swap_id, current_id
             )));
         }
+        #[cfg(feature = "integration-test")]
+        if self.behavior == TakerBehavior::StopWatcherBeforeSwap {
+            self.watch_service.stop_watcher_for_test();
+        }
+        if !self.watch_service.is_alive() {
+            return Err(TakerError::General("watchtower is down".into()));
+        }
 
         let initial_utxos = self.read_wallet()?.list_all_utxo();
 
         log::info!("Starting coinswap execution for id: {}", swap_id);
+
+        // Taproot has no breach case: its contract output cannot be spent
+        // mid-swap — key-path needs both keys, the hashlock needs the
+        // taker's preimage, timelocks are immature — so no detector starts.
+        if self.swap_state()?.params.protocol == ProtocolVersion::Legacy {
+            let backend = self.read_wallet()?.blockchain.new_connection()?;
+            self.breach_detector = Some(super::background_services::BreachDetector::start(
+                self.watch_service.clone(),
+                backend,
+            )?);
+        }
 
         self.funding_initialize()?;
 
@@ -1157,8 +1167,9 @@ impl Taker {
             }
         }
 
-        // Finalization succeeded — stop breach detector.
+        // Finalization succeeded — disarm and stop the breach detector.
         if let Some(detector) = self.breach_detector.take() {
+            detector.disarm(&self.watch_service);
             detector.stop();
         }
 
@@ -1979,7 +1990,7 @@ impl Taker {
                     if self
                         .breach_detector
                         .as_ref()
-                        .is_some_and(|d| d.is_breached())
+                        .is_some_and(|d| d.requires_abort())
                     {
                         log::error!(
                             "Contract broadcast detected during finalization — aborting retries"
@@ -2748,6 +2759,10 @@ pub enum TakerBehavior {
     /// Normal behavior.
     #[default]
     Normal,
+    /// Stop the watcher immediately before the taker's funding gate.
+    StopWatcherBeforeSwap,
+    /// Stop the watcher after Legacy breach sentinels are armed.
+    StopWatcherAfterSentinels,
     /// Close connection early (after maker selection).
     CloseEarly,
     /// Drop after funds/contracts are broadcast but before finalization.

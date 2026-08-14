@@ -57,34 +57,49 @@ const FIDELITY_BOND_UPDATE_INTERVAL: Duration = Duration::from_secs(600);
 pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
     log::info!("[{}] Starting maker server", maker.config.network_port);
 
-    let listener = match TcpListener::bind(("127.0.0.1", maker.config.network_port)) {
-        Ok(l) => l,
-        Err(e) => {
+    #[cfg(feature = "integration-test")]
+    if maker.behavior == super::handlers::MakerBehavior::StopWatcherOnStartup {
+        maker.watch_service.stop_watcher_for_test();
+    }
+    let listener = if maker.watch_service.is_alive() {
+        let listener = TcpListener::bind(("127.0.0.1", maker.config.network_port)).map_err(|e| {
             log::warn!(
                 "Failed to bind network port {}: {}. Fidelity bond funds may be locked to this port.",
                 maker.config.network_port,
                 e
             );
-            return Err(MakerError::IO(e));
-        }
+            MakerError::IO(e)
+        })?;
+        listener.set_nonblocking(true).map_err(MakerError::IO)?;
+        Some(listener)
+    } else {
+        log::error!(
+            "[{}] Watchtower down; recovery-only mode",
+            maker.config.network_port
+        );
+        None
     };
-    listener.set_nonblocking(true).map_err(MakerError::IO)?;
 
     #[cfg(feature = "integration-test")]
-    let maker_address = format!("127.0.0.1:{}", maker.config.network_port);
+    let maker_address = listener
+        .is_some()
+        .then(|| format!("127.0.0.1:{}", maker.config.network_port));
     #[cfg(not(feature = "integration-test"))]
-    let maker_address = maker.get_tor_hostname()?;
+    let maker_address = listener
+        .is_some()
+        .then(|| maker.get_tor_hostname())
+        .transpose()?;
 
-    log::info!(
-        "[{}] Setting up fidelity bond...",
-        maker.config.network_port
-    );
-    let fidelity_proof = maker.setup_fidelity_bond(&maker_address)?;
-
-    spawn_nostr_broadcast_thread(&maker, fidelity_proof)?;
-
-    log::info!("[{}] Checking swap liquidity...", maker.config.network_port);
-    maker.check_swap_liquidity()?;
+    if let Some(maker_address) = maker_address.as_ref() {
+        log::info!(
+            "[{}] Setting up fidelity bond...",
+            maker.config.network_port
+        );
+        let fidelity_proof = maker.setup_fidelity_bond(maker_address)?;
+        spawn_nostr_broadcast_thread(&maker, fidelity_proof)?;
+        log::info!("[{}] Checking swap liquidity...", maker.config.network_port);
+        maker.check_swap_liquidity()?;
+    }
 
     // Check for unfinished swapcoins from a previous run and start recovery.
     {
@@ -157,12 +172,14 @@ pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
         );
     }
 
-    maker.is_setup_complete.store(true, Relaxed);
-    log::info!(
-        "[{}] Server setup complete! Listening on port {}",
-        maker.config.network_port,
-        maker.config.network_port
-    );
+    if listener.is_some() {
+        maker.is_setup_complete.store(true, Relaxed);
+        log::info!(
+            "[{}] Server setup complete! Listening on port {}",
+            maker.config.network_port,
+            maker.config.network_port
+        );
+    }
 
     // Spawn RPC server thread for maker-cli operations
     let maker_rpc = Arc::clone(&maker);
@@ -188,20 +205,24 @@ pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
         .map_err(MakerError::IO)?;
     maker.thread_pool.add_thread(idle_handle)?;
 
-    // Spawn fidelity bond renewal thread
-    let maker_fidelity = Arc::clone(&maker);
-    let maker_addr_fidelity = maker_address.clone();
-    let fidelity_handle = thread::Builder::new()
-        .name("fidelity-renewal".to_string())
-        .spawn(move || {
-            if let Err(e) = fidelity_renewal_loop(maker_fidelity, &maker_addr_fidelity) {
-                log::error!("Fidelity renewal loop error: {:?}", e);
-            }
-        })
-        .map_err(MakerError::IO)?;
-    maker.thread_pool.add_thread(fidelity_handle)?;
+    if let Some(maker_address) = maker_address {
+        let maker_fidelity = Arc::clone(&maker);
+        let fidelity_handle = thread::Builder::new()
+            .name("fidelity-renewal".to_string())
+            .spawn(move || {
+                if let Err(e) = fidelity_renewal_loop(maker_fidelity, &maker_address) {
+                    log::error!("Fidelity renewal loop error: {:?}", e);
+                }
+            })
+            .map_err(MakerError::IO)?;
+        maker.thread_pool.add_thread(fidelity_handle)?;
+    }
 
     while !maker.is_shutdown() {
+        let Some(listener) = listener.as_ref() else {
+            sleep(Duration::from_millis(100));
+            continue;
+        };
         match listener.accept() {
             Ok((stream, addr)) => {
                 log::info!(
@@ -632,9 +653,9 @@ const MIN_WITNESS_ITEM_FOR_HASHLOCK: usize = 2;
 /// Preimage length in bytes.
 const PREIMAGE_LEN: usize = 32;
 
-/// Check the watch tower for spends on outgoing contract outputs, extract
-/// preimages from hashlock spends, and update incoming swapcoins in the wallet.
-fn check_for_preimage_via_watchtower(
+/// Read spends through the watcher, or directly through the wallet backend
+/// after the watcher exits, then persist any revealed hashlock preimages.
+fn check_for_preimage(
     maker: &MakerServer,
     outgoing_swapcoins: &[crate::wallet::swapcoin::OutgoingSwapCoin],
     incoming_swapcoins: &[crate::wallet::swapcoin::IncomingSwapCoin],
@@ -644,6 +665,13 @@ fn check_for_preimage_via_watchtower(
 
     let mut seen_outpoints = HashSet::new();
     let mut preimages: Vec<[u8; 32]> = Vec::new();
+    let wallet = lock_debug!(maker.wallet.read())
+        .map_err(|_| MakerError::General("Failed to lock wallet"))?;
+    let direct_chain = (!maker.watch_service.is_alive())
+        .then(|| wallet.blockchain.new_connection())
+        .transpose()
+        .map_err(MakerError::Wallet)?;
+    drop(wallet);
 
     // Query the watch tower for spends on each outgoing contract output.
     for outgoing in outgoing_swapcoins {
@@ -657,16 +685,26 @@ fn check_for_preimage_via_watchtower(
             // choosing timelock over hashlock — a stale miss refunds while a
             // preimage spend already exists. A failed query aborts this pass;
             // the recovery loop retries instead of refunding blind.
-            let reply = maker.watch_service.watch_request(outpoint).map_err(|e| {
-                log::warn!("watch request for {outpoint} failed: {e}");
-                MakerError::General("watchtower query failed")
-            })?;
+            let spending_tx = match direct_chain.as_ref() {
+                Some(chain) => chain
+                    .spending_transaction(
+                        &outpoint,
+                        outgoing.contract_tx.output[vout].script_pubkey.as_script(),
+                        None,
+                    )
+                    .map_err(MakerError::Wallet)?,
+                None => match maker.watch_service.watch_request(outpoint).map_err(|e| {
+                    log::warn!("watch request for {outpoint} failed: {e}");
+                    MakerError::General("watchtower query failed")
+                })? {
+                    crate::watch_tower::watcher::WatcherEvent::UtxoSpent {
+                        spending_tx, ..
+                    } => spending_tx,
+                    _ => None,
+                },
+            };
 
-            if let crate::watch_tower::watcher::WatcherEvent::UtxoSpent {
-                spending_tx: Some(spending_tx),
-                ..
-            } = reply
-            {
+            if let Some(spending_tx) = spending_tx {
                 // Extract preimages from the spending transaction's witnesses.
                 for input in &spending_tx.input {
                     let op = (input.previous_output.txid, input.previous_output.vout);
@@ -878,17 +916,12 @@ fn recover_from_swap(
         r.recovery.phase = MakerRecoveryPhase::Monitoring;
     });
 
+    let mut watchtower_down_logged = false;
     while !maker.is_shutdown() {
         // --- Hashlock path: check if preimages are available ---
-        if let Err(e) =
-            check_for_preimage_via_watchtower(&maker, &outgoing_swapcoins, &incoming_swapcoins)
-        {
-            // A transient backend failure must abort this pass so we never
-            // choose the timelock path from a stale "not spent" answer. It must
-            // not terminate the maker's only recovery thread: the next pass can
-            // observe a preimage once the backend is reachable again.
+        if let Err(e) = check_for_preimage(&maker, &outgoing_swapcoins, &incoming_swapcoins) {
             log::warn!(
-                "[{}] Could not refresh contract watches: {:?}; retrying recovery",
+                "[{}] Could not refresh contract spends: {:?}; retrying recovery",
                 maker.config.network_port,
                 e
             );
@@ -896,6 +929,17 @@ fn recover_from_swap(
                 break;
             }
             continue;
+        }
+        if maker.is_shutdown() {
+            break;
+        }
+        if !maker.watch_service.is_alive() && !watchtower_down_logged {
+            log::error!(
+                "[{}] Watchtower is down; directly polling swap {} for recovery",
+                maker.config.network_port,
+                swap_id
+            );
+            watchtower_down_logged = true;
         }
 
         // Check if all incoming swapcoins now have preimages

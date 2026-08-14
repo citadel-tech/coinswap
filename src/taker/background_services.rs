@@ -13,13 +13,13 @@ use std::{
     time::Duration,
 };
 
-use bitcoin::{OutPoint, Txid};
+use bitcoin::{OutPoint, ScriptBuf, Txid};
 
 use crate::{
     lock_debug,
     taker::error::TakerError,
     utill::HEART_BEAT_INTERVAL,
-    wallet::{Blockchain, RecoveryReport, Wallet},
+    wallet::{AnyBlockchain, Blockchain, RecoveryReport, Wallet},
     watch_tower::{service::WatchService, watcher::WatcherEvent},
 };
 
@@ -397,31 +397,34 @@ impl Drop for RecoveryLoop {
     }
 }
 
-/// Background thread that monitors sentinel outpoints for adversarial spends
-/// via the WatchService. Queries the watcher's file registry periodically;
-/// the watcher's ZMQ backend captures spending transactions in real-time.
-///
-/// - **Legacy**: sentinels are funding outpoints — if spent, a contract tx was broadcast.
-/// - **Taproot**: sentinels are contract outpoints — if spent during exchange, a script-path
-///   spend occurred (adversarial since key-path settlement hasn't happened yet).
+/// Monitors Legacy funding outpoints for an adversarial contract broadcast.
+/// The watcher is the primary source; a direct backend query preserves the
+/// fail-closed signal if the watcher exits.
 pub(crate) struct BreachDetector {
     breached: Arc<AtomicBool>,
+    unknown: Arc<AtomicBool>,
     /// Mapping of funding outpoint → expected contract txid.
     /// Only a spend whose txid matches the expected contract txid is adversarial.
     /// Cooperative spends (after finalization) produce a different txid.
-    sentinels: Arc<Mutex<Vec<(OutPoint, Txid)>>>,
+    sentinels: Arc<Mutex<Vec<(OutPoint, Txid, ScriptBuf)>>>,
     shutdown: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
 }
 
 impl BreachDetector {
     /// Spawn a background thread that polls the WatchService for sentinel spends.
-    pub(crate) fn start(watch_service: WatchService) -> std::io::Result<Self> {
+    pub(crate) fn start(
+        watch_service: WatchService,
+        backend: AnyBlockchain,
+    ) -> std::io::Result<Self> {
         let breached = Arc::new(AtomicBool::new(false));
-        let sentinels: Arc<Mutex<Vec<(OutPoint, Txid)>>> = Arc::new(Mutex::new(Vec::new()));
+        let unknown = Arc::new(AtomicBool::new(false));
+        let sentinels: Arc<Mutex<Vec<(OutPoint, Txid, ScriptBuf)>>> =
+            Arc::new(Mutex::new(Vec::new()));
         let shutdown = Arc::new(AtomicBool::new(false));
 
         let breached_clone = breached.clone();
+        let unknown_clone = unknown.clone();
         let sentinels_clone = sentinels.clone();
         let shutdown_clone = shutdown.clone();
 
@@ -436,26 +439,39 @@ impl BreachDetector {
 
                     let current_sentinels = match lock_debug!(sentinels_clone.lock()) {
                         Ok(guard) => guard.clone(),
-                        Err(_) => continue,
+                        Err(_) => {
+                            unknown_clone.store(true, Relaxed);
+                            continue;
+                        }
                     };
 
-                    for (outpoint, expected_contract_txid) in &current_sentinels {
-                        // The poll loop is the retry here: a failed query is
-                        // logged and re-asked on the next pass.
-                        let reply = match watch_service.watch_request(*outpoint) {
-                            Ok(reply) => reply,
-                            Err(e) => {
-                                log::error!(
-                                    "watch request for {outpoint} failed (watcher gone): {e}"
-                                );
-                                continue;
+                    let mut pass_unknown = false;
+                    for (outpoint, expected_contract_txid, spk) in &current_sentinels {
+                        let spending_tx = if watch_service.is_alive() {
+                            match watch_service.watch_request(*outpoint) {
+                                Ok(WatcherEvent::UtxoSpent { spending_tx, .. }) => spending_tx,
+                                Ok(_) => None,
+                                Err(e) => {
+                                    log::error!("watch request for {outpoint} failed: {e}");
+                                    pass_unknown = true;
+                                    continue;
+                                }
+                            }
+                        } else {
+                            match backend.spending_transaction(
+                                outpoint,
+                                spk.as_script(),
+                                Some(expected_contract_txid),
+                            ) {
+                                Ok(tx) => tx,
+                                Err(e) => {
+                                    log::error!("direct breach query for {outpoint} failed: {e}");
+                                    pass_unknown = true;
+                                    continue;
+                                }
                             }
                         };
-                        if let WatcherEvent::UtxoSpent {
-                            spending_tx: Some(ref tx),
-                            ..
-                        } = reply
-                        {
+                        if let Some(tx) = spending_tx {
                             let actual_txid = tx.compute_txid();
                             if actual_txid == *expected_contract_txid {
                                 // The funding outpoint was spent by the pre-signed contract tx.
@@ -476,11 +492,13 @@ impl BreachDetector {
                             );
                         }
                     }
+                    unknown_clone.store(pass_unknown, Relaxed);
                 }
             })?;
 
         Ok(Self {
             breached,
+            unknown,
             sentinels,
             shutdown,
             handle: Some(handle),
@@ -498,33 +516,31 @@ impl BreachDetector {
         watch_service: &WatchService,
         sentinels: &[(OutPoint, Txid, bitcoin::ScriptBuf)],
     ) -> Result<(), TakerError> {
-        // A sentinel that failed to register must not be tracked as armed:
-        // fail the swap step instead of pretending breach detection is live.
+        lock_debug!(self.sentinels.lock())
+            .map_err(|_| TakerError::General("breach sentinel lock poisoned".into()))?
+            .extend_from_slice(sentinels);
         for (outpoint, _, spk) in sentinels {
-            watch_service
-                .register_watch_request(*outpoint, spk.clone())
-                .map_err(|e| {
-                    TakerError::General(format!(
-                        "sentinel registration for {outpoint} failed (watcher gone): {e}"
-                    ))
-                })?;
-        }
-        if let Ok(mut guard) = lock_debug!(self.sentinels.lock()) {
-            #[cfg(debug_assertions)]
-            log::debug!(
-                "[WATCH_STATE] Source: taker::background_services::add_sentinels | Action: register_breach_sentinels | Added: {} | Total: {}",
-                sentinels.len(),
-                guard.len()
-            );
-            let storage: Vec<_> = sentinels.iter().map(|(op, txid, _)| (*op, *txid)).collect();
-            guard.extend_from_slice(&storage);
+            if let Err(e) = watch_service.register_watch_request(*outpoint, spk.clone()) {
+                log::error!("sentinel registration for {outpoint} failed: {e}; using fallback");
+            }
         }
         Ok(())
     }
 
-    /// Check whether an adversarial spend has been detected.
+    pub(crate) fn disarm(&self, watch_service: &WatchService) {
+        if let Ok(mut sentinels) = lock_debug!(self.sentinels.lock()) {
+            for (outpoint, _, spk) in sentinels.drain(..) {
+                _ = watch_service.unwatch(outpoint, spk);
+            }
+        }
+    }
+
     pub(crate) fn is_breached(&self) -> bool {
         self.breached.load(Relaxed)
+    }
+
+    pub(crate) fn requires_abort(&self) -> bool {
+        self.is_breached() || self.unknown.load(Relaxed)
     }
 
     /// Signal the background thread to stop and wait for it to finish.

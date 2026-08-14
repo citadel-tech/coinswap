@@ -25,6 +25,8 @@ pub enum MakerBehavior {
     /// Normal operation (no test override).
     #[default]
     Normal,
+    /// Stop the watchtower before the maker starts its network services.
+    StopWatcherOnStartup,
     /// Receive contract sigs and save swapcoins, but skip funding broadcast
     /// and close the connection. Simulates last-maker misbehavior.
     SkipFundingBroadcast,
@@ -248,6 +250,9 @@ pub trait Maker: Send + Sync {
     /// Get the Bitcoin network.
     fn network(&self) -> bitcoin::Network;
 
+    /// Whether the watchtower can still protect newly committed funds.
+    fn is_watchtower_alive(&self) -> bool;
+
     /// Get the tweakable keypair for swap address derivation.
     fn get_tweakable_keypair(
         &self,
@@ -383,6 +388,17 @@ pub trait Maker: Send + Sync {
     /// Get the test behavior override.
     #[cfg(feature = "integration-test")]
     fn behavior(&self) -> MakerBehavior;
+}
+
+/// Fail closed after admission; persistence limits the check-to-broadcast race.
+pub(super) fn ensure_watchtower_alive(maker: &impl Maker) -> Result<(), MakerError> {
+    if maker.is_watchtower_alive() {
+        Ok(())
+    } else {
+        Err(MakerError::General(
+            "watchtower is down, refusing to commit funds",
+        ))
+    }
 }
 
 /// Maker configuration values.
@@ -560,6 +576,17 @@ fn handle_swap_details<M: Maker>(
     details: SwapDetails,
 ) -> Result<Option<MakerToTakerMessage>, MakerError> {
     state.expect_phase(&[SwapPhase::AwaitingSwapDetails])?;
+
+    if !maker.is_watchtower_alive() {
+        log::error!(
+            "[{}] Rejecting swap {} because the watchtower is down",
+            Maker::network_port(maker.as_ref()),
+            details.id
+        );
+        return Ok(Some(MakerToTakerMessage::AckSwapDetails(
+            AckSwapDetails::reject(),
+        )));
+    }
 
     log::info!(
         "[{}] Received SwapDetails: amount={}, timelock={}, protocol={:?}",

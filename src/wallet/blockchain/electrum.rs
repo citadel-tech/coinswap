@@ -284,6 +284,33 @@ impl std::fmt::Debug for Electrum {
 }
 
 impl Electrum {
+    pub(crate) fn spending_transaction(
+        &self,
+        outpoint: &OutPoint,
+        script: &Script,
+        expected_txid: Option<&Txid>,
+    ) -> Result<Option<Transaction>, WalletError> {
+        if let Some(txid) = expected_txid {
+            let tx = match self.call(|c| c.transaction_get(txid)) {
+                Ok(tx) => tx,
+                Err(WalletError::Electrum(ref e)) if is_unknown_txid(e) => return Ok(None),
+                Err(e) => return Err(e),
+            };
+            return Ok(tx
+                .input
+                .iter()
+                .any(|input| input.previous_output == *outpoint)
+                .then_some(tx));
+        }
+        for entry in self.call(|c| c.script_get_history(script))? {
+            let tx = self.call(|c| c.transaction_get(&entry.tx_hash))?;
+            if tx.input.iter().any(|i| i.previous_output == *outpoint) {
+                return Ok(Some(tx));
+            }
+        }
+        Ok(None)
+    }
+
     /// Connect to an Electrum server and derive the network from its genesis
     /// hash. Used by `AnyBlockchain::from_config`; each consumer gets its own
     /// connection.
@@ -420,6 +447,13 @@ impl Electrum {
     /// not the reconnect-on-failure path, which replaces a dead socket in place.
     pub fn reconnect(&self) -> Result<Self, WalletError> {
         Self::with_shutdown_flag(&self.config, self.shutdown.clone())
+    }
+
+    pub(crate) fn reconnect_with_shutdown(
+        &self,
+        shutdown: Arc<AtomicBool>,
+    ) -> Result<Self, WalletError> {
+        Self::with_shutdown_flag(&self.config, shutdown)
     }
 
     /// Times the transport was rebuilt since construction.
@@ -1330,7 +1364,9 @@ impl Blockchain for Electrum {
         if ping_due {
             state.last_ping = Some(std::time::Instant::now());
             if let Err(e) = self.call(|c| c.ping()) {
-                log::warn!("electrum notification ping failed: {e:?}");
+                // Without the ping the socket is never read and the watcher
+                // goes deaf while looking alive — loud, not a warning.
+                log::error!("electrum notification ping failed: {e:?}");
                 return None;
             }
         }

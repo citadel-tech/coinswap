@@ -35,8 +35,7 @@ use std::{
 ///    - Taker recovers outgoing (to Maker1) via timelock.
 ///    - Maker1 recovers outgoing (to Maker2) via timelock.
 ///    - Maker2 has nothing to recover (outgoing was never broadcast).
-#[test]
-fn test_legacy_timelock_only_recovery() {
+fn run_legacy_timelock_only_recovery(stop_watcher: bool) {
     // ---- Setup ----
     warn!("Running Test: Legacy Timelock-Only Recovery");
 
@@ -122,6 +121,17 @@ fn test_legacy_timelock_only_recovery() {
     );
     info!("Swap failed as expected: {:?}", swap_result.err().unwrap());
     taker.log_tracker_state();
+
+    if stop_watcher {
+        assert!(
+            makers[0]
+                .has_unfinished_outgoing_swapcoin(&summary.swap_id)
+                .unwrap(),
+            "Maker1 must have an outgoing swapcoin for the funded swap before watcher shutdown"
+        );
+        makers[0].watch_service.stop_watcher_for_test();
+        assert!(!makers[0].watch_service.is_alive());
+    }
 
     // Sleep budget: 60s maker idle timeout (test builds) + 225-block outer-hop
     // timelock (REFUND_LOCKTIME_BASE 150 + STEP 75, 2 makers) ≈ 135s at
@@ -258,6 +268,15 @@ fn test_legacy_timelock_only_recovery() {
     tracker_logger.stop();
     test_framework.stop();
     block_generation_handle.join().unwrap();
+}
+
+#[test]
+fn test_legacy_timelock_only_recovery() {
+    run_legacy_timelock_only_recovery(false);
+}
+
+pub(crate) fn run_legacy_timelock_recovery_without_watcher() {
+    run_legacy_timelock_only_recovery(true);
 }
 
 /// Test: Timelock-only recovery when last maker skips Taproot funding broadcast.

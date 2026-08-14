@@ -3,6 +3,7 @@
 use bitcoin::{OutPoint, ScriptBuf};
 use crossbeam_channel::{unbounded, RecvTimeoutError};
 use std::{
+    panic::{self, AssertUnwindSafe},
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc::{self, SendError, Sender as StdSender},
@@ -48,19 +49,54 @@ pub struct WatchService {
     handle: WatcherHandle,
     /// Role flag checked by the watcher and every Electrum connection it owns.
     watcher_shutdown: Arc<AtomicBool>,
+    /// Set while the watcher runs, then left false after any terminal exit.
+    alive: Arc<AtomicBool>,
 }
 
 impl WatchService {
-    /// Creates a service whose watcher and backend share the role shutdown flag.
-    pub fn new(
+    fn from_parts(
         tx: StdSender<WatcherCommand>,
         handle: JoinHandle<Result<(), WatcherError>>,
         watcher_shutdown: Arc<AtomicBool>,
+        alive: Arc<AtomicBool>,
     ) -> Self {
         Self {
             tx,
             handle: Arc::new(Mutex::new(Some(handle))),
             watcher_shutdown,
+            alive,
+        }
+    }
+
+    /// Spawns a watcher whose lifetime is reflected by [`Self::is_alive`].
+    pub(crate) fn spawn(
+        tx: StdSender<WatcherCommand>,
+        watcher_shutdown: Arc<AtomicBool>,
+        run: impl FnOnce() -> Result<(), WatcherError> + Send + 'static,
+    ) -> std::io::Result<Self> {
+        let alive = Arc::new(AtomicBool::new(true));
+        let thread_alive = alive.clone();
+        let handle = thread::Builder::new()
+            .name("Watcher thread".to_string())
+            .spawn(move || run_with_liveness(thread_alive, run))?;
+        Ok(Self::from_parts(tx, handle, watcher_shutdown, alive))
+    }
+
+    /// Sticky watcher availability; false only after channel-level death:
+    /// thread exit, send failure, reply disconnect, or shutdown. A reply —
+    /// even an error — is proof the thread answered. Does not probe backend
+    /// progress or individual registrations.
+    pub fn is_alive(&self) -> bool {
+        self.alive.load(Ordering::Acquire)
+    }
+
+    fn send_command(&self, command: WatcherCommand) -> Result<(), SendError<WatcherCommand>> {
+        match self.tx.send(command) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                self.alive.store(false, Ordering::Release);
+                Err(e)
+            }
         }
     }
 
@@ -71,7 +107,7 @@ impl WatchService {
         outpoint: OutPoint,
         script_pubkey: ScriptBuf,
     ) -> Result<(), SendError<WatcherCommand>> {
-        self.tx.send(WatcherCommand::RegisterWatchRequest {
+        self.send_command(WatcherCommand::RegisterWatchRequest {
             outpoint,
             script_pubkey,
         })
@@ -79,25 +115,32 @@ impl WatchService {
 
     /// Re-arms the watches for every live contract in the wallet. The registry
     /// is memory-only, so a restart begins with nothing watched. Blocks until
-    /// the rebuild (Core rescan included) replies, so startup never runs unwatched.
+    /// the rebuild (Core rescan included) replies, so startup never runs
+    /// unwatched. The watcher retries a failed rescan until it completes, so
+    /// an Err here means the watcher is gone or shutting down.
     pub fn rebuild_watches(&self, watches: Vec<(OutPoint, ScriptBuf)>) -> Result<(), WatcherError> {
         let (reply_tx, reply_rx) = unbounded();
-        self.tx
-            .send(WatcherCommand::RebuildWatches {
-                watches,
-                reply: reply_tx,
-            })
-            .map_err(|_| WatcherError::SendError)?;
+        self.send_command(WatcherCommand::RebuildWatches {
+            watches,
+            reply: reply_tx,
+        })
+        .map_err(|_| WatcherError::SendError)?;
         // No total cap: a deep Core rescan legitimately takes minutes. The loop
         // only exists so teardown can still cut the wait short.
         loop {
             match reply_rx.recv_timeout(WATCH_REPLY_TIMEOUT) {
                 Ok(result) => return result.map_err(WatcherError::General),
-                Err(RecvTimeoutError::Disconnected) => return Err(WatcherError::SendError),
+                Err(RecvTimeoutError::Disconnected) => {
+                    self.alive.store(false, Ordering::Release);
+                    return Err(WatcherError::SendError);
+                }
                 Err(RecvTimeoutError::Timeout) => {
                     if self.watcher_shutdown.load(Ordering::Relaxed) {
                         return Err(WatcherError::Shutdown);
                     }
+                    // A rescan legitimately takes minutes, but a stuck one is
+                    // invisible otherwise — keep the wait visible in logs.
+                    log::warn!("still waiting for watch rebuild reply");
                 }
             }
         }
@@ -114,12 +157,11 @@ impl WatchService {
     /// watcher disconnects the reply channel, and shutdown cuts the wait short.
     pub fn watch_request(&self, outpoint: OutPoint) -> Result<WatcherEvent, WatcherError> {
         let (reply_tx, reply_rx) = unbounded();
-        self.tx
-            .send(WatcherCommand::WatchRequest {
-                outpoint,
-                reply: reply_tx,
-            })
-            .map_err(|_| WatcherError::SendError)?;
+        self.send_command(WatcherCommand::WatchRequest {
+            outpoint,
+            reply: reply_tx,
+        })
+        .map_err(|_| WatcherError::SendError)?;
 
         loop {
             match reply_rx.recv_timeout(WATCH_REPLY_TIMEOUT) {
@@ -131,12 +173,17 @@ impl WatchService {
                     )));
                 }
                 Ok(event) => return Ok(event),
-                Err(RecvTimeoutError::Disconnected) => return Err(WatcherError::SendError),
+                Err(RecvTimeoutError::Disconnected) => {
+                    self.alive.store(false, Ordering::Release);
+                    return Err(WatcherError::SendError);
+                }
                 Err(RecvTimeoutError::Timeout) => {
                     if self.watcher_shutdown.load(Ordering::Relaxed) {
                         return Err(WatcherError::Shutdown);
                     }
-                    log::debug!("still waiting for watcher reply for {outpoint}");
+                    // Warn, not debug: an alive watcher that stops answering is
+                    // the wedge case liveness cannot see — it must show in logs.
+                    log::warn!("still waiting for watcher reply for {outpoint}");
                 }
             }
         }
@@ -151,7 +198,7 @@ impl WatchService {
         outpoint: OutPoint,
         script_pubkey: ScriptBuf,
     ) -> Result<(), SendError<WatcherCommand>> {
-        self.tx.send(WatcherCommand::Unwatch {
+        self.send_command(WatcherCommand::Unwatch {
             outpoint,
             script_pubkey,
         })
@@ -160,8 +207,9 @@ impl WatchService {
     /// Signals the watcher to shut down gracefully and joins its thread,
     /// aborting any Electrum retry backoff it may be stuck in.
     pub fn shutdown(&self) {
-        let _ = self.tx.send(WatcherCommand::Shutdown);
+        let _ = self.send_command(WatcherCommand::Shutdown);
         self.watcher_shutdown.store(true, Ordering::Relaxed);
+        self.alive.store(false, Ordering::Release);
         let handle = lock_debug!(self.handle.lock())
             .ok()
             .and_then(|mut h| h.take());
@@ -175,11 +223,40 @@ impl WatchService {
                 Err(_) => "panic",
             };
             crate::utill::log_shutdown_join_done("watch_service", &thread, outcome);
-            match result {
-                Ok(Ok(())) => {}
-                Ok(Err(e)) => log::error!("watcher thread exited with error: {e:?}"),
-                Err(_) => log::error!("watcher thread panicked"),
-            }
+            // The watcher wrapper logs the detailed result when it exits.
+        }
+    }
+
+    /// Makes the watcher unavailable without stopping its owner, allowing
+    /// integration tests to exercise fail-closed behavior.
+    #[cfg(feature = "integration-test")]
+    pub fn stop_watcher_for_test(&self) {
+        let _ = self.send_command(WatcherCommand::Shutdown);
+        self.alive.store(false, Ordering::Release);
+    }
+}
+
+/// Runs a watcher while publishing and logging its complete lifetime. Panics
+/// are logged here and then resumed so the retained join handle still reports
+/// the correct outcome during orderly shutdown.
+fn run_with_liveness(
+    alive: Arc<AtomicBool>,
+    run: impl FnOnce() -> Result<(), WatcherError>,
+) -> Result<(), WatcherError> {
+    let result = panic::catch_unwind(AssertUnwindSafe(run));
+    alive.store(false, Ordering::Release);
+    match result {
+        Ok(Ok(())) => {
+            log::info!("watcher thread exited cleanly");
+            Ok(())
+        }
+        Ok(Err(e)) => {
+            log::error!("watcher thread exited with error: {e:?}");
+            Err(e)
+        }
+        Err(payload) => {
+            log::error!("watcher thread panicked");
+            panic::resume_unwind(payload)
         }
     }
 }
@@ -204,13 +281,11 @@ pub fn start_maker_watch_service(
         None,
         shutdown.clone(),
     );
-
     // Makers don't run discovery, so pass an already-complete flag.
-    let handle = thread::Builder::new()
-        .name("Watcher thread".to_string())
-        .spawn(move || watcher.run(Arc::new(AtomicBool::new(true))))?;
-
-    Ok(WatchService::new(tx_requests, handle, shutdown))
+    WatchService::spawn(tx_requests, shutdown, move || {
+        watcher.run(Arc::new(AtomicBool::new(true)))
+    })
+    .map_err(WatcherError::from)
 }
 
 #[cfg(test)]
@@ -219,6 +294,58 @@ mod tests {
 
     fn dummy_handle() -> JoinHandle<Result<(), WatcherError>> {
         thread::spawn(|| Ok(()))
+    }
+
+    fn test_service(
+        tx: StdSender<WatcherCommand>,
+        handle: JoinHandle<Result<(), WatcherError>>,
+        watcher_shutdown: bool,
+    ) -> WatchService {
+        WatchService::from_parts(
+            tx,
+            handle,
+            Arc::new(AtomicBool::new(watcher_shutdown)),
+            Arc::new(AtomicBool::new(true)),
+        )
+    }
+
+    #[test]
+    fn liveness_tracks_the_complete_thread_lifetime() {
+        let alive = Arc::new(AtomicBool::new(true));
+        let thread_alive = alive.clone();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let handle = thread::spawn(move || {
+            run_with_liveness(thread_alive, || {
+                started_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+                Ok(())
+            })
+        });
+
+        started_rx.recv().unwrap();
+        assert!(alive.load(Ordering::Acquire));
+        release_tx.send(()).unwrap();
+        assert!(handle.join().unwrap().is_ok());
+        assert!(!alive.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn liveness_is_cleared_on_error_and_panic() {
+        let errored = Arc::new(AtomicBool::new(false));
+        let result = run_with_liveness(errored.clone(), || {
+            Err(WatcherError::General("test error".to_string()))
+        });
+        assert!(result.is_err());
+        assert!(!errored.load(Ordering::Acquire));
+
+        let panicked = Arc::new(AtomicBool::new(false));
+        let result = panic::catch_unwind({
+            let panicked = panicked.clone();
+            move || run_with_liveness(panicked, || panic!("test panic"))
+        });
+        assert!(result.is_err());
+        assert!(!panicked.load(Ordering::Acquire));
     }
 
     #[test]
@@ -231,7 +358,7 @@ mod tests {
             }
             Ok(())
         });
-        let service = WatchService::new(tx, handle, Arc::new(AtomicBool::new(false)));
+        let service = test_service(tx, handle, false);
         let event = service.watch_request(OutPoint::null()).unwrap();
         assert!(matches!(event, WatcherEvent::NoOutpoint));
     }
@@ -239,7 +366,7 @@ mod tests {
     #[test]
     fn shutdown_flag_cuts_wait_short() {
         let (tx, rx) = mpsc::channel();
-        let service = WatchService::new(tx, dummy_handle(), Arc::new(AtomicBool::new(true)));
+        let service = test_service(tx, dummy_handle(), true);
         let err = service.watch_request(OutPoint::null()).unwrap_err();
         assert!(matches!(err, WatcherError::Shutdown));
         assert_eq!(rx.try_iter().count(), 1);
@@ -249,9 +376,10 @@ mod tests {
     fn dead_watcher_errors_without_retry() {
         let (tx, rx) = mpsc::channel::<WatcherCommand>();
         drop(rx);
-        let service = WatchService::new(tx, dummy_handle(), Arc::new(AtomicBool::new(false)));
+        let service = test_service(tx, dummy_handle(), false);
         let err = service.watch_request(OutPoint::null()).unwrap_err();
         assert!(matches!(err, WatcherError::SendError));
+        assert!(!service.is_alive());
     }
 
     #[test]
@@ -263,7 +391,7 @@ mod tests {
             }
             Ok(())
         });
-        let service = WatchService::new(tx, handle, Arc::new(AtomicBool::new(false)));
+        let service = test_service(tx, handle, false);
         let event = service.watch_request(OutPoint::null()).unwrap();
         assert!(matches!(event, WatcherEvent::NoOutpoint));
     }
@@ -277,13 +405,13 @@ mod tests {
             }
             Ok(())
         });
-        let service = WatchService::new(tx, handle, Arc::new(AtomicBool::new(false)));
+        let service = test_service(tx, handle, false);
         let err = service.watch_request(OutPoint::null()).unwrap_err();
         assert!(matches!(err, WatcherError::General(_)));
     }
 
     #[test]
-    fn rebuild_watches_blocks_until_reply() {
+    fn rebuild_error_reply_keeps_liveness() {
         let (tx, rx) = mpsc::channel();
         let (reply_hold_tx, reply_hold_rx) = mpsc::channel();
         let handle = thread::spawn(move || {
@@ -292,7 +420,7 @@ mod tests {
             }
             Ok(())
         });
-        let service = WatchService::new(tx, handle, Arc::new(AtomicBool::new(false)));
+        let service = test_service(tx, handle, false);
         let (done_tx, done_rx) = mpsc::channel();
         let svc = service.clone();
         let waiter = thread::spawn(move || _ = done_tx.send(svc.rebuild_watches(Vec::new())));
@@ -300,15 +428,17 @@ mod tests {
         // The watcher has the command but has not replied, so the caller must
         // still be blocked.
         assert!(done_rx.recv_timeout(Duration::from_millis(100)).is_err());
-        _ = reply.send(Ok(()));
-        assert!(done_rx.recv().unwrap().is_ok());
+        _ = reply.send(Err("rescan failed".to_string()));
+        assert!(done_rx.recv().unwrap().is_err());
+        // An answered reply — even an error — is not channel-level death.
+        assert!(service.is_alive());
         waiter.join().unwrap();
     }
 
     #[test]
     fn rebuild_watches_returns_shutdown_without_reply() {
         let (tx, _rx) = mpsc::channel();
-        let service = WatchService::new(tx, dummy_handle(), Arc::new(AtomicBool::new(true)));
+        let service = test_service(tx, dummy_handle(), true);
         let err = service.rebuild_watches(Vec::new()).unwrap_err();
         assert!(matches!(err, WatcherError::Shutdown));
     }

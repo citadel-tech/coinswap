@@ -10,6 +10,7 @@ use std::{
         mpsc::{Receiver as StdReceiver, RecvTimeoutError},
         Arc,
     },
+    thread,
 };
 
 use bitcoin::{consensus::deserialize, Block, Network, OutPoint, ScriptBuf, Transaction};
@@ -164,7 +165,7 @@ impl<R: Role> Watcher<R> {
             R::RUN_DISCOVERY
         );
 
-        let discovery_shutdown = self.shutdown.clone();
+        let discovery_shutdown = Arc::new(AtomicBool::new(false));
         let registry = self.registry.clone();
         let nostr_relays = self.nostr_relays.clone();
         let nostr_tor_config = self.nostr_tor_config.clone();
@@ -174,7 +175,9 @@ impl<R: Role> Watcher<R> {
             if R::RUN_DISCOVERY {
                 if let Some(nostr_tor_config) = nostr_tor_config {
                     // Discovery requires it's own dedicated backend to not overlap with regular watch requests.
-                    let chain = self.blockchain.new_connection()?;
+                    let chain = self
+                        .blockchain
+                        .new_connection_with_shutdown(discovery_shutdown.clone())?;
                     // The thread runs until shutdown, so its outcome is only
                     // known at the join below.
                     discovery_handle = Some(s.spawn(move || {
@@ -296,15 +299,18 @@ impl<R: Role> Watcher<R> {
                         self.pending_subscribes.push((*outpoint, spk.clone()));
                     }
                 }
-                // Electrum replays each script's whole history as `TxSeen`, so a
-                // spend from while we were down records itself. Core has no such
-                // feed and needs the blocks read back.
-                let result = if self.blockchain.is_electrum() {
-                    Ok(())
-                } else {
-                    self.rescan_for_missed_spends(&watches)
-                };
-                _ = reply.send(result);
+                // Electrum replays each script's whole history as `TxSeen`.
+                // Core has no history feed, so a failed rescan retries until
+                // it completes — the reply only fails on shutdown. A node
+                // pruned past a live contract hangs startup here, loudly.
+                if !self.blockchain.is_electrum() {
+                    while !self.shutdown.load(Ordering::Relaxed)
+                        && self.rescan_for_missed_spends(&watches).is_err()
+                    {
+                        thread::sleep(HEART_BEAT_INTERVAL);
+                    }
+                }
+                _ = reply.send(Ok(()));
             }
             WatcherCommand::WatchRequest { outpoint, reply } => {
                 log::info!("Intercepted watch request: {outpoint}");
@@ -456,7 +462,9 @@ impl<R: Role> Watcher<R> {
                     false
                 }
                 Err(e) => {
-                    log::warn!("re-subscribe still failing for {outpoint}: {e}");
+                    // The outpoint is unwatched while this fails; loud so a
+                    // wedged backend shows before a swap depends on the watch.
+                    log::error!("re-subscribe still failing for {outpoint}: {e}");
                     true
                 }
             }
