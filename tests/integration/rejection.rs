@@ -1368,7 +1368,6 @@ fn test_taproot_rejection(behavior: MakerBehavior, expected_error: &str) {
     block_generation_handle.join().unwrap();
 }
 
-
 #[test]
 fn test_maker_rejects_insufficient_liquidity_from_active_reservation() {
     warn!("Running Test: InsufficientLiquidity from active reservation");

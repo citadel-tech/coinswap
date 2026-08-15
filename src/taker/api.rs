@@ -1559,25 +1559,24 @@ impl Taker {
                             ));
                         }
                         swap_details.amount += Amount::from_sat(1);
-                        return Err(TakerError::General(match self
-                            .resend_swap_details(&maker_address, &swap_details)
-                        {
-                            Ok(MakerToTakerMessage::AckSwapDetails(ack)) => {
-                                if ack.tweakable_point.is_none() {
-                                    "Maker rejected mutated resent SwapDetails".to_string()
-                                } else {
-                                    "Maker accepted mutated resent SwapDetails".to_string()
+                        return Err(TakerError::General(
+                            match self.resend_swap_details(&maker_address, &swap_details) {
+                                Ok(MakerToTakerMessage::AckSwapDetails(ack)) => {
+                                    if ack.tweakable_point.is_none() {
+                                        "Maker rejected mutated resent SwapDetails".to_string()
+                                    } else {
+                                        "Maker accepted mutated resent SwapDetails".to_string()
+                                    }
                                 }
-                            }
-                            Ok(other) => format!(
-                                "Maker rejected mutated resent SwapDetails: {:?}",
-                                other
-                            ),
-                            Err(e) => format!(
-                                "Maker rejected mutated resent SwapDetails: {:?}",
-                                e
-                            ),
-                        }));
+                                Ok(other) => format!(
+                                    "Maker rejected mutated resent SwapDetails: {:?}",
+                                    other
+                                ),
+                                Err(e) => {
+                                    format!("Maker rejected mutated resent SwapDetails: {:?}", e)
+                                }
+                            },
+                        ));
                     }
 
                     #[cfg(feature = "integration-test")]

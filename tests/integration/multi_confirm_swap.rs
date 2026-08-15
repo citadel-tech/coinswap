@@ -48,10 +48,7 @@ fn test_taproot_multi_confirm_swap() {
     );
 }
 
-fn run_multi_confirm_swap(
-    protocol: ProtocolVersion,
-    makers_config_map: Vec<(u16, Option<u16>)>,
-) {
+fn run_multi_confirm_swap(protocol: ProtocolVersion, makers_config_map: Vec<(u16, Option<u16>)>) {
     let taker_behavior = vec![TakerBehavior::Normal];
     let maker_behaviors = vec![MakerBehavior::Normal, MakerBehavior::Normal];
 

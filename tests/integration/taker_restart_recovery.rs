@@ -197,6 +197,19 @@ fn run_taker_restart_recovery(protocol: ProtocolVersion, last_maker: MakerBehavi
         balances.spendable,
     );
 
+    // Everything the failed swap cost the taker is fees, pinned per protocol
+    // from real runs. A recovery that dropped the swapcoins without returning
+    // the funds would still pass the zero-balance asserts, but not this one.
+    let expected_diff = match protocol {
+        ProtocolVersion::Legacy => 7237,
+        ProtocolVersion::Taproot => 6367,
+    };
+    assert_eq!(
+        balance_diff.to_sat(),
+        expected_diff,
+        "taker did not get its funds back after restart recovery"
+    );
+
     for (i, maker) in makers.iter().enumerate() {
         maker
             .wallet
