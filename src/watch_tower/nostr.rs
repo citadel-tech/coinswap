@@ -25,7 +25,7 @@ use tungstenite::{stream::MaybeTlsStream, Message};
 
 use crate::{
     lock_debug,
-    maker::nostr::{swap_kind, connect_nostr_websocket, EXPIRATION_SECS},
+    maker::nostr::{connect_nostr_websocket, swap_kind, EXPIRATION_SECS},
     wallet::{AnyBlockchain, Blockchain},
     watch_tower::{
         registry_storage::FileRegistry,

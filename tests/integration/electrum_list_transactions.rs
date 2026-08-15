@@ -9,8 +9,8 @@ use bitcoin::Amount;
 use bitcoind::bitcoincore_rpc::{
     json::GetTransactionResultDetailCategory as Category, RpcApi as _,
 };
-use openswap::{taker::TakerBehavior, utill::MIN_FEE_RATE, wallet::AddressType};
 use log::info;
+use openswap::{taker::TakerBehavior, utill::MIN_FEE_RATE, wallet::AddressType};
 
 use super::test_framework::*;
 

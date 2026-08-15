@@ -5,6 +5,7 @@
 //! - Manual coin selection with regular/swap coin clause testing
 
 use bitcoin::{Amount, OutPoint};
+use log::{info, warn};
 use openswap::{
     maker::start_server,
     protocol::common_messages::ProtocolVersion,
@@ -12,7 +13,6 @@ use openswap::{
     utill::MIN_FEE_RATE,
     wallet::{AddressType, WalletError},
 };
-use log::{info, warn};
 use std::{sync::atomic::Ordering::Relaxed, thread, time::Duration};
 
 use super::test_framework::*;

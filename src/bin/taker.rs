@@ -1,6 +1,7 @@
 use bitcoin::Amount;
 use bitcoind::bitcoincore_rpc::Auth;
 use clap::Parser;
+use log::LevelFilter;
 use openswap::{
     lock_debug,
     protocol::ProtocolVersion,
@@ -11,7 +12,6 @@ use openswap::{
     utill::{parse_proxy_auth, print_new_wallet_seed, setup_taker_logger, UTXO},
     wallet::{AddressType, CoreRpcConfig, Wallet},
 };
-use log::LevelFilter;
 use serde_json::{json, to_string_pretty};
 use std::{path::PathBuf, str::FromStr};
 

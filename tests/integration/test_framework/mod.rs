@@ -35,6 +35,8 @@ use bitcoind::{
     BitcoinD,
 };
 
+use electrsd::ElectrsD;
+use log::info;
 use openswap::{
     maker::{MakerBehavior, MakerServer, MakerServerConfig},
     protocol::common_messages::{ProtocolVersion, OPENSWAP_PORT},
@@ -45,8 +47,6 @@ use openswap::{
         CoreRpcConfig, Electrum, ElectrumConfig,
     },
 };
-use electrsd::ElectrsD;
-use log::info;
 
 const BITCOIN_VERSION: &str = "28.1";
 

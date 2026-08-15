@@ -6,13 +6,13 @@
 
 use super::test_framework::*;
 use bitcoin::Amount;
+use log::info;
 use openswap::{
     maker::{start_server, MakerBehavior},
     protocol::common_messages::ProtocolVersion,
     taker::{SwapParams, TakerBehavior},
     wallet::AddressType,
 };
-use log::info;
 use std::{sync::atomic::Ordering::Relaxed, thread};
 
 /// Exact post-swap balances for one protocol run. Legacy and taproot spend

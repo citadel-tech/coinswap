@@ -1,12 +1,12 @@
 //! Stress and race-oriented tests for offerbook sync behavior (taker path).
 
 use bitcoin::Amount;
+use log::warn;
 use openswap::{
     maker::{start_server, MakerBehavior},
     taker::{MakerProtocol, MakerState, TakerBehavior},
     wallet::AddressType,
 };
-use log::warn;
 use std::{
     sync::{atomic::Ordering::Relaxed, Arc},
     thread,
