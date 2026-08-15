@@ -17,6 +17,8 @@ jobs:
       run: ./docker-setup build
 
     - name: Test makerd
+      # TODO(rebrand): switch to openswap/openswap once the image is published
+      # on Docker Hub; until then pull the last published coinswap image.
       run: docker run --rm coinswap/coinswap:latest makerd --help
 
     - name: Test taker
@@ -30,5 +32,5 @@ jobs:
     - name: Check service status
       run: ./docker-setup status
 
-    - name: Stop Coinswap stack
+    - name: Stop OpenSwap stack
       run: ./docker-setup stop

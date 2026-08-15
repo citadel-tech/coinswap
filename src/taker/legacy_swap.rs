@@ -54,7 +54,7 @@ impl Taker {
         let secp = Secp256k1::new();
         let mut swapcoins = Vec::new();
         let mut contract_data = Vec::new();
-        let mut coinswap_addresses = Vec::new();
+        let mut openswap_addresses = Vec::new();
 
         for (multisig_pubkey, hashlock_pubkey) in
             multisig_pubkeys.iter().zip(hashlock_pubkeys.iter())
@@ -77,7 +77,7 @@ impl Taker {
                 &locktime,
             );
 
-            coinswap_addresses.push(bitcoin::Address::p2wsh(&multisig_redeemscript, network));
+            openswap_addresses.push(bitcoin::Address::p2wsh(&multisig_redeemscript, network));
             contract_data.push((
                 my_multisig_privkey,
                 *multisig_pubkey,
@@ -88,7 +88,7 @@ impl Taker {
 
         let funding_result = wallet.create_funding_txes(
             send_amount,
-            &coinswap_addresses,
+            &openswap_addresses,
             MIN_FEE_RATE,
             manually_selected_outpoints,
             None,
@@ -132,7 +132,7 @@ impl Taker {
         Ok(swapcoins)
     }
 
-    /// Execute the multi-hop Legacy coinswap flow.
+    /// Execute the multi-hop Legacy openswap flow.
     pub(crate) fn exchange_legacy(&mut self) -> Result<(), TakerError> {
         log::info!("Starting multi-hop Legacy swap with ProofOfFunding flow");
 
@@ -1155,7 +1155,7 @@ impl Taker {
             }
         }
 
-        let next_coinswap_info: Vec<NextHopInfo> = next_multisig_pubkeys
+        let next_openswap_info: Vec<NextHopInfo> = next_multisig_pubkeys
             .iter()
             .zip(next_hashlock_pubkeys.iter())
             .zip(next_multisig_nonces.iter())
@@ -1176,7 +1176,7 @@ impl Taker {
         let pof = ProofOfFunding {
             id: swap_id.to_string(),
             confirmed_funding_txes,
-            next_coinswap_info,
+            next_openswap_info,
             refund_locktime,
             contract_feerate: MIN_FEE_RATE,
         };

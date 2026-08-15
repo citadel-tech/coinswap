@@ -5,14 +5,14 @@
 //! - Manual coin selection with regular/swap coin clause testing
 
 use bitcoin::{Amount, OutPoint};
-use coinswap::{
+use log::{info, warn};
+use openswap::{
     maker::start_server,
     protocol::common_messages::ProtocolVersion,
     taker::{SwapParams, TakerBehavior},
     utill::MIN_FEE_RATE,
     wallet::{AddressType, WalletError},
 };
-use log::{info, warn};
 use std::{sync::atomic::Ordering::Relaxed, thread, time::Duration};
 
 use super::test_framework::*;
@@ -109,7 +109,7 @@ fn test_address_grouping_behavior() {
     // Sync wallet to see all the UTXOs we just created
     {
         let mut wallet = maker.wallet.write().unwrap();
-        wallet.sync_and_save(&coinswap::utill::NO_SHUTDOWN).unwrap();
+        wallet.sync_and_save(&openswap::utill::NO_SHUTDOWN).unwrap();
     }
 
     println!("\n=== Available UTXO Summary ===");
@@ -222,23 +222,23 @@ fn test_separated_utxo_coin_selection() {
     // Wait for both makers setup completion
     wait_for_makers_setup(&makers, 120);
 
-    // Perform coinswap to create swap coins
-    info!("Performing coinswap to create swap coins");
+    // Perform openswap to create swap coins
+    info!("Performing openswap to create swap coins");
     let swap_params = SwapParams::new(ProtocolVersion::Legacy, Amount::from_sat(35000000), 2)
         .with_tx_count(1)
         .with_required_confirms(1);
 
     let summary = taker
-        .prepare_coinswap(swap_params)
-        .expect("prepare_coinswap should succeed");
+        .prepare_swap(swap_params)
+        .expect("prepare_swap should succeed");
     taker
-        .start_coinswap(&summary.swap_id)
-        .expect("coinswap should succeed");
+        .start_swap(&summary.swap_id)
+        .expect("openswap should succeed");
 
     // Sync both maker wallets
     for maker in &makers {
         let mut wallet = maker.wallet.write().unwrap();
-        wallet.sync_and_save(&coinswap::utill::NO_SHUTDOWN).unwrap();
+        wallet.sync_and_save(&openswap::utill::NO_SHUTDOWN).unwrap();
     }
 
     println!("=== Testing Separated UTXO Coin Selection ===");
@@ -346,7 +346,7 @@ fn test_separated_utxo_coin_selection() {
     // Sync wallet and retry
     {
         let mut wallet = maker.wallet.write().unwrap();
-        wallet.sync_and_save(&coinswap::utill::NO_SHUTDOWN).unwrap();
+        wallet.sync_and_save(&openswap::utill::NO_SHUTDOWN).unwrap();
         let updated_balances = wallet.get_balances().unwrap();
 
         println!("Updated balances after funding:");
@@ -435,7 +435,7 @@ fn test_manual_coinselection() {
         .get_wallet()
         .write()
         .unwrap()
-        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .sync_and_save(&openswap::utill::NO_SHUTDOWN)
         .unwrap();
 
     let all_utxos = taker.get_wallet().read().unwrap().list_all_utxo();
@@ -469,9 +469,9 @@ fn test_manual_coinselection() {
         .with_utxos(manually_selected_utxos.clone());
 
     let summary = taker
-        .prepare_coinswap(swap_params)
-        .expect("prepare_coinswap should succeed");
-    let _ = taker.start_coinswap(&summary.swap_id);
+        .prepare_swap(swap_params)
+        .expect("prepare_swap should succeed");
+    let _ = taker.start_swap(&summary.swap_id);
 
     // After Swap is done, wait for maker threads to conclude.
     makers
@@ -481,7 +481,7 @@ fn test_manual_coinselection() {
         .into_iter()
         .for_each(|thread| thread.join().unwrap());
 
-    info!("All coinswaps processed successfully. Transaction complete.");
+    info!("All openswaps processed successfully. Transaction complete.");
 
     thread::sleep(Duration::from_secs(10));
 
@@ -490,12 +490,12 @@ fn test_manual_coinselection() {
         .get_wallet()
         .write()
         .unwrap()
-        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .sync_and_save(&openswap::utill::NO_SHUTDOWN)
         .unwrap();
 
     for maker in makers.iter() {
         let mut wallet = maker.wallet.write().unwrap();
-        wallet.sync_and_save(&coinswap::utill::NO_SHUTDOWN).unwrap();
+        wallet.sync_and_save(&openswap::utill::NO_SHUTDOWN).unwrap();
     }
 
     // Check that the originally manually selected UTXOs were spent
@@ -514,11 +514,11 @@ fn test_manual_coinselection() {
 
     assert!(
         manual_utxos_spent,
-        "Not all manually selected UTXOs were spent in the coinswap"
+        "Not all manually selected UTXOs were spent in the openswap"
     );
 
     println!(
-        "\nTest 1 : All {} originally selected UTXOs were used in the coinswap",
+        "\nTest 1 : All {} originally selected UTXOs were used in the openswap",
         manually_selected_utxos.len()
     );
 

@@ -14,11 +14,11 @@
 //! If the Taker doesn't return, the Makers broadcast the contract transactions and reclaim
 //! their funds via timelock.
 //!
-//! The Taker after coming live again will see unfinished coinswaps in its wallet.
+//! The Taker after coming live again will see unfinished openswaps in its wallet.
 //! It can reclaim funds via broadcasting contract transactions and claiming via timelock.
 
 use bitcoin::Amount;
-use coinswap::{
+use openswap::{
     maker::{start_server, MakerBehavior},
     protocol::common_messages::ProtocolVersion,
     taker::{SwapParams, TakerBehavior},
@@ -123,14 +123,14 @@ pub(crate) fn run_abort1<B: TestBackend>(protocol: ProtocolVersion, expected: &E
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
     }
 
     verify_maker_pre_swap_balances(&makers);
 
-    // Initiate Coinswap
-    info!("Initiating coinswap protocol");
+    // Initiate OpenSwap
+    info!("Initiating openswap protocol");
 
     let swap_params = SwapParams::new(protocol, Amount::from_sat(500000), 2)
         .with_tx_count(3)
@@ -146,14 +146,14 @@ pub(crate) fn run_abort1<B: TestBackend>(protocol: ProtocolVersion, expected: &E
 
     // Prepare should succeed; execution should fail with DropAfterFundsBroadcast
     let summary = taker
-        .prepare_coinswap(swap_params)
+        .prepare_swap(swap_params)
         .expect("Prepare should succeed");
-    let swap_result = taker.start_coinswap(&summary.swap_id);
+    let swap_result = taker.start_swap(&summary.swap_id);
     let swap_error = swap_result.expect_err("Swap should fail due to test behavior");
     assert!(
         matches!(
             &swap_error,
-            coinswap::taker::error::TakerError::General(message)
+            openswap::taker::error::TakerError::General(message)
                 if message == "Test: dropped after contract exchange"
         ),
         "Swap failed before the injected abort: {:?}",
@@ -173,7 +173,7 @@ pub(crate) fn run_abort1<B: TestBackend>(protocol: ProtocolVersion, expected: &E
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
         let maker_balances = maker.wallet.read().unwrap().get_balances().unwrap();
         info!(
@@ -214,7 +214,7 @@ pub(crate) fn run_abort1<B: TestBackend>(protocol: ProtocolVersion, expected: &E
         .get_wallet()
         .write()
         .unwrap()
-        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .sync_and_save(&openswap::utill::NO_SHUTDOWN)
         .unwrap();
 
     // Verify taker balance
@@ -268,7 +268,7 @@ pub(crate) fn run_abort1<B: TestBackend>(protocol: ProtocolVersion, expected: &E
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
         let maker_balances = maker.wallet.read().unwrap().get_balances().unwrap();
 
@@ -386,7 +386,7 @@ fn electrum_sweeps_after_breach() {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
     }
 
@@ -400,10 +400,10 @@ fn electrum_sweeps_after_breach() {
 
     let log_path = format!("{}/taker/debug.log", test_framework.temp_dir.display());
     let summary = taker
-        .prepare_coinswap(swap_params)
+        .prepare_swap(swap_params)
         .expect("Prepare should succeed");
 
-    let swap_result = taker.start_coinswap(&summary.swap_id);
+    let swap_result = taker.start_swap(&summary.swap_id);
     assert!(
         swap_result.is_err(),
         "Swap should fail once the last maker closes"
@@ -423,7 +423,7 @@ fn electrum_sweeps_after_breach() {
         .get_wallet()
         .write()
         .unwrap()
-        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .sync_and_save(&openswap::utill::NO_SHUTDOWN)
         .unwrap();
     let taker_balances = taker.get_wallet().read().unwrap().get_balances().unwrap();
     let swapcoins_left = taker
@@ -514,7 +514,7 @@ fn electrum_discards_only_on_confirmed_spend() {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
     }
 
@@ -526,10 +526,10 @@ fn electrum_discards_only_on_confirmed_spend() {
 
     let log_path = format!("{}/taker/debug.log", test_framework.temp_dir.display());
     let summary = taker
-        .prepare_coinswap(swap_params)
+        .prepare_swap(swap_params)
         .expect("Prepare should succeed");
 
-    let swap_result = taker.start_coinswap(&summary.swap_id);
+    let swap_result = taker.start_swap(&summary.swap_id);
     assert!(
         swap_result.is_err(),
         "Swap should fail once the last maker closes"

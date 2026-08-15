@@ -3,7 +3,7 @@
 //! Route: Taker -> Maker1 (Normal) -> Maker2 (CloseAfterSweep) -> Taker
 //!
 //! Scenario:
-//! 1. Taker initiates a Taproot coinswap with 2 makers.
+//! 1. Taker initiates a Taproot openswap with 2 makers.
 //! 2. Funding transactions are broadcast and confirmed.
 //! 3. Maker2 drops the connection after completing its sweep.
 //! 4. Taker detects the failure and calls `recover_active_swap()`.
@@ -11,7 +11,7 @@
 //! 6. After blocks mature, verify: taker recovered funds (minus fees), no contract balance.
 
 use bitcoin::Amount;
-use coinswap::{
+use openswap::{
     maker::{start_server, MakerBehavior},
     protocol::common_messages::ProtocolVersion,
     taker::{SwapParams, TakerBehavior},
@@ -83,7 +83,7 @@ fn test_taproot_hashlock_recovery() {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
     }
 
@@ -97,7 +97,7 @@ fn test_taproot_hashlock_recovery() {
         Duration::from_secs(10),
     );
 
-    // Swap params for coinswap (Taproot)
+    // Swap params for openswap (Taproot)
     let swap_params = SwapParams::new(ProtocolVersion::Taproot, Amount::from_sat(500000), 2)
         .with_tx_count(3)
         .with_required_confirms(1);
@@ -106,9 +106,9 @@ fn test_taproot_hashlock_recovery() {
 
     // Prepare should succeed; execution should fail because Maker2 drops after sweep
     let summary = taker
-        .prepare_coinswap(swap_params)
+        .prepare_swap(swap_params)
         .expect("Prepare should succeed");
-    let swap_result = taker.start_coinswap(&summary.swap_id);
+    let swap_result = taker.start_swap(&summary.swap_id);
     assert!(
         swap_result.is_err(),
         "Swap should fail due to Maker2 closing after sweep"
@@ -128,7 +128,7 @@ fn test_taproot_hashlock_recovery() {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
         let maker_balances = maker.wallet.read().unwrap().get_balances().unwrap();
         info!(
@@ -167,7 +167,7 @@ fn test_taproot_hashlock_recovery() {
         .get_wallet()
         .write()
         .unwrap()
-        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .sync_and_save(&openswap::utill::NO_SHUTDOWN)
         .unwrap();
 
     // Verify taker balance
@@ -220,7 +220,7 @@ fn test_taproot_hashlock_recovery() {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
         let maker_balances = maker.wallet.read().unwrap().get_balances().unwrap();
         let original = maker_spendable_balance[i];

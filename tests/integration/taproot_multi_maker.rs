@@ -1,11 +1,11 @@
-//! Integration test for multi-maker coinswap with Taproot protocol.
+//! Integration test for multi-maker openswap with Taproot protocol.
 //!
 //! Setup: 1 taker with Normal behavior, 4 makers with Normal behavior.
 //! Protocol: Taproot (MuSig2), AddressType::P2TR.
 //! The taker routes the swap through all 4 makers.
 
 use bitcoin::Amount;
-use coinswap::{
+use openswap::{
     maker::start_server,
     protocol::common_messages::ProtocolVersion,
     taker::{SwapParams, TakerBehavior},
@@ -18,9 +18,9 @@ use log::{info, warn};
 use std::{sync::atomic::Ordering::Relaxed, thread};
 
 #[test]
-fn test_taproot_multi_maker_coinswap() {
+fn test_taproot_multi_maker_openswap() {
     // ---- Setup ----
-    warn!("Running Test: Multi-Maker Coinswap with Taproot (MuSig2) Protocol - 4 Makers");
+    warn!("Running Test: Multi-Maker OpenSwap with Taproot (MuSig2) Protocol - 4 Makers");
 
     let makers_config_map = vec![
         (7802, Some(20801)),
@@ -78,14 +78,14 @@ fn test_taproot_multi_maker_coinswap() {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
     }
 
     let maker_spendable_balance = verify_maker_pre_swap_balances(&makers);
     log::info!("Starting end-to-end swap test with Taproot protocol and 4 makers...");
 
-    // Swap params for coinswap (Taproot) with 4 makers
+    // Swap params for openswap (Taproot) with 4 makers
     let swap_params = SwapParams::new(ProtocolVersion::Taproot, Amount::from_sat(500000), 4)
         .with_tx_count(3)
         .with_required_confirms(1);
@@ -95,30 +95,30 @@ fn test_taproot_multi_maker_coinswap() {
 
     // Prepare the swap (negotiate with makers, get fee summary)
     let summary = taker
-        .prepare_coinswap(swap_params)
-        .expect("Failed to prepare Taproot coinswap with 4 makers");
+        .prepare_swap(swap_params)
+        .expect("Failed to prepare Taproot openswap with 4 makers");
     log::info!("Swap summary: {:?}", summary);
 
     // Execute the swap
-    match taker.start_coinswap(&summary.swap_id) {
+    match taker.start_swap(&summary.swap_id) {
         Ok(report) => {
-            log::info!("Coinswap (Taproot, 4 makers) completed successfully!");
+            log::info!("OpenSwap (Taproot, 4 makers) completed successfully!");
             log::info!("Swap report: {:?}", report);
         }
         Err(e) => {
-            log::error!("Coinswap (Taproot, 4 makers) failed: {:?}", e);
-            panic!("Coinswap (Taproot, 4 makers) failed: {:?}", e);
+            log::error!("OpenSwap (Taproot, 4 makers) failed: {:?}", e);
+            panic!("OpenSwap (Taproot, 4 makers) failed: {:?}", e);
         }
     }
 
-    log::info!("All coinswaps processed successfully. Transaction complete.");
+    log::info!("All openswaps processed successfully. Transaction complete.");
 
     // Sync wallets and verify results
     taker
         .get_wallet()
         .write()
         .unwrap()
-        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .sync_and_save(&openswap::utill::NO_SHUTDOWN)
         .unwrap();
 
     // Mine a block to confirm the sweep transactions
@@ -127,7 +127,7 @@ fn test_taproot_multi_maker_coinswap() {
     // Synchronize each maker's wallet
     for maker in makers.iter() {
         let mut wallet = maker.wallet.write().unwrap();
-        wallet.sync_and_save(&coinswap::utill::NO_SHUTDOWN).unwrap();
+        wallet.sync_and_save(&openswap::utill::NO_SHUTDOWN).unwrap();
     }
 
     let taker_balances_after = taker.get_wallet().read().unwrap().get_balances().unwrap();

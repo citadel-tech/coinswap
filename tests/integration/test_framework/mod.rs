@@ -1,4 +1,4 @@
-//! A Framework to write functional tests for the Coinswap Protocol.
+//! A Framework to write functional tests for the OpenSwap Protocol.
 //!
 //! This framework uses [bitcoind] to automatically spawn regtest node in the background.
 //!
@@ -35,9 +35,11 @@ use bitcoind::{
     BitcoinD,
 };
 
-use coinswap::{
+use electrsd::ElectrsD;
+use log::info;
+use openswap::{
     maker::{MakerBehavior, MakerServer, MakerServerConfig},
-    protocol::common_messages::{ProtocolVersion, COINSWAP_PORT},
+    protocol::common_messages::{ProtocolVersion, OPENSWAP_PORT},
     taker::{Taker, TakerBehavior, TakerInitConfig},
     utill::{check_tor_status, get_ephemeral_address, setup_logger},
     wallet::{
@@ -45,8 +47,6 @@ use coinswap::{
         CoreRpcConfig, Electrum, ElectrumConfig,
     },
 };
-use electrsd::ElectrsD;
-use log::info;
 
 const BITCOIN_VERSION: &str = "28.1";
 
@@ -305,16 +305,16 @@ pub fn fund_taker(
 /// Poll a wallet, calling `sync_and_save`, until its `regular` balance reaches `expected_regular`
 /// or `timeout_secs` elapses. Returns the last observed balances either way.
 fn wait_for_balance(
-    wallet: &std::sync::Arc<std::sync::RwLock<coinswap::wallet::Wallet>>,
+    wallet: &std::sync::Arc<std::sync::RwLock<openswap::wallet::Wallet>>,
     expected_regular: Amount,
     timeout_secs: u64,
-) -> coinswap::wallet::Balances {
+) -> openswap::wallet::Balances {
     let deadline = Instant::now() + Duration::from_secs(timeout_secs);
     let mut last;
     loop {
         {
             let mut w = wallet.write().unwrap();
-            w.sync_and_save(&coinswap::utill::NO_SHUTDOWN).unwrap();
+            w.sync_and_save(&openswap::utill::NO_SHUTDOWN).unwrap();
             last = w.get_balances().unwrap();
         }
         if last.regular >= expected_regular || Instant::now() >= deadline {
@@ -457,25 +457,25 @@ pub const TOR_CONTROL_PORT: u16 = 9051;
 /// Tor SOCKS port used by the Tor integration tests.
 pub const TOR_SOCKS_PORT: u16 = 9050;
 
-/// Control-port password for the Tor tests, from `COINSWAP_TOR_PASSWORD`
+/// Control-port password for the Tor tests, from `OPENSWAP_TOR_PASSWORD`
 /// (empty when unset, which matches a cookie-less `HashedControlPassword ""`).
 pub fn tor_password() -> String {
-    std::env::var("COINSWAP_TOR_PASSWORD").unwrap_or_default()
+    std::env::var("OPENSWAP_TOR_PASSWORD").unwrap_or_default()
 }
 
 /// True when the Tor integration tests should run.
 ///
-/// `COINSWAP_TOR_IT=1` means "I require Tor", so a missing daemon **panics**
+/// `OPENSWAP_TOR_IT=1` means "I require Tor", so a missing daemon **panics**
 /// rather than skipping. CI gates on these tests, and a silent skip would look
 /// exactly like a pass. Without the variable set they skip, for local runs.
 pub fn tor_it_enabled() -> bool {
-    if std::env::var("COINSWAP_TOR_IT").as_deref() != Ok("1") {
-        log::warn!("skipping Tor integration test: COINSWAP_TOR_IT=1 not set");
+    if std::env::var("OPENSWAP_TOR_IT").as_deref() != Ok("1") {
+        log::warn!("skipping Tor integration test: OPENSWAP_TOR_IT=1 not set");
         return false;
     }
     if let Err(e) = check_tor_status(TOR_CONTROL_PORT, &tor_password()) {
         panic!(
-            "COINSWAP_TOR_IT=1 but tor control port {} is unreachable: {:?}",
+            "OPENSWAP_TOR_IT=1 but tor control port {} is unreachable: {:?}",
             TOR_CONTROL_PORT, e
         );
     }
@@ -539,9 +539,9 @@ impl TestBackend for TorElectrumBackend {
         )
         .expect("ADD_ONION failed; call tor_it_enabled() before using this backend");
 
-        // The helper fixes the onion-side port to COINSWAP_PORT and maps it to
+        // The helper fixes the onion-side port to OPENSWAP_PORT and maps it to
         // electrsd's real local port.
-        let url = format!("tcp://{onion}:{COINSWAP_PORT}");
+        let url = format!("tcp://{onion}:{OPENSWAP_PORT}");
         log::info!("Tor electrum backend: {url} via socks 127.0.0.1:{TOR_SOCKS_PORT}");
 
         // `timeout` and `poll_interval_secs` are left at their derived proxied
@@ -682,7 +682,7 @@ impl TestFramework {
         maker_behaviors: Vec<MakerBehavior>,
     ) -> (Arc<Self>, Vec<Taker>, Vec<Arc<MakerServer>>, JoinHandle<()>) {
         // Setup directory — use a unique suffix so tests can run in parallel
-        let unique_id = format!("coinswap-{}", rand::random::<u64>());
+        let unique_id = format!("openswap-{}", rand::random::<u64>());
         let temp_dir = env::temp_dir().join(unique_id);
         // Remove if previously existing
         if temp_dir.exists() {
@@ -993,7 +993,7 @@ impl Drop for TrackerLoggerHandle {
 /// ```
 #[allow(dead_code)]
 pub fn spawn_tracker_logger(data_dir: PathBuf, interval: Duration) -> TrackerLoggerHandle {
-    use coinswap::taker::swap_tracker::SwapTracker;
+    use openswap::taker::swap_tracker::SwapTracker;
 
     let shutdown = Arc::new(AtomicBool::new(false));
     let shutdown_clone = shutdown.clone();
@@ -1021,7 +1021,7 @@ pub fn spawn_tracker_logger(data_dir: PathBuf, interval: Duration) -> TrackerLog
 ///
 /// Each test gets its own relay on its own random port with an in-memory
 /// database, so concurrently running tests never share nostr state. The relay
-/// binary is located via the `COINSWAP_TEST_NOSTR_RELAY_BIN` env var, falling
+/// binary is located via the `OPENSWAP_TEST_NOSTR_RELAY_BIN` env var, falling
 /// back to `nostr-rs-relay` on `PATH`.
 fn spawn_nostr_relay(temp_dir: &Path, port: u16) -> Child {
     let data_dir = temp_dir.join("nostr-relay");
@@ -1037,7 +1037,7 @@ fn spawn_nostr_relay(temp_dir: &Path, port: u16) -> Child {
     std::fs::write(&config_path, config).unwrap();
 
     let bin =
-        env::var("COINSWAP_TEST_NOSTR_RELAY_BIN").unwrap_or_else(|_| "nostr-rs-relay".to_string());
+        env::var("OPENSWAP_TEST_NOSTR_RELAY_BIN").unwrap_or_else(|_| "nostr-rs-relay".to_string());
 
     Command::new(&bin)
         .arg("--config")
@@ -1047,7 +1047,7 @@ fn spawn_nostr_relay(temp_dir: &Path, port: u16) -> Child {
         .spawn()
         .unwrap_or_else(|e| {
             panic!(
-                "failed to spawn nostr relay binary '{}': {}. Install it with `cargo install nostr-rs-relay` or set COINSWAP_TEST_NOSTR_RELAY_BIN.",
+                "failed to spawn nostr relay binary '{}': {}. Install it with `cargo install nostr-rs-relay` or set OPENSWAP_TEST_NOSTR_RELAY_BIN.",
                 bin, e
             )
         })

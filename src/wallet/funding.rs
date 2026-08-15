@@ -26,14 +26,14 @@ impl Wallet {
     /// Returns Ok(None) if there was no error but the wallet was unable to create funding txes
     pub fn create_funding_txes(
         &mut self,
-        coinswap_amount: Amount,
+        openswap_amount: Amount,
         destinations: &[Address],
         fee_rate: f64,
         manually_selected_outpoints: Option<Vec<OutPoint>>,
         excluded_outpoints: Option<Vec<OutPoint>>,
     ) -> Result<CreateFundingTxesResult, WalletError> {
         let ret = self.create_funding_txes_random_amounts(
-            coinswap_amount,
+            openswap_amount,
             destinations,
             fee_rate,
             manually_selected_outpoints,
@@ -46,14 +46,14 @@ impl Wallet {
 
         ret
 
-        // let ret = self.create_funding_txes_utxo_max_sends(coinswap_amount, destinations, fee_rate);
+        // let ret = self.create_funding_txes_utxo_max_sends(openswap_amount, destinations, fee_rate);
         // if ret.is_ok() {
         //     log::info!(target: "wallet", "created funding txes with fully-spending utxos");
         //     return ret;
         // }
 
         // let ret =
-        //     self.create_funding_txes_use_biggest_utxos(coinswap_amount, destinations, fee_rate);
+        //     self.create_funding_txes_use_biggest_utxos(openswap_amount, destinations, fee_rate);
         // if ret.is_ok() {
         //     log::info!(target: "wallet", "created funding txes with using the biggest utxos");
         //     return ret;
@@ -109,7 +109,7 @@ impl Wallet {
 
         //this calculation works like this:
         //o = [a, b, c, ...]             | list of output values
-        //t = coinswap amount            | total desired value
+        //t = openswap amount            | total desired value
         //a' <-- a + (t - (a+b+c+...))   | assign new first output value
         //a' <-- a + (t -a-b-c-...)      | rearrange
         //a' <-- t - b - c -...          |
@@ -131,16 +131,16 @@ impl Wallet {
     }
 
     // This function creates funding transactions with random amounts
-    // The total `coinswap_amount` is randomly distributed among number of destinations.
+    // The total `openswap_amount` is randomly distributed among number of destinations.
     fn create_funding_txes_random_amounts(
         &mut self,
-        coinswap_amount: Amount,
+        openswap_amount: Amount,
         destinations: &[Address],
         fee_rate: f64,
         manually_selected_outpoints: Option<Vec<OutPoint>>,
         excluded_outpoints: Option<Vec<OutPoint>>,
     ) -> Result<CreateFundingTxesResult, WalletError> {
-        let output_values = Wallet::generate_amount_fractions(destinations.len(), coinswap_amount)?;
+        let output_values = Wallet::generate_amount_fractions(destinations.len(), openswap_amount)?;
 
         // Flow of Lock Step 1. Unlock all unspent UTXOs
         self.unlock_all_utxos();
@@ -224,7 +224,7 @@ impl Wallet {
             log::debug!(
                 "[FUNDING_STATE] Source: wallet::funding::create_funding_txes_random_amounts | Wallet: {} | Amount: {} | Destinations: {} | FundingTxs: {} | MinerFee: {} | ManualUtxos: {} | ExcludedUtxos: {}",
                 self.get_name(),
-                coinswap_amount.to_sat(),
+                openswap_amount.to_sat(),
                 destinations.len(),
                 funding.funding_txes.len(),
                 funding.total_miner_fee,

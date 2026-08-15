@@ -1,5 +1,5 @@
 #![allow(clippy::too_many_arguments)]
-//! Per-wallet swap report files for coinswap participants.
+//! Per-wallet swap report files for openswap participants.
 //!
 //! Reports are appended to the swap report file next to the wallet that
 //! participated in the swap:
@@ -832,7 +832,7 @@ mod tests {
             .unwrap()
             .as_nanos();
         let dir = std::env::temp_dir().join(format!(
-            "coinswap_report_{test_name}_{}_{}",
+            "openswap_report_{test_name}_{}_{}",
             std::process::id(),
             nonce
         ));

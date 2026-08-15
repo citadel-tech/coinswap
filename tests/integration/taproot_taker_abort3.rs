@@ -15,7 +15,7 @@
 //! Both cases force timelock recovery for every party and share one runner.
 
 use bitcoin::Amount;
-use coinswap::{
+use openswap::{
     maker::{start_server, MakerBehavior},
     protocol::common_messages::ProtocolVersion,
     taker::{SwapParams, TakerBehavior},
@@ -123,7 +123,7 @@ fn run_taproot_taker_abort(
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
     }
 
@@ -142,9 +142,9 @@ fn run_taproot_taker_abort(
 
     // Prepare should succeed; execution should fail at the case's drop point.
     let summary = taker
-        .prepare_coinswap(swap_params)
+        .prepare_swap(swap_params)
         .expect("Prepare should succeed");
-    let swap_result = taker.start_coinswap(&summary.swap_id);
+    let swap_result = taker.start_swap(&summary.swap_id);
     assert!(
         swap_result.is_err(),
         "Swap should fail due to {:?} behavior",
@@ -166,7 +166,7 @@ fn run_taproot_taker_abort(
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
         let maker_balances = maker.wallet.read().unwrap().get_balances().unwrap();
         info!(
@@ -227,7 +227,7 @@ fn run_taproot_taker_abort(
         .get_wallet()
         .write()
         .unwrap()
-        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .sync_and_save(&openswap::utill::NO_SHUTDOWN)
         .unwrap();
 
     let taker_balances = taker.get_wallet().read().unwrap().get_balances().unwrap();

@@ -25,7 +25,7 @@ impl TakerCli {
     /// Construct a new [`TakerCli`] struct that also includes initiating bitcoind.
     fn new() -> TakerCli {
         // Initiate the bitcoind backend — unique dir for parallel test safety.
-        let unique_id = format!("coinswap-cli-{}", bip39::rand::random::<u64>());
+        let unique_id = format!("openswap-cli-{}", bip39::rand::random::<u64>());
         let temp_dir = temp_dir().join(unique_id);
 
         // Remove if previously existing

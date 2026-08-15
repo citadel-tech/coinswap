@@ -5,11 +5,11 @@
 //! If the Taker doesn't return, the Makers broadcast the contract transactions and reclaim
 //! their funds via timelock.
 //!
-//! The Taker after coming live again will see unfinished coinswaps in its wallet.
+//! The Taker after coming live again will see unfinished openswaps in its wallet.
 //! It can reclaim funds via broadcasting contract transactions and claiming via timelock.
 
 use bitcoin::Amount;
-use coinswap::{
+use openswap::{
     maker::{start_server, MakerBehavior},
     protocol::common_messages::ProtocolVersion,
     taker::{SwapParams, TakerBehavior},
@@ -80,14 +80,14 @@ fn taker_abort_1_legacy_corerpc() {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
     }
 
     verify_maker_pre_swap_balances(&makers);
 
-    // Initiate Coinswap
-    info!("Initiating coinswap protocol");
+    // Initiate OpenSwap
+    info!("Initiating openswap protocol");
 
     let swap_params = SwapParams::new(ProtocolVersion::Legacy, Amount::from_sat(500000), 2)
         .with_tx_count(3)
@@ -103,9 +103,9 @@ fn taker_abort_1_legacy_corerpc() {
 
     // Prepare should succeed; execution should fail with DropAfterFundsBroadcast
     let summary = taker
-        .prepare_coinswap(swap_params)
+        .prepare_swap(swap_params)
         .expect("Prepare should succeed");
-    let swap_result = taker.start_coinswap(&summary.swap_id);
+    let swap_result = taker.start_swap(&summary.swap_id);
     assert!(
         swap_result.is_err(),
         "Swap should fail due to DropAfterFundsBroadcast behavior"
@@ -125,7 +125,7 @@ fn taker_abort_1_legacy_corerpc() {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
         let maker_balances = maker.wallet.read().unwrap().get_balances().unwrap();
         info!(
@@ -163,7 +163,7 @@ fn taker_abort_1_legacy_corerpc() {
         .get_wallet()
         .write()
         .unwrap()
-        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .sync_and_save(&openswap::utill::NO_SHUTDOWN)
         .unwrap();
 
     // Verify taker balance
@@ -217,7 +217,7 @@ fn taker_abort_1_legacy_corerpc() {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
         let maker_balances = maker.wallet.read().unwrap().get_balances().unwrap();
 
@@ -330,7 +330,7 @@ fn maker_recovers_swap_past_refund_deadline() {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
     }
     generate_blocks(bitcoind, 1);
@@ -341,10 +341,10 @@ fn maker_recovers_swap_past_refund_deadline() {
         .with_tx_count(1)
         .with_required_confirms(1);
     let summary = taker
-        .prepare_coinswap(swap_params)
-        .expect("Legacy prepare_coinswap should succeed");
+        .prepare_swap(swap_params)
+        .expect("Legacy prepare_swap should succeed");
     assert!(
-        taker.start_coinswap(&summary.swap_id).is_err(),
+        taker.start_swap(&summary.swap_id).is_err(),
         "The swap must fail once the maker gives up on it"
     );
 

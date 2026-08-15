@@ -1,7 +1,7 @@
 blank_issues_enabled: false
 contact_links:
   - name: Security Vulnerability
-    url: https://github.com/citadel-tech/coinswap/security/advisories/new
+    url: https://github.com/citadel-foss/openswap/security/advisories/new
     about: >
       Do NOT open a public issue for security vulnerabilities.
       Report them privately via GitHub Security Advisories.
@@ -11,7 +11,7 @@ contact_links:
         - Logs and versions (`git rev-parse --short HEAD`, `rustc --version`, `bitcoind --version`, `tor --version`)
       We aim to follow responsible disclosure. Please give maintainers time to investigate and ship a fix before public disclosure.
   - name: Protocol Discussion
-    url: https://github.com/citadel-tech/coinswap/discussions
+    url: https://github.com/citadel-foss/openswap/discussions
     about: >
       For protocol design questions, RFCs, or open-ended ideas,
       start a GitHub Discussion instead of opening an issue.

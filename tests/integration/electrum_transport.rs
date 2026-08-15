@@ -19,7 +19,7 @@ use std::{
 
 use bitcoin::hashes::Hash;
 use bitcoind::{bitcoincore_rpc::RpcApi, BitcoinD};
-use coinswap::wallet::{Blockchain, Electrum, ElectrumConfig, WalletError};
+use openswap::wallet::{Blockchain, Electrum, ElectrumConfig, WalletError};
 
 use super::test_framework::{
     generate_blocks, init_bitcoind, init_electrsd, send_to_address, wait_for_electrs_tip,
@@ -133,7 +133,7 @@ struct Setup {
 }
 
 fn setup(name: &str) -> Setup {
-    let root_dir = std::env::temp_dir().join(format!("coinswap-transport-{}", std::process::id()));
+    let root_dir = std::env::temp_dir().join(format!("openswap-transport-{}", std::process::id()));
     let temp_dir = root_dir.join(name);
     std::fs::create_dir_all(&temp_dir).unwrap();
 

@@ -15,7 +15,7 @@ use bitcoin::{
     Address, Amount, Network,
 };
 use bitcoind::bitcoincore_rpc::RpcApi;
-use coinswap::{
+use openswap::{
     maker::{start_server, MakerBehavior, MakerServer},
     protocol::common_messages::ProtocolVersion,
     taker::{error::TakerError, SwapParams, TakerBehavior},
@@ -111,7 +111,7 @@ fn test_maker_rejects_out_of_bounds_swap_details() {
 
     // ---- 1. Below minimum, taker-side offerbook filter ----
     let err = taker
-        .prepare_coinswap(
+        .prepare_swap(
             SwapParams::new(ProtocolVersion::Taproot, below_min, 2)
                 .with_tx_count(1)
                 .with_required_confirms(1),
@@ -126,7 +126,7 @@ fn test_maker_rejects_out_of_bounds_swap_details() {
 
     // ---- 2. Above maximum, taker-side offerbook filter ----
     let err = taker
-        .prepare_coinswap(
+        .prepare_swap(
             SwapParams::new(ProtocolVersion::Taproot, above_max, 2)
                 .with_tx_count(1)
                 .with_required_confirms(1),
@@ -141,7 +141,7 @@ fn test_maker_rejects_out_of_bounds_swap_details() {
 
     // ---- 3. Below minimum, past the filter, caught at negotiation ----
     let err = taker
-        .prepare_coinswap(
+        .prepare_swap(
             SwapParams::new(ProtocolVersion::Taproot, below_min, 2)
                 .with_tx_count(1)
                 .with_required_confirms(1)
@@ -161,7 +161,7 @@ fn test_maker_rejects_out_of_bounds_swap_details() {
 
     // ---- 4. Above maximum, past the filter, caught at negotiation ----
     let err = taker
-        .prepare_coinswap(
+        .prepare_swap(
             SwapParams::new(ProtocolVersion::Taproot, above_max, 2)
                 .with_tx_count(1)
                 .with_required_confirms(1)
@@ -182,12 +182,12 @@ fn test_maker_rejects_out_of_bounds_swap_details() {
     // ---- 5. Taker aborts after maker selection, before negotiating ----
     taker.behavior = TakerBehavior::CloseEarly;
     let err = taker
-        .prepare_coinswap(
+        .prepare_swap(
             SwapParams::new(ProtocolVersion::Taproot, Amount::from_sat(500000), 2)
                 .with_tx_count(1)
                 .with_required_confirms(1),
         )
-        .expect_err("CloseEarly must abort prepare_coinswap");
+        .expect_err("CloseEarly must abort prepare_swap");
     info!("Taker closed early after maker selection: {:?}", err);
     taker.behavior = TakerBehavior::Normal;
 
@@ -196,7 +196,7 @@ fn test_maker_rejects_out_of_bounds_swap_details() {
     // the amount only on the wire, so the maker guard is what must refuse.
     taker.behavior = TakerBehavior::ForgeBounds(below_min);
     let err = taker
-        .prepare_coinswap(
+        .prepare_swap(
             SwapParams::new(ProtocolVersion::Taproot, Amount::from_sat(500_000), 2)
                 .with_tx_count(1)
                 .with_required_confirms(1)
@@ -208,7 +208,7 @@ fn test_maker_rejects_out_of_bounds_swap_details() {
     // ---- 7. Forged above-maximum reaches the maker's own guard ----
     taker.behavior = TakerBehavior::ForgeBounds(above_max);
     let err = taker
-        .prepare_coinswap(
+        .prepare_swap(
             SwapParams::new(ProtocolVersion::Taproot, Amount::from_sat(500_000), 2)
                 .with_tx_count(1)
                 .with_required_confirms(1)
@@ -222,7 +222,7 @@ fn test_maker_rejects_out_of_bounds_swap_details() {
     // error string it surfaces tells which arm the maker took for each.
     taker.behavior = TakerBehavior::ResendMutatedDetails;
     let err = taker
-        .prepare_coinswap(
+        .prepare_swap(
             SwapParams::new(ProtocolVersion::Taproot, Amount::from_sat(500_000), 2)
                 .with_tx_count(1)
                 .with_required_confirms(1)
@@ -400,12 +400,12 @@ fn test_low_swap_liquidity() {
         .wallet
         .write()
         .unwrap()
-        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .sync_and_save(&openswap::utill::NO_SHUTDOWN)
         .unwrap();
 
     info!("Maker should be halted due to low swap liquidity");
 
-    info!("Initiating coinswap (Will fail due to maker not accepting any offer due to low swap liquidity)");
+    info!("Initiating openswap (Will fail due to maker not accepting any offer due to low swap liquidity)");
 
     // Swap params
     let swap_params = SwapParams::new(ProtocolVersion::Taproot, Amount::from_sat(500000), 1)
@@ -414,9 +414,9 @@ fn test_low_swap_liquidity() {
 
     // Attempt the swap - it will fail because maker has no liquidity
     let err = taker
-        .prepare_coinswap(swap_params.clone())
+        .prepare_swap(swap_params.clone())
         .expect_err("Swap should have failed due to insufficient maker liquidity");
-    info!("Coinswap failed as expected: {err:?}");
+    info!("OpenSwap failed as expected: {err:?}");
 
     info!("Adding sufficient funds to maker to perform a swap and avoid low swap liquidity");
     fund_makers(
@@ -441,16 +441,16 @@ fn test_low_swap_liquidity() {
         .with_required_confirms(1);
 
     let summary = taker
-        .prepare_coinswap(swap_params)
-        .expect("prepare_coinswap should succeed after funding");
+        .prepare_swap(swap_params)
+        .expect("prepare_swap should succeed after funding");
 
-    match taker.start_coinswap(&summary.swap_id) {
+    match taker.start_swap(&summary.swap_id) {
         Ok(_report) => {
-            log::info!("Coinswap completed successfully after re-funding!");
+            log::info!("OpenSwap completed successfully after re-funding!");
         }
         Err(e) => {
-            log::error!("Coinswap failed: {:?}", e);
-            panic!("Coinswap failed: {:?}", e);
+            log::error!("OpenSwap failed: {:?}", e);
+            panic!("OpenSwap failed: {:?}", e);
         }
     }
 
@@ -520,7 +520,7 @@ fn makers_reject_duplicate_funding_outpoints() {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
     }
     generate_blocks(bitcoind, 1);
@@ -531,10 +531,10 @@ fn makers_reject_duplicate_funding_outpoints() {
         .with_tx_count(3)
         .with_required_confirms(1);
     let taproot_summary = takers[0]
-        .prepare_coinswap(taproot_params)
-        .expect("Taproot prepare_coinswap should succeed");
+        .prepare_swap(taproot_params)
+        .expect("Taproot prepare_swap should succeed");
     assert!(
-        takers[0].start_coinswap(&taproot_summary.swap_id).is_err(),
+        takers[0].start_swap(&taproot_summary.swap_id).is_err(),
         "Taproot maker must reject a duplicated contract outpoint"
     );
 
@@ -606,7 +606,7 @@ fn run_legacy_proof_guard(port: u16, rpc: u16, behavior: TakerBehavior, expected
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
     }
     generate_blocks(bitcoind, 1);
@@ -615,10 +615,10 @@ fn run_legacy_proof_guard(port: u16, rpc: u16, behavior: TakerBehavior, expected
         .with_tx_count(3)
         .with_required_confirms(1);
     let summary = taker
-        .prepare_coinswap(params)
-        .expect("prepare_coinswap should succeed");
+        .prepare_swap(params)
+        .expect("prepare_swap should succeed");
     assert!(
-        taker.start_coinswap(&summary.swap_id).is_err(),
+        taker.start_swap(&summary.swap_id).is_err(),
         "maker must reject the crafted ProofOfFunding"
     );
 
@@ -708,7 +708,7 @@ fn run_rejects_spent_funding_outpoint<B: TestBackend>(behavior: TakerBehavior) {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
     }
     generate_blocks(bitcoind, 1);
@@ -717,10 +717,10 @@ fn run_rejects_spent_funding_outpoint<B: TestBackend>(behavior: TakerBehavior) {
         .with_tx_count(3)
         .with_required_confirms(1);
     let summary = takers[0]
-        .prepare_coinswap(params)
-        .expect("Legacy prepare_coinswap should succeed");
+        .prepare_swap(params)
+        .expect("Legacy prepare_swap should succeed");
     assert!(
-        takers[0].start_coinswap(&summary.swap_id).is_err(),
+        takers[0].start_swap(&summary.swap_id).is_err(),
         "Legacy maker must reject an already spent funding outpoint"
     );
 
@@ -806,7 +806,7 @@ fn maker_errors_when_seen_funding_tx_is_evicted() {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
     }
     generate_blocks(bitcoind, 1);
@@ -815,7 +815,7 @@ fn maker_errors_when_seen_funding_tx_is_evicted() {
     // funding tx (which signals RBF) the moment the maker reports seeing it.
     let conflict_tx = {
         let mut wallet = taker.get_wallet().write().unwrap();
-        wallet.sync_and_save(&coinswap::utill::NO_SHUTDOWN).unwrap();
+        wallet.sync_and_save(&openswap::utill::NO_SHUTDOWN).unwrap();
         let coins = wallet.list_all_utxo_spend_info();
         let destination = wallet
             .get_next_internal_addresses(1, AddressType::P2TR)
@@ -834,8 +834,8 @@ fn maker_errors_when_seen_funding_tx_is_evicted() {
         .with_tx_count(1)
         .with_required_confirms(0);
     let summary = taker
-        .prepare_coinswap(swap_params)
-        .expect("prepare_coinswap should succeed");
+        .prepare_swap(swap_params)
+        .expect("prepare_swap should succeed");
 
     let log_path = format!("{}/taker/debug.log", test_framework.temp_dir.display());
 
@@ -843,7 +843,7 @@ fn maker_errors_when_seen_funding_tx_is_evicted() {
     // its confirmation wait until the conflict evicts the tx from the mempool.
     test_framework.set_block_gen_paused(true);
     let swap_result = thread::scope(|s| {
-        let swap_handle = s.spawn(|| taker.start_coinswap(&summary.swap_id));
+        let swap_handle = s.spawn(|| taker.start_swap(&summary.swap_id));
 
         wait_for_new_log(&log_path, "seen in mempool", Duration::from_secs(120));
         // Sent through bitcoind, not the taker's wallet, whose lock the swap
@@ -916,7 +916,7 @@ fn maker_rejects_proof_of_funding_with_missing_contract_cache() {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
     }
 
@@ -934,10 +934,10 @@ fn maker_rejects_proof_of_funding_with_missing_contract_cache() {
     generate_blocks(bitcoind, 1);
 
     let summary = taker
-        .prepare_coinswap(swap_params)
-        .expect("prepare_coinswap should succeed");
+        .prepare_swap(swap_params)
+        .expect("prepare_swap should succeed");
 
-    let result = taker.start_coinswap(&summary.swap_id);
+    let result = taker.start_swap(&summary.swap_id);
     assert!(
         result.is_err(),
         "maker must reject ProofOfFunding without a cached contract binding"
@@ -963,7 +963,7 @@ fn maker_rejects_proof_of_funding_with_missing_contract_cache() {
         .wallet
         .write()
         .unwrap()
-        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .sync_and_save(&openswap::utill::NO_SHUTDOWN)
         .unwrap();
     let maker_spendable_after = makers[0]
         .wallet
@@ -1031,7 +1031,7 @@ fn test_taproot_maker_rejects_contract_amount_mismatch() {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
     }
 
@@ -1041,9 +1041,9 @@ fn test_taproot_maker_rejects_contract_amount_mismatch() {
     generate_blocks(bitcoind, 1);
 
     let summary = taker
-        .prepare_coinswap(swap_params)
+        .prepare_swap(swap_params)
         .expect("Taproot swap preparation should succeed before contract validation");
-    let swap_result = taker.start_coinswap(&summary.swap_id);
+    let swap_result = taker.start_swap(&summary.swap_id);
     assert!(
         swap_result.is_err(),
         "Taproot swap should fail when taker lies about contract amount"
@@ -1110,7 +1110,7 @@ fn test_legacy_taker_rejects_malformed_maker_funding_output() {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
     }
 
@@ -1120,12 +1120,12 @@ fn test_legacy_taker_rejects_malformed_maker_funding_output() {
     generate_blocks(bitcoind, 1);
 
     let summary = taker
-        .prepare_coinswap(swap_params)
-        .expect("prepare_coinswap should succeed");
+        .prepare_swap(swap_params)
+        .expect("prepare_swap should succeed");
 
     // The taker must reject before signing/finalizing; otherwise it can later
     // report success while the incoming sweep is unspendable.
-    let result = taker.start_coinswap(&summary.swap_id);
+    let result = taker.start_swap(&summary.swap_id);
     assert!(
         result.is_err(),
         "taker must reject malformed maker sender contract data"
@@ -1191,14 +1191,14 @@ fn test_legacy_taker_rejects_fee_skimming_maker() {
     wait_for_makers_setup(&makers, 120);
     generate_blocks(bitcoind, 1);
     let summary = taker
-        .prepare_coinswap(
+        .prepare_swap(
             SwapParams::new(ProtocolVersion::Legacy, Amount::from_sat(500_000), 1)
                 .with_tx_count(3)
                 .with_required_confirms(1),
         )
         .expect("prepare Legacy swap");
     let error = taker
-        .start_coinswap(&summary.swap_id)
+        .start_swap(&summary.swap_id)
         .expect_err("reject fee skim");
     assert!(
         format!("{error:?}").contains("does not match expected"),
@@ -1270,13 +1270,13 @@ fn test_taproot_rejects_underfunded_maker_contract() {
         .with_tx_count(3)
         .with_required_confirms(1);
     let summary = taker
-        .prepare_coinswap(swap_params)
-        .expect("failed to prepare Taproot coinswap");
+        .prepare_swap(swap_params)
+        .expect("failed to prepare Taproot openswap");
 
     // The taker must reject during maker contract verification, before storing
     // an incoming swapcoin from the malicious contract data.
     let error = taker
-        .start_coinswap(&summary.swap_id)
+        .start_swap(&summary.swap_id)
         .expect_err("taker must reject maker contract data that claims more than the tx output");
     match error {
         TakerError::General(message) => {
@@ -1344,14 +1344,14 @@ fn test_taproot_rejection(behavior: MakerBehavior, expected_error: &str) {
     wait_for_makers_setup(&makers, 120);
     generate_blocks(bitcoind, 1);
     let summary = taker
-        .prepare_coinswap(
+        .prepare_swap(
             SwapParams::new(ProtocolVersion::Taproot, Amount::from_sat(30_000), 1)
                 .with_tx_count(3)
                 .with_required_confirms(1),
         )
         .expect("prepare Taproot swap");
     let error = taker
-        .start_coinswap(&summary.swap_id)
+        .start_swap(&summary.swap_id)
         .expect_err("reject fee skim");
     assert!(
         format!("{error:?}").contains(expected_error),
@@ -1423,14 +1423,14 @@ fn test_maker_rejects_insufficient_liquidity_from_active_reservation() {
 
     let maker_addr = format!("127.0.0.1:{}", maker.config.network_port);
 
-    // Taker 0 admits a swap with the maker. prepare_coinswap only negotiates;
+    // Taker 0 admits a swap with the maker. prepare_swap only negotiates;
     // it does not fund, so the maker keeps an active reservation for the amount.
     let first = SwapParams::new(ProtocolVersion::Taproot, Amount::from_sat(9_000_000), 1)
         .with_tx_count(1)
         .with_required_confirms(1)
         .with_preferred_makers(vec![maker_addr.clone()]);
     takers[0]
-        .prepare_coinswap(first)
+        .prepare_swap(first)
         .expect("first swap should be admitted and create a reservation");
 
     // Taker 1 asks for the same amount. The advertised max_size is still large
@@ -1440,7 +1440,7 @@ fn test_maker_rejects_insufficient_liquidity_from_active_reservation() {
         .with_required_confirms(1)
         .with_preferred_makers(vec![maker_addr]);
     let _err = takers[1]
-        .prepare_coinswap(second)
+        .prepare_swap(second)
         .expect_err("second swap should fail due to reserved liquidity");
 
     // The wire rejection is intentionally terse (AckSwapDetails::reject), so the

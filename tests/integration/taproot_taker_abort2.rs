@@ -1,7 +1,7 @@
 //! Taproot taker abort test 2: Taker closes at sender's contract exchange.
 //!
 //! Scenario:
-//! 1. Taker initiates a Taproot coinswap with 2 makers.
+//! 1. Taker initiates a Taproot openswap with 2 makers.
 //! 2. Taker drops during the contract exchange phase, specifically when
 //!    sending the sender's contract data (CloseAtSendersContract behavior).
 //! 3. Funding transactions have been broadcast at this point.
@@ -9,7 +9,7 @@
 //! 5. Verify: all parties recovered funds (contract == 0, small fee loss).
 
 use bitcoin::Amount;
-use coinswap::{
+use openswap::{
     maker::{start_server, MakerBehavior},
     protocol::common_messages::ProtocolVersion,
     taker::{SwapParams, TakerBehavior},
@@ -85,7 +85,7 @@ fn test_taproot_taker_abort2() {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
     }
 
@@ -98,7 +98,7 @@ fn test_taproot_taker_abort2() {
         Duration::from_secs(10),
     );
 
-    // Swap params for coinswap (Taproot)
+    // Swap params for openswap (Taproot)
     let swap_params = SwapParams::new(ProtocolVersion::Taproot, Amount::from_sat(500000), 2)
         .with_tx_count(3)
         .with_required_confirms(1);
@@ -107,9 +107,9 @@ fn test_taproot_taker_abort2() {
 
     // Prepare should succeed; execution should fail at sender's contract exchange
     let summary = taker
-        .prepare_coinswap(swap_params)
+        .prepare_swap(swap_params)
         .expect("Prepare should succeed");
-    let swap_result = taker.start_coinswap(&summary.swap_id);
+    let swap_result = taker.start_swap(&summary.swap_id);
     assert!(
         swap_result.is_err(),
         "Swap should fail due to CloseAtSendersContract behavior"
@@ -129,7 +129,7 @@ fn test_taproot_taker_abort2() {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
         let maker_balances = maker.wallet.read().unwrap().get_balances().unwrap();
         info!(
@@ -181,7 +181,7 @@ fn test_taproot_taker_abort2() {
         .get_wallet()
         .write()
         .unwrap()
-        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .sync_and_save(&openswap::utill::NO_SHUTDOWN)
         .unwrap();
 
     // Verify taker balance

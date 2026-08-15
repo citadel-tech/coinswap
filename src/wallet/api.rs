@@ -243,7 +243,7 @@ pub enum UTXOSpendInfo {
 }
 
 impl UTXOSpendInfo {
-    /// Estimates Witness Size for different types of UTXOs in the context of Coinswap
+    /// Estimates Witness Size for different types of UTXOs in the context of OpenSwap
     pub fn estimate_witness_size(&self) -> usize {
         const P2WPKH_WITNESS_SIZE: usize = 107; // 1 + 72 (sig) + 33 (pubkey) + 1 (count)
         const P2TR_WITNESS_SIZE: usize = 66; // 1 (witness items) + 1 (Signature length) + 64 (Schnorr sig)
@@ -2651,7 +2651,7 @@ impl Wallet {
         }
     }
 
-    pub(crate) fn create_and_import_coinswap_address(
+    pub(crate) fn create_and_import_swap_address(
         &mut self,
         other_pubkey: &PublicKey,
     ) -> Result<(Address, SecretKey), WalletError> {

@@ -5,7 +5,7 @@
 
 use bitcoin::Amount;
 use bitcoind::bitcoincore_rpc::RpcApi;
-use coinswap::{maker::start_server, taker::TakerBehavior, wallet::AddressType};
+use openswap::{maker::start_server, taker::TakerBehavior, wallet::AddressType};
 
 use super::test_framework::*;
 
@@ -48,7 +48,7 @@ fn test_fidelity_auto_renewal() {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
         let wallet_read = maker.wallet.read().unwrap();
 
@@ -126,7 +126,7 @@ fn test_fidelity_auto_renewal() {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
         let wallet_read = maker.wallet.read().unwrap();
 

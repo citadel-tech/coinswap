@@ -1,9 +1,9 @@
-//! Standard coinswap test: normal swap between a Taker and 2 Makers.
-//! Nothing goes wrong and the coinswap completes successfully.
+//! Standard openswap test: normal swap between a Taker and 2 Makers.
+//! Nothing goes wrong and the openswap completes successfully.
 //! Also asserts a 3-hop request is rejected up front when only 2 makers exist.
 
 use bitcoin::Amount;
-use coinswap::{
+use openswap::{
     maker::{start_server, MakerBehavior},
     protocol::common_messages::ProtocolVersion,
     taker::{error::TakerError, SwapParams, TakerBehavior},
@@ -15,12 +15,12 @@ use super::test_framework::*;
 use log::{info, warn};
 use std::{sync::atomic::Ordering::Relaxed, thread};
 
-/// This test demonstrates a standard coinswap round between a Taker and 2 Makers. Nothing goes wrong
-/// and the coinswap completes successfully.
+/// This test demonstrates a standard openswap round between a Taker and 2 Makers. Nothing goes wrong
+/// and the openswap completes successfully.
 #[test]
-fn test_standard_coinswap() {
+fn test_standard_openswap() {
     // ---- Setup ----
-    warn!("Running Test: Standard Coinswap Procedure");
+    warn!("Running Test: Standard OpenSwap Procedure");
 
     let makers_config_map = vec![(6102, Some(19051)), (16102, Some(19052))];
     let taker_behavior = vec![TakerBehavior::Normal];
@@ -72,7 +72,7 @@ fn test_standard_coinswap() {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
     }
 
@@ -84,16 +84,16 @@ fn test_standard_coinswap() {
         .with_tx_count(3)
         .with_required_confirms(1);
     let err = taker
-        .prepare_coinswap(too_many_hops)
-        .expect_err("prepare_coinswap must fail with only 2 makers for a 3-hop swap");
+        .prepare_swap(too_many_hops)
+        .expect_err("prepare_swap must fail with only 2 makers for a 3-hop swap");
     assert!(
         matches!(err, TakerError::NotEnoughMakersInOfferBook),
         "Expected NotEnoughMakersInOfferBook, got: {:?}",
         err
     );
 
-    // Initiate Coinswap
-    info!("Initiating coinswap protocol");
+    // Initiate OpenSwap
+    info!("Initiating openswap protocol");
 
     let swap_params = SwapParams::new(ProtocolVersion::Legacy, Amount::from_sat(500000), 2)
         .with_tx_count(3)
@@ -102,20 +102,20 @@ fn test_standard_coinswap() {
     generate_blocks(bitcoind, 1);
 
     let summary = taker
-        .prepare_coinswap(swap_params)
-        .expect("Failed to prepare coinswap");
+        .prepare_swap(swap_params)
+        .expect("Failed to prepare openswap");
     taker
-        .start_coinswap(&summary.swap_id)
-        .expect("Coinswap should complete successfully");
+        .start_swap(&summary.swap_id)
+        .expect("OpenSwap should complete successfully");
 
-    info!("All coinswaps processed successfully. Transaction complete.");
+    info!("All openswaps processed successfully. Transaction complete.");
 
     // Sync wallets
     taker
         .get_wallet()
         .write()
         .unwrap()
-        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .sync_and_save(&openswap::utill::NO_SHUTDOWN)
         .unwrap();
 
     generate_blocks(bitcoind, 1);
@@ -125,7 +125,7 @@ fn test_standard_coinswap() {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
     }
 
@@ -176,7 +176,7 @@ fn test_standard_coinswap() {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
         let balances = maker.wallet.read().unwrap().get_balances().unwrap();
 
@@ -228,7 +228,7 @@ fn test_standard_coinswap() {
         );
     }
 
-    info!("Standard coinswap test completed successfully!");
+    info!("Standard openswap test completed successfully!");
 
     let temp_dir = makers[0]
         .data_dir

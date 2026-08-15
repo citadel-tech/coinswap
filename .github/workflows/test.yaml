@@ -138,7 +138,7 @@ jobs:
           sudo systemctl stop tor@default.service tor.service || true
           mkdir -p /tmp/tor-it
           # Empty control password: `check_tor_status` sends AUTHENTICATE "" and
-          # the test helpers default COINSWAP_TOR_PASSWORD to empty.
+          # the test helpers default OPENSWAP_TOR_PASSWORD to empty.
           HASH="$(tor --hash-password '' | tail -n 1)"
           cat <<EOF > /tmp/tor-it/torrc
           SocksPort 9050
@@ -166,7 +166,7 @@ jobs:
       # `timeout-minutes` already bounds the run.
       - name: Run ${{ matrix.test }}
         env:
-          COINSWAP_TOR_IT: "1"
+          OPENSWAP_TOR_IT: "1"
         run: |
           cargo nextest run --features integration-test \
             --run-ignored=only --test-threads=1 --retries 2 \

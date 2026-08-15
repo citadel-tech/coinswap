@@ -1,4 +1,4 @@
-//! Coinswap Maker Server.
+//! OpenSwap Maker Server.
 
 use std::{
     io::ErrorKind,
@@ -15,7 +15,7 @@ use std::{
 use crate::maker::rpc::server::MakerRpc;
 use crate::{
     lock_debug,
-    nostr_coinswap::broadcast_bond_on_nostr,
+    maker::nostr::broadcast_bond_on_nostr,
     protocol::common_messages::{FidelityProof, MakerToTakerMessage, TakerToMakerMessage},
     utill::{HEART_BEAT_INTERVAL, MAX_RPC_MESSAGE_SIZE},
     wallet::{Blockchain, RecoveryReport, Wallet},

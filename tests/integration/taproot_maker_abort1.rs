@@ -1,11 +1,11 @@
 //! Integration test: Taproot maker abort1 - Not enough makers.
 //!
 //! Only 1 maker is available, but the swap requires 2 makers (maker_count: 2).
-//! prepare_coinswap should FAIL because there are not enough makers.
+//! prepare_swap should FAIL because there are not enough makers.
 //! No recovery is needed - balances should remain unchanged.
 
 use bitcoin::Amount;
-use coinswap::{
+use openswap::{
     maker::{start_server, MakerBehavior},
     protocol::common_messages::ProtocolVersion,
     taker::{SwapParams, TakerBehavior},
@@ -21,7 +21,7 @@ use std::{sync::atomic::Ordering::Relaxed, thread};
 ///
 /// Scenario:
 /// 1. Only 1 maker is available but swap requires 2 (maker_count: 2).
-/// 2. prepare_coinswap should fail because it cannot find enough makers.
+/// 2. prepare_swap should fail because it cannot find enough makers.
 /// 3. No funds are broadcast, so no recovery is needed.
 /// 4. Verify balances are unchanged.
 #[test]
@@ -80,7 +80,7 @@ fn test_taproot_maker_abort1() {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
     }
 
@@ -94,11 +94,11 @@ fn test_taproot_maker_abort1() {
 
     generate_blocks(bitcoind, 1);
 
-    // prepare_coinswap should FAIL because only 1 maker is available for a 2-maker swap
-    let prepare_result = taker.prepare_coinswap(swap_params);
+    // prepare_swap should FAIL because only 1 maker is available for a 2-maker swap
+    let prepare_result = taker.prepare_swap(swap_params);
     assert!(
         prepare_result.is_err(),
-        "prepare_coinswap should fail because only 1 maker is available for a 2-maker swap"
+        "prepare_swap should fail because only 1 maker is available for a 2-maker swap"
     );
     info!(
         "Prepare failed as expected: {:?}",
@@ -110,7 +110,7 @@ fn test_taproot_maker_abort1() {
         .get_wallet()
         .write()
         .unwrap()
-        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .sync_and_save(&openswap::utill::NO_SHUTDOWN)
         .unwrap();
 
     let taker_balances = taker.get_wallet().read().unwrap().get_balances().unwrap();

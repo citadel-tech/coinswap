@@ -1,10 +1,10 @@
-//! Integration test for Taproot Coinswap implementation.
+//! Integration test for Taproot OpenSwap implementation.
 //!
-//! This test demonstrates a taproot-based coinswap between a Taker and 2 Makers using
+//! This test demonstrates a taproot-based openswap between a Taker and 2 Makers using
 //! the Taproot protocol with MuSig2 signatures.
 
 use bitcoin::Amount;
-use coinswap::{
+use openswap::{
     maker::{start_server, MakerBehavior},
     protocol::common_messages::ProtocolVersion,
     taker::{SwapParams, TakerBehavior},
@@ -16,11 +16,11 @@ use super::test_framework::*;
 use log::{info, warn};
 use std::{sync::atomic::Ordering::Relaxed, thread};
 
-/// Test taproot coinswap
+/// Test taproot openswap
 #[test]
-fn test_taproot_coinswap() {
+fn test_taproot_openswap() {
     // ---- Setup ----
-    warn!("Running Test: Taproot Coinswap Basic Functionality");
+    warn!("Running Test: Taproot OpenSwap Basic Functionality");
 
     let makers_config_map = vec![(7102, Some(19061)), (17102, Some(19062))];
     let taker_behavior = vec![TakerBehavior::Normal];
@@ -72,14 +72,14 @@ fn test_taproot_coinswap() {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
     }
 
     let maker_spendable_balance = verify_maker_pre_swap_balances(&makers);
     log::info!("Starting end-to-end taproot swap test...");
 
-    // Swap params for taproot coinswap
+    // Swap params for taproot openswap
     let swap_params = SwapParams::new(ProtocolVersion::Taproot, Amount::from_sat(500000), 2)
         .with_tx_count(3)
         .with_required_confirms(1);
@@ -89,19 +89,19 @@ fn test_taproot_coinswap() {
 
     // Prepare and execute the swap
     let summary = taker
-        .prepare_coinswap(swap_params)
-        .expect("Failed to prepare Taproot coinswap");
+        .prepare_swap(swap_params)
+        .expect("Failed to prepare Taproot openswap");
     taker
-        .start_coinswap(&summary.swap_id)
-        .expect("Taproot coinswap should complete successfully");
-    log::info!("Taproot coinswap completed successfully!");
+        .start_swap(&summary.swap_id)
+        .expect("Taproot openswap should complete successfully");
+    log::info!("Taproot openswap completed successfully!");
 
     // Sync wallets and verify results
     taker
         .get_wallet()
         .write()
         .unwrap()
-        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .sync_and_save(&openswap::utill::NO_SHUTDOWN)
         .unwrap();
 
     // Mine a block to confirm the sweep transactions
@@ -112,7 +112,7 @@ fn test_taproot_coinswap() {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
     }
 

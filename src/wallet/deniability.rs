@@ -133,7 +133,7 @@ impl std::error::Error for DeniabilityProofError {}
 /// SHA256 message signed to assert control of a swap contract outpoint.
 fn proof_message(protocol: ProtocolVersion, outpoint: OutPoint) -> secp256k1::Message {
     let mut bytes = Vec::new();
-    bytes.extend_from_slice(b"coinswap-deniability-proof-v1");
+    bytes.extend_from_slice(b"openswap-deniability-proof-v1");
     bytes.extend_from_slice(format!("{protocol:?}").as_bytes());
     bytes.extend_from_slice(outpoint.to_string().as_bytes());
     secp256k1::Message::from_digest_slice(sha256::Hash::hash(&bytes).as_byte_array())

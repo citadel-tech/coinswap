@@ -35,10 +35,10 @@ jobs:
           GH_TOKEN: ${{ secrets.TRIGGER_OTHER_REPOS_FROM_CORE }}
           DOWNSTREAM_NAME: ${{ matrix.downstream }}
           DOWNSTREAM_REPOSITORY: ${{ matrix.repository }}
-          COINSWAP_SHA: ${{ github.sha }}
-          COINSWAP_REF: ${{ github.ref }}
-          COINSWAP_REPOSITORY: ${{ github.repository }}
-          COINSWAP_COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
+          OPENSWAP_SHA: ${{ github.sha }}
+          OPENSWAP_REF: ${{ github.ref }}
+          OPENSWAP_REPOSITORY: ${{ github.repository }}
+          OPENSWAP_COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
           TRIGGERING_ACTOR: ${{ github.triggering_actor }}
         shell: bash
         run: |
@@ -52,18 +52,18 @@ jobs:
           payload_file="${RUNNER_TEMP}/${DOWNSTREAM_NAME}-dispatch.json"
           jq -n \
             --arg event_type "openswap-updated" \
-            --arg coinswap_sha "${COINSWAP_SHA}" \
-            --arg coinswap_ref "${COINSWAP_REF}" \
-            --arg coinswap_repository "${COINSWAP_REPOSITORY}" \
-            --arg coinswap_commit_url "${COINSWAP_COMMIT_URL}" \
+            --arg openswap_sha "${OPENSWAP_SHA}" \
+            --arg openswap_ref "${OPENSWAP_REF}" \
+            --arg openswap_repository "${OPENSWAP_REPOSITORY}" \
+            --arg openswap_commit_url "${OPENSWAP_COMMIT_URL}" \
             --arg triggering_actor "${TRIGGERING_ACTOR}" \
             '{
               event_type: $event_type,
               client_payload: {
-                coinswap_sha: $coinswap_sha,
-                coinswap_ref: $coinswap_ref,
-                coinswap_repository: $coinswap_repository,
-                coinswap_commit_url: $coinswap_commit_url,
+                openswap_sha: $openswap_sha,
+                openswap_ref: $openswap_ref,
+                openswap_repository: $openswap_repository,
+                openswap_commit_url: $openswap_commit_url,
                 triggering_actor: $triggering_actor
               }
             }' > "${payload_file}"

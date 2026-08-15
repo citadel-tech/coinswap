@@ -30,7 +30,7 @@ use bitcoind::bitcoincore_rpc::json::ListUnspentResultEntry;
 
 use crate::{
     lock_debug,
-    nostr_coinswap::NOSTR_RELAYS,
+    maker::nostr::NOSTR_RELAYS,
     protocol::{
         common_messages::{
             GetOffer, MakerToTakerMessage, Offer, PrivateKeyHandover, ProtocolVersion, SwapDetails,
@@ -229,7 +229,7 @@ pub struct SwapParams {
     pub preferred_makers: Option<Vec<String>>,
     /// (optional) PaySwap: settle the final incoming swapcoin to this
     /// third-party address. When set, `send_amount` is the exact amount the
-    /// receiver gets; the gross route amount is solved during `prepare_coinswap`.
+    /// receiver gets; the gross route amount is solved during `prepare_swap`.
     pub payment_address: Option<bitcoin::Address<bitcoin::address::NetworkUnchecked>>,
 }
 
@@ -305,7 +305,7 @@ pub struct MakerFeeInfo {
 /// Summary returned after the prepare phase, before the user commits funds.
 #[derive(Debug, Clone)]
 pub struct SwapSummary {
-    /// Unique swap ID (use this to call `start_coinswap`).
+    /// Unique swap ID (use this to call `start_swap`).
     pub swap_id: String,
     /// Protocol version.
     pub protocol: ProtocolVersion,
@@ -848,13 +848,13 @@ impl Taker {
         }
     }
 
-    /// Prepare a coinswap: discover makers, negotiate, and return a summary.
+    /// Prepare a openswap: discover makers, negotiate, and return a summary.
     ///
     /// No funds are committed. The caller reviews the summary and then calls
-    /// `start_coinswap` with the returned `swap_id` to execute.
-    pub fn prepare_coinswap(&mut self, params: SwapParams) -> Result<SwapSummary, TakerError> {
+    /// `start_swap` with the returned `swap_id` to execute.
+    pub fn prepare_swap(&mut self, params: SwapParams) -> Result<SwapSummary, TakerError> {
         log::info!(
-            "Preparing coinswap: amount={}, makers={}, protocol={:?}",
+            "Preparing openswap: amount={}, makers={}, protocol={:?}",
             params.send_amount,
             params.maker_count,
             params.protocol
@@ -888,7 +888,7 @@ impl Taker {
         OsRng.fill_bytes(&mut preimage);
 
         let swap_id = Hash160::hash(&preimage)[0..8].to_lower_hex_string();
-        log::info!("Preparing coinswap with id: {}", swap_id);
+        log::info!("Preparing openswap with id: {}", swap_id);
 
         let maker_count = params.maker_count;
 
@@ -1011,12 +1011,12 @@ impl Taker {
         Ok(summary)
     }
 
-    /// Execute a prepared coinswap. Call after reviewing the `SwapSummary`
-    /// from `prepare_coinswap`.
+    /// Execute a prepared openswap. Call after reviewing the `SwapSummary`
+    /// from `prepare_swap`.
     ///
     /// Commits funds on-chain: creates funding transactions, exchanges
     /// contracts with makers, finalizes, and sweeps.
-    pub fn start_coinswap(&mut self, swap_id: &str) -> Result<TakerReport, TakerError> {
+    pub fn start_swap(&mut self, swap_id: &str) -> Result<TakerReport, TakerError> {
         let swap_start_time = Instant::now();
 
         // Verify the swap_id matches the prepared swap.
@@ -1037,7 +1037,7 @@ impl Taker {
 
         let initial_utxos = self.read_wallet()?.list_all_utxo();
 
-        log::info!("Starting coinswap execution for id: {}", swap_id);
+        log::info!("Starting openswap execution for id: {}", swap_id);
 
         // Taproot has no breach case: its contract output cannot be spent
         // mid-swap — key-path needs both keys, the hashlock needs the
@@ -1287,7 +1287,7 @@ impl Taker {
             Some(&swept),
         )?;
 
-        log::info!("Coinswap completed successfully: {:?}", report);
+        log::info!("OpenSwap completed successfully: {:?}", report);
         Ok(report)
     }
 
@@ -2047,12 +2047,12 @@ impl Taker {
                 TakerError::General(format!("Failed to connect to {}: {}", address, e))
             })?,
             ConnectionType::Tor => {
-                use crate::protocol::common_messages::COINSWAP_PORT;
+                use crate::protocol::common_messages::OPENSWAP_PORT;
 
                 socks5_connect(
                     self.config.socks_port,
                     address,
-                    COINSWAP_PORT,
+                    OPENSWAP_PORT,
                     None,
                     timeout,
                 )

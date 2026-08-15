@@ -11,7 +11,7 @@
 //! Legacy arm in `legacy_handlers.rs` was added alongside this test.
 
 use bitcoin::Amount;
-use coinswap::{
+use openswap::{
     maker::{start_server, MakerBehavior},
     protocol::common_messages::ProtocolVersion,
     taker::{SwapParams, TakerBehavior},
@@ -93,9 +93,9 @@ fn test_legacy_hashlock_recovery() {
     generate_blocks(bitcoind, 1);
 
     let summary = taker
-        .prepare_coinswap(swap_params)
+        .prepare_swap(swap_params)
         .expect("Prepare should succeed");
-    let swap_result = taker.start_coinswap(&summary.swap_id);
+    let swap_result = taker.start_swap(&summary.swap_id);
     assert!(
         swap_result.is_err(),
         "Swap should fail due to Maker2 closing after sweep"

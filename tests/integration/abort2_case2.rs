@@ -5,7 +5,7 @@
 //! The swap should succeed.
 
 use bitcoin::Amount;
-use coinswap::{
+use openswap::{
     maker::{start_server, MakerBehavior},
     protocol::common_messages::ProtocolVersion,
     taker::{SwapParams, TakerBehavior},
@@ -75,13 +75,13 @@ fn maker_abort2_case2() {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
     }
 
     let maker_spendable_balance = verify_maker_pre_swap_balances(&makers);
 
-    // Swap params for coinswap (Legacy)
+    // Swap params for openswap (Legacy)
     let swap_params = SwapParams::new(ProtocolVersion::Legacy, Amount::from_sat(500000), 2)
         .with_tx_count(3)
         .with_required_confirms(1);
@@ -90,10 +90,10 @@ fn maker_abort2_case2() {
 
     // Prepare and execute the swap — taker should retry with the spare maker
     let summary = taker
-        .prepare_coinswap(swap_params)
-        .expect("Failed to prepare coinswap");
+        .prepare_swap(swap_params)
+        .expect("Failed to prepare openswap");
     taker
-        .start_coinswap(&summary.swap_id)
+        .start_swap(&summary.swap_id)
         .expect("Swap should succeed with spare maker");
 
     // Sync wallets and verify results
@@ -101,7 +101,7 @@ fn maker_abort2_case2() {
         .get_wallet()
         .write()
         .unwrap()
-        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .sync_and_save(&openswap::utill::NO_SHUTDOWN)
         .unwrap();
 
     generate_blocks(bitcoind, 1);
@@ -111,7 +111,7 @@ fn maker_abort2_case2() {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
     }
 

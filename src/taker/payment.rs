@@ -141,7 +141,7 @@ fn solve_route_gross_sats(
 impl Taker {
     /// Validate the receiver address network and per-output dust floor.
     /// Returns the checked address, or `None` for regular swaps. Runs at the
-    /// top of `prepare_coinswap`, before any swap state exists; the checked
+    /// top of `prepare_swap`, before any swap state exists; the checked
     /// address then feeds [`Self::payment_prepare_route`].
     pub(crate) fn payment_validate_params(
         &self,

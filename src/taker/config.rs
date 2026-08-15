@@ -38,8 +38,8 @@ impl TakerConfig {
     ///
     /// For reference of default config checkout `./taker.toml` in repo folder.
     ///
-    /// Default data-dir for linux: `~/.coinswap/taker`
-    /// Default config locations: `~/.coinswap/taker/config.toml`.
+    /// Default data-dir for linux: `~/.openswap/taker`
+    /// Default config locations: `~/.openswap/taker/config.toml`.
     pub fn new(config_path: Option<&Path>) -> io::Result<Self> {
         let default_config_path = get_taker_dir()?.join("config.toml");
 

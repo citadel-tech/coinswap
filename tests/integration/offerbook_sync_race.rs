@@ -1,12 +1,12 @@
 //! Stress and race-oriented tests for offerbook sync behavior (taker path).
 
 use bitcoin::Amount;
-use coinswap::{
+use log::warn;
+use openswap::{
     maker::{start_server, MakerBehavior},
     taker::{MakerProtocol, MakerState, TakerBehavior},
     wallet::AddressType,
 };
-use log::warn;
 use std::{
     sync::{atomic::Ordering::Relaxed, Arc},
     thread,
@@ -16,7 +16,7 @@ use super::test_framework::*;
 
 const STAGED_MAKER_SETUP_TIMEOUT_SECS: u64 = 180;
 
-fn good_maker_count(taker: &coinswap::taker::Taker) -> usize {
+fn good_maker_count(taker: &openswap::taker::Taker) -> usize {
     taker
         .fetch_offers()
         .unwrap()

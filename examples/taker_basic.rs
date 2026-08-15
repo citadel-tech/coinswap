@@ -1,6 +1,6 @@
 //! Basic Taker API Example
 //!
-//! This example demonstrates how to use the Coinswap Taker API:
+//! This example demonstrates how to use the OpenSwap Taker API:
 //! - Initialize a Taker instance with Bitcoin Core RPC
 //! - Check wallet balance and generate addresses
 //! - Fund the wallet with test coins
@@ -8,8 +8,8 @@
 //!
 //! ## Prerequisites
 //!
-//! This example requires Tor to be running for coinswap connections.
-//! See [Tor setup documentation](https://github.com/citadel-tech/coinswap/blob/master/docs/tor.md)
+//! This example requires Tor to be running for openswap connections.
+//! See [Tor setup documentation](https://github.com/citadel-foss/openswap/blob/master/docs/tor.md)
 //! for installation and configuration instructions.
 //!
 //! ## Usage
@@ -24,20 +24,20 @@ use bitcoind::{
     bitcoincore_rpc::{Auth, RpcApi},
     BitcoinD,
 };
-use coinswap::{
+use openswap::{
     protocol::common_messages::ProtocolVersion,
     taker::{SwapParams, Taker, TakerInitConfig},
     wallet::{AddressType, BackendConfig, CoreRpcConfig},
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== Coinswap Taker Basic Example ===");
+    println!("=== OpenSwap Taker Basic Example ===");
     println!("NOTE: When prompted for encryption passphrase, press Enter for no encryption");
 
     // Clean up any existing wallet files to ensure fresh start
     let wallet_path = std::env::home_dir()
         .unwrap_or_else(std::env::temp_dir)
-        .join(".coinswap")
+        .join(".openswap")
         .join("taker")
         .join("wallets")
         .join("taker-example");
@@ -50,8 +50,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Setup bitcoind in regtest mode
     // NOTE: This example uses regtest for demonstration. In production,
     // you should run your own bitcoind node. See the bitcoind documentation
-    // at https://github.com/citadel-tech/coinswap/blob/master/docs/bitcoind.md
-    let data_dir = std::env::temp_dir().join("coinswap_taker_example");
+    // at https://github.com/citadel-foss/openswap/blob/master/docs/bitcoind.md
+    let data_dir = std::env::temp_dir().join("openswap_taker_example");
     std::fs::create_dir_all(&data_dir)?;
 
     println!("Starting Bitcoin Core in regtest mode...");
@@ -105,7 +105,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let taker = Taker::init(config).unwrap();
 
     // Swap the two lines above for these to drive the same wallet through an electrs server instead of bitcoind RPC.
-    //     use coinswap::wallet::ElectrumConfig;
+    //     use openswap::wallet::ElectrumConfig;
     //     let electrum_config = ElectrumConfig {
     //         url: "tcp://127.0.0.1:60401".to_string(),
     //     };
@@ -162,7 +162,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .unwrap();
 
             // Sync wallet to see the new funds
-            wallet.sync_and_save(&coinswap::utill::NO_SHUTDOWN).unwrap();
+            wallet.sync_and_save(&openswap::utill::NO_SHUTDOWN).unwrap();
 
             let updated_balances = wallet.get_balances().unwrap();
             println!("Wallet funded successfully!");
@@ -213,8 +213,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Coinswap setup
-    println!("\nCoinswap setup:");
+    // OpenSwap setup
+    println!("\nOpenSwap setup:");
 
     let swap_params = SwapParams {
         protocol: ProtocolVersion::Legacy,
@@ -233,17 +233,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Protocol: {:?}", swap_params.protocol);
 
     // In production, you would call:
-    //   let summary = taker.prepare_coinswap(swap_params).unwrap();
-    //   let report = taker.start_coinswap(&summary.swap_id).unwrap();
+    //   let summary = taker.prepare_swap(swap_params).unwrap();
+    //   let report = taker.start_swap(&summary.swap_id).unwrap();
 
-    println!("\nCoinswap call commented out for this example.");
+    println!("\nOpenSwap call commented out for this example.");
     println!("\nIn production, you would call:");
-    println!("  let summary = taker.prepare_coinswap(swap_params).unwrap();");
-    println!("  let report = taker.start_coinswap(&summary.swap_id).unwrap();");
+    println!("  let summary = taker.prepare_swap(swap_params).unwrap();");
+    println!("  let report = taker.start_swap(&summary.swap_id).unwrap();");
     println!("\nThis would:");
     println!("- Connect to the tracker server to find makers");
     println!("- Negotiate with {} makers", swap_params.maker_count);
-    println!("- Execute the coinswap protocol");
+    println!("- Execute the openswap protocol");
     println!("- Return the final transaction details");
 
     println!("\nExample completed.");

@@ -9,8 +9,8 @@ use bitcoin::Amount;
 use bitcoind::bitcoincore_rpc::{
     json::GetTransactionResultDetailCategory as Category, RpcApi as _,
 };
-use coinswap::{taker::TakerBehavior, utill::MIN_FEE_RATE, wallet::AddressType};
 use log::info;
+use openswap::{taker::TakerBehavior, utill::MIN_FEE_RATE, wallet::AddressType};
 
 use super::test_framework::*;
 
@@ -72,7 +72,7 @@ fn test_electrum_list_transactions() {
         .get_wallet()
         .write()
         .unwrap()
-        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .sync_and_save(&openswap::utill::NO_SHUTDOWN)
         .unwrap();
 
     let txs = taker

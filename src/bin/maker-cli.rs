@@ -1,7 +1,7 @@
 use std::{fs, net::TcpStream, path::PathBuf, time::Duration};
 
 use clap::Parser;
-use coinswap::{
+use openswap::{
     maker::{AuthenticatedRpcRequest, MakerError, RpcMsgReq, RpcMsgResp},
     utill::{get_maker_dir, read_message, send_message, MIN_FEE_RATE},
 };
@@ -10,9 +10,9 @@ use coinswap::{
 ///
 /// The app works as an RPC client for makerd, useful to access the server, retrieve information, and manage server operations.
 ///
-/// For more detailed usage information, please refer: <https://github.com/citadel-tech/coinswap/blob/master/docs/maker-cli.md>
+/// For more detailed usage information, please refer: <https://github.com/citadel-foss/openswap/blob/master/docs/maker-cli.md>
 ///
-/// This is early beta, and there are known and unknown bugs. Please report issues at: <https://github.com/citadel-tech/coinswap/issues>
+/// This is early beta, and there are known and unknown bugs. Please report issues at: <https://github.com/citadel-foss/openswap/issues>
 #[derive(Parser, Debug)]
 #[command(version = option_env ! ("CARGO_PKG_VERSION").unwrap_or("unknown"),
 author = option_env ! ("CARGO_PKG_AUTHORS").unwrap_or(""))]

@@ -222,7 +222,7 @@ fn process_proof_of_funding<M: Maker>(
         "[CONTRACT_STATE] Role: Maker | Protocol: Legacy | SwapID: {} | ProofFundingTxs: {} | NextHopKeys: {} | RefundLocktime: {} | Status: verified",
         pof.id,
         pof.confirmed_funding_txes.len(),
-        pof.next_coinswap_info.len(),
+        pof.next_openswap_info.len(),
         pof.refund_locktime
     );
 
@@ -318,7 +318,7 @@ fn process_proof_of_funding<M: Maker>(
     // success reports match what was really earned.
     state.service_fee_sats = swap_fee.to_sat();
     let mining_fee =
-        Amount::from_sat(estimate_funding_tx_fee_sats() * pof.next_coinswap_info.len() as u64);
+        Amount::from_sat(estimate_funding_tx_fee_sats() * pof.next_openswap_info.len() as u64);
     let outgoing_amount = incoming_amount
         .checked_sub(swap_fee)
         .and_then(|amt| amt.checked_sub(mining_fee))
@@ -349,22 +349,22 @@ fn process_proof_of_funding<M: Maker>(
     maker.sync_and_save_wallet()?;
 
     let next_multisig_pubkeys: Vec<PublicKey> = pof
-        .next_coinswap_info
+        .next_openswap_info
         .iter()
         .map(|info| info.next_multisig_pubkey)
         .collect();
     let next_hashlock_pubkeys: Vec<PublicKey> = pof
-        .next_coinswap_info
+        .next_openswap_info
         .iter()
         .map(|info| info.next_hashlock_pubkey)
         .collect();
     let next_multisig_nonces: Vec<SecretKey> = pof
-        .next_coinswap_info
+        .next_openswap_info
         .iter()
         .map(|info| info.next_multisig_nonce)
         .collect();
     let next_hashlock_nonces: Vec<SecretKey> = pof
-        .next_coinswap_info
+        .next_openswap_info
         .iter()
         .map(|info| info.next_hashlock_nonce)
         .collect();
@@ -379,7 +379,7 @@ fn process_proof_of_funding<M: Maker>(
         );
     }
 
-    let (funding_txes, mut outgoing_swapcoins, _mining_fees) = maker.initialize_coinswap(
+    let (funding_txes, mut outgoing_swapcoins, _mining_fees) = maker.initialize_openswap(
         outgoing_amount,
         &next_multisig_pubkeys,
         &next_hashlock_pubkeys,

@@ -17,10 +17,10 @@ use bitcoin::{consensus::deserialize, Block, Network, OutPoint, ScriptBuf, Trans
 use crossbeam_channel::Sender as CbSender;
 
 use crate::{
-    nostr,
     utill::HEART_BEAT_INTERVAL,
     wallet::{blockchain::WatchEvent, AnyBlockchain, Blockchain},
     watch_tower::{
+        nostr,
         registry_storage::FileRegistry,
         utils::{process_block, process_transaction},
         watcher_error::WatcherError,

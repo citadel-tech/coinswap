@@ -21,18 +21,18 @@ use bitcoind::{
     bitcoincore_rpc::{Auth, RpcApi},
     BitcoinD,
 };
-use coinswap::{
+use openswap::{
     utill::MIN_FEE_RATE,
     wallet::{AddressType, AnyBlockchain, CoreRPC, CoreRpcConfig, Destination, Wallet},
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== Coinswap Wallet Basic Example ===");
+    println!("=== OpenSwap Wallet Basic Example ===");
 
     // Clean up any existing wallet files to ensure fresh start
     let wallet_path = std::env::home_dir()
         .unwrap_or_else(std::env::temp_dir)
-        .join(".coinswap")
+        .join(".openswap")
         .join("taker")
         .join("wallets")
         .join("wallet-example");
@@ -45,8 +45,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Setup bitcoind in regtest mode
     // NOTE: This example uses regtest for demonstration. In production,
     // you should run your own bitcoind node. See the bitcoind documentation
-    // at https://github.com/citadel-tech/coinswap/blob/master/docs/bitcoind.md
-    let data_dir = std::env::temp_dir().join("coinswap_wallet_example");
+    // at https://github.com/citadel-foss/openswap/blob/master/docs/bitcoind.md
+    let data_dir = std::env::temp_dir().join("openswap_wallet_example");
     std::fs::create_dir_all(&data_dir)?;
 
     println!("Starting Bitcoin Core in regtest mode...");
@@ -91,7 +91,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut wallet = Wallet::init(&wallet_path, backend, None).unwrap();
 
     // Swap the two lines above for these to drive the same wallet through an electrs server instead of bitcoind RPC.
-    //     use coinswap::wallet::{Electrum, ElectrumConfig};
+    //     use openswap::wallet::{Electrum, ElectrumConfig};
     //     let electrum_config = ElectrumConfig {
     //         url: "tcp://127.0.0.1:60401".to_string(),
     //     };
@@ -101,7 +101,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Wallet initialized successfully!");
 
     // Sync wallet first
-    wallet.sync_and_save(&coinswap::utill::NO_SHUTDOWN).unwrap();
+    wallet.sync_and_save(&openswap::utill::NO_SHUTDOWN).unwrap();
     println!("Wallet synced with blockchain");
 
     // Fund the wallet for demonstration
@@ -128,7 +128,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap();
 
     // Sync wallet to see the new funds
-    wallet.sync_and_save(&coinswap::utill::NO_SHUTDOWN).unwrap();
+    wallet.sync_and_save(&openswap::utill::NO_SHUTDOWN).unwrap();
     println!("Wallet funded with {} BTC", fund_amount.to_btc());
 
     // Check balances and explain what each type means

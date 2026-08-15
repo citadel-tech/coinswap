@@ -9,7 +9,7 @@
 //! `taproot_swap.rs`) even though the keepalive message is shared.
 
 use bitcoin::Amount;
-use coinswap::{
+use openswap::{
     maker::{start_server, MakerBehavior},
     protocol::common_messages::ProtocolVersion,
     taker::{SwapParams, TakerBehavior},
@@ -104,13 +104,13 @@ fn run_multi_confirm_swap(protocol: ProtocolVersion, makers_config_map: Vec<(u16
     generate_blocks(bitcoind, 1);
 
     let summary = taker
-        .prepare_coinswap(swap_params)
-        .expect("Failed to prepare coinswap");
+        .prepare_swap(swap_params)
+        .expect("Failed to prepare openswap");
     taker
-        .start_coinswap(&summary.swap_id)
-        .expect("Coinswap should complete successfully despite the longer funding wait");
+        .start_swap(&summary.swap_id)
+        .expect("OpenSwap should complete successfully despite the longer funding wait");
 
-    info!("Coinswap completed with required_confirms = {REQUIRED_CONFIRMS}");
+    info!("OpenSwap completed with required_confirms = {REQUIRED_CONFIRMS}");
 
     makers
         .iter()

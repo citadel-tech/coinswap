@@ -1,7 +1,7 @@
 //! Taproot taker abort test 1: Taker closes at AckSwapDetails response.
 //!
 //! Scenario:
-//! 1. Taker initiates a Taproot coinswap with 2 makers.
+//! 1. Taker initiates a Taproot openswap with 2 makers.
 //! 2. Taker closes the connection immediately after receiving AckSwapDetails
 //!    from a maker (CloseAtAckResponse behavior).
 //! 3. This is an early abort -- no funding transactions are broadcast.
@@ -9,7 +9,7 @@
 //! 5. Verify: taker balance is approximately unchanged (no fund loss).
 
 use bitcoin::Amount;
-use coinswap::{
+use openswap::{
     maker::{start_server, MakerBehavior},
     protocol::common_messages::ProtocolVersion,
     taker::{SwapParams, TakerBehavior},
@@ -81,14 +81,14 @@ fn test_taproot_taker_abort1() {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
     }
 
     let _maker_spendable_balance = verify_maker_pre_swap_balances(&makers);
     log::info!("Starting taproot taker abort1 test...");
 
-    // Swap params for coinswap (Taproot)
+    // Swap params for openswap (Taproot)
     let swap_params = SwapParams::new(ProtocolVersion::Taproot, Amount::from_sat(500000), 2)
         .with_tx_count(3)
         .with_required_confirms(1);
@@ -97,7 +97,7 @@ fn test_taproot_taker_abort1() {
 
     // Prepare should fail at AckResponse — the taker closes the connection
     // right after receiving AckSwapDetails, before any funding is broadcast.
-    let prepare_result = taker.prepare_coinswap(swap_params.clone());
+    let prepare_result = taker.prepare_swap(swap_params.clone());
     assert!(
         prepare_result.is_err(),
         "Prepare should fail due to CloseAtAckResponse behavior"
@@ -132,7 +132,7 @@ fn test_taproot_taker_abort1() {
     // AckSwapDetails after storing a new reservation, and the taker only emits
     // the CloseAtAckResponse test error after receiving that ack — so hitting
     // that exact error proves the makers accepted the retry.
-    let retry_result = taker.prepare_coinswap(swap_params);
+    let retry_result = taker.prepare_swap(swap_params);
     let retry_err = format!(
         "{:?}",
         retry_result.expect_err("Retry should still abort at AckSwapDetails")
@@ -154,7 +154,7 @@ fn test_taproot_taker_abort1() {
         .get_wallet()
         .write()
         .unwrap()
-        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .sync_and_save(&openswap::utill::NO_SHUTDOWN)
         .unwrap();
 
     let taker_balances = taker.get_wallet().read().unwrap().get_balances().unwrap();

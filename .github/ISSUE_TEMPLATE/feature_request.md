@@ -1,6 +1,6 @@
 ---
 name: Feature Request
-about: Suggest a new feature or improvement for CoinSwap
+about: Suggest a new feature or improvement for OpenSwap
 title: "feat: "
 labels: ["enhancement"]
 assignees: ""

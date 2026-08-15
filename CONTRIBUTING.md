@@ -1,18 +1,18 @@
-# Contributing to CoinSwap
+# Contributing to OpenSwap
 
-Thank you for your interest in contributing to **CoinSwap**!
+Thank you for your interest in contributing to **OpenSwap**!
 
-We are building functioning, minimal-viable binaries and libraries for the trustless, peer-to-peer [Maxwell-Belcher CoinSwap protocol](https://github.com/citadel-tech/Coinswap-Protocol-Specification) on Bitcoin. This is **experimental security-critical software** — every change can affect atomicity, privacy (Tor), sybil resistance (fidelity bonds), or real BTC. Because of this, we maintain **very high standards** for code quality, testing, and human understanding.
+We are building functioning, minimal-viable binaries and libraries for the trustless, peer-to-peer [Maxwell-Belcher Atomic Swap protocol](https://github.com/citadel-foss/OpenSwap-Protocol-Specification) on Bitcoin. This is **experimental security-critical software** — every change can affect atomicity, privacy (Tor), sybil resistance (fidelity bonds), or real BTC. Because of this, we maintain **very high standards** for code quality, testing, and human understanding.
 
 We welcome contributions from everyone, but we expect contributors to understand the critical nature of this codebase.
-To understand the codebase, please refer to the [Deep Wiki](https://deepwiki.com/citadel-tech/coinswap).
+To understand the codebase, please refer to the [Deep Wiki](https://deepwiki.com/citadel-foss/openswap).
 
 ## Code of Conduct
 
 This project follows the [Contributor Covenant Code of Conduct](https://www.contributor-covenant.org/version/2/1/code_of_conduct/). By participating, you agree to abide by it.
 
 ## Table of Contents
-- [Contributing to CoinSwap](#contributing-to-coinswap)
+- [Contributing to OpenSwap](#contributing-to-openswap)
   - [Code of Conduct](#code-of-conduct)
   - [Table of Contents](#table-of-contents)
   - [How Can I Contribute?](#how-can-i-contribute)
@@ -39,8 +39,8 @@ This project follows the [Contributor Covenant Code of Conduct](https://www.cont
 - Include steps to reproduce, regtest logs, environment (Docker vs native), and expected vs actual behavior.
 
 ### Suggesting Features or Protocol Changes
-- Use the [Feature Request issue template](.github/ISSUE_TEMPLATE/feature_request.md) or open a [discussion](https://github.com/citadel-tech/coinswap/discussions).
-- For protocol-level ideas, please reference the [CoinSwap protocol specification](https://github.com/citadel-tech/Coinswap-Protocol-Specification) where possible.
+- Use the [Feature Request issue template](.github/ISSUE_TEMPLATE/feature_request.md) or open a [discussion](https://github.com/citadel-foss/openswap/discussions).
+- For protocol-level ideas, please reference the [OpenSwap protocol specification](https://github.com/citadel-foss/OpenSwap-Protocol-Specification) where possible.
 
 ### Code & Documentation Contributions
 See the Pull Request section below.
@@ -55,8 +55,8 @@ See the Pull Request section below.
 
 ### Recommended: One-Click Docker Stack
 ```bash
-git clone https://github.com/citadel-tech/coinswap.git
-cd coinswap
+git clone https://github.com/citadel-foss/openswap.git
+cd openswap
 ./docker-setup configure
 ./docker-setup start
 ```
@@ -64,8 +64,8 @@ See [`docs/docker.md`](docs/docker.md) for full details.
 
 ### Native Setup
 ```bash
-git clone https://github.com/citadel-tech/coinswap.git
-cd coinswap
+git clone https://github.com/citadel-foss/openswap.git
+cd openswap
 cargo build --release
 # Install binaries (optional)
 sudo install ./target/release/{taker,makerd,maker-cli} /usr/local/bin/
@@ -154,7 +154,7 @@ We strongly prefer thoughtful, human-driven contributions — even if fewer in n
 Security is the top priority.
 
 - **Never** report security issues in public issues or PRs.
-- Report privately via the [GitHub Security Advisory](https://github.com/citadel-tech/coinswap/security/advisories/new) feature. Alternatively, reach core maintainers directly via a private message in the [Matrix server](https://matrix.to/#/#citadel-foss:matrix.org).
+- Report privately via the [GitHub Security Advisory](https://github.com/citadel-foss/openswap/security/advisories/new) feature. Alternatively, reach core maintainers directly via a private message in the [Matrix server](https://matrix.to/#/#citadel-foss:matrix.org).
 - We follow responsible disclosure.
 
 Any change touching protocol logic, cryptography, or fund handling **must** preserve trustlessness and atomic guarantees.
@@ -162,11 +162,11 @@ Any change touching protocol logic, cryptography, or fund handling **must** pres
 ## Community & Getting Help
 
 - **Matrix**: [Citadel Matrix](https://matrix.to/#/#citadel-foss:matrix.org) (fastest for questions)
-- [GitHub Issues](https://github.com/citadel-tech/coinswap/issues) & [Discussions](https://github.com/citadel-tech/coinswap/discussions)
-- Look for [`good first issue`](https://github.com/citadel-tech/coinswap/labels/good%20first%20issue) or [`help wanted`](https://github.com/citadel-tech/coinswap/labels/help%20wanted) labels
+- [GitHub Issues](https://github.com/citadel-foss/openswap/issues) & [Discussions](https://github.com/citadel-foss/openswap/discussions)
+- Look for [`good first issue`](https://github.com/citadel-foss/openswap/labels/good%20first%20issue) or [`help wanted`](https://github.com/citadel-foss/openswap/labels/help%20wanted) labels
 
 ---
 
-**Thank you** for helping make CoinSwap more robust, private, and secure! 🧡
+**Thank you** for helping make OpenSwap more robust, private, and secure! 🧡
 
 Happy swapping.

@@ -1,6 +1,6 @@
 ---
 name: Bug Report
-about: Report a bug or unexpected behavior in CoinSwap
+about: Report a bug or unexpected behavior in OpenSwap
 title: "bug: "
 labels: ["bug"]
 assignees: ""
@@ -18,4 +18,4 @@ assignees: ""
 <!-- What should have happened? -->
 
 ## Environment and Logs
-<!-- Include the CoinSwap version, OS, setup, network, role, protocol version, and relevant logs. -->
+<!-- Include the OpenSwap version, OS, setup, network, role, protocol version, and relevant logs. -->
