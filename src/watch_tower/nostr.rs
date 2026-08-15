@@ -63,7 +63,7 @@ pub fn run_discovery(
 
     let connections = relays
         .iter()
-        .map(|_| blockchain.new_connection())
+        .map(|_| blockchain.new_connection_with_shutdown(shutdown.clone()))
         .collect::<Result<Vec<_>, _>>()?;
     let mut sessions = Vec::with_capacity(relays.len());
     for (relay, blockchain) in relays.iter().zip(connections) {
