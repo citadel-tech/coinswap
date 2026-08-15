@@ -1,8 +1,7 @@
 //! Integration test for concurrent taker coinswap with limited maker liquidity.
 //!
 //! Setup: 2 takers with Normal behavior, 2 makers with Normal behavior.
-//! Protocol: Legacy (ECDSA), AddressType::P2TR.
-//! Both takers run swaps concurrently via `thread::scope`.
+//! Both takers run swaps concurrently via `thread::scope`, once per protocol.
 //! Makers have limited liquidity (only enough for ~1 swap), so one taker
 //! should succeed and the other should fail due to insufficient funds.
 //! This exercises the UTXO reservation mechanism that prevents double-spend.
@@ -31,10 +30,33 @@ const RESULT_FAILED: u8 = 2;
 
 #[test]
 fn test_concurrent_takers_legacy() {
-    // ---- Setup ----
-    warn!("Running Test: Concurrent Takers with Legacy (ECDSA) Protocol - Limited Liquidity");
+    concurrent_takers(
+        ProtocolVersion::Legacy,
+        vec![(7802, Some(20801)), (17802, Some(20802))],
+        [1250081, 1250044],
+    );
+}
 
-    let makers_config_map = vec![(7802, Some(20801)), (17802, Some(20802))];
+#[test]
+fn test_concurrent_takers_taproot() {
+    concurrent_takers(
+        ProtocolVersion::Taproot,
+        vec![(7902, Some(20901)), (17902, Some(20902))],
+        [1250309, 1250272],
+    );
+}
+
+fn concurrent_takers(
+    protocol: ProtocolVersion,
+    makers_config_map: Vec<(u16, Option<u16>)>,
+    expected_maker_spendable: [u64; 2],
+) {
+    // ---- Setup ----
+    warn!(
+        "Running Test: Concurrent Takers with {:?} Protocol - Limited Liquidity",
+        protocol
+    );
+
     let taker_behavior = vec![TakerBehavior::Normal, TakerBehavior::Normal];
 
     // Initialize test framework with 2 takers and 2 makers
@@ -122,7 +144,10 @@ fn test_concurrent_takers_legacy() {
         .collect();
 
     // ---- Concurrent Swaps ----
-    log::info!("Starting concurrent swaps for both takers (Legacy protocol)...");
+    log::info!(
+        "Starting concurrent swaps for both takers ({:?} protocol)...",
+        protocol
+    );
 
     generate_blocks(bitcoind, 1);
 
@@ -139,25 +164,25 @@ fn test_concurrent_takers_legacy() {
         let r2 = &result2;
 
         s.spawn(move || {
-            info!("Taker 1 starting concurrent coinswap");
-            let swap_params = SwapParams::new(ProtocolVersion::Legacy, Amount::from_sat(500000), 2)
+            info!("Taker 1 starting concurrent {:?} coinswap", protocol);
+            let swap_params = SwapParams::new(protocol, Amount::from_sat(500000), 2)
                 .with_tx_count(3)
                 .with_required_confirms(1);
 
             match taker1.prepare_coinswap(swap_params) {
                 Ok(summary) => match taker1.start_coinswap(&summary.swap_id) {
                     Ok(report) => {
-                        info!("Taker 1 coinswap completed successfully!");
+                        info!("Taker 1 {:?} coinswap completed successfully!", protocol);
                         info!("Taker 1 swap report: {:?}", report);
                         r1.store(RESULT_SUCCESS, Relaxed);
                     }
                     Err(e) => {
-                        warn!("Taker 1 coinswap failed: {:?}", e);
+                        warn!("Taker 1 {:?} coinswap failed: {:?}", protocol, e);
                         r1.store(RESULT_FAILED, Relaxed);
                     }
                 },
                 Err(e) => {
-                    warn!("Taker 1 prepare failed: {:?}", e);
+                    warn!("Taker 1 {:?} prepare failed: {:?}", protocol, e);
                     r1.store(RESULT_FAILED, Relaxed);
                 }
             }
@@ -167,32 +192,32 @@ fn test_concurrent_takers_legacy() {
         thread::sleep(Duration::from_secs(3));
 
         s.spawn(move || {
-            info!("Taker 2 starting concurrent coinswap");
-            let swap_params = SwapParams::new(ProtocolVersion::Legacy, Amount::from_sat(900000), 2)
+            info!("Taker 2 starting concurrent {:?} coinswap", protocol);
+            let swap_params = SwapParams::new(protocol, Amount::from_sat(900000), 2)
                 .with_tx_count(3)
                 .with_required_confirms(1);
 
             match taker2.prepare_coinswap(swap_params) {
                 Ok(summary) => match taker2.start_coinswap(&summary.swap_id) {
                     Ok(report) => {
-                        info!("Taker 2 coinswap completed successfully!");
+                        info!("Taker 2 {:?} coinswap completed successfully!", protocol);
                         info!("Taker 2 swap report: {:?}", report);
                         r2.store(RESULT_SUCCESS, Relaxed);
                     }
                     Err(e) => {
-                        warn!("Taker 2 coinswap failed: {:?}", e);
+                        warn!("Taker 2 {:?} coinswap failed: {:?}", protocol, e);
                         r2.store(RESULT_FAILED, Relaxed);
                     }
                 },
                 Err(e) => {
-                    warn!("Taker 2 prepare failed: {:?}", e);
+                    warn!("Taker 2 {:?} prepare failed: {:?}", protocol, e);
                     r2.store(RESULT_FAILED, Relaxed);
                 }
             }
         });
     });
 
-    info!("All concurrent coinswaps processed.");
+    info!("All concurrent {:?} coinswaps processed.", protocol);
 
     let r1 = result1.load(Relaxed);
     let r2 = result2.load(Relaxed);
@@ -209,7 +234,11 @@ fn test_concurrent_takers_legacy() {
     // The UTXO reservation mechanism prevents double-spend of maker UTXOs
     assert!(success_count >= 1, "At least one taker should succeed");
     let log_path = format!("{}/taker/debug.log", test_framework.temp_dir.display());
+    // Maker-side log: the maker refused the second swap for liquidity.
     test_framework.assert_log("Rejecting swap ", &log_path);
+    // Taker-side log: the losing taker got the rejection as a message and
+    // failed fast, not sat out a timeout on a dropped connection.
+    test_framework.assert_log("rejected swap", &log_path);
     assert_eq!(
         completed_count, 2,
         "Both takers should have completed (success or failure)"
@@ -266,8 +295,6 @@ fn test_concurrent_takers_legacy() {
         }
     }
 
-    let expected_maker_spendable = [1250081, 1250044];
-
     // Verify maker balances
     for (i, (maker, original_spendable)) in makers.iter().zip(maker_spendable_balance).enumerate() {
         let wallet = maker.wallet.read().unwrap();
@@ -285,8 +312,8 @@ fn test_concurrent_takers_legacy() {
             i
         );
 
-        // With the lower fee schedule, the second maker's earned fee does not fully
-        // offset its on-chain spend cost in this limited-liquidity scenario.
+        // With the lower fee schedule, the earned maker fee does not fully
+        // offset on-chain spend costs in this limited-liquidity scenario.
         if success_count > 0 {
             assert_eq!(
                 balances.spendable.to_sat(),
@@ -303,7 +330,10 @@ fn test_concurrent_takers_legacy() {
         }
     }
 
-    info!("All concurrent taker swap tests (Legacy) completed successfully!");
+    info!(
+        "All concurrent taker swap tests ({:?}) completed successfully!",
+        protocol
+    );
 
     makers
         .iter()

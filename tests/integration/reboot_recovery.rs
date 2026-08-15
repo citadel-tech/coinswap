@@ -1,14 +1,15 @@
-//! Integration test: Taproot maker reboot recovery preserves funded swapcoins.
+//! Reboot and crash recovery, both protocols.
 //!
-//! Route: Taker -> Maker1 (Normal) -> Maker2 (CloseAtPrivateKeyHandover) -> Taker
+//! A restarted node knows its live swaps only from what it persisted. This
+//! file proves each piece of that: funded swapcoins survive a maker reboot
+//! with no tracker record yet, startup rebuilds every contract watch, and a
+//! crash inside the contract-acceptance window loses nothing.
 //!
-//! Scenario:
-//! 1. Taker initiates a Taproot coinswap with 2 makers.
-//! 2. Maker2 broadcasts its funding transaction and persists unfinished swapcoins.
-//! 3. Maker2 closes at private key handover.
-//! 4. Maker2 is restarted before idle recovery can write a tracker record.
-//! 5. Startup recovery must not discard the persisted swapcoins merely because
-//!    it cannot find a matching tracker record.
+//! Route for the reboot case: Taker -> Maker1 (Normal) -> Maker2 (closes at
+//! handover) -> Taker. Maker2 broadcasts its funding transaction and persists
+//! unfinished swapcoins, then is restarted before idle recovery can write a
+//! tracker record. Startup recovery must not discard the persisted swapcoins
+//! merely because it cannot find a matching tracker record.
 
 use bitcoin::Amount;
 use coinswap::{

@@ -119,7 +119,7 @@ pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
             // by swap id before recovery so each discard/recovery decision is
             // scoped to the swap being evaluated, preserving funded recovery
             // material across restarts.
-            // Regression coverage: `tests/integration/taproot_reboot_recovery.rs`.
+            // Regression coverage: `tests/integration/reboot_recovery.rs`.
             let mut groups = std::collections::HashMap::new();
             for incoming in inc {
                 let swap_id = incoming.swap_id.clone().ok_or(MakerError::General(
