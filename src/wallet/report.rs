@@ -106,20 +106,22 @@ pub struct MakerFeeInfo {
 // Report structs
 // ---------------------------------------------------------------------------
 
-/// Outcome of a PaySwap payment. Reported confirmed only after the settlement
-/// transactions reached the confirmation target — never merely because
-/// private-key handover completed.
+/// Outcome of a PaySwap payment. Reported confirmed only after every settlement
+/// transaction has been mined with at least one confirmation — never merely
+/// because private-key handover completed.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PaymentResult {
     /// Receiver address the payment was pinned to.
     pub receiver_address: String,
     /// Exact amount requested for the receiver (satoshis).
     pub requested_amount: u64,
-    /// Amount actually delivered (satoshis); 0 until settlement confirms.
+    /// Amount actually delivered by settlement transactions confirmed on-chain
+    /// (satoshis).
     pub delivered_amount: u64,
     /// Settlement transaction IDs paying the receiver.
     pub settlement_txids: Vec<String>,
-    /// Whether every settlement transaction reached the confirmation target.
+    /// Whether every settlement transaction was mined with at least one confirmation
+    /// and their outputs delivered the exact requested amount.
     pub confirmed: bool,
 }
 

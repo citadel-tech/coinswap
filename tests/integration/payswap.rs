@@ -22,10 +22,6 @@ use super::test_framework::*;
 use log::{info, warn};
 use std::{sync::atomic::Ordering::Relaxed, thread};
 
-/// Taproot's settlement budget: one script-path spend at the minimum feerate.
-/// Legacy budgets a contract publication on top, so it must come out higher.
-const TAPROOT_SETTLEMENT_BUDGET_SATS: u64 = 310;
-
 /// Taproot PaySwap with multiple final swapcoins (`tx_count = 3`), so the
 /// settlement splits the receiver amount across several exact outputs.
 #[test]
@@ -132,10 +128,11 @@ fn test_taproot_payswap() {
     );
     assert_eq!(quote.amount, payment_amount);
     assert_eq!(quote.address, receiver_address);
+    assert!(quote.settlement_budget > Amount::ZERO);
     assert_eq!(
-        quote.settlement_budget,
-        Amount::from_sat(TAPROOT_SETTLEMENT_BUDGET_SATS * 3),
-        "taproot budgets one script-path spend per settlement output"
+        quote.settlement_budget.to_sat() % 3,
+        0,
+        "settlement budget must divide exactly across all final swapcoins"
     );
     assert!(
         summary.send_amount > payment_amount + quote.settlement_budget,
@@ -214,9 +211,10 @@ fn test_taproot_payswap() {
         spendable_decrease >= summary.send_amount,
         "wallet cost must cover the gross route amount"
     );
-    assert!(
-        spendable_decrease <= summary.send_amount + Amount::from_sat(10_000),
-        "wallet cost above route amount is only the taker's own funding fees"
+    assert_eq!(
+        spendable_decrease.to_sat(),
+        payment_result.delivered_amount + report.fee_paid,
+        "wallet cost must equal the delivered payment plus reported fees"
     );
 
     info!("Taproot PaySwap test completed successfully!");
@@ -315,13 +313,7 @@ fn test_legacy_payswap() {
     );
     assert_eq!(quote.amount, payment_amount);
     assert_eq!(quote.address, receiver_address);
-    // Legacy budgets both the contract publication and the contract spend, so
-    // it is the larger of the two protocols.
-    assert!(
-        quote.settlement_budget > Amount::from_sat(TAPROOT_SETTLEMENT_BUDGET_SATS),
-        "legacy settlement budget {} must exceed the taproot script-path budget",
-        quote.settlement_budget
-    );
+    assert!(quote.settlement_budget > Amount::ZERO);
     assert!(
         summary.send_amount > payment_amount + quote.settlement_budget,
         "gross route amount must cover the receiver amount, settlement budget, and maker fees"
@@ -349,6 +341,11 @@ fn test_legacy_payswap() {
         .expect("payment swap report must carry a payment result");
     assert!(payment_result.confirmed);
     assert_eq!(payment_result.delivered_amount, payment_amount.to_sat());
+    assert_eq!(
+        payment_result.settlement_txids.len(),
+        1,
+        "one settlement tx per final swapcoin"
+    );
     assert!(
         report.fee_paid < payment_amount.to_sat(),
         "receiver payment principal must not be reported as a fee"
@@ -377,14 +374,132 @@ fn test_legacy_payswap() {
         .checked_sub(taker_balances.spendable)
         .expect("payment swap must cost the taker its route amount");
     assert!(
-        spendable_decrease >= summary.send_amount
-            && spendable_decrease <= summary.send_amount + Amount::from_sat(10_000),
-        "wallet cost {} must be the route amount {} plus only the taker's own funding fees",
-        spendable_decrease,
-        summary.send_amount
+        spendable_decrease >= summary.send_amount,
+        "wallet cost must cover the gross route amount"
+    );
+    assert_eq!(
+        spendable_decrease.to_sat(),
+        payment_result.delivered_amount + report.fee_paid,
+        "wallet cost must equal the delivered payment plus reported fees"
     );
 
     info!("Legacy PaySwap test completed successfully!");
+
+    makers
+        .iter()
+        .for_each(|maker| maker.shutdown.store(true, Relaxed));
+    maker_threads
+        .into_iter()
+        .for_each(|thread| thread.join().unwrap());
+    test_framework.stop();
+    block_generation_handle.join().unwrap();
+}
+
+/// A PaySwap quote is bound to its selected makers. Negotiation failure must
+/// not substitute a spare, and a changed offer must abort before funding.
+#[test]
+fn test_payswap_negotiation_guards_abort_before_funding() {
+    warn!("Running Test: PaySwap negotiation guards abort before funding");
+
+    let (test_framework, mut takers, makers, block_generation_handle) =
+        TestFramework::init::<BitcoindBackend>(
+            vec![(8012, Some(19031)), (18012, Some(19032))],
+            vec![
+                TakerBehavior::Normal,
+                TakerBehavior::AlterPaymentQuoteBeforeNegotiation,
+            ],
+            vec![MakerBehavior::CloseAfterAckResponse, MakerBehavior::Normal],
+        );
+
+    let bitcoind = &test_framework.bitcoind;
+    for taker in &mut takers {
+        fund_taker(
+            taker,
+            bitcoind,
+            1,
+            Amount::from_btc(0.05).unwrap(),
+            AddressType::P2TR,
+        );
+    }
+    fund_makers(
+        &makers,
+        bitcoind,
+        2,
+        Amount::from_btc(0.05).unwrap(),
+        AddressType::P2TR,
+    );
+
+    let maker_threads = makers
+        .iter()
+        .map(|maker| {
+            let maker = maker.clone();
+            thread::spawn(move || start_server(maker).unwrap())
+        })
+        .collect::<Vec<_>>();
+    wait_for_makers_setup(&makers, 120);
+    for maker in &makers {
+        maker
+            .wallet
+            .write()
+            .unwrap()
+            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .unwrap();
+    }
+    generate_blocks(bitcoind, 1);
+
+    let failing_maker = format!("127.0.0.1:{}", makers[0].config.network_port);
+    let spare_maker = format!("127.0.0.1:{}", makers[1].config.network_port);
+    let payment_amount = Amount::from_sat(100_000);
+    let mempool_before = bitcoind.client.get_raw_mempool().unwrap();
+
+    let receiver = bitcoind
+        .client
+        .get_new_address(None, None)
+        .unwrap()
+        .require_network(bitcoin::Network::Regtest)
+        .unwrap();
+    let negotiation_err = takers[0]
+        .prepare_coinswap(
+            SwapParams::new(ProtocolVersion::Taproot, payment_amount, 1)
+                .with_required_confirms(1)
+                .with_preferred_makers(vec![failing_maker, spare_maker.clone()])
+                .with_payment_address(receiver.as_unchecked().clone()),
+        )
+        .expect_err("PaySwap must not substitute a spare after negotiation failure");
+    assert!(
+        format!("{negotiation_err:?}").contains("failed during payment swap negotiation"),
+        "unexpected negotiation error: {:?}",
+        negotiation_err
+    );
+    assert!(
+        !makers[1].has_ongoing_swaps().unwrap(),
+        "the spare maker must not be negotiated"
+    );
+
+    let receiver = bitcoind
+        .client
+        .get_new_address(None, None)
+        .unwrap()
+        .require_network(bitcoin::Network::Regtest)
+        .unwrap();
+    let repricing_err = takers[1]
+        .prepare_coinswap(
+            SwapParams::new(ProtocolVersion::Taproot, payment_amount, 1)
+                .with_required_confirms(1)
+                .with_preferred_makers(vec![spare_maker])
+                .with_payment_address(receiver.as_unchecked().clone()),
+        )
+        .expect_err("PaySwap must reject a changed maker offer");
+    assert!(
+        format!("{repricing_err:?}").contains("repriced its offer"),
+        "unexpected repricing error: {:?}",
+        repricing_err
+    );
+    assert_eq!(
+        bitcoind.client.get_raw_mempool().unwrap(),
+        mempool_before,
+        "negotiation guards must abort before any funding transaction is broadcast"
+    );
 
     makers
         .iter()

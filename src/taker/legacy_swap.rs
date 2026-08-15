@@ -807,9 +807,6 @@ impl Taker {
                 self.swap_state_mut()?.incoming_swapcoins.push(incoming);
             }
 
-            // PaySwap: pin the receiver before the coins are persisted.
-            self.payment_stamp_targets()?;
-
             log::info!(
                 "Created {} incoming swapcoins from last maker",
                 self.swap_state()?.incoming_swapcoins.len()
@@ -846,6 +843,10 @@ impl Taker {
                 "Stored {} receiver contract signatures on incoming swapcoins",
                 receiver_sigs.len()
             );
+
+            // Pin the PaySwap receiver only after every incoming coin has the
+            // maker signature needed to publish its contract during recovery.
+            self.payment_stamp_targets()?;
             self.persist_incoming_swapcoins()?;
         }
 

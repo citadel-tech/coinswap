@@ -918,6 +918,23 @@ impl Taker {
         }
 
         #[cfg(feature = "integration-test")]
+        if self.behavior == TakerBehavior::AlterPaymentQuoteBeforeNegotiation
+            && self.swap_state()?.payment.is_some()
+        {
+            let quoted_offer = self
+                .swap_state_mut()?
+                .makers
+                .first_mut()
+                .and_then(|maker| maker.offer.as_mut())
+                .ok_or_else(|| {
+                    TakerError::General(
+                        "Test: payment route has no quoted maker offer to alter".to_string(),
+                    )
+                })?;
+            quoted_offer.base_fee = quoted_offer.base_fee.saturating_add(1);
+        }
+
+        #[cfg(feature = "integration-test")]
         if self.behavior == TakerBehavior::CloseEarly {
             log::warn!("Test behavior: closing early after maker selection");
             return Err(TakerError::General(
@@ -2576,12 +2593,16 @@ impl Taker {
                 },
             );
 
+            // `sweep_incoming_swapcoins` adds an entry to `resolved` only after
+            // the settlement transaction has reached one confirmation.
+            let all_settlements_confirmed = !swap.incoming_swapcoins.is_empty()
+                && settlement_txids.len() == swap.incoming_swapcoins.len();
             crate::wallet::PaymentResult {
                 receiver_address: p.address.to_string(),
                 requested_amount: p.amount.to_sat(),
                 delivered_amount,
                 settlement_txids,
-                confirmed: status == SwapStatus::Success && delivered_amount == p.amount.to_sat(),
+                confirmed: all_settlements_confirmed && delivered_amount == p.amount.to_sat(),
             }
         });
 
@@ -2936,4 +2957,7 @@ pub enum TakerBehavior {
     /// recovery run — the window where incoming coins would otherwise exist only
     /// in memory (crash_after_contract_exchange).
     CrashAfterContractExchange,
+    /// Alter the cached PaySwap quote before negotiation so the freshly fetched
+    /// maker offer exercises the repricing guard.
+    AlterPaymentQuoteBeforeNegotiation,
 }
