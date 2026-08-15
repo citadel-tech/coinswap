@@ -25,20 +25,16 @@ jobs:
         include:
           - downstream: openswap-ffi
             repository: citadel-foss/openswap-ffi
-            secret_name: OPENSWAP_FFI_DISPATCH_TOKEN
           - downstream: maker-dashboard
             repository: citadel-foss/maker-dashboard
-            secret_name: OPENSWAP_MAKER_DASHBOARD_DISPATCH_TOKEN
           - downstream: taker-app
             repository: citadel-foss/taker-app
-            secret_name: OPENSWAP_TAKER_APP_DISPATCH_TOKEN
     steps:
       - name: Dispatch compatibility check
         env:
-          GH_TOKEN: ${{ secrets[matrix.secret_name] }}
+          GH_TOKEN: ${{ secrets.TRIGGER_OTHER_REPOS_FROM_CORE }}
           DOWNSTREAM_NAME: ${{ matrix.downstream }}
           DOWNSTREAM_REPOSITORY: ${{ matrix.repository }}
-          DISPATCH_SECRET_NAME: ${{ matrix.secret_name }}
           OPENSWAP_SHA: ${{ github.sha }}
           OPENSWAP_REF: ${{ github.ref }}
           OPENSWAP_REPOSITORY: ${{ github.repository }}
@@ -49,7 +45,7 @@ jobs:
           set -euo pipefail
 
           if [[ -z "${GH_TOKEN}" ]]; then
-            echo "::error::The ${DISPATCH_SECRET_NAME} secret is not configured."
+            echo "::error::The TRIGGER_OTHER_REPOS_FROM_CORE secret is not configured."
             exit 1
           fi
 
