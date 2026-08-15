@@ -165,7 +165,10 @@ impl<R: Role> Watcher<R> {
             R::RUN_DISCOVERY
         );
 
-        let discovery_shutdown = Arc::new(AtomicBool::new(false));
+        // Discovery is part of the watcher lifetime. Sharing the owner flag
+        // lets taker shutdown interrupt relay processing immediately, even if
+        // the watcher event loop is still finishing its current backend call.
+        let discovery_shutdown = self.shutdown.clone();
         let registry = self.registry.clone();
         let nostr_relays = self.nostr_relays.clone();
         let nostr_tor_config = self.nostr_tor_config.clone();
