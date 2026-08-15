@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: coinswap-downstream-compatibility-dispatch
+  group: openswap-downstream-compatibility-dispatch
   cancel-in-progress: true
 
 permissions: {}
@@ -23,22 +23,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - downstream: coinswap-ffi
-            repository: citadel-tech/coinswap-ffi
-            secret_name: COINSWAP_FFI_DISPATCH_TOKEN
+          - downstream: openswap-ffi
+            repository: citadel-foss/openswap-ffi
           - downstream: maker-dashboard
-            repository: citadel-tech/maker-dashboard
-            secret_name: COINSWAP_MAKER_DASHBOARD_DISPATCH_TOKEN
+            repository: citadel-foss/maker-dashboard
           - downstream: taker-app
-            repository: citadel-tech/taker-app
-            secret_name: COINSWAP_TAKER_APP_DISPATCH_TOKEN
+            repository: citadel-foss/taker-app
     steps:
       - name: Dispatch compatibility check
         env:
-          GH_TOKEN: ${{ secrets[matrix.secret_name] }}
+          GH_TOKEN: ${{ secrets.TRIGGER_OTHER_REPOS_FROM_CORE }}
           DOWNSTREAM_NAME: ${{ matrix.downstream }}
           DOWNSTREAM_REPOSITORY: ${{ matrix.repository }}
-          DISPATCH_SECRET_NAME: ${{ matrix.secret_name }}
           COINSWAP_SHA: ${{ github.sha }}
           COINSWAP_REF: ${{ github.ref }}
           COINSWAP_REPOSITORY: ${{ github.repository }}
@@ -49,13 +45,13 @@ jobs:
           set -euo pipefail
 
           if [[ -z "${GH_TOKEN}" ]]; then
-            echo "::error::The ${DISPATCH_SECRET_NAME} secret is not configured."
+            echo "::error::The TRIGGER_OTHER_REPOS_FROM_CORE secret is not configured."
             exit 1
           fi
 
           payload_file="${RUNNER_TEMP}/${DOWNSTREAM_NAME}-dispatch.json"
           jq -n \
-            --arg event_type "coinswap-updated" \
+            --arg event_type "openswap-updated" \
             --arg coinswap_sha "${COINSWAP_SHA}" \
             --arg coinswap_ref "${COINSWAP_REF}" \
             --arg coinswap_repository "${COINSWAP_REPOSITORY}" \
