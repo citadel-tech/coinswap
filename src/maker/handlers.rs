@@ -366,9 +366,9 @@ pub trait Maker: Send + Sync {
         message: &crate::protocol::legacy_messages::ProofOfFunding,
     ) -> Result<crate::protocol::Hash160, MakerError>;
 
-    /// Initialize outgoing coinswap.
+    /// Initialize outgoing openswap.
     #[allow(clippy::too_many_arguments)]
-    fn initialize_coinswap(
+    fn initialize_openswap(
         &self,
         send_amount: Amount,
         next_multisig_pubkeys: &[PublicKey],

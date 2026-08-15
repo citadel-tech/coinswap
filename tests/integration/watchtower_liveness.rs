@@ -1,7 +1,7 @@
 //! Maker admission must fail closed after its watcher thread exits.
 
 use bitcoin::Amount;
-use coinswap::{
+use openswap::{
     maker::{start_server, MakerBehavior},
     protocol::common_messages::ProtocolVersion,
     taker::{error::TakerError, SwapParams, TakerBehavior},
@@ -52,7 +52,7 @@ fn maker_rejects_new_swaps_after_watcher_exit() {
     assert!(!maker.watch_service.is_alive());
 
     for protocol in [ProtocolVersion::Legacy, ProtocolVersion::Taproot] {
-        let result = taker.prepare_coinswap(
+        let result = taker.prepare_swap(
             SwapParams::new(protocol, Amount::from_sat(500_000), 1)
                 .with_tx_count(1)
                 .with_required_confirms(1),
@@ -114,14 +114,14 @@ fn taker_refuses_swap_before_funding_after_watcher_exit() {
     wait_for_makers_setup(&makers, 120);
 
     let summary = taker
-        .prepare_coinswap(
+        .prepare_swap(
             SwapParams::new(ProtocolVersion::Legacy, Amount::from_sat(500_000), 1)
                 .with_tx_count(1)
                 .with_required_confirms(1),
         )
         .unwrap();
     taker.behavior = TakerBehavior::StopWatcherBeforeSwap;
-    let error = taker.start_coinswap(&summary.swap_id).unwrap_err();
+    let error = taker.start_swap(&summary.swap_id).unwrap_err();
     assert!(format!("{error:?}").contains("watchtower is down"));
     assert_eq!(
         taker

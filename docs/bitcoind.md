@@ -2,7 +2,7 @@
 
 In this tutorial, we will guide you through setting up [Mutinynet](https://github.com/benthecarman/bitcoin/tree/mutinynet-inq-29), which runs on the [inquisition hardfork](https://github.com/bitcoin-inquisition/bitcoin) of Bitcoin Core, to allow experimental consensus rules while maintaining compatibility with existing Bitcoin consensus rules.
 
-Coinswap doesn't need any experimental consensus. Mutinynet serves as a stable public Bitcoin Signet network to host the first movers of the coinswap marketplace.
+OpenSwap doesn't need any experimental consensus. Mutinynet serves as a stable public Bitcoin Signet network to host the first movers of the openswap marketplace.
 
 This tutorial will cover basic operations like setting up, creating wallets, getting funds, checking balances, and sending sats between two wallets using `bitcoin-cli`.
 
@@ -39,7 +39,7 @@ Copy this [`bitcoin.conf`](./bitcoin.conf) file from the docs folder into the da
 cp ./docs/bitcoin.conf ~/.bitcoin/bitcoin.conf
 ```
 
-This reference configuration contains the settings required to run `bitcoind` for Coinswap on either Mutinynet (Signet) or Regtest.
+This reference configuration contains the settings required to run `bitcoind` for OpenSwap on either Mutinynet (Signet) or Regtest.
 
 ---
 
@@ -59,7 +59,7 @@ Or, run local Regtest
 $ bitcoind -regtest 
 ```
 
-> **Note**: The Coinswap marketplace is live on Mutinynet. To access the market and perform swaps with other makers, start `bitcoind -signet`.
+> **Note**: The OpenSwap marketplace is live on Mutinynet. To access the market and perform swaps with other makers, start `bitcoind -signet`.
 
 Useful links for Mutinynet operations:
  - [Mutinynet Block Explorer](https://mutinynet.com/mining)
@@ -270,5 +270,5 @@ Alice's balance will be reduced by slightly more than 1 BTC: 1 BTC was sent to B
 
 ---
 
-We’ve set up `bitcoind`, created two wallets (`alice` and `bob`), generated blocks, and sent Bitcoin between the wallets. You are now ready to explore Bitcoin transactions and experiment with coinswap CLI apps.
+We’ve set up `bitcoind`, created two wallets (`alice` and `bob`), generated blocks, and sent Bitcoin between the wallets. You are now ready to explore Bitcoin transactions and experiment with openswap CLI apps.
 

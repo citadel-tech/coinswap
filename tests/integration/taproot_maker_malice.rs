@@ -6,7 +6,7 @@
 //! stay locked on-chain while the taker never receives contract data.
 //!
 //! Scenario:
-//! 1. Taker initiates a Taproot coinswap with 2 makers.
+//! 1. Taker initiates a Taproot openswap with 2 makers.
 //! 2. Maker[1] (second maker) broadcasts its contract tx after setup and
 //!    closes the connection (BroadcastContractAfterSetup behavior).
 //! 3. Taker detects the failure and triggers recovery (recover_active_swap).
@@ -14,7 +14,7 @@
 //! 5. Verify: taker and makers recovered funds (contract == 0, small fee loss).
 
 use bitcoin::Amount;
-use coinswap::{
+use openswap::{
     maker::{start_server, MakerBehavior},
     protocol::common_messages::ProtocolVersion,
     taker::{SwapParams, TakerBehavior},
@@ -107,7 +107,7 @@ fn test_taproot_malice_maker_broadcast_contract() {
         Duration::from_secs(10),
     );
 
-    // Swap params for coinswap (Taproot)
+    // Swap params for openswap (Taproot)
     let swap_params = SwapParams::new(ProtocolVersion::Taproot, Amount::from_sat(500000), 2)
         .with_tx_count(1)
         .with_required_confirms(1);
@@ -116,9 +116,9 @@ fn test_taproot_malice_maker_broadcast_contract() {
 
     // Prepare should succeed; execution should fail because maker broadcasts contracts
     let summary = taker
-        .prepare_coinswap(swap_params)
+        .prepare_swap(swap_params)
         .expect("Prepare should succeed");
-    let swap_result = taker.start_coinswap(&summary.swap_id);
+    let swap_result = taker.start_swap(&summary.swap_id);
     assert!(
         swap_result.is_err(),
         "Swap should fail due to maker BroadcastContractAfterSetup behavior"

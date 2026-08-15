@@ -1,14 +1,14 @@
 //! Malice test 1: Taker broadcasts contract transactions maliciously after full setup.
 //!
 //! Scenario:
-//! 1. Taker initiates a Legacy coinswap with 2 makers.
+//! 1. Taker initiates a Legacy openswap with 2 makers.
 //! 2. Full setup completes (funding broadcast, contract sigs exchanged).
 //! 3. Taker broadcasts outgoing contract txs maliciously (BroadcastContractAfterFullSetup).
 //! 4. Swap fails. Makers detect the broadcast contracts and recover via timelock.
 //! 5. After recovery, verify: makers recovered funds (contract == 0, small fee loss).
 
 use bitcoin::Amount;
-use coinswap::{
+use openswap::{
     maker::{start_server, MakerBehavior},
     protocol::common_messages::ProtocolVersion,
     taker::{SwapParams, TakerBehavior},
@@ -84,14 +84,14 @@ fn test_malice1_taker_broadcast_contract() {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
     }
 
     let maker_spendable_balance = verify_maker_pre_swap_balances(&makers);
     log::info!("Starting malice1 test...");
 
-    // Swap params for coinswap (Legacy)
+    // Swap params for openswap (Legacy)
     let swap_params = SwapParams::new(ProtocolVersion::Legacy, Amount::from_sat(500000), 2)
         .with_tx_count(3)
         .with_required_confirms(1);
@@ -100,9 +100,9 @@ fn test_malice1_taker_broadcast_contract() {
 
     // Prepare should succeed; execution should fail with BroadcastContractAfterFullSetup
     let summary = taker
-        .prepare_coinswap(swap_params)
+        .prepare_swap(swap_params)
         .expect("Prepare should succeed");
-    let swap_result = taker.start_coinswap(&summary.swap_id);
+    let swap_result = taker.start_swap(&summary.swap_id);
     assert!(
         swap_result.is_err(),
         "Swap should fail due to BroadcastContractAfterFullSetup behavior"
@@ -122,7 +122,7 @@ fn test_malice1_taker_broadcast_contract() {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
         let maker_balances = maker.wallet.read().unwrap().get_balances().unwrap();
         info!(
@@ -186,7 +186,7 @@ fn test_malice1_taker_broadcast_contract() {
         .get_wallet()
         .write()
         .unwrap()
-        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .sync_and_save(&openswap::utill::NO_SHUTDOWN)
         .unwrap();
 
     // Verify taker balance

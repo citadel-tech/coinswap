@@ -16,7 +16,7 @@
 //!    the relay. A corrupted offerbook.json must be reset and rewritten.
 
 use bitcoin::Amount;
-use coinswap::{
+use openswap::{
     maker::{start_server, MakerBehavior},
     taker::{Taker, TakerBehavior},
     wallet::AddressType,

@@ -1,12 +1,12 @@
-//! Electrum-only coinswap tests.
+//! Electrum-only openswap tests.
 //!
 //! - The watch-tower uses `ElectrumNotifier` + `electrum_chain_name`/`electrum_block_count` instead of ZMQ + Bitcoin Core REST.
 //! - The offer-sync and Nostr discovery use `electrum_block_count`/`electrum_get_raw_tx`.
-//!   Bitcoind is still spawned because it is the source of regtest funds and mines blocks, but the coinswap code itself talks only to electrs.
+//!   Bitcoind is still spawned because it is the source of regtest funds and mines blocks, but the openswap code itself talks only to electrs.
 
 use super::test_framework::*;
 use bitcoin::Amount;
-use coinswap::{
+use openswap::{
     maker::{start_server, MakerBehavior},
     protocol::common_messages::ProtocolVersion,
     taker::{SwapParams, TakerBehavior},
@@ -44,10 +44,10 @@ const LEGACY_EXPECTED: ExpectedBalances = ExpectedBalances {
     maker_earnings: [451, 414],
 };
 
-/// Run an Electrum-only coinswap with the given protocol version and assert the
+/// Run an Electrum-only openswap with the given protocol version and assert the
 /// exact post-swap taker / maker balances.
 fn run_electrum_swap(protocol: ProtocolVersion, expected: &ExpectedBalances) {
-    info!("Running Test: Electrum Coinswap Procedure ({protocol:?})");
+    info!("Running Test: Electrum OpenSwap Procedure ({protocol:?})");
     let makers_config_map = vec![(6102, Some(19051)), (16102, Some(19052))];
     let taker_behavior = vec![TakerBehavior::Normal];
     let maker_behaviors = vec![MakerBehavior::Normal, MakerBehavior::Normal];
@@ -85,7 +85,7 @@ fn run_electrum_swap(protocol: ProtocolVersion, expected: &ExpectedBalances) {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
     }
     let maker_spendable_balance = verify_maker_pre_swap_balances(&makers);
@@ -95,8 +95,8 @@ fn run_electrum_swap(protocol: ProtocolVersion, expected: &ExpectedBalances) {
     generate_blocks(bitcoind, 1);
     // The taker's pre-swap sync must see the funding blocks, not a stale index.
     test_framework.wait_for_electrs_tip();
-    let summary = taker.prepare_coinswap(swap_params).unwrap();
-    taker.start_coinswap(&summary.swap_id).unwrap();
+    let summary = taker.prepare_swap(swap_params).unwrap();
+    taker.start_swap(&summary.swap_id).unwrap();
     // electrs indexes asynchronously; let it reach the tip before the
     // post-swap syncs so the asserted balances aren't computed from a
     // stale index.
@@ -105,7 +105,7 @@ fn run_electrum_swap(protocol: ProtocolVersion, expected: &ExpectedBalances) {
         .get_wallet()
         .write()
         .unwrap()
-        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .sync_and_save(&openswap::utill::NO_SHUTDOWN)
         .unwrap();
     generate_blocks(bitcoind, 1);
     test_framework.wait_for_electrs_tip();
@@ -114,7 +114,7 @@ fn run_electrum_swap(protocol: ProtocolVersion, expected: &ExpectedBalances) {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
     }
     let taker_balances = taker.get_wallet().read().unwrap().get_balances().unwrap();
@@ -202,7 +202,7 @@ fn run_electrum_swap(protocol: ProtocolVersion, expected: &ExpectedBalances) {
             "Maker {i} earnings mismatch"
         );
     }
-    info!("Electrum-only coinswap test ({protocol:?}) completed successfully!");
+    info!("Electrum-only openswap test ({protocol:?}) completed successfully!");
     drop(takers);
     makers
         .iter()
@@ -213,11 +213,11 @@ fn run_electrum_swap(protocol: ProtocolVersion, expected: &ExpectedBalances) {
 }
 
 #[test]
-fn test_taproot_coinswap_electrum() {
+fn test_taproot_openswap_electrum() {
     run_electrum_swap(ProtocolVersion::Taproot, &TAPROOT_EXPECTED);
 }
 
 #[test]
-fn test_legacy_coinswap_electrum() {
+fn test_legacy_openswap_electrum() {
     run_electrum_swap(ProtocolVersion::Legacy, &LEGACY_EXPECTED);
 }

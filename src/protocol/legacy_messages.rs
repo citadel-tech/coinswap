@@ -63,7 +63,7 @@ pub struct FundingTxInfo {
     pub hashlock_nonce: SecretKey,
 }
 
-/// Public key information for the next hop of a coinswap.
+/// Public key information for the next hop of a openswap.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NextHopInfo {
     /// Multisig pubkey for the next hop (derived from tweakable_point + nonce).
@@ -84,7 +84,7 @@ pub struct ProofOfFunding {
     /// Confirmed funding transactions with merkle proofs.
     pub confirmed_funding_txes: Vec<FundingTxInfo>,
     /// Information about the next hop (pubkeys for outgoing swap).
-    pub next_coinswap_info: Vec<NextHopInfo>,
+    pub next_openswap_info: Vec<NextHopInfo>,
     /// Refund locktime in blocks.
     pub refund_locktime: u16,
     /// Fee rate for contract transactions.

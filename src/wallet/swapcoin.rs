@@ -1215,7 +1215,7 @@ impl OutgoingSwapCoin {
 
 /// Watch-only view of a swap between two other parties.
 ///
-/// Used by the taker to monitor coinswaps between two makers.
+/// Used by the taker to monitor openswaps between two makers.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WatchOnlySwapCoin {
     /// Protocol version for this swap coin.

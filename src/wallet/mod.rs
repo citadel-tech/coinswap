@@ -1,4 +1,4 @@
-//! The Coinswap Wallet (unsecured). Used by both the Taker and Maker.
+//! The OpenSwap Wallet (unsecured). Used by both the Taker and Maker.
 
 mod api;
 mod backup;

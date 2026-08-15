@@ -14,7 +14,7 @@
 
 use bitcoin::{absolute::LockTime, Amount};
 use bitcoind::bitcoincore_rpc::{Auth, RpcApi};
-use coinswap::{
+use openswap::{
     maker::start_server,
     taker::TakerBehavior,
     utill::MIN_FEE_RATE,
@@ -33,7 +33,7 @@ fn test_mempool_only_spend_reads_as_spent() {
     // Its own bitcoind: nothing mines in the background, so the spend cannot
     // confirm while the assertions run.
     let temp_dir =
-        std::env::temp_dir().join(format!("coinswap-mempool-spend-{}", std::process::id()));
+        std::env::temp_dir().join(format!("openswap-mempool-spend-{}", std::process::id()));
     std::fs::create_dir_all(&temp_dir).unwrap();
     // Ask the OS for the zmq port rather than guessing one in a range.
     let zmq_port = std::net::TcpListener::bind("127.0.0.1:0")
@@ -238,7 +238,7 @@ fn test_fidelity_creation() {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
         let wallet_read = maker.wallet.read().unwrap();
 
@@ -310,7 +310,7 @@ fn test_fidelity_creation() {
         move || {
             let mut maker_write_wallet = maker.wallet.write().unwrap();
             maker_write_wallet
-                .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+                .sync_and_save(&openswap::utill::NO_SHUTDOWN)
                 .unwrap();
         }
     });
@@ -404,7 +404,7 @@ fn test_fidelity_spending() {
         .wallet
         .write()
         .unwrap()
-        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .sync_and_save(&openswap::utill::NO_SHUTDOWN)
         .unwrap();
 
     // Make fidelity bond expire
@@ -416,7 +416,7 @@ fn test_fidelity_spending() {
         .wallet
         .write()
         .unwrap()
-        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .sync_and_save(&openswap::utill::NO_SHUTDOWN)
         .unwrap();
 
     // Assert UTXO shows up in list and track the specific fidelity UTXO
@@ -528,7 +528,7 @@ fn test_fidelity_spending() {
                     .wallet
                     .write()
                     .unwrap()
-                    .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+                    .sync_and_save(&openswap::utill::NO_SHUTDOWN)
                     .unwrap();
                 log::info!("Regular transaction #{} completed successfully", i + 1);
             }
@@ -563,7 +563,7 @@ fn test_fidelity_spending() {
         .wallet
         .write()
         .unwrap()
-        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .sync_and_save(&openswap::utill::NO_SHUTDOWN)
         .unwrap();
 
     // Verify the specific UTXO is now consumed and bond is spent
@@ -635,7 +635,7 @@ fn test_fidelity_spending() {
         .wallet
         .write()
         .unwrap()
-        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .sync_and_save(&openswap::utill::NO_SHUTDOWN)
         .unwrap();
 
     {

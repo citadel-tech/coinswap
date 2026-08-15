@@ -3,12 +3,12 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-IMAGE_NAME="coinswap"
+IMAGE_NAME="openswap"
 BITCOIN_IMAGE_NAME="bitcoin-mutinynet"
 CONFIG_FILE="$SCRIPT_DIR/.docker-config"
 VERSION_FILE="$SCRIPT_DIR/docker/bitcoin-mutinynet.version"
 
-DEFAULT_BITCOIN_DATADIR="/home/coinswap/.bitcoin"
+DEFAULT_BITCOIN_DATADIR="/home/openswap/.bitcoin"
 DEFAULT_BITCOIN_NETWORK="signet"
 DEFAULT_BITCOIN_RPC_PORT="38332"
 DEFAULT_BITCOIN_ZMQ_PORT="28332"
@@ -50,7 +50,7 @@ load_config() {
 
 save_config() {
     cat > "$CONFIG_FILE" << EOF
-# Coinswap Docker Configuration
+# OpenSwap Docker Configuration
 BITCOIN_DATADIR="$BITCOIN_DATADIR"
 BITCOIN_NETWORK="$BITCOIN_NETWORK"
 BITCOIN_RPC_PORT="$BITCOIN_RPC_PORT"
@@ -117,7 +117,7 @@ setup_env() {
     TOR_AUTH_PASSWORD="${TOR_AUTH_PASSWORD:-$DEFAULT_TOR_AUTH}"
     USE_EXTERNAL_BITCOIND="${USE_EXTERNAL_BITCOIND:-false}"
     USE_EXTERNAL_TOR="${USE_EXTERNAL_TOR:-false}"
-    BITCOIN_WALLET_NAME="${BITCOIN_WALLET_NAME:-coinswap-maker}"
+    BITCOIN_WALLET_NAME="${BITCOIN_WALLET_NAME:-openswap-maker}"
     
     # export variables for docker-compose
     export IMAGE_NAME="${IMAGE_NAME}"
@@ -258,7 +258,7 @@ select_bitcoin_wallet() {
 
 configure_setup() {
     echo ""
-    print_info "Coinswap Docker Configuration"
+    print_info "OpenSwap Docker Configuration"
     echo "============================================"
     echo ""
     
@@ -349,8 +349,8 @@ configure_setup() {
         
         echo ""
         print_info "Wallet will be configured after bitcoind syncs."
-        read -p "Enter wallet name to create [coinswap-maker]: " wallet_name
-        BITCOIN_WALLET_NAME="${wallet_name:-coinswap-maker}"
+        read -p "Enter wallet name to create [openswap-maker]: " wallet_name
+        BITCOIN_WALLET_NAME="${wallet_name:-openswap-maker}"
     fi
     
     echo ""
@@ -423,7 +423,7 @@ configure_setup() {
     fi
     
     echo ""
-    print_info "Coinswap Maker Ports"
+    print_info "OpenSwap Maker Ports"
     echo "----------------------------------------"
     
     read -p "Makerd RPC port [${DEFAULT_MAKERD_RPC_PORT}]: " makerd_rpc
@@ -498,13 +498,13 @@ check_docker() {
 
 # Build the Docker image
 build_image() {
-    print_info "Building Coinswap Docker image..."
+    print_info "Building OpenSwap Docker image..."
     cd "$SCRIPT_DIR"
     
     if docker build -f docker/Dockerfile -t "${IMAGE_NAME}:latest" .; then
-        print_success "Coinswap image built successfully"
+        print_success "OpenSwap image built successfully"
     else
-        print_error "Failed to build Coinswap image"
+        print_error "Failed to build OpenSwap image"
         exit 1
     fi
 }
@@ -571,7 +571,7 @@ start_stack() {
     
     setup_env
     
-    print_info "Starting Coinswap stack with docker-compose..."
+    print_info "Starting OpenSwap stack with docker-compose..."
     print_info "Active Profiles: $COMPOSE_PROFILES"
     cd "$SCRIPT_DIR"
     
@@ -585,7 +585,7 @@ start_stack() {
         fi
         
         if [ $? -ne 0 ]; then
-            print_error "Failed to start Coinswap stack"
+            print_error "Failed to start OpenSwap stack"
             exit 1
         fi
         
@@ -601,20 +601,20 @@ start_stack() {
         if docker compose up -d; then
             start_makerd
         else
-            print_error "Failed to start Coinswap stack"
+            print_error "Failed to start OpenSwap stack"
             exit 1
         fi
     fi
 }
 
 stop_stack() {
-    print_info "Stopping Coinswap stack..."
+    print_info "Stopping OpenSwap stack..."
     cd "$SCRIPT_DIR"
     setup_env
     
     docker compose down
     
-    print_success "Coinswap stack stopped"
+    print_success "OpenSwap stack stopped"
 }
 
 show_logs() {
@@ -723,23 +723,23 @@ run_command() {
     local cmd="$1"
     shift
     setup_env
-    docker run --rm -it --network coinswap-network "${IMAGE_NAME}:latest" "$cmd" "$@"
+    docker run --rm -it --network openswap-network "${IMAGE_NAME}:latest" "$cmd" "$@"
 }
 
 show_help() {
-    echo "Coinswap Docker Setup Script"
+    echo "OpenSwap Docker Setup Script"
     echo ""
     echo "Usage: $0 [COMMAND]"
     echo ""
     echo "Commands:"
-    echo "  configure        Configure Coinswap Docker setup"
+    echo "  configure        Configure OpenSwap Docker setup"
     echo "  build            Build the Docker image"
     echo "  build-bitcoin    Build the Bitcoin Mutinynet Docker image"
-    echo "  start [options]  Start the full Coinswap stack"
+    echo "  start [options]  Start the full OpenSwap stack"
     echo "                   Options:"
     echo "                     -d, --default   Use default configuration without prompting"
-    echo "  stop             Stop the Coinswap stack"
-    echo "  restart          Restart the Coinswap stack"
+    echo "  stop             Stop the OpenSwap stack"
+    echo "  restart          Restart the OpenSwap stack"
     echo "  logs [service]   Show logs (optionally for specific service)"
     echo "                   Services: bitcoind, tor, makerd"
     echo "  status           Show status of running services"
@@ -793,7 +793,7 @@ case "${1:-}" in
     ;;
     "shell")
         setup_env
-        docker run --rm -it --network coinswap-network "coinswap/${IMAGE_NAME}:latest" /bin/sh
+        docker run --rm -it --network openswap-network "openswap/${IMAGE_NAME}:latest" /bin/sh
     ;;
     "makerd"|"maker-cli"|"taker"|"bitcoin-cli")
         run_command "$@"

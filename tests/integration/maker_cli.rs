@@ -9,7 +9,7 @@
 //! something real to report.
 
 use bitcoin::{Address, Amount};
-use coinswap::{
+use openswap::{
     maker::{start_server, AuthenticatedRpcRequest, MakerBehavior, RpcMsgReq, RpcMsgResp},
     protocol::common_messages::ProtocolVersion,
     taker::{SwapParams, TakerBehavior},
@@ -111,11 +111,11 @@ fn test_maker_rpc_server() {
         .with_required_confirms(1);
     generate_blocks(bitcoind, 1);
     let summary = taker
-        .prepare_coinswap(swap_params)
+        .prepare_swap(swap_params)
         .expect("Prepare should succeed");
     taker
-        .start_coinswap(&summary.swap_id)
-        .expect("Coinswap should complete successfully");
+        .start_swap(&summary.swap_id)
+        .expect("OpenSwap should complete successfully");
     let swap_id = summary.swap_id.clone();
     info!("Swap {} completed, querying maker RPC", swap_id);
 

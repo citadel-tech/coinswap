@@ -1,7 +1,7 @@
 //! Nostr discovery module.
 //!
 //! Handles the discovery of Maker fidelity bonds via Nostr relays. It creates persistent
-//! subscriptions to network-specific CoinSwap events, validates incoming fidelity
+//! subscriptions to network-specific OpenSwap events, validates incoming fidelity
 //! announcements against the Bitcoin blockchain, and stores verified bonds in the registry.
 
 use std::{
@@ -25,7 +25,7 @@ use tungstenite::{stream::MaybeTlsStream, Message};
 
 use crate::{
     lock_debug,
-    nostr_coinswap::{coinswap_kind, connect_nostr_websocket, EXPIRATION_SECS},
+    maker::nostr::{swap_kind, connect_nostr_websocket, EXPIRATION_SECS},
     wallet::{AnyBlockchain, Blockchain},
     watch_tower::{
         registry_storage::FileRegistry,
@@ -50,7 +50,7 @@ pub fn run_discovery(
     relays: &[String],
     nostr_tor_config: (u16, String),
 ) -> Result<(), WatcherError> {
-    let kind = Kind::Custom(coinswap_kind(network));
+    let kind = Kind::Custom(swap_kind(network));
     log::info!(
         "Starting market discovery via Nostr | network={} | kind={} | relays={:?}",
         network,

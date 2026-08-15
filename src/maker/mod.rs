@@ -1,4 +1,4 @@
-//! The Coinswap Maker.
+//! The OpenSwap Maker.
 //!
 //! A Maker server that acts as a swap service provider.
 //! It can be run in an unix/mac system with local access to Bitcoin Core RPC.
@@ -20,6 +20,7 @@ mod taproot_verification;
 
 pub mod api;
 pub mod handlers;
+pub mod nostr;
 pub mod server;
 pub mod swap_tracker;
 

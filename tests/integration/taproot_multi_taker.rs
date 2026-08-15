@@ -1,11 +1,11 @@
-//! Integration test for multi-taker concurrent coinswap with Taproot protocol.
+//! Integration test for multi-taker concurrent openswap with Taproot protocol.
 //!
 //! Setup: 2 takers with Normal behavior, 2 makers with Normal behavior.
 //! Protocol: Taproot (MuSig2), AddressType::P2TR.
 //! Both takers run swaps sequentially through the same pair of makers.
 
 use bitcoin::Amount;
-use coinswap::{
+use openswap::{
     maker::start_server,
     protocol::common_messages::ProtocolVersion,
     taker::{SwapParams, TakerBehavior},
@@ -18,9 +18,9 @@ use log::{info, warn};
 use std::{sync::atomic::Ordering::Relaxed, thread};
 
 #[test]
-fn test_taproot_multi_taker_coinswap() {
+fn test_taproot_multi_taker_openswap() {
     // ---- Setup ----
-    warn!("Running Test: Multi-Taker Coinswap with Taproot (MuSig2) Protocol");
+    warn!("Running Test: Multi-Taker OpenSwap with Taproot (MuSig2) Protocol");
 
     let makers_config_map = vec![(7702, Some(20701)), (17702, Some(20702))];
     let taker_behavior = vec![TakerBehavior::Normal, TakerBehavior::Normal];
@@ -85,7 +85,7 @@ fn test_taproot_multi_taker_coinswap() {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
     }
 
@@ -102,18 +102,18 @@ fn test_taproot_multi_taker_coinswap() {
 
     let taker1 = &mut takers[0];
     let summary1 = taker1
-        .prepare_coinswap(swap_params1)
-        .expect("Failed to prepare Taproot coinswap for Taker 1");
+        .prepare_swap(swap_params1)
+        .expect("Failed to prepare Taproot openswap for Taker 1");
     log::info!("Taker 1 swap summary: {:?}", summary1);
 
-    match taker1.start_coinswap(&summary1.swap_id) {
+    match taker1.start_swap(&summary1.swap_id) {
         Ok(report) => {
-            log::info!("Taker 1 coinswap (Taproot) completed successfully!");
+            log::info!("Taker 1 openswap (Taproot) completed successfully!");
             log::info!("Taker 1 swap report: {:?}", report);
         }
         Err(e) => {
-            log::error!("Taker 1 coinswap (Taproot) failed: {:?}", e);
-            panic!("Taker 1 coinswap (Taproot) failed: {:?}", e);
+            log::error!("Taker 1 openswap (Taproot) failed: {:?}", e);
+            panic!("Taker 1 openswap (Taproot) failed: {:?}", e);
         }
     }
 
@@ -126,7 +126,7 @@ fn test_taproot_multi_taker_coinswap() {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
     }
 
@@ -139,22 +139,22 @@ fn test_taproot_multi_taker_coinswap() {
 
     let taker2 = &mut takers[1];
     let summary2 = taker2
-        .prepare_coinswap(swap_params2)
-        .expect("Failed to prepare Taproot coinswap for Taker 2");
+        .prepare_swap(swap_params2)
+        .expect("Failed to prepare Taproot openswap for Taker 2");
     log::info!("Taker 2 swap summary: {:?}", summary2);
 
-    match taker2.start_coinswap(&summary2.swap_id) {
+    match taker2.start_swap(&summary2.swap_id) {
         Ok(report) => {
-            log::info!("Taker 2 coinswap (Taproot) completed successfully!");
+            log::info!("Taker 2 openswap (Taproot) completed successfully!");
             log::info!("Taker 2 swap report: {:?}", report);
         }
         Err(e) => {
-            log::error!("Taker 2 coinswap (Taproot) failed: {:?}", e);
-            panic!("Taker 2 coinswap (Taproot) failed: {:?}", e);
+            log::error!("Taker 2 openswap (Taproot) failed: {:?}", e);
+            panic!("Taker 2 openswap (Taproot) failed: {:?}", e);
         }
     }
 
-    log::info!("All coinswaps processed successfully. Transactions complete.");
+    log::info!("All openswaps processed successfully. Transactions complete.");
 
     // Sync all wallets
     for taker in takers.iter() {
@@ -162,7 +162,7 @@ fn test_taproot_multi_taker_coinswap() {
             .get_wallet()
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
     }
 
@@ -170,7 +170,7 @@ fn test_taproot_multi_taker_coinswap() {
 
     for maker in makers.iter() {
         let mut wallet = maker.wallet.write().unwrap();
-        wallet.sync_and_save(&coinswap::utill::NO_SHUTDOWN).unwrap();
+        wallet.sync_and_save(&openswap::utill::NO_SHUTDOWN).unwrap();
     }
 
     // ---- Verify Taker 1 ----

@@ -1,6 +1,6 @@
-//! Definition of the Coinswap Contract Transaction.
+//! Definition of the OpenSwap Contract Transaction.
 //!
-//! This module includes most of the fundamental functions defining the coinswap protocol.
+//! This module includes most of the fundamental functions defining the openswap protocol.
 
 use std::convert::TryInto;
 
@@ -54,7 +54,7 @@ const PUBKEY2_OFFSET: usize = PUBKEY1_OFFSET + PUBKEY_LENGTH + 1;
 /// Calculate the coin swap fee based on various parameters.
 /// swap_amount in sats, refund_locktime in blocks.
 #[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn calculate_coinswap_fee(
+pub(crate) fn calculate_swap_fee(
     // Should we consider value in Amount?
     swap_amount: u64,
     refund_locktime: u16,
@@ -202,7 +202,7 @@ pub(crate) fn check_hashlock_has_pubkey(
     }
 }
 
-/// Create a contract redeem script for a coinswap transaction.
+/// Create a contract redeem script for a openswap transaction.
 #[rustfmt::skip]
 pub(crate) fn create_contract_redeemscript(
     pub_hashlock: &PublicKey,
@@ -384,7 +384,7 @@ pub(crate) fn read_pubkeys_from_multisig_redeemscript(
 /// Virtual size charged for a legacy contract transaction.
 pub(crate) const CONTRACT_TX_VSIZE: u64 = 150;
 
-/// Create a Contract Transaction for the "Sender" side of Coinswap.
+/// Create a Contract Transaction for the "Sender" side of OpenSwap.
 /// The Sender gets the coins back via timelock.
 /// Receiver gets the coins via hashlock.
 pub(crate) fn create_senders_contract_tx(
@@ -1071,7 +1071,7 @@ mod test {
     }
 
     #[test]
-    fn calculate_coinswap_fee_normal() {
+    fn calculate_swap_fee_normal() {
         // Test with typical values
         let base_fee_sat = calculate_fee_sats(150);
         let amt_rel_fee_pct = 2.5;
@@ -1081,7 +1081,7 @@ mod test {
 
         let expected_fee = 4800;
 
-        let calculated_fee = calculate_coinswap_fee(
+        let calculated_fee = calculate_swap_fee(
             swap_amount,
             refund_locktime,
             base_fee_sat,
@@ -1093,19 +1093,19 @@ mod test {
 
         // Test with zero values
         assert_eq!(
-            calculate_coinswap_fee(swap_amount, refund_locktime, 0, 0.0, 0.0),
+            calculate_swap_fee(swap_amount, refund_locktime, 0, 0.0, 0.0),
             0
         );
 
         // Test with only the absolute fee being non-zero
         assert_eq!(
-            calculate_coinswap_fee(swap_amount, refund_locktime, base_fee_sat, 0.0, 0.0),
+            calculate_swap_fee(swap_amount, refund_locktime, base_fee_sat, 0.0, 0.0),
             300
         );
 
         // Test with only the relative fees being non-zero
         assert_eq!(
-            calculate_coinswap_fee(
+            calculate_swap_fee(
                 swap_amount,
                 refund_locktime,
                 0,
@@ -1262,7 +1262,7 @@ mod test {
 
         let funding_proof = ProofOfFunding {
             confirmed_funding_txes: vec![funding_info_1.clone()],
-            next_coinswap_info: vec![NextHopInfo {
+            next_openswap_info: vec![NextHopInfo {
                 next_hashlock_pubkey: pub_1,
                 next_multisig_pubkey: pub_2,
                 next_multisig_nonce: SecretKey::new(&mut thread_rng()),
@@ -1293,7 +1293,7 @@ mod test {
 
         let funding_proof = ProofOfFunding {
             confirmed_funding_txes: vec![funding_info_1, funding_info_2],
-            next_coinswap_info: vec![NextHopInfo {
+            next_openswap_info: vec![NextHopInfo {
                 next_hashlock_pubkey: pub_1,
                 next_multisig_pubkey: pub_2,
                 next_multisig_nonce: SecretKey::new(&mut thread_rng()),

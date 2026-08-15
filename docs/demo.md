@@ -1,10 +1,10 @@
 <div align="center">
 
-# Coinswap All System Demo
+# OpenSwap All System Demo
 
 ### Prerequisites & Setup Guide
 
-Get your system ready to participate in the **Coinswap Live Demo** — run a maker, fire up the taker, and perform a real trustless swap on a custom signet.
+Get your system ready to participate in the **OpenSwap Live Demo** — run a maker, fire up the taker, and perform a real trustless swap on a custom signet.
 
 </div>
 
@@ -14,8 +14,8 @@ Get your system ready to participate in the **Coinswap Live Demo** — run a mak
 
 | App | Role | Repository |
 | --- | --- | --- |
-| 🗄️ **Maker Dashboard** | GUI to run and monitor your maker server | [`citadel-tech/maker-dashboard`](https://github.com/citadel-tech/maker-dashboard) |
-| 📱 **Taker App** | GUI client to fund a wallet and perform swaps | [`citadel-tech/taker-app`](https://github.com/citadel-tech/taker-app) |
+| 🗄️ **Maker Dashboard** | GUI to run and monitor your maker server | [`citadel-foss/maker-dashboard`](https://github.com/citadel-foss/maker-dashboard) |
+| 📱 **Taker App** | GUI client to fund a wallet and perform swaps | [`citadel-foss/taker-app`](https://github.com/citadel-foss/taker-app) |
 
 > 📥 **Download a pre-compiled binary (recommended for both apps).** Grab the binary for your OS from each app's **latest release** and run it — no toolchain required.
 >
@@ -36,13 +36,13 @@ Start `bitcoind` with the following `bitcoin.conf`:
 ```ini
 signet=1
 [signet]
-# Custom Signet dedicated for the Coinswap Network. 
+# Custom Signet dedicated for the OpenSwap Network. 
 # This signet is maintained by Citadel FOSS Developers.
 signetchallenge=0014a3ec9c731da66d9725d54947aede5c830623f33d
 addnode=170.75.166.88:38333
 dnsseed=0
 
-# RPC configuration for Coinswap operations
+# RPC configuration for OpenSwap operations
 server=1
 rpcuser=user
 rpcpassword=password
@@ -131,7 +131,7 @@ A GUI for running and monitoring your maker server.
 
 ### 📥 Download Pre-compiled Binary (Recommended)
 
-1. Visit the **[latest release](https://github.com/citadel-tech/maker-dashboard/releases/latest)**.
+1. Visit the **[latest release](https://github.com/citadel-foss/maker-dashboard/releases/latest)**.
 2. Download the **Maker Dashboard** binary for your operating system.
 3. Run the binary and follow the on-screen steps, then open <http://localhost:3000> in your browser to access the dashboard.
 
@@ -146,9 +146,9 @@ Make sure [Docker is installed](#2-docker--only-for-the-maker-dashboard-docker-f
   ```bash
   docker run -d --name maker-dashboard --network host \
     --volume ~/.config/maker-dashboard:/root/.config/maker-dashboard \
-    --volume ~/.coinswap:/root/.coinswap \
+    --volume ~/.openswap:/root/.openswap \
     --env MAKER_DASHBOARD_HOST=127.0.0.1 \
-    coinswap/maker-dashboard:master
+    openswap/maker-dashboard:master
   ```
 
 - **macOS:**
@@ -158,9 +158,9 @@ Make sure [Docker is installed](#2-docker--only-for-the-maker-dashboard-docker-f
   ```bash
   docker run -d --name maker-dashboard -p 127.0.0.1:3000:3000 \
     --volume ~/.config/maker-dashboard:/root/.config/maker-dashboard \
-    --volume ~/.coinswap:/root/.coinswap \
+    --volume ~/.openswap:/root/.openswap \
     --env MAKER_DASHBOARD_HOST=0.0.0.0 \
-    coinswap/maker-dashboard:master
+    openswap/maker-dashboard:master
   ```
 
 Open your browser and navigate to <http://localhost:3000> to access the dashboard.
@@ -172,23 +172,23 @@ Open your browser and navigate to <http://localhost:3000> to access the dashboar
 > Use this only if the options above don't work. Requires the [build-from-source prerequisites](#3-build-from-source-prerequisites--only-if-you-self-compile) above (Rust, Node.js v18+, and the `libtor` native build tools).
 
 ```bash
-git clone https://github.com/citadel-tech/maker-dashboard.git
+git clone https://github.com/citadel-foss/maker-dashboard.git
 cd maker-dashboard
 make build
 make run
 ```
 
-`make build` compiles the Rust backend (`cargo build --release`) and the frontend (`cd frontend && npm install && npm run build`). Once running, open <http://localhost:3000> in your browser. See the project's [README](https://github.com/citadel-tech/maker-dashboard#readme) for advanced/per-component steps.
+`make build` compiles the Rust backend (`cargo build --release`) and the frontend (`cd frontend && npm install && npm run build`). Once running, open <http://localhost:3000> in your browser. See the project's [README](https://github.com/citadel-foss/maker-dashboard#readme) for advanced/per-component steps.
 
 ---
 
 ## 📱 Taker App
 
-A GUI swap client to fund a wallet and perform Coinswaps.
+A GUI swap client to fund a wallet and perform OpenSwaps.
 
 ### 📥 Download Pre-compiled Binary (Recommended)
 
-1. Visit the **[latest release](https://github.com/citadel-tech/taker-app/releases/latest)**.
+1. Visit the **[latest release](https://github.com/citadel-foss/taker-app/releases/latest)**.
 2. Download the **Taker App** binary for your operating system.
 3. Run the binary and follow the on-screen onboarding steps.
 
@@ -197,13 +197,13 @@ A GUI swap client to fund a wallet and perform Coinswaps.
 > Use this only if the options above don't work. Requires the [build-from-source prerequisites](#3-build-from-source-prerequisites--only-if-you-self-compile) above (Rust, Node.js v18+, and the `libtor` native build tools).
 
 ```bash
-git clone https://github.com/citadel-tech/taker-app.git
+git clone https://github.com/citadel-foss/taker-app.git
 cd taker-app
-npm install      # the `prepare` step clones coinswap-ffi and builds the native modules (~2-3 min)
+npm install      # the `prepare` step clones openswap-ffi and builds the native modules (~2-3 min)
 npm run dist     # production build
 ```
 
-For a live development build, use `npm run dev` instead. See the project's [README](https://github.com/citadel-tech/taker-app#readme) for details.
+For a live development build, use `npm run dev` instead. See the project's [README](https://github.com/citadel-foss/taker-app#readme) for details.
 
 ---
 
@@ -214,4 +214,4 @@ For a live development build, use `npm run dev` instead. See the project's [READ
 3. Wait for the funding transaction to confirm (track it on the **[Block Explorer](https://mempool.citadelfoss.xyz/)**).
 4. Pick an available maker from the marketplace and start your swap. 🎉
 
-> 🆘 Something didn't work as expected? Please report an [Issue](https://github.com/citadel-tech/coinswap/issues) or ping the devs in the [community forum](https://matrix.to/#/#ciatdel-foss:matrix.org).
+> 🆘 Something didn't work as expected? Please report an [Issue](https://github.com/citadel-foss/openswap/issues) or ping the devs in the [community forum](https://matrix.to/#/#ciatdel-foss:matrix.org).

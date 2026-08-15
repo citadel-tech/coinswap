@@ -1,7 +1,7 @@
 use bitcoin::Amount;
 use bitcoind::bitcoincore_rpc::Auth;
 use clap::Parser;
-use coinswap::{
+use openswap::{
     lock_debug,
     protocol::ProtocolVersion,
     taker::{
@@ -15,22 +15,22 @@ use log::LevelFilter;
 use serde_json::{json, to_string_pretty};
 use std::{path::PathBuf, str::FromStr};
 
-/// A simple command line app to operate as coinswap client.
+/// A simple command line app to operate as openswap client.
 ///
-/// The app works as a regular Bitcoin wallet with the added capability to perform coinswaps.
+/// The app works as a regular Bitcoin wallet with the added capability to perform openswaps.
 /// It can talk to either a Bitcoin Core node (over RPC + ZMQ — the default) or an
 /// Electrum-protocol server (via `--electrum`). Both paths support the full swap flow
 /// and the `restore` subcommand. It currently only runs on Testnet4.
 /// Suggested faucet for getting Signet coins (tor browser required): <http://s2ncekhezyo2tkwtftti3aiukfpqmxidatjrdqmwie6xnf2dfggyscad.onion/>
 ///
-/// For more detailed usage information, please refer: <https://github.com/citadel-tech/coinswap/blob/master/docs/taker.md>
+/// For more detailed usage information, please refer: <https://github.com/citadel-foss/openswap/blob/master/docs/taker.md>
 ///
-/// This is early beta, and there are known and unknown bugs. Please report issues at: <https://github.com/citadel-tech/coinswap/issues>
+/// This is early beta, and there are known and unknown bugs. Please report issues at: <https://github.com/citadel-foss/openswap/issues>
 #[derive(Parser, Debug)]
 #[clap(version = option_env ! ("CARGO_PKG_VERSION").unwrap_or("unknown"),
 author = option_env ! ("CARGO_PKG_AUTHORS").unwrap_or(""))]
 struct Cli {
-    /// Optional data directory. Default value: "~/.coinswap/taker"
+    /// Optional data directory. Default value: "~/.openswap/taker"
     #[clap(long, short = 'd')]
     data_directory: Option<PathBuf>,
 
@@ -138,8 +138,8 @@ enum Commands {
         #[clap(long, short = 'm')]
         address: String,
     },
-    /// Initiate the coinswap process
-    Coinswap {
+    /// Initiate the openswap process
+    OpenSwap {
         /// Sets the Maker count to swap with. Swapping with less than 2 makers is not allowed to maintain client privacy.
         /// Adding more makers in the swap will incur more swap fees.
         #[clap(long, short = 'm', default_value = "2")]
@@ -322,7 +322,7 @@ fn main() -> Result<(), TakerError> {
                 | Commands::FetchOffers
                 | Commands::Backup { .. }
                 | Commands::Restore { .. }
-                | Commands::Coinswap { .. }
+                | Commands::OpenSwap { .. }
         ),
         args.data_directory.clone(), // default path handled inside the function.
     );
@@ -334,7 +334,7 @@ fn main() -> Result<(), TakerError> {
 
     let data_dir = match args.data_directory.clone() {
         Some(dir) => dir,
-        None => coinswap::utill::get_taker_dir()?,
+        None => openswap::utill::get_taker_dir()?,
     };
     // Static settings live in the file (auto-created with defaults if missing).
     // Read it here, before the backend bakes the proxy address in, so a
@@ -344,14 +344,14 @@ fn main() -> Result<(), TakerError> {
     // Build the unified taker config (also used by the Restore branch).
     // `--electrum` selects the Electrum backend; otherwise Bitcoin Core.
     let backend = match args.electrum_url.as_ref() {
-        Some(url) => coinswap::wallet::BackendConfig::Electrum(coinswap::wallet::ElectrumConfig {
+        Some(url) => openswap::wallet::BackendConfig::Electrum(openswap::wallet::ElectrumConfig {
             url: url.clone(),
             socks5: args
                 .electrum_tor
                 .then(|| format!("127.0.0.1:{}", file_config.socks_port)),
             ..Default::default()
         }),
-        None => coinswap::wallet::BackendConfig::CoreRpc(CoreRpcConfig {
+        None => openswap::wallet::BackendConfig::CoreRpc(CoreRpcConfig {
             url: args.rpc.clone(),
             auth: Auth::UserPass(args.auth.0.clone(), args.auth.1.clone()),
             wallet_name: wallet_name.clone(),
@@ -363,7 +363,7 @@ fn main() -> Result<(), TakerError> {
     };
 
     if let Commands::Restore { ref backup_file } = args.command {
-        coinswap::taker::Taker::restore_wallet(
+        openswap::taker::Taker::restore_wallet(
             args.data_directory,
             Some(wallet_name), // Use the actual translated wallet name here.
             backend,
@@ -404,7 +404,7 @@ fn main() -> Result<(), TakerError> {
     // Sync wallet after initialization
     lock_debug!(taker.get_wallet().write())
         .unwrap()
-        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)?;
+        .sync_and_save(&openswap::utill::NO_SHUTDOWN)?;
 
     match &args.command {
         Commands::ListUtxo => {
@@ -469,7 +469,7 @@ fn main() -> Result<(), TakerError> {
             let manually_selected_outpoints = {
                 let wallet = lock_debug!(taker.get_wallet().read()).unwrap();
                 Some(
-                    coinswap::utill::interactive_select(wallet.list_all_utxo_spend_info(), amount)?
+                    openswap::utill::interactive_select(wallet.list_all_utxo_spend_info(), amount)?
                         .iter()
                         .map(|(utxo, _)| bitcoin::OutPoint::new(utxo.txid, utxo.vout))
                         .collect::<Vec<_>>(),
@@ -541,7 +541,7 @@ fn main() -> Result<(), TakerError> {
                 println!("No maker with address {address} in offerbook");
             }
         }
-        Commands::Coinswap {
+        Commands::OpenSwap {
             makers,
             amount,
             tx_count,
@@ -558,7 +558,7 @@ fn main() -> Result<(), TakerError> {
                 let target_amount = Amount::from_sat(*amount);
                 let wallet = lock_debug!(taker.get_wallet().read()).unwrap();
                 Some(
-                    coinswap::utill::interactive_select(
+                    openswap::utill::interactive_select(
                         wallet.list_all_utxo_spend_info(),
                         target_amount,
                     )?
@@ -589,7 +589,7 @@ fn main() -> Result<(), TakerError> {
             }
 
             // Phase 1: Prepare — discover makers, negotiate, get fee summary.
-            let summary = taker.prepare_coinswap(swap_params)?;
+            let summary = taker.prepare_swap(swap_params)?;
 
             println!("\n========== Swap Summary ==========");
             println!("Swap ID:   {}", summary.swap_id);
@@ -622,7 +622,7 @@ fn main() -> Result<(), TakerError> {
                     payment.taker_funding_fee_estimate
                 );
                 println!(
-                    "Total coinswap cost: {}",
+                    "Total openswap cost: {}",
                     summary.send_amount + payment.taker_funding_fee_estimate
                 );
             } else {
@@ -649,7 +649,7 @@ fn main() -> Result<(), TakerError> {
                 }
             }
 
-            taker.start_coinswap(&summary.swap_id)?;
+            taker.start_swap(&summary.swap_id)?;
         }
         Commands::Recover => {
             taker.recover_active_swap()?;
@@ -663,7 +663,7 @@ fn main() -> Result<(), TakerError> {
             unreachable!()
         }
         Commands::VerifyDeniability { swap_id } => match taker.verify_deniability(swap_id) {
-            Ok(true) => println!("Proof valid: swap participated in a completed coinswap"),
+            Ok(true) => println!("Proof valid: swap participated in a completed openswap"),
             Ok(false) => println!("Proof invalid or not found for this swap ID"),
             Err(e) => println!("Error: {e}"),
         },

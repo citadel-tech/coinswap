@@ -3,7 +3,7 @@
 //! This module provides a minimal interface for publishing Maker-related
 //! events over the Nostr protocol. It is primarily used to broadcast
 //! fidelity bond information and other coordination signals required
-//! by the Coinswap protocol.
+//! by the OpenSwap protocol.
 
 #[cfg(not(feature = "integration-test"))]
 use std::io;
@@ -36,15 +36,15 @@ use crate::{
 #[cfg(not(feature = "integration-test"))]
 const NOSTR_SOCKS_TIMEOUT: Duration = Duration::from_secs(300);
 
-/// nostr url for coinswap
+/// nostr url for openswap
 #[cfg(not(feature = "integration-test"))]
 pub const NOSTR_RELAYS: &[&str] = &["wss://nos.lol", "wss://relay.damus.io"];
-/// nostr url for coinswap
+/// nostr url for openswap
 #[cfg(feature = "integration-test")]
 pub const NOSTR_RELAYS: &[&str] = &["ws://127.0.0.1:8000"];
 
-/// Returns the Coinswap Nostr event kind for the given Bitcoin network.
-pub fn coinswap_kind(network: Network) -> u16 {
+/// Returns the OpenSwap Nostr event kind for the given Bitcoin network.
+pub fn swap_kind(network: Network) -> u16 {
     match network {
         Network::Bitcoin => 37778,
         Network::Signet => 37779,
@@ -122,8 +122,8 @@ pub fn broadcast_bond_on_nostr(
     }
     let outpoint = fidelity.bond.outpoint;
     let content = format!("{}:{}", outpoint.txid, outpoint.vout);
-    let kind = coinswap_kind(config.network);
-    // Coinswap kinds are in the NIP-33 parameterized-replaceable range (30000..39999),
+    let kind = swap_kind(config.network);
+    // OpenSwap kinds are in the NIP-33 parameterized-replaceable range (30000..39999),
     // so included a stable `d` tag to keep relay handling spec-compliant.
     let d_tag = format!("fidelity:{}", content);
 

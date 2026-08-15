@@ -1,4 +1,4 @@
-//! PaySwap integration tests: settling a coinswap to a third-party receiver
+//! PaySwap integration tests: settling a openswap to a third-party receiver
 //! for an exact amount.
 //!
 //! The receiver is the regtest node's wallet — a genuine third party whose
@@ -8,7 +8,7 @@
 //! swapcoins (`tx_count > 1`).
 
 use bitcoin::Amount;
-use coinswap::{
+use openswap::{
     maker::{start_server, MakerBehavior},
     protocol::common_messages::ProtocolVersion,
     taker::{SwapParams, TakerBehavior},
@@ -73,7 +73,7 @@ fn test_taproot_payswap() {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
     }
     verify_maker_pre_swap_balances(&makers);
@@ -92,7 +92,7 @@ fn test_taproot_payswap() {
     let mainnet_address = "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"
         .parse()
         .unwrap();
-    let wrong_network_result = taker.prepare_coinswap(
+    let wrong_network_result = taker.prepare_swap(
         SwapParams::new(ProtocolVersion::Taproot, payment_amount, 2)
             .with_tx_count(3)
             .with_required_confirms(1)
@@ -115,7 +115,7 @@ fn test_taproot_payswap() {
         .with_payment_address(receiver_address.as_unchecked().clone());
 
     let summary = taker
-        .prepare_coinswap(swap_params)
+        .prepare_swap(swap_params)
         .expect("Failed to prepare Taproot payment swap");
 
     let quote = summary
@@ -140,7 +140,7 @@ fn test_taproot_payswap() {
     );
 
     let report = taker
-        .start_coinswap(&summary.swap_id)
+        .start_swap(&summary.swap_id)
         .expect("Taproot payment swap should complete successfully");
 
     // ---- Verify the exact payment ----
@@ -182,7 +182,7 @@ fn test_taproot_payswap() {
         .get_wallet()
         .write()
         .unwrap()
-        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .sync_and_save(&openswap::utill::NO_SHUTDOWN)
         .unwrap();
     let taker_balances = taker.get_wallet().read().unwrap().get_balances().unwrap();
     info!(
@@ -281,7 +281,7 @@ fn test_legacy_payswap() {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
     }
     verify_maker_pre_swap_balances(&makers);
@@ -301,7 +301,7 @@ fn test_legacy_payswap() {
         .with_payment_address(receiver_address.as_unchecked().clone());
 
     let summary = taker
-        .prepare_coinswap(swap_params)
+        .prepare_swap(swap_params)
         .expect("Failed to prepare Legacy payment swap");
     let quote = summary
         .payment
@@ -320,7 +320,7 @@ fn test_legacy_payswap() {
     );
 
     let report = taker
-        .start_coinswap(&summary.swap_id)
+        .start_swap(&summary.swap_id)
         .expect("Legacy payment swap should complete successfully");
 
     // ---- Verify the exact payment ----
@@ -360,7 +360,7 @@ fn test_legacy_payswap() {
         .get_wallet()
         .write()
         .unwrap()
-        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .sync_and_save(&openswap::utill::NO_SHUTDOWN)
         .unwrap();
     let taker_balances = taker.get_wallet().read().unwrap().get_balances().unwrap();
     assert_eq!(
@@ -442,7 +442,7 @@ fn test_payswap_negotiation_guards_abort_before_funding() {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
     }
     generate_blocks(bitcoind, 1);
@@ -459,7 +459,7 @@ fn test_payswap_negotiation_guards_abort_before_funding() {
         .require_network(bitcoin::Network::Regtest)
         .unwrap();
     let negotiation_err = takers[0]
-        .prepare_coinswap(
+        .prepare_swap(
             SwapParams::new(ProtocolVersion::Taproot, payment_amount, 1)
                 .with_required_confirms(1)
                 .with_preferred_makers(vec![failing_maker, spare_maker.clone()])
@@ -483,7 +483,7 @@ fn test_payswap_negotiation_guards_abort_before_funding() {
         .require_network(bitcoin::Network::Regtest)
         .unwrap();
     let repricing_err = takers[1]
-        .prepare_coinswap(
+        .prepare_swap(
             SwapParams::new(ProtocolVersion::Taproot, payment_amount, 1)
                 .with_required_confirms(1)
                 .with_preferred_makers(vec![spare_maker])

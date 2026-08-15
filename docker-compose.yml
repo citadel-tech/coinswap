@@ -1,7 +1,7 @@
 services:
   bitcoind:
-    image: coinswap/${BITCOIN_IMAGE_NAME:-bitcoin-mutinynet}:${BITCOIN_TAG:-latest}
-    container_name: coinswap-bitcoind
+    image: openswap/${BITCOIN_IMAGE_NAME:-bitcoin-mutinynet}:${BITCOIN_TAG:-latest}
+    container_name: openswap-bitcoind
     profiles: ["internal-bitcoind"]
     command: >
       bitcoind 
@@ -23,7 +23,7 @@ services:
 
   tor:
     image: osminogin/tor-simple
-    container_name: coinswap-tor
+    container_name: openswap-tor
     profiles: ["internal-tor"]
     network_mode: "host"
     entrypoint: /bin/sh
@@ -57,8 +57,8 @@ services:
     restart: unless-stopped
 
   makerd:
-    image: coinswap/${IMAGE_NAME:-coinswap}:latest
-    container_name: coinswap-makerd
+    image: openswap/${IMAGE_NAME:-openswap}:latest
+    container_name: openswap-makerd
     profiles: ["external-tor"]
     network_mode: "host"
     command: &makerd-command
@@ -66,9 +66,9 @@ services:
       - -c
       - |
         sleep 15
-        mkdir -p /home/coinswap/.coinswap/maker
+        mkdir -p /home/openswap/.openswap/maker
         
-        cat > /home/coinswap/.coinswap/maker/config.toml << EOM
+        cat > /home/openswap/.openswap/maker/config.toml << EOM
         network_port = $${MAKER_NETWORK_PORT:-6102}
         rpc_port = $${MAKER_RPC_PORT:-6103}
         socks_port = $${TOR_SOCKS_PORT:-9050}
@@ -83,7 +83,7 @@ services:
         time_relative_fee_pct = $${TIME_RELATIVE_FEE_PCT:-0.0001}
         EOM
         
-        WALLET_NAME="$${BITCOIN_WALLET_NAME:-coinswap-maker}"
+        WALLET_NAME="$${BITCOIN_WALLET_NAME:-openswap-maker}"
         echo "INFO: Using wallet: $$WALLET_NAME"
 
         echo "[DEBUG] Running: makerd -t \"$${TOR_AUTH_PASSWORD}\" -r $${BITCOIN_RPC_HOST} -a $${BITCOIN_RPC_AUTH} $${MAKERD_EXTRA_ARGS} -w \"$$WALLET_NAME\""
@@ -92,7 +92,7 @@ services:
     ports:
       - "${MAKERD_RPC_PORT:-6103}:${MAKERD_RPC_PORT:-6103}"
     volumes:
-      - maker-data:/home/coinswap/.coinswap
+      - maker-data:/home/openswap/.openswap
     environment: &makerd-env
       - RUST_LOG=${RUST_LOG:-info}
       - MAKER_NETWORK_PORT=${MAKERD_PORT:-6102}
@@ -109,17 +109,17 @@ services:
       - BITCOIN_RPC_HOST=${BITCOIN_RPC_HOST}
       - BITCOIN_RPC_AUTH=${BITCOIN_RPC_AUTH:-user:password}
       - MAKERD_EXTRA_ARGS=${MAKERD_EXTRA_ARGS}
-      - BITCOIN_WALLET_NAME=${BITCOIN_WALLET_NAME:-coinswap-maker}
+      - BITCOIN_WALLET_NAME=${BITCOIN_WALLET_NAME:-openswap-maker}
     restart: unless-stopped
 
   makerd-internal:
-    image: coinswap/${IMAGE_NAME:-coinswap}:latest
-    container_name: coinswap-makerd
+    image: openswap/${IMAGE_NAME:-openswap}:latest
+    container_name: openswap-makerd
     profiles: ["internal-tor"]
     network_mode: "host"
     command: *makerd-command
     volumes:
-      - maker-data:/home/coinswap/.coinswap
+      - maker-data:/home/openswap/.openswap
     environment: *makerd-env
     restart: unless-stopped
     depends_on:
@@ -135,4 +135,4 @@ volumes:
 
 networks:
   default:
-    name: coinswap-network
+    name: openswap-network

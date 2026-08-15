@@ -30,18 +30,18 @@ This will display a detailed guide about the app and its capabilities.
 #### **Output:**
 
 ```bash
-coinswap 0.1.0
-Developers at Citadel-Tech
+openswap 0.1.0
+Developers at Citadel FOSS
 A simple command line app to operate the makerd server.
 
 The app works as an RPC client for makerd, useful to access the server, retrieve information, and
 manage server operations.
 
 For more detailed usage information, please refer:
-https://github.com/citadel-tech/coinswap/blob/master/docs/maker-cli.md
+https://github.com/citadel-foss/openswap/blob/master/docs/maker-cli.md
 
 This is early beta, and there are known and unknown bugs. Please report issues at:
-https://github.com/citadel-tech/coinswap/issues
+https://github.com/citadel-foss/openswap/issues
 
 USAGE:
     maker-cli [OPTIONS] <SUBCOMMAND>
@@ -148,7 +148,7 @@ $ ./maker-cli show-data-dir
 **Output:**
 
 ```bash
-<home_directory>/coinswap/maker
+<home_directory>/openswap/maker
 ```
 
 This is where all the maker's data is stored.
@@ -264,11 +264,11 @@ This confirms the balance of our fidelity UTXOs matches the amount we set when c
 
 ---
 
-For more details about fidelity bonds, refer to the [Fidelity Bond Documentation](https://github.com/citadel-tech/Coinswap-Protocol-Specification/blob/main/v1/4_fidelity.md).
+For more details about fidelity bonds, refer to the [Fidelity Bond Documentation](https://github.com/citadel-foss/OpenSwap-Protocol-Specification/blob/main/v1/4_fidelity.md).
 
 ---
 
-Next, we’ll explore other UTXOs and balances in Coinswap.
+Next, we’ll explore other UTXOs and balances in OpenSwap.
 
 ### Other UTXOs and Their Balances
 
@@ -279,7 +279,7 @@ $ ./maker-cli list-utxo-swap
 []
 ```
 
-This lists UTXOs received from incoming swaps. Since we have not done any coinswap yet, we have no swap UTXOs and thus no swap balances.
+This lists UTXOs received from incoming swaps. Since we have not done any openswap yet, we have no swap UTXOs and thus no swap balances.
 
 #### Contract UTXOs
 
@@ -288,7 +288,7 @@ $ ./maker-cli list-utxo-contract
 []
 ```
 
-This lists HTLC contract UTXOs. As mentioned above: We haven't participated in any coinswap transactions yet, so we don't have any unsuccessful coinswaps. Therefore, we have no `contract UTXOs` and no balance in this category.
+This lists HTLC contract UTXOs. As mentioned above: We haven't participated in any openswap transactions yet, so we don't have any unsuccessful openswaps. Therefore, we have no `contract UTXOs` and no balance in this category.
 
 Both categories show zero balances as confirmed by our `get-balances` output:
 
@@ -436,8 +436,8 @@ success
 This syncs the maker wallet with the current blockchain state. On `makerd`, we will see:
 
 ```bash
-INFO coinswap::maker::rpc::server - Starting wallet sync.
-INFO coinswap::maker::rpc::server - Wallet sync success.
+INFO openswap::maker::rpc::server - Starting wallet sync.
+INFO openswap::maker::rpc::server - Wallet sync success.
 ```
 
 ### Checking Wallet Balances and UTXOs:
@@ -568,19 +568,19 @@ Shutdown Initiated
 This shuts down the makerd server. Once you run this command, the maker server initiates a shutdown, and we'll see the following logs indicating the shutdown process:
 
 ```bash
- INFO coinswap::maker::server - [6102] Maker is shutting down.
- INFO coinswap::maker::api - Joining 4 threads
- INFO coinswap::maker::api - [6102] Thread RPC Thread joined
- INFO coinswap::maker::api - [6102] Thread Contract Watcher Thread joined
- INFO coinswap::maker::api - [6102] Thread Idle Client Checker Thread joined
- INFO coinswap::maker::api - [6102] Thread Bitcoin Core Connection Checker Thread joined
- INFO coinswap::maker::api - Successfully joined 4 threads
- INFO coinswap::maker::server - Shutdown wallet sync initiated.
- INFO coinswap::maker::server - Shutdown wallet syncing completed.
- INFO coinswap::maker::server - Wallet file saved to disk.
- INFO coinswap::maker::server - Maker Server is shut down successfully
+ INFO openswap::maker::server - [6102] Maker is shutting down.
+ INFO openswap::maker::api - Joining 4 threads
+ INFO openswap::maker::api - [6102] Thread RPC Thread joined
+ INFO openswap::maker::api - [6102] Thread Contract Watcher Thread joined
+ INFO openswap::maker::api - [6102] Thread Idle Client Checker Thread joined
+ INFO openswap::maker::api - [6102] Thread Bitcoin Core Connection Checker Thread joined
+ INFO openswap::maker::api - Successfully joined 4 threads
+ INFO openswap::maker::server - Shutdown wallet sync initiated.
+ INFO openswap::maker::server - Shutdown wallet syncing completed.
+ INFO openswap::maker::server - Wallet file saved to disk.
+ INFO openswap::maker::server - Maker Server is shut down successfully
 ```
 
 ---
 
-And that's it! Now you are ready to be a maker in the Coinswap network. Start your maker servers, perform coinswaps, and enjoy earning fees from takers who participate in coinswaps with you.
+And that's it! Now you are ready to be a maker in the OpenSwap network. Start your maker servers, perform openswaps, and enjoy earning fees from takers who participate in openswaps with you.

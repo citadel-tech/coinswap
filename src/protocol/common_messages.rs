@@ -1,4 +1,4 @@
-//! Common Coinswap Protocol Messages and Top-Level Message Enums.
+//! Common OpenSwap Protocol Messages and Top-Level Message Enums.
 
 use bitcoin::{bip32::ChainCode, hashes::sha256d::Hash, Amount, PublicKey};
 use serde::{Deserialize, Serialize};
@@ -13,8 +13,8 @@ use super::{
 };
 use crate::wallet::FidelityBond;
 
-/// Well-known virtual port for the CoinSwap protocol over Tor.
-pub const COINSWAP_PORT: u16 = 21;
+/// Well-known virtual port for the OpenSwap protocol over Tor.
+pub const OPENSWAP_PORT: u16 = 21;
 
 /// Hash preimage type used in HTLC contracts.
 pub type Preimage = [u8; 32];
@@ -30,7 +30,7 @@ pub struct FidelityProof {
     pub cert_sig: bitcoin::secp256k1::ecdsa::Signature,
 }
 
-/// Protocol version identifier for coinswap operations.
+/// Protocol version identifier for openswap operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum ProtocolVersion {
     /// Legacy ECDSA-based protocol with script-evaluated HTLCs.

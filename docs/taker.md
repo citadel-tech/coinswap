@@ -1,14 +1,14 @@
 # Taker Tutorial
 
-The **Taker** is the party that initiates the coinswap. It discovers makers, requests offers from them and selects suitable makers for the swap.
+The **Taker** is the party that initiates the openswap. It discovers makers, requests offers from them and selects suitable makers for the swap.
 
-In this tutorial, we will guide you through the process of setting up and running the taker, and conducting a coinswap.
+In this tutorial, we will guide you through the process of setting up and running the taker, and conducting a openswap.
 
 ## Setup
 
 ## Taker CLI
 
-The taker CLI is an application that allows you to perform coinswaps as a taker.
+The taker CLI is an application that allows you to perform openswaps as a taker.
 
 > **Warning:**  
 > Taker wallet files contain private keys required to spend your funds. Ensure these wallet files are backed up securely, and take appropriate measures to protect your private keys.
@@ -42,19 +42,19 @@ This will display a detailed guide about the app and its capabilities.
 #### **Output:**
 
 ```bash
-coinswap 0.1.2
-Developers at Citadel-Tech
-A simple command line app to operate as a CoinSwap client.
+openswap 0.1.2
+Developers at Citadel FOSS
+A simple command line app to operate as a OpenSwap client.
 
-The app works as a regular Bitcoin wallet with the added capability to perform coinswaps. The app
+The app works as a regular Bitcoin wallet with the added capability to perform openswaps. The app
 requires a running Bitcoin Core node with RPC access. It currently only runs on Testnet4. Suggested
 faucet for getting Signet coins (tor browser required): http://a4ovtjlwiclzy37bjaurcbb6wpl6dtckmlqwrywq7uoajeaz6kth4uyd.onion/
 
 For more detailed usage information, please refer:
-https://github.com/citadel-tech/coinswap/blob/master/docs/taker.md
+https://github.com/citadel-foss/openswap/blob/master/docs/taker.md
 
 This is early beta, and there are known and unknown bugs. Please report issues at:
-https://github.com/citadel-tech/coinswap/issues
+https://github.com/citadel-foss/openswap/issues
 
 USAGE:
     taker [OPTIONS] <SUBCOMMAND>
@@ -66,7 +66,7 @@ OPTIONS:
             [default: user:password]
 
     -d, --data-directory <DATA_DIRECTORY>
-            Optional data directory. Default value: "~/.coinswap/taker"
+            Optional data directory. Default value: "~/.openswap/taker"
 
     -h, --help
             Print help information
@@ -93,8 +93,8 @@ OPTIONS:
             wallet. Default: taker-wallet
 
 SUBCOMMANDS:
-    coinswap
-            Initiate the coinswap process
+    openswap
+            Initiate the openswap process
     fetch-offers
             Update the offerbook with current market offers and display them
     list-offers
@@ -149,7 +149,7 @@ SUBCOMMANDS:
 
 ### Generate a New Address
 
-Before you can perform coinswaps, you need to fund your wallet. First, generate a new receiving address:
+Before you can perform openswaps, you need to fund your wallet. First, generate a new receiving address:
 
 ```bash
 $ taker get-new-address
@@ -257,7 +257,7 @@ $ taker list-utxo-swap
 }
 ```
 
-This lists all UTXOs received in incoming swaps. Since we haven't performed any coinswaps yet, this list is empty.
+This lists all UTXOs received in incoming swaps. Since we haven't performed any openswaps yet, this list is empty.
 
 ### List Contract UTXOs
 
@@ -276,7 +276,7 @@ This lists all UTXOs that we need to claim via timelock. If you see entries in t
 
 ### Fetch Available Offers
 
-Now we are ready to initiate a coinswap. We are first going to sync the offer book to get a list of available makers:
+Now we are ready to initiate a openswap. We are first going to sync the offer book to get a list of available makers:
 
 ```bash
 $ taker fetch-offers
@@ -302,80 +302,80 @@ $ taker fetch-offers
 
 This will fetch the list of available makers and display their offers.
 
-### Initiate a Coinswap
+### Initiate a OpenSwap
 
-Now we can initiate a coinswap with the makers:
+Now we can initiate a openswap with the makers:
 
 ```bash
-$ taker coinswap
+$ taker openswap
 ```
 
-This will initiate a coinswap with the default parameters. The process typically takes several minutes to complete. You can monitor the swap progress by watching the debug log in a new terminal:
+This will initiate a openswap with the default parameters. The process typically takes several minutes to complete. You can monitor the swap progress by watching the debug log in a new terminal:
 
 ```bash
-tail -f ~/.coinswap/taker/debug.log
+tail -f ~/.openswap/taker/debug.log
 ```
 
 ```bash
 
-2025-09-03T18:58:34.830814322+05:30 INFO coinswap::utill - ✅ Logger initialized successfully
-2025-09-03T18:58:34.831885420+05:30 INFO coinswap::wallet::api - Wallet file at "/home/keraliss/.coinswap/taker/wallets/taker-wallet" successfully loaded.
-2025-09-03T18:58:34.831932106+05:30 INFO coinswap::taker::config - Successfully loaded config file from : /home/keraliss/.coinswap/taker/config.toml
-2025-09-03T18:58:34.832064049+05:30 INFO coinswap::utill - Tor is fully started and operational!
-2025-09-03T18:58:34.832636855+05:30 INFO coinswap::taker::api - Succesfully loaded offerbook at : "/home/keraliss/.coinswap/taker/offerbook.json"
-2025-09-03T18:58:34.832650756+05:30 INFO coinswap::wallet::rpc - Initializing wallet sync and save
-2025-09-03T18:58:35.157963973+05:30 INFO coinswap::wallet::rpc - Completed wallet sync and save
-2025-09-03T18:58:35.157987063+05:30 INFO coinswap::taker::api - Using regular UTXOs for coinswap
-2025-09-03T18:58:35.157991757+05:30 INFO coinswap::taker::api - Syncing Offerbook
-2025-09-03T18:58:35.158000831+05:30 INFO coinswap::taker::api - Fetching addresses from DNS: lp75qh3del4qot6fmkqq4taqm33pidvk63lncvhlwsllbwrl2f4g4qqd.onion:8080
-2025-09-03T18:58:44.794069324+05:30 INFO coinswap::taker::routines - Downloading offer from ewaexd2es2uzr34wp26cj5zgph7bug7znmmxolvwzmoeedbiyfgz3wqd.onion:8202
-2025-09-03T18:58:44.794123815+05:30 INFO coinswap::taker::routines - Downloading offer from rywnaguli5qwad2ayqyu3673acyyl5dw7bsjifhge4zohftfi76ybbid.onion:6102
-2025-09-03T18:58:53.391435256+05:30 INFO coinswap::taker::routines - Downloaded offer from : rywnaguli5qwad2ayqyu3673acyyl5dw7bsjifhge4zohftfi76ybbid.onion:6102 
-2025-09-03T18:58:53.641409491+05:30 INFO coinswap::taker::routines - Downloaded offer from : ewaexd2es2uzr34wp26cj5zgph7bug7znmmxolvwzmoeedbiyfgz3wqd.onion:8202 
-2025-09-03T18:58:53.641555305+05:30 INFO coinswap::taker::api - Found offer from rywnaguli5qwad2ayqyu3673acyyl5dw7bsjifhge4zohftfi76ybbid.onion:6102. Verifying Fidelity Proof
-2025-09-03T18:58:53.644582350+05:30 INFO coinswap::taker::api - Fidelity Bond verification success. Adding offer to our OfferBook
-2025-09-03T18:58:53.644600038+05:30 INFO coinswap::taker::api - Found offer from ewaexd2es2uzr34wp26cj5zgph7bug7znmmxolvwzmoeedbiyfgz3wqd.onion:8202. Verifying Fidelity Proof
-2025-09-03T18:58:53.645776479+05:30 INFO coinswap::taker::api - Fidelity Bond verification success. Adding offer to our OfferBook
-2025-09-03T18:58:53.646061049+05:30 INFO coinswap::taker::api - Found 5 suitable makers for this swap round
-2025-09-03T18:58:53.646074741+05:30 INFO coinswap::taker::api - Initiating coinswap with id : c874d9f7ac7e6230
-2025-09-03T18:58:53.646081183+05:30 INFO coinswap::taker::api - Initializing First Hop.
-2025-09-03T18:58:53.646089505+05:30 INFO coinswap::taker::api - Choosing next maker: 127.0.0.1:6102
-2025-09-03T18:58:53.700488732+05:30 INFO coinswap::wallet::api - Address grouping: Selected 2 regular UTXOs (total: 253000 sats, target+fee: 20324 sats)
-2025-09-03T18:58:53.702775316+05:30 INFO coinswap::wallet::spend - Adding change output with 232560 sats (fee: 440 sats)
-2025-09-03T18:58:53.706404936+05:30 INFO coinswap::wallet::spend - Created Funding tx, txid: 3233bcef16eb6c2179fda31d9229c6989111a75f297c9c49859320069cd460e6 | Size: 220 vB | Fee: 440 sats | Feerate: 2.00 sat/vB
-2025-09-03T18:58:53.706461956+05:30 INFO coinswap::wallet::funding - Created Funding tx, txid: 3233bcef16eb6c2179fda31d9229c6989111a75f297c9c49859320069cd460e6 | Size: 220 vB | Fee: 440 sats | Feerate: 2.00 sat/vB
+2025-09-03T18:58:34.830814322+05:30 INFO openswap::utill - ✅ Logger initialized successfully
+2025-09-03T18:58:34.831885420+05:30 INFO openswap::wallet::api - Wallet file at "/home/keraliss/.openswap/taker/wallets/taker-wallet" successfully loaded.
+2025-09-03T18:58:34.831932106+05:30 INFO openswap::taker::config - Successfully loaded config file from : /home/keraliss/.openswap/taker/config.toml
+2025-09-03T18:58:34.832064049+05:30 INFO openswap::utill - Tor is fully started and operational!
+2025-09-03T18:58:34.832636855+05:30 INFO openswap::taker::api - Succesfully loaded offerbook at : "/home/keraliss/.openswap/taker/offerbook.json"
+2025-09-03T18:58:34.832650756+05:30 INFO openswap::wallet::rpc - Initializing wallet sync and save
+2025-09-03T18:58:35.157963973+05:30 INFO openswap::wallet::rpc - Completed wallet sync and save
+2025-09-03T18:58:35.157987063+05:30 INFO openswap::taker::api - Using regular UTXOs for openswap
+2025-09-03T18:58:35.157991757+05:30 INFO openswap::taker::api - Syncing Offerbook
+2025-09-03T18:58:35.158000831+05:30 INFO openswap::taker::api - Fetching addresses from DNS: lp75qh3del4qot6fmkqq4taqm33pidvk63lncvhlwsllbwrl2f4g4qqd.onion:8080
+2025-09-03T18:58:44.794069324+05:30 INFO openswap::taker::routines - Downloading offer from ewaexd2es2uzr34wp26cj5zgph7bug7znmmxolvwzmoeedbiyfgz3wqd.onion:8202
+2025-09-03T18:58:44.794123815+05:30 INFO openswap::taker::routines - Downloading offer from rywnaguli5qwad2ayqyu3673acyyl5dw7bsjifhge4zohftfi76ybbid.onion:6102
+2025-09-03T18:58:53.391435256+05:30 INFO openswap::taker::routines - Downloaded offer from : rywnaguli5qwad2ayqyu3673acyyl5dw7bsjifhge4zohftfi76ybbid.onion:6102 
+2025-09-03T18:58:53.641409491+05:30 INFO openswap::taker::routines - Downloaded offer from : ewaexd2es2uzr34wp26cj5zgph7bug7znmmxolvwzmoeedbiyfgz3wqd.onion:8202 
+2025-09-03T18:58:53.641555305+05:30 INFO openswap::taker::api - Found offer from rywnaguli5qwad2ayqyu3673acyyl5dw7bsjifhge4zohftfi76ybbid.onion:6102. Verifying Fidelity Proof
+2025-09-03T18:58:53.644582350+05:30 INFO openswap::taker::api - Fidelity Bond verification success. Adding offer to our OfferBook
+2025-09-03T18:58:53.644600038+05:30 INFO openswap::taker::api - Found offer from ewaexd2es2uzr34wp26cj5zgph7bug7znmmxolvwzmoeedbiyfgz3wqd.onion:8202. Verifying Fidelity Proof
+2025-09-03T18:58:53.645776479+05:30 INFO openswap::taker::api - Fidelity Bond verification success. Adding offer to our OfferBook
+2025-09-03T18:58:53.646061049+05:30 INFO openswap::taker::api - Found 5 suitable makers for this swap round
+2025-09-03T18:58:53.646074741+05:30 INFO openswap::taker::api - Initiating openswap with id : c874d9f7ac7e6230
+2025-09-03T18:58:53.646081183+05:30 INFO openswap::taker::api - Initializing First Hop.
+2025-09-03T18:58:53.646089505+05:30 INFO openswap::taker::api - Choosing next maker: 127.0.0.1:6102
+2025-09-03T18:58:53.700488732+05:30 INFO openswap::wallet::api - Address grouping: Selected 2 regular UTXOs (total: 253000 sats, target+fee: 20324 sats)
+2025-09-03T18:58:53.702775316+05:30 INFO openswap::wallet::spend - Adding change output with 232560 sats (fee: 440 sats)
+2025-09-03T18:58:53.706404936+05:30 INFO openswap::wallet::spend - Created Funding tx, txid: 3233bcef16eb6c2179fda31d9229c6989111a75f297c9c49859320069cd460e6 | Size: 220 vB | Fee: 440 sats | Feerate: 2.00 sat/vB
+2025-09-03T18:58:53.706461956+05:30 INFO openswap::wallet::funding - Created Funding tx, txid: 3233bcef16eb6c2179fda31d9229c6989111a75f297c9c49859320069cd460e6 | Size: 220 vB | Fee: 440 sats | Feerate: 2.00 sat/vB
 2025-09-03T18:58:53.706768325+05:30 INFO wallet - created funding txes random amounts
-2025-09-03T18:58:53.708215981+05:30 ERROR coinswap::taker::api - Failed to obtain sender's contract signatures from first_maker 127.0.0.1:6102: IO(Custom { kind: Other, error: "general SOCKS server failure" })
-2025-09-03T18:58:53.708262825+05:30 INFO coinswap::taker::api - Choosing next maker: 127.0.0.1:6102
-2025-09-03T18:58:53.756678424+05:30 INFO coinswap::wallet::api - Address grouping: Selected 2 regular UTXOs (total: 253000 sats, target+fee: 20324 sats)
-2025-09-03T18:58:53.758990905+05:30 INFO coinswap::wallet::spend - Adding change output with 232560 sats (fee: 440 sats)
-2025-09-03T18:58:53.762458743+05:30 INFO coinswap::wallet::spend - Created Funding tx, txid: db7afbbd4a7e7b0e1aa1b27b5f1deef509140413459b272c894a2ee8473eae44 | Size: 220 vB | Fee: 440 sats | Feerate: 2.00 sat/vB
-2025-09-03T18:58:53.762508683+05:30 INFO coinswap::wallet::funding - Created Funding tx, txid: db7afbbd4a7e7b0e1aa1b27b5f1deef509140413459b272c894a2ee8473eae44 | Size: 220 vB | Fee: 440 sats | Feerate: 2.00 sat/vB
+2025-09-03T18:58:53.708215981+05:30 ERROR openswap::taker::api - Failed to obtain sender's contract signatures from first_maker 127.0.0.1:6102: IO(Custom { kind: Other, error: "general SOCKS server failure" })
+2025-09-03T18:58:53.708262825+05:30 INFO openswap::taker::api - Choosing next maker: 127.0.0.1:6102
+2025-09-03T18:58:53.756678424+05:30 INFO openswap::wallet::api - Address grouping: Selected 2 regular UTXOs (total: 253000 sats, target+fee: 20324 sats)
+2025-09-03T18:58:53.758990905+05:30 INFO openswap::wallet::spend - Adding change output with 232560 sats (fee: 440 sats)
+2025-09-03T18:58:53.762458743+05:30 INFO openswap::wallet::spend - Created Funding tx, txid: db7afbbd4a7e7b0e1aa1b27b5f1deef509140413459b272c894a2ee8473eae44 | Size: 220 vB | Fee: 440 sats | Feerate: 2.00 sat/vB
+2025-09-03T18:58:53.762508683+05:30 INFO openswap::wallet::funding - Created Funding tx, txid: db7afbbd4a7e7b0e1aa1b27b5f1deef509140413459b272c894a2ee8473eae44 | Size: 220 vB | Fee: 440 sats | Feerate: 2.00 sat/vB
 2025-09-03T18:58:53.762721044+05:30 INFO wallet - created funding txes random amounts
-2025-09-03T18:58:53.763710980+05:30 ERROR coinswap::taker::api - Failed to obtain sender's contract signatures from first_maker 127.0.0.1:6102: IO(Custom { kind: Other, error: "general SOCKS server failure" })
-2025-09-03T18:58:53.763757893+05:30 INFO coinswap::taker::api - Choosing next maker: 127.0.0.1:6102
-2025-09-03T18:58:53.813457799+05:30 INFO coinswap::wallet::api - Address grouping: Selected 2 regular UTXOs (total: 253000 sats, target+fee: 20324 sats)
-2025-09-03T18:58:53.815543924+05:30 INFO coinswap::wallet::spend - Adding change output with 232560 sats (fee: 440 sats)
-2025-09-03T18:58:53.819894556+05:30 INFO coinswap::wallet::spend - Created Funding tx, txid: a680b1d032a5fa5febd4f2c38743c9aa657783c2d1c713b5748ba6c57c6474d0 | Size: 220 vB | Fee: 440 sats | Feerate: 2.00 sat/vB
-2025-09-03T18:58:53.820038208+05:30 INFO coinswap::wallet::funding - Created Funding tx, txid: a680b1d032a5fa5febd4f2c38743c9aa657783c2d1c713b5748ba6c57c6474d0 | Size: 220 vB | Fee: 440 sats | Feerate: 2.00 sat/vB
+2025-09-03T18:58:53.763710980+05:30 ERROR openswap::taker::api - Failed to obtain sender's contract signatures from first_maker 127.0.0.1:6102: IO(Custom { kind: Other, error: "general SOCKS server failure" })
+2025-09-03T18:58:53.763757893+05:30 INFO openswap::taker::api - Choosing next maker: 127.0.0.1:6102
+2025-09-03T18:58:53.813457799+05:30 INFO openswap::wallet::api - Address grouping: Selected 2 regular UTXOs (total: 253000 sats, target+fee: 20324 sats)
+2025-09-03T18:58:53.815543924+05:30 INFO openswap::wallet::spend - Adding change output with 232560 sats (fee: 440 sats)
+2025-09-03T18:58:53.819894556+05:30 INFO openswap::wallet::spend - Created Funding tx, txid: a680b1d032a5fa5febd4f2c38743c9aa657783c2d1c713b5748ba6c57c6474d0 | Size: 220 vB | Fee: 440 sats | Feerate: 2.00 sat/vB
+2025-09-03T18:58:53.820038208+05:30 INFO openswap::wallet::funding - Created Funding tx, txid: a680b1d032a5fa5febd4f2c38743c9aa657783c2d1c713b5748ba6c57c6474d0 | Size: 220 vB | Fee: 440 sats | Feerate: 2.00 sat/vB
 2025-09-03T18:58:53.820375931+05:30 INFO wallet - created funding txes random amounts
-2025-09-03T18:58:53.821413777+05:30 ERROR coinswap::taker::api - Failed to obtain sender's contract signatures from first_maker 127.0.0.1:6102: IO(Custom { kind: Other, error: "general SOCKS server failure" })
-2025-09-03T18:58:53.821551711+05:30 INFO coinswap::taker::api - Choosing next maker: ewaexd2es2uzr34wp26cj5zgph7bug7znmmxolvwzmoeedbiyfgz3wqd.onion:8202
-2025-09-03T18:58:53.872796787+05:30 INFO coinswap::wallet::api - Address grouping: Selected 2 regular UTXOs (total: 253000 sats, target+fee: 20324 sats)
-2025-09-03T18:58:53.874726933+05:30 INFO coinswap::wallet::spend - Adding change output with 232560 sats (fee: 440 sats)
-2025-09-03T18:58:53.877062518+05:30 INFO coinswap::wallet::spend - Created Funding tx, txid: 5eacac48877057bdda3e34d1a7e5f93d4d594cde599be166e465b5464501c76c | Size: 220 vB | Fee: 440 sats | Feerate: 2.00 sat/vB
-2025-09-03T18:58:53.877090094+05:30 INFO coinswap::wallet::funding - Created Funding tx, txid: 5eacac48877057bdda3e34d1a7e5f93d4d594cde599be166e465b5464501c76c | Size: 220 vB | Fee: 440 sats | Feerate: 2.00 sat/vB
+2025-09-03T18:58:53.821413777+05:30 ERROR openswap::taker::api - Failed to obtain sender's contract signatures from first_maker 127.0.0.1:6102: IO(Custom { kind: Other, error: "general SOCKS server failure" })
+2025-09-03T18:58:53.821551711+05:30 INFO openswap::taker::api - Choosing next maker: ewaexd2es2uzr34wp26cj5zgph7bug7znmmxolvwzmoeedbiyfgz3wqd.onion:8202
+2025-09-03T18:58:53.872796787+05:30 INFO openswap::wallet::api - Address grouping: Selected 2 regular UTXOs (total: 253000 sats, target+fee: 20324 sats)
+2025-09-03T18:58:53.874726933+05:30 INFO openswap::wallet::spend - Adding change output with 232560 sats (fee: 440 sats)
+2025-09-03T18:58:53.877062518+05:30 INFO openswap::wallet::spend - Created Funding tx, txid: 5eacac48877057bdda3e34d1a7e5f93d4d594cde599be166e465b5464501c76c | Size: 220 vB | Fee: 440 sats | Feerate: 2.00 sat/vB
+2025-09-03T18:58:53.877090094+05:30 INFO openswap::wallet::funding - Created Funding tx, txid: 5eacac48877057bdda3e34d1a7e5f93d4d594cde599be166e465b5464501c76c | Size: 220 vB | Fee: 440 sats | Feerate: 2.00 sat/vB
 2025-09-03T18:58:53.877509748+05:30 INFO wallet - created funding txes random amounts
-2025-09-03T18:58:54.568365133+05:30 INFO coinswap::taker::api - ===> ReqContractSigsForSender | ewaexd2es2uzr34wp26cj5zgph7bug7znmmxolvwzmoeedbiyfgz3wqd.onion:8202
-2025-09-03T18:58:58.263137675+05:30 INFO coinswap::taker::api - <=== RespContractSigsForSender | ewaexd2es2uzr34wp26cj5zgph7bug7znmmxolvwzmoeedbiyfgz3wqd.onion:8202
-2025-09-03T18:58:58.263583864+05:30 INFO coinswap::taker::api - Total Funding Txs Fees: 0.00000440 BTC
-2025-09-03T18:58:58.263606558+05:30 INFO coinswap::taker::api - Transaction size: 220 vB (0.220 kvB)
-2025-09-03T18:58:58.291022378+05:30 INFO coinswap::taker::api - Broadcasted Funding tx. txid: 5eacac48877057bdda3e34d1a7e5f93d4d594cde599be166e465b5464501c76c
-2025-09-03T18:58:58.291105164+05:30 INFO coinswap::taker::api - Waiting for funding transaction confirmation. Txids : [5eacac48877057bdda3e34d1a7e5f93d4d594cde599be166e465b5464501c76c]
-2025-09-03T18:58:58.292556173+05:30 INFO coinswap::taker::api - Funding tx Seen in Mempool. Waiting for confirmation for 0 secs
-2025-09-03T18:58:59.062221277+05:30 INFO coinswap::taker::api - ===> WaitingFundingConfirmation | ewaexd2es2uzr34wp26cj5zgph7bug7znmmxolvwzmoeedbiyfgz3wqd.onion:8202
-2025-09-03T18:59:29.063641719+05:30 INFO coinswap::taker::api - Funding tx Seen in Mempool. Waiting for confirmation for 30 secs
-2025-09-03T18:59:29.683684462+05:30 INFO coinswap::taker::api - ===> WaitingFundingConfirmation | ewaexd2es2uzr34wp26cj5zgph7bug7znmmxolvwzmoeedbiyfgz3wqd.onion:8202
+2025-09-03T18:58:54.568365133+05:30 INFO openswap::taker::api - ===> ReqContractSigsForSender | ewaexd2es2uzr34wp26cj5zgph7bug7znmmxolvwzmoeedbiyfgz3wqd.onion:8202
+2025-09-03T18:58:58.263137675+05:30 INFO openswap::taker::api - <=== RespContractSigsForSender | ewaexd2es2uzr34wp26cj5zgph7bug7znmmxolvwzmoeedbiyfgz3wqd.onion:8202
+2025-09-03T18:58:58.263583864+05:30 INFO openswap::taker::api - Total Funding Txs Fees: 0.00000440 BTC
+2025-09-03T18:58:58.263606558+05:30 INFO openswap::taker::api - Transaction size: 220 vB (0.220 kvB)
+2025-09-03T18:58:58.291022378+05:30 INFO openswap::taker::api - Broadcasted Funding tx. txid: 5eacac48877057bdda3e34d1a7e5f93d4d594cde599be166e465b5464501c76c
+2025-09-03T18:58:58.291105164+05:30 INFO openswap::taker::api - Waiting for funding transaction confirmation. Txids : [5eacac48877057bdda3e34d1a7e5f93d4d594cde599be166e465b5464501c76c]
+2025-09-03T18:58:58.292556173+05:30 INFO openswap::taker::api - Funding tx Seen in Mempool. Waiting for confirmation for 0 secs
+2025-09-03T18:58:59.062221277+05:30 INFO openswap::taker::api - ===> WaitingFundingConfirmation | ewaexd2es2uzr34wp26cj5zgph7bug7znmmxolvwzmoeedbiyfgz3wqd.onion:8202
+2025-09-03T18:59:29.063641719+05:30 INFO openswap::taker::api - Funding tx Seen in Mempool. Waiting for confirmation for 30 secs
+2025-09-03T18:59:29.683684462+05:30 INFO openswap::taker::api - ===> WaitingFundingConfirmation | ewaexd2es2uzr34wp26cj5zgph7bug7znmmxolvwzmoeedbiyfgz3wqd.onion:8202
 
 .
 .
@@ -383,17 +383,17 @@ tail -f ~/.coinswap/taker/debug.log
 .
 .
 
-2025-09-03T19:55:19.045810783+05:30 INFO coinswap::wallet::api - Transaction seen in mempool,waiting for confirmation, txid: aed232df3ce3523434fcd2a8aad7fad02fa858d4be29cf0e1c18dde4a3cefb9d
-2025-09-03T19:55:19.045831823+05:30 INFO coinswap::wallet::api - Next sync in 130 secs
-2025-09-03T19:57:29.047058307+05:30 INFO coinswap::wallet::api - Transaction confirmed at blockheight: 16032, txid : aed232df3ce3523434fcd2a8aad7fad02fa858d4be29cf0e1c18dde4a3cefb9d
-2025-09-03T19:57:29.047080134+05:30 INFO coinswap::wallet::api - Sweep Transaction aed232df3ce3523434fcd2a8aad7fad02fa858d4be29cf0e1c18dde4a3cefb9d confirmed at blockheight: 16032
-2025-09-03T19:57:29.047090987+05:30 INFO coinswap::wallet::api - Successfully swept incoming swap coin, txid: aed232df3ce3523434fcd2a8aad7fad02fa858d4be29cf0e1c18dde4a3cefb9d
-2025-09-03T19:57:29.047106047+05:30 INFO coinswap::wallet::api - Successfully removed incoming swaps coins
-2025-09-03T19:57:29.047290187+05:30 INFO coinswap::taker::api - Successfully swept 1 incoming swap coins: [aed232df3ce3523434fcd2a8aad7fad02fa858d4be29cf0e1c18dde4a3cefb9d]
-2025-09-03T19:57:29.047300886+05:30 INFO coinswap::taker::api - Successfully Completed Coinswap.
-2025-09-03T19:57:29.047307582+05:30 INFO coinswap::taker::api - Shutting down taker.
-2025-09-03T19:57:29.047631218+05:30 INFO coinswap::taker::api - offerbook data saved to disk.
-2025-09-03T19:57:29.047740527+05:30 INFO coinswap::taker::api - Wallet data saved to disk.
+2025-09-03T19:55:19.045810783+05:30 INFO openswap::wallet::api - Transaction seen in mempool,waiting for confirmation, txid: aed232df3ce3523434fcd2a8aad7fad02fa858d4be29cf0e1c18dde4a3cefb9d
+2025-09-03T19:55:19.045831823+05:30 INFO openswap::wallet::api - Next sync in 130 secs
+2025-09-03T19:57:29.047058307+05:30 INFO openswap::wallet::api - Transaction confirmed at blockheight: 16032, txid : aed232df3ce3523434fcd2a8aad7fad02fa858d4be29cf0e1c18dde4a3cefb9d
+2025-09-03T19:57:29.047080134+05:30 INFO openswap::wallet::api - Sweep Transaction aed232df3ce3523434fcd2a8aad7fad02fa858d4be29cf0e1c18dde4a3cefb9d confirmed at blockheight: 16032
+2025-09-03T19:57:29.047090987+05:30 INFO openswap::wallet::api - Successfully swept incoming swap coin, txid: aed232df3ce3523434fcd2a8aad7fad02fa858d4be29cf0e1c18dde4a3cefb9d
+2025-09-03T19:57:29.047106047+05:30 INFO openswap::wallet::api - Successfully removed incoming swaps coins
+2025-09-03T19:57:29.047290187+05:30 INFO openswap::taker::api - Successfully swept 1 incoming swap coins: [aed232df3ce3523434fcd2a8aad7fad02fa858d4be29cf0e1c18dde4a3cefb9d]
+2025-09-03T19:57:29.047300886+05:30 INFO openswap::taker::api - Successfully Completed OpenSwap.
+2025-09-03T19:57:29.047307582+05:30 INFO openswap::taker::api - Shutting down taker.
+2025-09-03T19:57:29.047631218+05:30 INFO openswap::taker::api - offerbook data saved to disk.
+2025-09-03T19:57:29.047740527+05:30 INFO openswap::taker::api - Wallet data saved to disk.
 ```
 
 ### Recovering Failed Swaps
@@ -418,16 +418,16 @@ $ taker  recover
 **Output:**
 
 ```bash
-2025-08-13T14:36:38.734842084+05:30 INFO coinswap::wallet::api - Unfinished incoming txids: []
-2025-08-13T14:36:38.734849418+05:30 INFO coinswap::wallet::api - Unfinished outgoing txids: []
-2025-08-13T14:36:38.752510411+05:30 INFO coinswap::taker::api - Recovery completed.
+2025-08-13T14:36:38.734842084+05:30 INFO openswap::wallet::api - Unfinished incoming txids: []
+2025-08-13T14:36:38.734849418+05:30 INFO openswap::wallet::api - Unfinished outgoing txids: []
+2025-08-13T14:36:38.752510411+05:30 INFO openswap::taker::api - Recovery completed.
 ```
 
 This will attempt to recover all funds from failed swaps. In this case, since there are no unfinished transactions (both incoming and outgoing txids arrays are empty), the recovery process completes immediately with no funds to recover.
 
 ## Data, Config and Wallets
 
-The taker stores all its data in a data directory. By default, the data directory is located at `$HOME/.coinswap/taker`. You can change the data directory by passing the `--data-directory` option to the `taker` command.
+The taker stores all its data in a data directory. By default, the data directory is located at `$HOME/.openswap/taker`. You can change the data directory by passing the `--data-directory` option to the `taker` command.
 
 The data directory contains the following files:
 
@@ -435,7 +435,7 @@ The data directory contains the following files:
 2. `debug.log` - The log file for the taker.
 3. `wallets` directory - Contains the wallet files for the taker.
 
-**Default Taker Configuration (`~/.coinswap/taker/config.toml`):**
+**Default Taker Configuration (`~/.openswap/taker/config.toml`):**
 
 ```toml
 control_port = 9051

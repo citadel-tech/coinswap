@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: coinswap-downstream-compatibility-dispatch
+  group: openswap-downstream-compatibility-dispatch
   cancel-in-progress: true
 
 permissions: {}
@@ -23,15 +23,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - downstream: coinswap-ffi
-            repository: citadel-tech/coinswap-ffi
-            secret_name: COINSWAP_FFI_DISPATCH_TOKEN
+          - downstream: openswap-ffi
+            repository: citadel-foss/openswap-ffi
+            secret_name: OPENSWAP_FFI_DISPATCH_TOKEN
           - downstream: maker-dashboard
-            repository: citadel-tech/maker-dashboard
-            secret_name: COINSWAP_MAKER_DASHBOARD_DISPATCH_TOKEN
+            repository: citadel-foss/maker-dashboard
+            secret_name: OPENSWAP_MAKER_DASHBOARD_DISPATCH_TOKEN
           - downstream: taker-app
-            repository: citadel-tech/taker-app
-            secret_name: COINSWAP_TAKER_APP_DISPATCH_TOKEN
+            repository: citadel-foss/taker-app
+            secret_name: OPENSWAP_TAKER_APP_DISPATCH_TOKEN
     steps:
       - name: Dispatch compatibility check
         env:
@@ -39,10 +39,10 @@ jobs:
           DOWNSTREAM_NAME: ${{ matrix.downstream }}
           DOWNSTREAM_REPOSITORY: ${{ matrix.repository }}
           DISPATCH_SECRET_NAME: ${{ matrix.secret_name }}
-          COINSWAP_SHA: ${{ github.sha }}
-          COINSWAP_REF: ${{ github.ref }}
-          COINSWAP_REPOSITORY: ${{ github.repository }}
-          COINSWAP_COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
+          OPENSWAP_SHA: ${{ github.sha }}
+          OPENSWAP_REF: ${{ github.ref }}
+          OPENSWAP_REPOSITORY: ${{ github.repository }}
+          OPENSWAP_COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
           TRIGGERING_ACTOR: ${{ github.triggering_actor }}
         shell: bash
         run: |
@@ -55,19 +55,19 @@ jobs:
 
           payload_file="${RUNNER_TEMP}/${DOWNSTREAM_NAME}-dispatch.json"
           jq -n \
-            --arg event_type "coinswap-updated" \
-            --arg coinswap_sha "${COINSWAP_SHA}" \
-            --arg coinswap_ref "${COINSWAP_REF}" \
-            --arg coinswap_repository "${COINSWAP_REPOSITORY}" \
-            --arg coinswap_commit_url "${COINSWAP_COMMIT_URL}" \
+            --arg event_type "openswap-updated" \
+            --arg openswap_sha "${OPENSWAP_SHA}" \
+            --arg openswap_ref "${OPENSWAP_REF}" \
+            --arg openswap_repository "${OPENSWAP_REPOSITORY}" \
+            --arg openswap_commit_url "${OPENSWAP_COMMIT_URL}" \
             --arg triggering_actor "${TRIGGERING_ACTOR}" \
             '{
               event_type: $event_type,
               client_payload: {
-                coinswap_sha: $coinswap_sha,
-                coinswap_ref: $coinswap_ref,
-                coinswap_repository: $coinswap_repository,
-                coinswap_commit_url: $coinswap_commit_url,
+                openswap_sha: $openswap_sha,
+                openswap_ref: $openswap_ref,
+                openswap_repository: $openswap_repository,
+                openswap_commit_url: $openswap_commit_url,
                 triggering_actor: $triggering_actor
               }
             }' > "${payload_file}"

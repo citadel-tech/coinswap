@@ -12,19 +12,19 @@ use bitcoind::{
 use electrsd::ElectrsD;
 use log::info;
 
-use coinswap::wallet::{
+use openswap::wallet::{
     AddressType, AnyBlockchain, BackendConfig, CoreRPC, CoreRpcConfig, Electrum, ElectrumConfig,
     Wallet, WalletBackup,
 };
 
-use coinswap::security::{load_sensitive_struct, KeyMaterial, SerdeJson};
+use openswap::security::{load_sensitive_struct, KeyMaterial, SerdeJson};
 
 use super::test_framework::{
     generate_blocks, init_bitcoind, init_electrsd, send_to_address, wait_for_electrs_tip,
 };
 
 fn setup(test_name: String) -> (PathBuf, CoreRpcConfig, PathBuf, BitcoinD, PathBuf, PathBuf) {
-    let root_dir = std::env::temp_dir().join(format!("coinswap-{}", rand::random::<u64>()));
+    let root_dir = std::env::temp_dir().join(format!("openswap-{}", rand::random::<u64>()));
     let temp_dir = root_dir.join("wallet-tests").join(test_name);
     let wallets_dir = temp_dir.join("");
 
@@ -109,7 +109,7 @@ fn plainwallet_plainbackup_plainrestore() {
     let addr = wallet.get_next_external_address(AddressType::P2TR).unwrap();
     send_and_mine(&mut bitcoind, &addr, 0.05, 1).unwrap();
 
-    wallet.sync_and_save(&coinswap::utill::NO_SHUTDOWN).unwrap();
+    wallet.sync_and_save(&openswap::utill::NO_SHUTDOWN).unwrap();
 
     let (backup, _) =
         load_sensitive_struct::<WalletBackup, SerdeJson>(&wallet_backup_file, None).unwrap();
@@ -160,7 +160,7 @@ fn encwallet_encbackup_encrestore() {
     let addr = wallet.get_next_external_address(AddressType::P2TR).unwrap();
     send_and_mine(&mut bitcoind, &addr, 0.05, 1).unwrap();
 
-    wallet.sync_and_save(&coinswap::utill::NO_SHUTDOWN).unwrap();
+    wallet.sync_and_save(&openswap::utill::NO_SHUTDOWN).unwrap();
 
     let (backup, _) = load_sensitive_struct::<WalletBackup, SerdeJson>(
         &wallet_backup_file,
@@ -197,7 +197,7 @@ struct ElectrumSetup {
 }
 
 fn setup_electrum(test_name: &str) -> ElectrumSetup {
-    let root_dir = std::env::temp_dir().join(format!("coinswap-elec-{}", rand::random::<u64>()));
+    let root_dir = std::env::temp_dir().join(format!("openswap-elec-{}", rand::random::<u64>()));
     let temp_dir = root_dir.join("wallet-tests").join(test_name);
     let wallets_dir = temp_dir.join("");
     let original_wallet_name = "original-wallet".to_string();
@@ -253,7 +253,7 @@ fn plainwallet_plainbackup_plainrestore_electrum() {
     send_and_mine(&mut s.bitcoind, &addr, 0.05, 1).unwrap();
     wait_for_electrs_tip(&s.bitcoind, &s.electrsd, &s.electrum_cfg);
 
-    wallet.sync_and_save(&coinswap::utill::NO_SHUTDOWN).unwrap();
+    wallet.sync_and_save(&openswap::utill::NO_SHUTDOWN).unwrap();
 
     let (backup, _) =
         load_sensitive_struct::<WalletBackup, SerdeJson>(&s.backup_file, None).unwrap();
@@ -298,7 +298,7 @@ fn encwallet_encbackup_encrestore_electrum() {
     send_and_mine(&mut s.bitcoind, &addr, 0.05, 1).unwrap();
     wait_for_electrs_tip(&s.bitcoind, &s.electrsd, &s.electrum_cfg);
 
-    wallet.sync_and_save(&coinswap::utill::NO_SHUTDOWN).unwrap();
+    wallet.sync_and_save(&openswap::utill::NO_SHUTDOWN).unwrap();
 
     let (backup, _) = load_sensitive_struct::<WalletBackup, SerdeJson>(
         &s.backup_file,

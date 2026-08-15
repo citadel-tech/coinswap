@@ -4,7 +4,7 @@
 //! Route: Taker -> Maker1 (Normal) -> Maker2 (CloseAtHashPreimage) -> Taker
 //!
 //! Scenario:
-//! 1. Taker initiates a Legacy coinswap with 2 makers.
+//! 1. Taker initiates a Legacy openswap with 2 makers.
 //! 2. Maker2 broadcasts its funding transaction and persists unfinished swapcoins.
 //! 3. Maker2 closes at hash preimage / private key handover.
 //! 4. Maker2 is restarted before idle recovery can write a tracker record.
@@ -12,7 +12,7 @@
 //!    it cannot find a matching tracker record.
 
 use bitcoin::Amount;
-use coinswap::{
+use openswap::{
     maker::{start_server, MakerBehavior, MakerServer},
     protocol::common_messages::ProtocolVersion,
     taker::{SwapParams, TakerBehavior},
@@ -90,9 +90,9 @@ fn test_legacy_maker_reboot_recovery_preserves_funded_swapcoins() {
     generate_blocks(bitcoind, 1);
 
     let summary = taker
-        .prepare_coinswap(swap_params)
+        .prepare_swap(swap_params)
         .expect("Prepare should succeed");
-    let swap_result = taker.start_coinswap(&summary.swap_id);
+    let swap_result = taker.start_swap(&summary.swap_id);
     assert!(
         swap_result.is_err(),
         "Swap should fail due to Maker2 closing at hash preimage handover"

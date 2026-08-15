@@ -1,16 +1,16 @@
 <div align="center">
 
-# Coinswap
-Functioning, minimal-viable binaries and libraries to perform a trustless, p2p [Maxwell-Belcher Coinswap Protocol](https://gist.github.com/chris-belcher/9144bd57a91c194e332fb5ca371d0964).
+# OpenSwap
+Functioning, minimal-viable binaries and libraries to perform a trustless, p2p [Maxwell-Belcher OpenSwap Protocol](https://gist.github.com/chris-belcher/9144bd57a91c194e332fb5ca371d0964).
 
-[![MIT or Apache-2.0 Licensed](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](https://github.com/citadel-tech/coinswap/blob/master/LICENSE)
-[![Build Status](https://github.com/citadel-tech/coinswap/actions/workflows/build.yaml/badge.svg)](https://github.com/citadel-tech/coinswap/actions/workflows/build.yaml)
-[![Lint Status](https://github.com/citadel-tech/coinswap/actions/workflows/lint.yaml/badge.svg)](https://github.com/citadel-tech/coinswap/actions/workflows/lint.yaml)
-[![Test Status](https://github.com/citadel-tech/coinswap/actions/workflows/test.yaml/badge.svg)](https://github.com/citadel-tech/coinswap/actions/workflows/test.yaml)
-[![Coverage](https://codecov.io/github/citadel-tech/coinswap/coverage.svg?branch=master)](https://codecov.io/github/citadel-tech/coinswap?branch=master)
+[![MIT or Apache-2.0 Licensed](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](https://github.com/citadel-foss/openswap/blob/master/LICENSE)
+[![Build Status](https://github.com/citadel-foss/openswap/actions/workflows/build.yaml/badge.svg)](https://github.com/citadel-foss/openswap/actions/workflows/build.yaml)
+[![Lint Status](https://github.com/citadel-foss/openswap/actions/workflows/lint.yaml/badge.svg)](https://github.com/citadel-foss/openswap/actions/workflows/lint.yaml)
+[![Test Status](https://github.com/citadel-foss/openswap/actions/workflows/test.yaml/badge.svg)](https://github.com/citadel-foss/openswap/actions/workflows/test.yaml)
+[![Coverage](https://codecov.io/github/citadel-foss/openswap/coverage.svg?branch=master)](https://codecov.io/github/citadel-foss/openswap?branch=master)
 [![Rustc Version 1.75.0+](https://img.shields.io/badge/rustc-1.75.0%2B-lightgrey.svg)](https://blog.rust-lang.org/2023/12/28/Rust-1.75.0.html)
 
-[![Latest Release](https://img.shields.io/github/v/release/citadel-tech/coinswap?label=latest%20release&color=orange)](https://github.com/citadel-tech/coinswap/releases/latest)
+[![Latest Release](https://img.shields.io/github/v/release/citadel-foss/openswap?label=latest%20release&color=orange)](https://github.com/citadel-foss/openswap/releases/latest)
 [![Website](https://img.shields.io/badge/website-citadelfoss.xyz-blue)](https://citadelfoss.xyz/)
 
 </div>
@@ -20,7 +20,7 @@ This project is under active development. Mainnet use is **NOT recommended.**
 
 # About
 
-Coinswap is a trustless, self-custodial [atomic swap](https://bitcoinops.org/en/topics/coinswap/) protocol built on Bitcoin. Unlike existing solutions that rely on centralized servers as [single points of failure](https://en.wikipedia.org/wiki/Single_point_of_failure), Coinswap's marketplace is seeded in the Bitcoin blockchain itself — no central host required, anyone with a Bitcoin node can participate. 
+OpenSwap is a trustless, self-custodial [atomic swap](https://bitcoinops.org/en/topics/openswap/) protocol built on Bitcoin. Unlike existing solutions that rely on centralized servers as [single points of failure](https://en.wikipedia.org/wiki/Single_point_of_failure), OpenSwap's marketplace is seeded in the Bitcoin blockchain itself — no central host required, anyone with a Bitcoin node can participate. 
 
 For a quicker dive into the idea, see the [**Website**](https://citadelfoss.xyz/).
 
@@ -36,9 +36,9 @@ For a quicker dive into the idea, see the [**Website**](https://citadelfoss.xyz/
 
 The project extends Chris Belcher's [teleport-transactions](https://github.com/bitcoin-teleport/teleport-transactions) proof-of-concept into a production-grade implementation with full protocol handling, functional testing, sybil resistance, CLI tools, and a GUI app. The same protocol can be extended for cross-chain swaps.
 
-For protocol-level details, see the [Coinswap Protocol Specifications](https://github.com/citadel-tech/Coinswap-Protocol-Specification).
+For protocol-level details, see the [OpenSwap Protocol Specifications](https://github.com/citadel-foss/OpenSwap-Protocol-Specification).
 
-For an in-depth exploration of the repository, it's recommended to use [Deep Wiki](https://deepwiki.com/citadel-tech/coinswap).
+For an in-depth exploration of the repository, it's recommended to use [Deep Wiki](https://deepwiki.com/citadel-foss/openswap).
 
 # Executables
 
@@ -49,21 +49,21 @@ This crate compiles into the following CLI binaries. Useful for integration test
 
 **[maker-cli](./docs/maker-cli.md)**: CLI controller for the `makerd`. Manage server, access wallet, view swap statistics, and more. [Demo](./docs/maker-cli.md)
 
-**[taker](./docs/taker.md)**: A command-line Coinswap client app to perform swaps, discover market, etc. [Demo](./docs/taker.md)
+**[taker](./docs/taker.md)**: A command-line OpenSwap client app to perform swaps, discover market, etc. [Demo](./docs/taker.md)
 
 ## GUI Apps
-GUI apps are built using the core library rust APIs ([taker api](https://github.com/citadel-tech/coinswap/blob/master/src/taker/api.rs), [maker api](https://github.com/citadel-tech/coinswap/blob/master/src/maker/api.rs)) and [FFIs](https://github.com/citadel-tech/coinswap-ffi) built on top of it to support other languages. Suitable for power users and UI/UX stress testing. 
+GUI apps are built using the core library rust APIs ([taker api](https://github.com/citadel-foss/openswap/blob/master/src/taker/api.rs), [maker api](https://github.com/citadel-foss/openswap/blob/master/src/maker/api.rs)) and [FFIs](https://github.com/citadel-foss/openswap-ffi) built on top of it to support other languages. Suitable for power users and UI/UX stress testing. 
 
-The apps provide the full suite of Coinswap operations at "near production" quality. They can be locally compiled from their respective repos, or download precompiled binaries from their release pages.  
+The apps provide the full suite of OpenSwap operations at "near production" quality. They can be locally compiled from their respective repos, or download precompiled binaries from their release pages.  
 
-**[taker-app](https://github.com/citadel-tech/taker-app)**: A Desktop Coinswap client, built with the JS FFIs, to manage the all operations of coinswap wallet, discover and manage marketplace, and much more.
+**[taker-app](https://github.com/citadel-foss/taker-app)**: A Desktop OpenSwap client, built with the JS FFIs, to manage the all operations of openswap wallet, discover and manage marketplace, and much more.
 
-**[maker-dashboard](https://github.com/citadel-tech/maker-dashboard)**: A Webapp for maker management dashboard, built in rust, designed for headless servers or desktops. Create and manage multiple makers, connect with the market, earn swap fees and much more, with a nice and useful UI.
+**[maker-dashboard](https://github.com/citadel-foss/maker-dashboard)**: A Webapp for maker management dashboard, built in rust, designed for headless servers or desktops. Create and manage multiple makers, connect with the market, earn swap fees and much more, with a nice and useful UI.
 
 Check the [demo doc](./docs/demo.md) for quick setup guides.
 
 > [!NOTE]
-> These apps should be considered as "examples", rather than products. We encourage all Bitcoin wallet developers to take a look at our [examples](https://github.com/citadel-tech/coinswap/tree/master/examples), [ffis](), and [apis](https://github.com/citadel-tech/coinswap/blob/master/src/taker/api.rs), to build their own apps, or integrate Coinswap within their existing apps. App ecosystem diversity is crucial for decentralization.
+> These apps should be considered as "examples", rather than products. We encourage all Bitcoin wallet developers to take a look at our [examples](https://github.com/citadel-foss/openswap/tree/master/examples), [ffis](), and [apis](https://github.com/citadel-foss/openswap/blob/master/src/taker/api.rs), to build their own apps, or integrate OpenSwap within their existing apps. App ecosystem diversity is crucial for decentralization.
 
 # Development
 
@@ -79,8 +79,8 @@ The [Test Framework](./tests/integration/test_framework/mod.rs) spawns toy marke
 
 ## Contributing
 
-- Browse [issues](https://github.com/citadel-tech/coinswap/issues), especially [`good first issue`](https://github.com/citadel-tech/coinswap/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22)
-- Review [open PRs](https://github.com/citadel-tech/coinswap/pulls)
+- Browse [issues](https://github.com/citadel-foss/openswap/issues), especially [`good first issue`](https://github.com/citadel-foss/openswap/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22)
+- Review [open PRs](https://github.com/citadel-foss/openswap/pulls)
 - Search for `TODO`s in the codebase
 - Read the [docs](./docs)
 - Read the [Contributing Guide](./CONTRIBUTING.md) — including the AI contributions policy

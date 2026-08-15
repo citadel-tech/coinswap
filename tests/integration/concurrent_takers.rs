@@ -1,4 +1,4 @@
-//! Integration test for concurrent taker coinswap with limited maker liquidity.
+//! Integration test for concurrent taker openswap with limited maker liquidity.
 //!
 //! Setup: 2 takers with Normal behavior, 2 makers with Normal behavior.
 //! Both takers run swaps concurrently via `thread::scope`, once per protocol.
@@ -7,7 +7,7 @@
 //! This exercises the UTXO reservation mechanism that prevents double-spend.
 
 use bitcoin::Amount;
-use coinswap::{
+use openswap::{
     maker::start_server,
     protocol::common_messages::ProtocolVersion,
     taker::{SwapParams, TakerBehavior},
@@ -124,7 +124,7 @@ fn concurrent_takers(
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
     }
 
@@ -164,20 +164,20 @@ fn concurrent_takers(
         let r2 = &result2;
 
         s.spawn(move || {
-            info!("Taker 1 starting concurrent {:?} coinswap", protocol);
+            info!("Taker 1 starting concurrent {:?} openswap", protocol);
             let swap_params = SwapParams::new(protocol, Amount::from_sat(500000), 2)
                 .with_tx_count(3)
                 .with_required_confirms(1);
 
-            match taker1.prepare_coinswap(swap_params) {
-                Ok(summary) => match taker1.start_coinswap(&summary.swap_id) {
+            match taker1.prepare_swap(swap_params) {
+                Ok(summary) => match taker1.start_swap(&summary.swap_id) {
                     Ok(report) => {
-                        info!("Taker 1 {:?} coinswap completed successfully!", protocol);
+                        info!("Taker 1 {:?} openswap completed successfully!", protocol);
                         info!("Taker 1 swap report: {:?}", report);
                         r1.store(RESULT_SUCCESS, Relaxed);
                     }
                     Err(e) => {
-                        warn!("Taker 1 {:?} coinswap failed: {:?}", protocol, e);
+                        warn!("Taker 1 {:?} openswap failed: {:?}", protocol, e);
                         r1.store(RESULT_FAILED, Relaxed);
                     }
                 },
@@ -192,20 +192,20 @@ fn concurrent_takers(
         thread::sleep(Duration::from_secs(3));
 
         s.spawn(move || {
-            info!("Taker 2 starting concurrent {:?} coinswap", protocol);
+            info!("Taker 2 starting concurrent {:?} openswap", protocol);
             let swap_params = SwapParams::new(protocol, Amount::from_sat(900000), 2)
                 .with_tx_count(3)
                 .with_required_confirms(1);
 
-            match taker2.prepare_coinswap(swap_params) {
-                Ok(summary) => match taker2.start_coinswap(&summary.swap_id) {
+            match taker2.prepare_swap(swap_params) {
+                Ok(summary) => match taker2.start_swap(&summary.swap_id) {
                     Ok(report) => {
-                        info!("Taker 2 {:?} coinswap completed successfully!", protocol);
+                        info!("Taker 2 {:?} openswap completed successfully!", protocol);
                         info!("Taker 2 swap report: {:?}", report);
                         r2.store(RESULT_SUCCESS, Relaxed);
                     }
                     Err(e) => {
-                        warn!("Taker 2 {:?} coinswap failed: {:?}", protocol, e);
+                        warn!("Taker 2 {:?} openswap failed: {:?}", protocol, e);
                         r2.store(RESULT_FAILED, Relaxed);
                     }
                 },
@@ -217,7 +217,7 @@ fn concurrent_takers(
         });
     });
 
-    info!("All concurrent {:?} coinswaps processed.", protocol);
+    info!("All concurrent {:?} openswaps processed.", protocol);
 
     let r1 = result1.load(Relaxed);
     let r2 = result2.load(Relaxed);
@@ -244,7 +244,7 @@ fn concurrent_takers(
         "Both takers should have completed (success or failure)"
     );
 
-    log::info!("All coinswaps processed. Transactions complete.");
+    log::info!("All openswaps processed. Transactions complete.");
 
     // Sync all wallets
     for taker in takers.iter() {
@@ -252,7 +252,7 @@ fn concurrent_takers(
             .get_wallet()
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
     }
 
@@ -260,7 +260,7 @@ fn concurrent_takers(
 
     for maker in makers.iter() {
         let mut wallet = maker.wallet.write().unwrap();
-        wallet.sync_and_save(&coinswap::utill::NO_SHUTDOWN).unwrap();
+        wallet.sync_and_save(&openswap::utill::NO_SHUTDOWN).unwrap();
     }
 
     // ---- Verify balances ----

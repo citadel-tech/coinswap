@@ -17,17 +17,17 @@
 //!
 //! An ephemeral onion service must upload its descriptor to the HSDir ring and
 //! the client must fetch it back, so these **cannot work offline**. They are
-//! `#[ignore]`d and additionally require `COINSWAP_TOR_IT=1`; without that
+//! `#[ignore]`d and additionally require `OPENSWAP_TOR_IT=1`; without that
 //! variable they skip, but with it set and Tor unreachable they deliberately
 //! panic — a misconfigured Tor must not pass silently. Run them with:
 //!
 //! ```text
-//! COINSWAP_TOR_IT=1 cargo test --features integration-test electrum_tor \
+//! OPENSWAP_TOR_IT=1 cargo test --features integration-test electrum_tor \
 //!     -- --ignored --test-threads=1 --nocapture
 //! ```
 //!
 //! `tor` must be listening on `TOR_CONTROL_PORT` / `TOR_SOCKS_PORT` and be fully
-//! bootstrapped. Set `COINSWAP_TOR_PASSWORD` if the control port needs one.
+//! bootstrapped. Set `OPENSWAP_TOR_PASSWORD` if the control port needs one.
 //!
 //! Ignored does not mean dead: no hermetic suite can reach the Tor network, so
 //! these stay opt-in by design. They are the only coverage of the watchtower
@@ -37,7 +37,7 @@
 //! test process. That is deliberate — the CI job's tor is ephemeral and drops
 //! them on restart.
 
-use coinswap::protocol::common_messages::ProtocolVersion;
+use openswap::protocol::common_messages::ProtocolVersion;
 
 use super::{
     electrum_abort1::{run_abort1, LEGACY_EXPECTED, TAPROOT_EXPECTED},
@@ -49,7 +49,7 @@ use log::warn;
 
 /// Taproot abort1 over Tor: the widest watchtower path in the suite.
 #[test]
-#[ignore = "requires a bootstrapped tor and COINSWAP_TOR_IT=1"]
+#[ignore = "requires a bootstrapped tor and OPENSWAP_TOR_IT=1"]
 fn tor_abort1_taproot() {
     if !tor_it_enabled() {
         return;
@@ -60,7 +60,7 @@ fn tor_abort1_taproot() {
 
 /// Legacy abort1 over Tor. Same cascade, different contract shape.
 #[test]
-#[ignore = "requires a bootstrapped tor and COINSWAP_TOR_IT=1"]
+#[ignore = "requires a bootstrapped tor and OPENSWAP_TOR_IT=1"]
 fn tor_abort1_legacy() {
     if !tor_it_enabled() {
         return;
@@ -71,7 +71,7 @@ fn tor_abort1_legacy() {
 
 /// Malicious contract broadcast over Tor, exercising the taker's breach detector.
 #[test]
-#[ignore = "requires a bootstrapped tor and COINSWAP_TOR_IT=1"]
+#[ignore = "requires a bootstrapped tor and OPENSWAP_TOR_IT=1"]
 fn tor_malice2() {
     if !tor_it_enabled() {
         return;

@@ -34,7 +34,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ secrets.DOCKERHUB_USERNAME }}/coinswap
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/openswap
           tags: |
             # Tag for master branch
             type=ref,event=branch

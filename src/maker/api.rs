@@ -18,7 +18,7 @@ use bitcoin::{bip32::ChainCode, Amount, Network, OutPoint, PublicKey, Transactio
 
 use crate::{
     lock_debug,
-    nostr_coinswap::NOSTR_RELAYS,
+    maker::nostr::NOSTR_RELAYS,
     protocol::common_messages::{FidelityProof, ProtocolVersion, SwapDetails},
     taker::api::REFUND_LOCKTIME_STEP,
     utill::{get_maker_dir, parse_field, parse_toml, MIN_FEE_RATE},
@@ -184,7 +184,7 @@ impl Default for MakerServerConfig {
 impl MakerServerConfig {
     /// Load configuration from a TOML file at the given path.
     ///
-    /// If `config_path` is `None`, defaults to `~/.coinswap/maker/config.toml`.
+    /// If `config_path` is `None`, defaults to `~/.openswap/maker/config.toml`.
     /// If the file doesn't exist or is empty, a default config file is created.
     /// Fields missing from the file fall back to defaults.
     pub fn new(config_path: Option<&Path>) -> Result<Self, WalletError> {
@@ -1705,7 +1705,7 @@ impl MakerTrait for MakerServer {
         Ok(hashvalue)
     }
 
-    fn initialize_coinswap(
+    fn initialize_openswap(
         &self,
         send_amount: Amount,
         next_multisig_pubkeys: &[PublicKey],
@@ -1716,7 +1716,7 @@ impl MakerTrait for MakerServer {
         excluded_outpoints: Option<Vec<OutPoint>>,
     ) -> Result<(Vec<Transaction>, Vec<OutgoingSwapCoin>, Amount), MakerError> {
         log::info!(
-            "[{}] Initializing coinswap: amount={} sats, {} pubkeys",
+            "[{}] Initializing openswap: amount={} sats, {} pubkeys",
             self.config.network_port,
             send_amount.to_sat(),
             next_multisig_pubkeys.len()
@@ -1725,9 +1725,9 @@ impl MakerTrait for MakerServer {
         let mut wallet = lock_debug!(self.wallet.write())
             .map_err(|_| MakerError::General("Failed to lock wallet"))?;
 
-        let (coinswap_addresses, my_multisig_privkeys): (Vec<_>, Vec<_>) = next_multisig_pubkeys
+        let (openswap_addresses, my_multisig_privkeys): (Vec<_>, Vec<_>) = next_multisig_pubkeys
             .iter()
-            .map(|other_key| wallet.create_and_import_coinswap_address(other_key))
+            .map(|other_key| wallet.create_and_import_swap_address(other_key))
             .collect::<Result<Vec<_>, _>>()
             .map_err(MakerError::Wallet)?
             .into_iter()
@@ -1736,7 +1736,7 @@ impl MakerTrait for MakerServer {
         let create_funding_txes_result = wallet
             .create_funding_txes(
                 send_amount,
-                &coinswap_addresses,
+                &openswap_addresses,
                 contract_feerate,
                 None,
                 excluded_outpoints,

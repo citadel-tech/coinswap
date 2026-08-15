@@ -1,4 +1,4 @@
-# Coinswap Dockerfile
+# OpenSwap Dockerfile
 # Contains makerd, maker-cli, and taker
 
 ## --- Builder Stage ---
@@ -20,7 +20,7 @@ RUN apk add --no-cache \
     libgcc \
     musl-dev
 
-WORKDIR /usr/src/coinswap
+WORKDIR /usr/src/openswap
 COPY . .
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
@@ -46,26 +46,26 @@ RUN --mount=type=cache,target=/var/cache/apk \
     libgcc \
     musl-dev
 
-RUN adduser -D -u 1001 coinswap
+RUN adduser -D -u 1001 openswap
 
-RUN mkdir -p /app/bin /home/coinswap/.coinswap && \
-    chown -R coinswap:coinswap /app /home/coinswap
+RUN mkdir -p /app/bin /home/openswap/.openswap && \
+    chown -R openswap:openswap /app /home/openswap
 
-COPY --from=builder --chown=coinswap:coinswap /usr/src/coinswap/target/release/makerd /app/bin/
-COPY --from=builder --chown=coinswap:coinswap /usr/src/coinswap/target/release/maker-cli /app/bin/
-COPY --from=builder --chown=coinswap:coinswap /usr/src/coinswap/target/release/taker /app/bin/
+COPY --from=builder --chown=openswap:openswap /usr/src/openswap/target/release/makerd /app/bin/
+COPY --from=builder --chown=openswap:openswap /usr/src/openswap/target/release/maker-cli /app/bin/
+COPY --from=builder --chown=openswap:openswap /usr/src/openswap/target/release/taker /app/bin/
 
 RUN chmod +x /app/bin/*
 
-USER coinswap
+USER openswap
 WORKDIR /app
 
 ENV PATH="/app/bin:$PATH"
 
-ENV COINSWAP_DATA_DIR="/home/coinswap/.coinswap"
+ENV OPENSWAP_DATA_DIR="/home/openswap/.openswap"
 
 
 
-VOLUME ["/home/coinswap/.coinswap"]
+VOLUME ["/home/openswap/.openswap"]
 
 CMD ["makerd"]

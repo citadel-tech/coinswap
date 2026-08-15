@@ -5,7 +5,7 @@
 //! recovery is impossible since the funding is never on-chain).
 
 use bitcoin::Amount;
-use coinswap::{
+use openswap::{
     maker::{start_server, MakerBehavior},
     protocol::common_messages::ProtocolVersion,
     taker::{SwapParams, TakerBehavior},
@@ -89,7 +89,7 @@ fn run_legacy_timelock_only_recovery(stop_watcher: bool) {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
     }
 
@@ -103,7 +103,7 @@ fn run_legacy_timelock_only_recovery(stop_watcher: bool) {
         Duration::from_secs(10),
     );
 
-    // Swap params for coinswap (Legacy)
+    // Swap params for openswap (Legacy)
     let swap_params = SwapParams::new(ProtocolVersion::Legacy, Amount::from_sat(500000), 2)
         .with_tx_count(3)
         .with_required_confirms(1);
@@ -112,9 +112,9 @@ fn run_legacy_timelock_only_recovery(stop_watcher: bool) {
 
     // Prepare should succeed; execution should fail because Maker2 closes the connection
     let summary = taker
-        .prepare_coinswap(swap_params)
+        .prepare_swap(swap_params)
         .expect("Prepare should succeed");
-    let swap_result = taker.start_coinswap(&summary.swap_id);
+    let swap_result = taker.start_swap(&summary.swap_id);
     assert!(
         swap_result.is_err(),
         "Swap should fail due to Maker2 skipping funding broadcast"
@@ -145,7 +145,7 @@ fn run_legacy_timelock_only_recovery(stop_watcher: bool) {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
         let maker_balances = maker.wallet.read().unwrap().get_balances().unwrap();
         info!(
@@ -184,7 +184,7 @@ fn run_legacy_timelock_only_recovery(stop_watcher: bool) {
         .get_wallet()
         .write()
         .unwrap()
-        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .sync_and_save(&openswap::utill::NO_SHUTDOWN)
         .unwrap();
 
     // Verify taker balance
@@ -229,7 +229,7 @@ fn run_legacy_timelock_only_recovery(stop_watcher: bool) {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
         let maker_balances = maker.wallet.read().unwrap().get_balances().unwrap();
         let original = maker_spendable_balance[i];
@@ -348,7 +348,7 @@ fn test_taproot_timelock_only_recovery() {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
     }
 
@@ -362,7 +362,7 @@ fn test_taproot_timelock_only_recovery() {
         Duration::from_secs(10),
     );
 
-    // Swap params for coinswap (Taproot)
+    // Swap params for openswap (Taproot)
     let swap_params = SwapParams::new(ProtocolVersion::Taproot, Amount::from_sat(500000), 2)
         .with_tx_count(3)
         .with_required_confirms(1);
@@ -371,9 +371,9 @@ fn test_taproot_timelock_only_recovery() {
 
     // Prepare should succeed; execution should fail because Maker2 closes the connection
     let summary = taker
-        .prepare_coinswap(swap_params)
+        .prepare_swap(swap_params)
         .expect("Prepare should succeed");
-    let swap_result = taker.start_coinswap(&summary.swap_id);
+    let swap_result = taker.start_swap(&summary.swap_id);
     assert!(
         swap_result.is_err(),
         "Swap should fail due to Maker2 skipping funding broadcast"
@@ -393,7 +393,7 @@ fn test_taproot_timelock_only_recovery() {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
         let maker_balances = maker.wallet.read().unwrap().get_balances().unwrap();
         info!(
@@ -433,7 +433,7 @@ fn test_taproot_timelock_only_recovery() {
         .get_wallet()
         .write()
         .unwrap()
-        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .sync_and_save(&openswap::utill::NO_SHUTDOWN)
         .unwrap();
 
     // Verify taker balance
@@ -478,7 +478,7 @@ fn test_taproot_timelock_only_recovery() {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
         let maker_balances = maker.wallet.read().unwrap().get_balances().unwrap();
         let original = maker_spendable_balance[i];

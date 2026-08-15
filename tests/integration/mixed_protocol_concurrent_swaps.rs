@@ -6,7 +6,7 @@
 //! maker-wide setting.
 
 use bitcoin::Amount;
-use coinswap::{
+use openswap::{
     maker::start_server,
     protocol::common_messages::ProtocolVersion,
     taker::{SwapParams, TakerBehavior},
@@ -70,7 +70,7 @@ fn test_concurrent_legacy_and_taproot_swaps() {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
     }
     let maker_original_balances = verify_maker_pre_swap_balances(&makers);
@@ -95,8 +95,8 @@ fn test_concurrent_legacy_and_taproot_swaps() {
                 .with_tx_count(3)
                 .with_required_confirms(1);
             let result = legacy_taker
-                .prepare_coinswap(params)
-                .and_then(|summary| legacy_taker.start_coinswap(&summary.swap_id));
+                .prepare_swap(params)
+                .and_then(|summary| legacy_taker.start_swap(&summary.swap_id));
 
             match result {
                 Ok(report) => {
@@ -117,8 +117,8 @@ fn test_concurrent_legacy_and_taproot_swaps() {
                 .with_tx_count(3)
                 .with_required_confirms(1);
             let result = taproot_taker
-                .prepare_coinswap(params)
-                .and_then(|summary| taproot_taker.start_coinswap(&summary.swap_id));
+                .prepare_swap(params)
+                .and_then(|summary| taproot_taker.start_swap(&summary.swap_id));
 
             match result {
                 Ok(report) => {
@@ -152,7 +152,7 @@ fn test_concurrent_legacy_and_taproot_swaps() {
             .get_wallet()
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
         let balances = taker.get_wallet().read().unwrap().get_balances().unwrap();
 
@@ -213,7 +213,7 @@ fn test_concurrent_legacy_and_taproot_swaps() {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
         let balances = maker.wallet.read().unwrap().get_balances().unwrap();
 

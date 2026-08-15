@@ -1,6 +1,6 @@
 use bitcoind::bitcoincore_rpc::Auth;
 use clap::Parser;
-use coinswap::{
+use openswap::{
     lock_debug,
     maker::{bind_port_retry, start_server, MakerError, MakerServer, MakerServerConfig},
     utill::{parse_proxy_auth, print_new_wallet_seed, setup_maker_logger},
@@ -8,7 +8,7 @@ use coinswap::{
 };
 use std::{path::PathBuf, sync::Arc};
 
-/// Coinswap Maker Server
+/// OpenSwap Maker Server
 ///
 /// The server requires a Bitcoin Core RPC connection running in Testnet4. It requires some starting balance, around 50,000 sats for Fidelity + Swap Liquidity (suggested 50,000 sats).
 /// So topup with at least 0.001 BTC to start all the node processses. Suggested [faucet here]<https://mempool.space/testnet4/faucet>
@@ -18,14 +18,14 @@ use std::{path::PathBuf, sync::Arc};
 ///
 /// The server is operated with the maker-cli app, for all basic wallet related operations.
 ///
-/// For more detailed usage information, please refer the [Maker Doc]<https://github.com/citadel-tech/coinswap/blob/master/docs/makerd.md>
+/// For more detailed usage information, please refer the [Maker Doc]<https://github.com/citadel-foss/openswap/blob/master/docs/makerd.md>
 ///
-/// This is early beta, and there are known and unknown bugs. Please report issues in the [Project Issue Board]<https://github.com/citadel-tech/coinswap/issues>
+/// This is early beta, and there are known and unknown bugs. Please report issues in the [Project Issue Board]<https://github.com/citadel-foss/openswap/issues>
 #[derive(Parser, Debug)]
 #[clap(version = option_env ! ("CARGO_PKG_VERSION").unwrap_or("unknown"),
 author = option_env ! ("CARGO_PKG_AUTHORS").unwrap_or(""))]
 struct Cli {
-    /// Optional DNS data directory. Default value: "~/.coinswap/maker"
+    /// Optional DNS data directory. Default value: "~/.openswap/maker"
     #[clap(long, short = 'd')]
     data_directory: Option<PathBuf>,
     /// Bitcoin Core RPC network address.
@@ -81,7 +81,7 @@ fn main() -> Result<(), MakerError> {
 
     let data_dir = match args.data_directory {
         Some(dir) => dir,
-        None => coinswap::utill::get_maker_dir()?,
+        None => openswap::utill::get_maker_dir()?,
     };
 
     // Load static settings from config file (auto-creates defaults if missing)

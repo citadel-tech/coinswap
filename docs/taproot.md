@@ -1,8 +1,8 @@
-# Taproot Coinswap Protocol Documentation
+# Taproot OpenSwap Protocol Documentation
 
 ## Overview
 
-This document describes the complete taproot-based coinswap protocol implementation using MuSig2 signatures for enhanced privacy and efficiency. The protocol enables trustless atomic swaps between a taker and multiple makers in a cyclic flow.
+This document describes the complete taproot-based openswap protocol implementation using MuSig2 signatures for enhanced privacy and efficiency. The protocol enables trustless atomic swaps between a taker and multiple makers in a cyclic flow.
 
 ## Protocol Architecture
 
@@ -204,7 +204,7 @@ let message = Message::from(sighash);
 ## Complete Protocol Summary
 
 ### Total Message Flow
-The complete taproot coinswap involves **16 messages** across 3 phases:
+The complete taproot openswap involves **16 messages** across 3 phases:
 
 1. **Discovery (8 messages)**: Offer fetching and swap negotiation
 2. **Contract Creation (4 messages)**: Cyclic contract setup

@@ -33,7 +33,7 @@ pub use super::report::{
 ///
 /// # Parameters
 ///
-/// - `data_dir`: Target directory, defaults to `~/.coinswap/taker`
+/// - `data_dir`: Target directory, defaults to `~/.openswap/taker`
 /// - `wallet_file_name`: Restored wallet filename, defaults to name from backup if empty
 /// - `backup_file_path`: Path to the JSON file containing the wallet backup (encrypted or plain)
 /// - `password`: Required if the backup is encrypted. Supplying a non-empty password

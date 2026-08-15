@@ -5,7 +5,7 @@
 //! unacceptable block count, the Maker thus results an error saying "Invalid fidelity timelock".
 
 use bitcoin::Amount;
-use coinswap::{
+use openswap::{
     maker::{start_server, MakerBehavior, MakerError, MakerServer, MakerServerConfig},
     protocol::common_messages::ProtocolVersion,
     taker::{error::TakerError, SwapParams, TakerBehavior},
@@ -71,10 +71,10 @@ fn fidelity_limit_violation() {
         .wallet
         .write()
         .unwrap()
-        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .sync_and_save(&openswap::utill::NO_SHUTDOWN)
         .unwrap();
 
-    info!("Initiating coinswap (Will fail due to invalid fidelity timelock)");
+    info!("Initiating openswap (Will fail due to invalid fidelity timelock)");
 
     // Swap params - small amount for faster testing
     let swap_params = SwapParams::new(ProtocolVersion::Taproot, Amount::from_sat(500000), 1)
@@ -83,14 +83,14 @@ fn fidelity_limit_violation() {
 
     // Prepare the swap - it will fail
     let err = taker
-        .prepare_coinswap(swap_params)
+        .prepare_swap(swap_params)
         .expect_err("Swap should have failed due to NotEnoughMakersInOfferBook");
     assert!(
         matches!(err, TakerError::NotEnoughMakersInOfferBook),
         "Expected NotEnoughMakersInOfferBook, got: {:?}",
         err
     );
-    info!("Coinswap failed as expected: {err:?}");
+    info!("OpenSwap failed as expected: {err:?}");
 
     info!("Shutting down maker to simulate restart with corrupted config");
     maker.shutdown.store(true, Relaxed);

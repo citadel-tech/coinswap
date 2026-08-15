@@ -1,6 +1,6 @@
-# Coinswap Docker
+# OpenSwap Docker
 
-A dockerized version of the **Complete Coinswap Backend**.
+A dockerized version of the **Complete OpenSwap Backend**.
 
 The Docker spawns multiple containers, with Mutinynet, Tor, makerd, maker-cli, and taker configured to communicate with each other.
 
@@ -8,16 +8,16 @@ Various subsets of the stack can be used for different application needs and env
 
 ## Overview
 
-The Docker setup provides a complete environment for running any Coinswap applications:
+The Docker setup provides a complete environment for running any OpenSwap applications:
 
-- **Single unified Dockerfile** containing all Coinswap components
+- **Single unified Dockerfile** containing all OpenSwap components
 - **Alpine Linux 3.20** base image for minimal size
 - **Rust 1.90.0** for building the applications
 - **Custom Bitcoin Mutinynet image** for Signet testing
 - **External Tor image** (`osminogin/tor-simple`)
 - **Interactive configuration** with automatic service detection
 - **Docker Compose Profiles** for flexible deployment
-- **Coinswap binaries:** `makerd`, `maker-cli`, `taker`
+- **OpenSwap binaries:** `makerd`, `maker-cli`, `taker`
 
 ## Architecture
 
@@ -33,7 +33,7 @@ graph TD
     tor_vol["tor-data"]
     maker_vol["maker-data"]
     
-    network["coinswap-network"]
+    network["openswap-network"]
     
     makerd <-->|"RPC calls <br> (on bitcoind rpc-port)"| bitcoind
     makerd -->|SOCKS proxy| tor
@@ -67,11 +67,11 @@ The Docker setup uses:
 
 ### Using the Setup Script (Recommended)
 
-The `docker-setup` script provides an interactive way to configure and run Coinswap:
+The `docker-setup` script provides an interactive way to configure and run OpenSwap:
 
 ```bash
-git clone https://github.com/citadel-tech/coinswap.git
-cd coinswap
+git clone https://github.com/citadel-foss/openswap.git
+cd openswap
 
 # Interactive configuration
 ./docker-setup configure
@@ -118,8 +118,8 @@ Configuration is saved to `.docker-config` and reused on subsequent runs.
 The build process creates a single image containing all binaries:
 
 ```bash
-git clone https://github.com/citadel-tech/coinswap.git
-cd coinswap
+git clone https://github.com/citadel-foss/openswap.git
+cd openswap
 
 # Build using the setup script
 ./docker-setup build
@@ -128,12 +128,12 @@ cd coinswap
 ./docker-setup build-bitcoin
 
 # Or build manually
-docker build -f docker/Dockerfile -t coinswap:latest .
+docker build -f docker/Dockerfile -t openswap:latest .
 ```
 
 ### Available Images
 
-- **coinswap**: Contains `makerd`, `maker-cli`, and `taker`
+- **openswap**: Contains `makerd`, `maker-cli`, and `taker`
 - **bitcoin-mutinynet**: Custom Bitcoin Core node for Mutinynet network
 
 ## Running Applications
@@ -148,16 +148,16 @@ Run the maker daemon with persistent data storage:
 
 # Or manually with specific image
 docker run -d \
-  --name coinswap-makerd \
+  --name openswap-makerd \
   -p 6102:6102 \
   -p 6103:6103 \
-  -v coinswap-maker-data:/home/coinswap/.coinswap \
-  --network coinswap-network \
-  coinswap:latest makerd
+  -v openswap-maker-data:/home/openswap/.openswap \
+  --network openswap-network \
+  openswap:latest makerd
 ```
 
 **Port mappings:**
-- `6102`: Maker network port for coinswap protocol
+- `6102`: Maker network port for openswap protocol
 - `6103`: Maker RPC port for `maker-cli` commands
 
 ### Maker CLI
@@ -171,9 +171,9 @@ Control the maker daemon:
 ./docker-setup maker-cli stop
 
 # Or manually
-docker run --rm --network coinswap-network coinswap:latest maker-cli ping
-docker run --rm --network coinswap-network coinswap:latest maker-cli wallet-balance
-docker run --rm --network coinswap-network coinswap:latest maker-cli stop
+docker run --rm --network openswap-network openswap:latest maker-cli ping
+docker run --rm --network openswap-network openswap:latest maker-cli wallet-balance
+docker run --rm --network openswap-network openswap:latest maker-cli stop
 ```
 
 ### Taker
@@ -186,9 +186,9 @@ Run taker operations:
 
 # Or manually
 docker run --rm -it \
-  -v coinswap-taker-data:/home/coinswap/.coinswap \
-  --network coinswap-network \
-  coinswap:latest taker --help
+  -v openswap-taker-data:/home/openswap/.openswap \
+  --network openswap-network \
+  openswap:latest taker --help
 ```
 
 ## Docker Compose Setup
@@ -236,5 +236,5 @@ docker compose logs -f makerd
 ./docker-setup shell
 
 # or manually
-docker run --rm -it coinswap:latest sh
+docker run --rm -it openswap:latest sh
 ```

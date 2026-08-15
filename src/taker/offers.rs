@@ -1185,13 +1185,13 @@ impl MakerAddress {
         };
         #[cfg(not(feature = "integration-test"))]
         let mut socket = {
-            use crate::protocol::common_messages::COINSWAP_PORT;
+            use crate::protocol::common_messages::OPENSWAP_PORT;
 
             // Production: self.0 is a .onion hostname, connect via the Tor proxy
             socks5_connect(
                 socks_port,
                 &self.0,
-                COINSWAP_PORT,
+                OPENSWAP_PORT,
                 None,
                 Duration::from_secs(FIRST_CONNECT_ATTEMPT_TIMEOUT_SEC),
             )?

@@ -1,7 +1,7 @@
 //! Malice test 2: Maker broadcasts contract transactions maliciously after setup.
 //!
 //! Scenario:
-//! 1. Taker initiates a Legacy coinswap with 2 makers.
+//! 1. Taker initiates a Legacy openswap with 2 makers.
 //! 2. Maker[1] (second maker) broadcasts its outgoing contract txs after setup
 //!    and closes the connection (BroadcastContractAfterSetup behavior).
 //! 3. Taker detects the failure and triggers recovery (recover_active_swap).
@@ -17,7 +17,7 @@
 //! broadcasts then dies.
 
 use bitcoin::Amount;
-use coinswap::{
+use openswap::{
     maker::{start_server, MakerBehavior},
     protocol::common_messages::ProtocolVersion,
     taker::{SwapParams, TakerBehavior},
@@ -105,7 +105,7 @@ fn run_malice2_with_taker_behavior<B: TestBackend>(
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
     }
 
@@ -118,7 +118,7 @@ fn run_malice2_with_taker_behavior<B: TestBackend>(
         Duration::from_secs(10),
     );
 
-    // Swap params for coinswap (Legacy)
+    // Swap params for openswap (Legacy)
     let swap_params = SwapParams::new(ProtocolVersion::Legacy, Amount::from_sat(500000), 2)
         .with_tx_count(1)
         .with_required_confirms(1);
@@ -127,9 +127,9 @@ fn run_malice2_with_taker_behavior<B: TestBackend>(
 
     // Prepare should succeed; execution should fail because maker broadcasts contracts
     let summary = taker
-        .prepare_coinswap(swap_params)
+        .prepare_swap(swap_params)
         .expect("Prepare should succeed");
-    let swap_result = taker.start_coinswap(&summary.swap_id);
+    let swap_result = taker.start_swap(&summary.swap_id);
     assert!(
         swap_result.is_err(),
         "Swap should fail due to maker BroadcastContractAfterSetup behavior"
@@ -155,7 +155,7 @@ fn run_malice2_with_taker_behavior<B: TestBackend>(
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
         let maker_balances = maker.wallet.read().unwrap().get_balances().unwrap();
         info!(
@@ -208,7 +208,7 @@ fn run_malice2_with_taker_behavior<B: TestBackend>(
         .get_wallet()
         .write()
         .unwrap()
-        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .sync_and_save(&openswap::utill::NO_SHUTDOWN)
         .unwrap();
 
     // Verify taker balance

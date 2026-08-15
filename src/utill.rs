@@ -104,9 +104,9 @@ fn get_home_dir() -> io::Result<PathBuf> {
     }
 }
 
-/// Get the default data directory. `~/.coinswap`.
+/// Get the default data directory. `~/.openswap`.
 fn get_data_dir() -> io::Result<PathBuf> {
-    Ok(get_home_dir()?.join(".coinswap"))
+    Ok(get_home_dir()?.join(".openswap"))
 }
 
 /// Get the Maker Directory
@@ -252,7 +252,7 @@ pub fn setup_maker_logger(filter: LevelFilter, data_dir: Option<PathBuf>) {
 
         let config = config
             .logger(Logger::builder().build("bitcoincore_rpc", LevelFilter::Off))
-            .logger(maker_logger.build("coinswap::maker", filter))
+            .logger(maker_logger.build("openswap::maker", filter))
             .build(Root::builder().appender("stdout").build(filter))
             .unwrap();
 
@@ -267,7 +267,7 @@ pub fn setup_maker_logger(filter: LevelFilter, data_dir: Option<PathBuf>) {
 /// Takes log level to set the desired logging verbosity
 pub fn setup_logger(filter: LevelFilter, data_dir: Option<PathBuf>) {
     Once::new().call_once(|| {
-        // env::set_var("RUST_LOG", "coinswap=info");
+        // env::set_var("RUST_LOG", "openswap=info");
         setup_taker_logger(filter, true, data_dir.as_ref().map(|d| d.join("taker")));
         setup_maker_logger(filter, data_dir.as_ref().map(|d| d.join("maker")));
     });
@@ -852,7 +852,7 @@ pub fn print_new_wallet_seed(mnemonic: &SecretMnemonic) -> io::Result<()> {
 
 /// Publish `local_port` as an ephemeral Tor onion service via `ADD_ONION`.
 ///
-/// The service listens on [`COINSWAP_PORT`](crate::protocol::common_messages::COINSWAP_PORT)
+/// The service listens on [`OPENSWAP_PORT`](crate::protocol::common_messages::OPENSWAP_PORT)
 /// and forwards to `127.0.0.1:local_port`. Pass `"NEW:ED25519-V3"` as
 /// `private_key_data` for a fresh key, or `"ED25519-V3:<base64>"` to reuse one.
 /// When `service_id_data` is set, that service is removed first.
@@ -868,7 +868,7 @@ pub fn get_ephemeral_address(
     private_key_data: &str,
     service_id_data: Option<&str>,
 ) -> Result<String, TorError> {
-    use crate::protocol::common_messages::COINSWAP_PORT;
+    use crate::protocol::common_messages::OPENSWAP_PORT;
     use std::io::BufRead;
     let mut stream = TcpStream::connect(format!("127.0.0.1:{control_port}"))?;
     let mut reader = BufReader::new(stream.try_clone()?);
@@ -882,7 +882,7 @@ pub fn get_ephemeral_address(
     }
 
     let add_onion_command = format!(
-        "ADD_ONION {private_key_data} Flags=Detach Port={COINSWAP_PORT},127.0.0.1:{local_port}\r\n"
+        "ADD_ONION {private_key_data} Flags=Detach Port={OPENSWAP_PORT},127.0.0.1:{local_port}\r\n"
     );
 
     stream.write_all(add_onion_command.as_bytes())?;

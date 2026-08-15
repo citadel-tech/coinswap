@@ -12,7 +12,7 @@
 //! merely because it cannot find a matching tracker record.
 
 use bitcoin::Amount;
-use coinswap::{
+use openswap::{
     maker::{start_server, MakerBehavior, MakerServer},
     protocol::common_messages::ProtocolVersion,
     taker::{SwapParams, Taker, TakerBehavior},
@@ -96,7 +96,7 @@ fn run_reboot_recovery_with_watcher<B: TestBackend>(watcher_available: bool) {
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
     }
 
@@ -107,9 +107,9 @@ fn run_reboot_recovery_with_watcher<B: TestBackend>(watcher_available: bool) {
     generate_blocks(bitcoind, 1);
 
     let summary = taker
-        .prepare_coinswap(swap_params)
+        .prepare_swap(swap_params)
         .expect("Prepare should succeed");
-    let swap_result = taker.start_coinswap(&summary.swap_id);
+    let swap_result = taker.start_swap(&summary.swap_id);
     assert!(
         swap_result.is_err(),
         "Swap should fail due to Maker2 closing at private key handover"
@@ -121,7 +121,7 @@ fn run_reboot_recovery_with_watcher<B: TestBackend>(watcher_available: bool) {
         .wallet
         .write()
         .unwrap()
-        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .sync_and_save(&openswap::utill::NO_SHUTDOWN)
         .unwrap();
     let before_outgoing = victim.wallet.read().unwrap().get_outgoing_swapcoins_count();
     let before_incoming = victim.wallet.read().unwrap().get_incoming_swapcoins_count();
@@ -323,7 +323,7 @@ pub(crate) fn run_restart_rebuilds_watches<B: TestBackend>(
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
     }
 
@@ -334,9 +334,9 @@ pub(crate) fn run_restart_rebuilds_watches<B: TestBackend>(
     generate_blocks(bitcoind, 1);
 
     let summary = taker
-        .prepare_coinswap(swap_params)
+        .prepare_swap(swap_params)
         .expect("Prepare should succeed");
-    let swap_result = taker.start_coinswap(&summary.swap_id);
+    let swap_result = taker.start_swap(&summary.swap_id);
     assert!(
         swap_result.is_err(),
         "Swap should fail because the taker crashes before finalization"
@@ -349,7 +349,7 @@ pub(crate) fn run_restart_rebuilds_watches<B: TestBackend>(
         .get_wallet()
         .write()
         .unwrap()
-        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .sync_and_save(&openswap::utill::NO_SHUTDOWN)
         .unwrap();
     assert!(
         taker
@@ -369,7 +369,7 @@ pub(crate) fn run_restart_rebuilds_watches<B: TestBackend>(
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
         assert!(
             maker.wallet.read().unwrap().get_incoming_swapcoins_count() > 0,
@@ -440,7 +440,7 @@ pub(crate) fn run_restart_rebuilds_watches<B: TestBackend>(
         .get_wallet()
         .write()
         .unwrap()
-        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .sync_and_save(&openswap::utill::NO_SHUTDOWN)
         .unwrap();
     assert_eq!(
         restarted
@@ -511,7 +511,7 @@ pub(crate) fn run_restart_rebuilds_watches<B: TestBackend>(
             .wallet
             .write()
             .unwrap()
-            .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+            .sync_and_save(&openswap::utill::NO_SHUTDOWN)
             .unwrap();
         let balances = maker.wallet.read().unwrap().get_balances().unwrap();
         info!(
@@ -532,7 +532,7 @@ pub(crate) fn run_restart_rebuilds_watches<B: TestBackend>(
         .get_wallet()
         .write()
         .unwrap()
-        .sync_and_save(&coinswap::utill::NO_SHUTDOWN)
+        .sync_and_save(&openswap::utill::NO_SHUTDOWN)
         .unwrap();
     let taker_balances = restarted
         .get_wallet()

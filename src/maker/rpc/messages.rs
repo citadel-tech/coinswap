@@ -151,7 +151,7 @@ impl Display for RpcMsgResp {
             Self::ListBonds(v) => write!(f, "{v}"),
             Self::VerifyDeniabilityResp(valid) => {
                 if *valid {
-                    write!(f, "Proof valid: swap participated in a completed coinswap")
+                    write!(f, "Proof valid: swap participated in a completed openswap")
                 } else {
                     write!(f, "Proof invalid or not found for this swap ID")
                 }
