@@ -843,6 +843,10 @@ impl Taker {
                 "Stored {} receiver contract signatures on incoming swapcoins",
                 receiver_sigs.len()
             );
+
+            // Pin the PaySwap receiver only after every incoming coin has the
+            // maker signature needed to publish its contract during recovery.
+            self.payment_stamp_targets()?;
             self.persist_incoming_swapcoins()?;
         }
 

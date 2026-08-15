@@ -106,6 +106,25 @@ pub struct MakerFeeInfo {
 // Report structs
 // ---------------------------------------------------------------------------
 
+/// Outcome of a PaySwap payment. Reported confirmed only after every settlement
+/// transaction has been mined with at least one confirmation — never merely
+/// because private-key handover completed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PaymentResult {
+    /// Receiver address the payment was pinned to.
+    pub receiver_address: String,
+    /// Exact amount requested for the receiver (satoshis).
+    pub requested_amount: u64,
+    /// Amount actually delivered by settlement transactions confirmed on-chain
+    /// (satoshis).
+    pub delivered_amount: u64,
+    /// Settlement transaction IDs paying the receiver.
+    pub settlement_txids: Vec<String>,
+    /// Whether every settlement transaction was mined with at least one confirmation
+    /// and their outputs delivered the exact requested amount.
+    pub confirmed: bool,
+}
+
 /// Taker-perspective record for one swap (success or failed).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TakerReport {
@@ -128,7 +147,8 @@ pub struct TakerReport {
     pub outgoing_amount: u64,
     /// Amount the taker received back after the swap (satoshis).
     pub incoming_amount: u64,
-    /// Total fee paid (outgoing − incoming, satoshis).
+    /// Total fee paid (outgoing − wallet outputs − settled PaySwap
+    /// receiver payment, satoshis).
     pub fee_paid: u64,
     /// Mining fees paid for all transactions (satoshis).
     pub mining_fee: u64,
@@ -163,6 +183,9 @@ pub struct TakerReport {
     pub output_swap_utxos: Vec<(u64, String)>,
     /// Deniability proof for this swap, if successfully generated.
     pub deniability_proof: Option<DeniabilityProof>,
+    /// PaySwap outcome; present only when the swap paid a third-party receiver.
+    #[serde(default)]
+    pub payment: Option<PaymentResult>,
 }
 
 impl TakerReport {
@@ -213,14 +236,46 @@ impl TakerReport {
         println!("                              Swap Details");
         println!("--------------------------------------------------------------------------------\x1b[0m");
 
-        println!(
-            "\x1b[1;37mTarget Amount     :\x1b[0m {} sats",
-            self.outgoing_amount
-        );
-        println!(
-            "\x1b[1;37mTotal Output      :\x1b[0m {} sats",
-            self.incoming_amount
-        );
+        if let Some(ref payment) = self.payment {
+            println!("\x1b[1;37mSwap Type         :\x1b[0m PaySwap");
+            println!(
+                "\x1b[1;37mRoute Amount      :\x1b[0m {} sats",
+                self.outgoing_amount
+            );
+            println!(
+                "\x1b[1;37mPayment To        :\x1b[0m {}",
+                payment.receiver_address
+            );
+            println!(
+                "\x1b[1;37mPayment Requested :\x1b[0m {} sats",
+                payment.requested_amount
+            );
+            println!(
+                "\x1b[1;37mPayment Delivered :\x1b[0m {} sats",
+                payment.delivered_amount
+            );
+            println!(
+                "\x1b[1;37mPayment Status    :\x1b[0m {}",
+                if payment.confirmed {
+                    "confirmed"
+                } else {
+                    "pending"
+                }
+            );
+            println!(
+                "\x1b[1;37mTotal Cost        :\x1b[0m {} sats",
+                payment.delivered_amount.saturating_add(self.fee_paid)
+            );
+        } else {
+            println!(
+                "\x1b[1;37mTarget Amount     :\x1b[0m {} sats",
+                self.outgoing_amount
+            );
+            println!(
+                "\x1b[1;37mTotal Output      :\x1b[0m {} sats",
+                self.incoming_amount
+            );
+        }
         println!(
             "\x1b[1;37mTotal Fee Paid    :\x1b[0m \x1b[1;31m{} sats\x1b[0m",
             self.fee_paid
@@ -236,6 +291,11 @@ impl TakerReport {
             );
         }
         println!("\x1b[1;37mNetwork           :\x1b[0m {}", self.network);
+        if let Some(ref payment) = self.payment {
+            for txid in &payment.settlement_txids {
+                println!("  Settlement Tx   : {}", txid);
+            }
+        }
         println!("\x1b[1;37mMakers Used       :\x1b[0m {}", self.makers_count);
         for (i, addr) in self.maker_addresses.iter().enumerate() {
             println!("  Maker {}         : {}", i + 1, addr);
@@ -807,6 +867,7 @@ mod tests {
             output_change_utxos: vec![],
             output_swap_utxos: vec![],
             deniability_proof: None,
+            payment: None,
         }
     }
 

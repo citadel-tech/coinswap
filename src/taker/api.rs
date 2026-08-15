@@ -62,6 +62,7 @@ use super::{
         MakerAddress, MakerOfferCandidate, MakerProtocol, OfferAndAddress, OfferBook,
         OfferBookHandle, OfferSyncClient, OfferSyncHandle, OfferSyncService,
     },
+    payment::{hop_net_sats, HopFeeTerms, PaymentQuote},
 };
 
 #[cfg(not(feature = "integration-test"))]
@@ -119,6 +120,10 @@ pub(crate) const REFUND_LOCKTIME_BASE: u16 = 150;
 pub(crate) const REFUND_LOCKTIME_STEP: u16 = 20;
 #[cfg(feature = "integration-test")]
 pub(crate) const REFUND_LOCKTIME_STEP: u16 = 75;
+
+/// Headroom over the swap amount that the wallet must also cover, for the
+/// taker's own funding-transaction mining fees.
+pub(super) const FUNDING_FEE_BUFFER: Amount = Amount::from_sat(10_000);
 
 /// Maximum number of finalization retry attempts before triggering recovery.
 #[cfg(not(feature = "integration-test"))]
@@ -220,6 +225,10 @@ pub struct SwapParams {
     /// Manually specified maker addresses (optional). When set, these makers
     /// are used instead of auto-discovery from the offerbook.
     pub preferred_makers: Option<Vec<String>>,
+    /// (optional) PaySwap: settle the final incoming swapcoin to this
+    /// third-party address. When set, `send_amount` is the exact amount the
+    /// receiver gets; the gross route amount is solved during `prepare_coinswap`.
+    pub payment_address: Option<bitcoin::Address<bitcoin::address::NetworkUnchecked>>,
 }
 
 impl SwapParams {
@@ -233,6 +242,7 @@ impl SwapParams {
             required_confirms: 1,
             manually_selected_outpoints: None,
             preferred_makers: None,
+            payment_address: None,
         }
     }
 
@@ -258,6 +268,15 @@ impl SwapParams {
     /// When set, these makers are used directly instead of auto-discovery.
     pub fn with_preferred_makers(mut self, makers: Vec<String>) -> Self {
         self.preferred_makers = Some(makers);
+        self
+    }
+
+    /// Set the payment address: settle the swap to a third-party receiver's address.
+    pub fn with_payment_address(
+        mut self,
+        address: bitcoin::Address<bitcoin::address::NetworkUnchecked>,
+    ) -> Self {
+        self.payment_address = Some(address);
         self
     }
 }
@@ -296,6 +315,8 @@ pub struct SwapSummary {
     pub total_estimated_fee: Amount,
     /// Estimated amount the taker will receive after all fees.
     pub estimated_receive_amount: Amount,
+    /// PaySwap cost breakdown; present only when a payment-address was set.
+    pub payment: Option<PaymentQuote>,
 }
 
 /// State for an ongoing swap.
@@ -327,6 +348,9 @@ pub(crate) struct OngoingSwapState {
     /// Reference block height captured during negotiation for consistent Taproot CLTV timelocks.
     /// Taproot uses absolute heights, so all timelock calculations must use the same base height.
     pub(crate) reference_height: Option<u32>,
+    /// PaySwap state; `None` for regular swaps. When set, `params.send_amount`
+    /// holds the solved gross route amount.
+    pub(crate) payment: Option<PaymentQuote>,
 }
 
 /// Connection state for a maker in the swap route.
@@ -397,7 +421,8 @@ impl Taker {
         let per_hop_mining_fee = estimate_funding_tx_fee_sats() * swap.params.tx_count as u64;
 
         // Replay each hop's deduction exactly as the maker computes it. Any
-        // slack here is room for a cheating maker to underpay the next hop.
+        // slack here is room for a cheating maker to underpay the next hop;
+        // the PaySwap solver shares this formula and relies on its exactness.
         let mut amount_sats = send_amount.to_sat();
         for i in 0..=maker_idx {
             let maker = &swap.makers[i];
@@ -409,11 +434,11 @@ impl Taker {
                         as u32
                 }
             };
-            let fee = (offer.base_fee as f64
-                + (amount_sats as f64 * offer.amount_relative_fee_pct) / 100.0
-                + (amount_sats as f64 * locktime as f64 * offer.time_relative_fee_pct) / 100.0)
-                .ceil() as u64;
-            amount_sats = amount_sats.saturating_sub(fee + per_hop_mining_fee);
+            amount_sats = hop_net_sats(
+                &HopFeeTerms::from_offer(offer, locktime),
+                per_hop_mining_fee,
+                amount_sats,
+            );
         }
 
         Some(Amount::from_sat(amount_sats))
@@ -834,7 +859,7 @@ impl Taker {
         );
 
         let available = self.read_wallet()?.get_balances()?.spendable;
-        let required = params.send_amount + Amount::from_sat(10000);
+        let required = params.send_amount + FUNDING_FEE_BUFFER;
         if available < required {
             return Err(TakerError::General(format!(
                 "Insufficient balance: available={}, required={}",
@@ -854,13 +879,15 @@ impl Taker {
             }
         }
 
+        // PaySwap: reject an invalid receiver before any swap state exists.
+        let payment_address = self.payment_validate_params(&params)?;
+
         let mut preimage = [0u8; 32];
         OsRng.fill_bytes(&mut preimage);
 
         let swap_id = Hash160::hash(&preimage)[0..8].to_lower_hex_string();
         log::info!("Preparing coinswap with id: {}", swap_id);
 
-        let send_amount = params.send_amount;
         let maker_count = params.maker_count;
 
         self.ongoing_swap = Some(OngoingSwapState {
@@ -876,6 +903,7 @@ impl Taker {
             spare_makers: Vec::new(),
             phase: SwapPhase::MakersDiscovered,
             reference_height: None,
+            payment: None,
         });
 
         // Block on an offerbook sync first so discovery selects makers from
@@ -883,6 +911,28 @@ impl Taker {
         self.sync_offerbook_and_wait()?;
         self.discover_makers()?;
         self.persist_swap(SwapPhase::MakersDiscovered)?;
+
+        // PaySwap: solve the gross route amount before any amount is quoted.
+        if let Some(address) = payment_address {
+            self.payment_prepare_route(address)?;
+        }
+
+        #[cfg(feature = "integration-test")]
+        if self.behavior == TakerBehavior::AlterPaymentQuoteBeforeNegotiation
+            && self.swap_state()?.payment.is_some()
+        {
+            let quoted_offer = self
+                .swap_state_mut()?
+                .makers
+                .first_mut()
+                .and_then(|maker| maker.offer.as_mut())
+                .ok_or_else(|| {
+                    TakerError::General(
+                        "Test: payment route has no quoted maker offer to alter".to_string(),
+                    )
+                })?;
+            quoted_offer.base_fee = quoted_offer.base_fee.saturating_add(1);
+        }
 
         #[cfg(feature = "integration-test")]
         if self.behavior == TakerBehavior::CloseEarly {
@@ -895,8 +945,10 @@ impl Taker {
         self.negotiate_swap_details()?;
         self.persist_swap(SwapPhase::Negotiated)?;
 
-        // Build the summary from negotiated state.
+        // Build the summary from negotiated state. Re-read the amount: a
+        // payment route solve rewrites it to the gross.
         let swap = self.swap_state()?;
+        let send_amount = swap.params.send_amount;
         let protocol = swap.params.protocol;
         let mut maker_fees = Vec::with_capacity(maker_count);
         let mut amount_sats = send_amount.to_sat() as f64;
@@ -944,6 +996,7 @@ impl Taker {
             makers: maker_fees,
             total_estimated_fee: Amount::from_sat(total_fee_sats),
             estimated_receive_amount: estimated_receive,
+            payment: swap.payment.clone(),
         };
 
         log::info!(
@@ -1015,7 +1068,13 @@ impl Taker {
                         .swap_state()
                         .map(|s| s.phase)
                         .unwrap_or(SwapPhase::MakersDiscovered);
-                    if phase < SwapPhase::FundsBroadcast {
+                    // Payment routes cannot substitute makers (see
+                    // negotiate_swap_details); aborting pre-funding is safe.
+                    let payment_swap = self
+                        .swap_state()
+                        .map(|s| s.payment.is_some())
+                        .unwrap_or(false);
+                    if phase < SwapPhase::FundsBroadcast && !payment_swap {
                         if let Some(spare) = {
                             let swap = self.swap_state_mut()?;
                             swap.spare_makers.pop()
@@ -1218,8 +1277,13 @@ impl Taker {
         self.persist_swap(SwapPhase::Completed)?;
 
         // Generate, save, and return the SwapReport
-        let report =
-            self.generate_swap_report(&initial_utxos, swap_start_time, SwapStatus::Success, None)?;
+        let report = self.generate_swap_report(
+            &initial_utxos,
+            swap_start_time,
+            SwapStatus::Success,
+            None,
+            Some(&swept),
+        )?;
 
         log::info!("Coinswap completed successfully: {:?}", report);
         Ok(report)
@@ -1417,6 +1481,15 @@ impl Taker {
                 Err(e) => {
                     log::warn!("Maker {} failed during negotiation: {:?}", i, e);
 
+                    // Payment routes are priced against the exact makers they
+                    // were solved for; substitution would invalidate the gross.
+                    // Nothing is funded yet, so failing is safe.
+                    if self.swap_state()?.payment.is_some() {
+                        return Err(TakerError::General(format!(
+                            "Maker {} failed during payment swap negotiation: {:?}",
+                            i, e
+                        )));
+                    }
                     let spare = self.swap_state_mut()?.spare_makers.pop();
                     if let Some(spare_addr) = spare {
                         log::info!("Substituting maker {} with spare at {}", i, spare_addr);
@@ -1494,6 +1567,25 @@ impl Taker {
                     offer.time_relative_fee_pct
                 );
                 Self::validate_offer(&offer, maker_idx, send_amount)?;
+                // A repricing since the payment quote would silently move the
+                // receiver's amount; abort while nothing is funded. Bitwise
+                // float comparison is intentional: any change is a repricing.
+                if let (Some(quoted), true) = (
+                    self.swap_state()?.makers[maker_idx].offer.as_ref(),
+                    self.swap_state()?.payment.is_some(),
+                ) {
+                    if quoted.base_fee != offer.base_fee
+                        || quoted.amount_relative_fee_pct.to_bits()
+                            != offer.amount_relative_fee_pct.to_bits()
+                        || quoted.time_relative_fee_pct.to_bits()
+                            != offer.time_relative_fee_pct.to_bits()
+                    {
+                        return Err(TakerError::General(format!(
+                            "Maker {} repriced its offer between the payment quote and negotiation",
+                            maker_idx
+                        )));
+                    }
+                }
                 self.swap_state_mut()?.makers[maker_idx].offer = Some(*offer);
             }
             other => {
@@ -1564,7 +1656,7 @@ impl Taker {
     }
 
     /// Validate a maker's offer for fee sanity and size limits.
-    fn validate_offer(
+    pub(super) fn validate_offer(
         offer: &Offer,
         maker_idx: usize,
         send_amount: Amount,
@@ -2210,6 +2302,8 @@ impl Taker {
                 .iter()
                 .map(|k| SerializableSecretKey::from(*k))
                 .collect(),
+            payment_address: swap.payment.as_ref().map(|p| p.address.to_string()),
+            payment_amount_sat: swap.payment.as_ref().map(|p| p.amount.to_sat()),
             created_at: now,
             updated_at: now,
         })
@@ -2295,12 +2389,15 @@ impl Taker {
     ///
     /// Computes UTXO diffs, per-maker fee breakdown, contract txids, and funding txids.
     /// Prints the report to console and saves it beside the active wallet file.
+    /// `swept` carries the settlement outcome, and is `None` on failure paths
+    /// where no sweep ran.
     fn generate_swap_report(
         &self,
         initial_utxos: &[ListUnspentResultEntry],
         start_time: Instant,
         status: SwapStatus,
         error_message: Option<String>,
+        swept: Option<&RecoveryOutcome>,
     ) -> Result<TakerReport, TakerError> {
         let swap = self.swap_state()?;
         let swap_duration = start_time.elapsed();
@@ -2466,9 +2563,61 @@ impl Taker {
             })
             .sum();
 
-        let total_fee = total_input_amount.saturating_sub(total_output_amount);
+        // A PaySwap settlement pays an external receiver, so it does not appear
+        // among this wallet's outputs. Account for the confirmed receiver output
+        // before deriving fees; otherwise the payment principal is mislabeled as
+        // mining/maker fees in the report.
+        let payment = swap.payment.as_ref().map(|p| {
+            let resolved = swept
+                .map(|outcome| outcome.resolved.as_slice())
+                .unwrap_or(&[]);
+            // Pair each of this swap's incoming coins with the spend that
+            // settled it, dropping any the sweep did not resolve.
+            let settled = swap.incoming_swapcoins.iter().filter_map(|swapcoin| {
+                let contract_txid = swapcoin.contract_tx.compute_txid();
+                resolved
+                    .iter()
+                    .find(|(resolved_txid, _)| *resolved_txid == contract_txid)
+                    .map(|(_, spending_txid)| (swapcoin, spending_txid))
+            });
+
+            let (settlement_txids, delivered_amount) = settled.fold(
+                (Vec::new(), 0u64),
+                |(mut txids, delivered), (swapcoin, spending_txid)| {
+                    txids.push(spending_txid.to_string());
+                    let paid = swapcoin
+                        .payment_target
+                        .as_ref()
+                        .map_or(0, |target| target.amount.to_sat());
+                    (txids, delivered + paid)
+                },
+            );
+
+            // `sweep_incoming_swapcoins` adds an entry to `resolved` only after
+            // the settlement transaction has reached one confirmation.
+            let all_settlements_confirmed = !swap.incoming_swapcoins.is_empty()
+                && settlement_txids.len() == swap.incoming_swapcoins.len();
+            crate::wallet::PaymentResult {
+                receiver_address: p.address.to_string(),
+                requested_amount: p.amount.to_sat(),
+                delivered_amount,
+                settlement_txids,
+                confirmed: all_settlements_confirmed && delivered_amount == p.amount.to_sat(),
+            }
+        });
+
+        let delivered_payment = payment.as_ref().map_or(0, |p| p.delivered_amount);
+        let accounted_output_amount = total_output_amount.saturating_add(delivered_payment);
+        let total_fee = total_input_amount.saturating_sub(accounted_output_amount);
         let mining_fee = total_fee.saturating_sub(total_maker_fees);
-        let fee_percentage = (total_fee as f64 / swap.params.send_amount.to_sat() as f64) * 100.0;
+        let fee_denominator = payment
+            .as_ref()
+            .map_or(swap.params.send_amount.to_sat(), |p| p.requested_amount);
+        let fee_percentage = if fee_denominator == 0 {
+            0.0
+        } else {
+            (total_fee as f64 / fee_denominator as f64) * 100.0
+        };
 
         // Contract txids
         let outgoing_contract_txid = if !swap.outgoing_swapcoins.is_empty() {
@@ -2525,6 +2674,7 @@ impl Taker {
             end_timestamp: swap_end_ts,
             start_timestamp: swap_end_ts.saturating_sub(swap_duration.as_secs()),
             deniability_proof: None,
+            payment,
         }
         .with_proof(
             swap.incoming_swapcoins.last(),
@@ -2557,6 +2707,7 @@ impl Taker {
             start_time,
             SwapStatus::Failed,
             Some(format!("{:?}", error)),
+            None,
         ) {
             log::warn!("Failed to generate failure report: {:?}", e);
         }
@@ -2806,4 +2957,7 @@ pub enum TakerBehavior {
     /// recovery run — the window where incoming coins would otherwise exist only
     /// in memory (crash_after_contract_exchange).
     CrashAfterContractExchange,
+    /// Alter the cached PaySwap quote before negotiation so the freshly fetched
+    /// maker offer exercises the repricing guard.
+    AlterPaymentQuoteBeforeNegotiation,
 }

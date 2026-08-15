@@ -269,6 +269,13 @@ pub struct SwapRecord {
     /// Hashlock nonces for recovery (both Legacy and Taproot).
     /// Legacy: used in ProofOfFunding. Taproot: one per maker hop.
     pub hashlock_nonces: Vec<SerializableSecretKey>,
+    /// PaySwap receiver address, informational — the binding copy lives on
+    /// the wallet's incoming swapcoins.
+    #[serde(default)]
+    pub payment_address: Option<String>,
+    /// Exact PaySwap amount for the receiver (satoshis).
+    #[serde(default)]
+    pub payment_amount_sat: Option<u64>,
     pub created_at: u64,
     pub updated_at: u64,
 }
@@ -644,6 +651,8 @@ mod tests {
             recovery: RecoveryState::default(),
             multisig_nonces: vec![],
             hashlock_nonces: vec![],
+            payment_address: None,
+            payment_amount_sat: None,
             created_at: now_secs(),
             updated_at: now_secs(),
         }

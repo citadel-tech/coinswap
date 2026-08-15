@@ -655,6 +655,9 @@ impl Taker {
             swapcoin.set_preimage(preimage);
             self.swap_state_mut()?.incoming_swapcoins.push(swapcoin);
         }
+
+        // PaySwap: pin the receiver before the coins are persisted.
+        self.payment_stamp_targets()?;
         Ok(())
     }
 
