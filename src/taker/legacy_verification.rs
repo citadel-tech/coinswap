@@ -130,6 +130,14 @@ impl Taker {
         receivers_txs: &[Transaction],
         prev_senders_info: &[SenderContractTxInfo],
     ) -> Result<(), TakerError> {
+        if sigs.len() != receivers_txs.len() || sigs.len() != prev_senders_info.len() {
+            return Err(TakerError::General(format!(
+                "Wrong number of receiver signatures: expected {}, got {}",
+                receivers_txs.len(),
+                sigs.len()
+            )));
+        }
+
         for (i, ((sig, tx), info)) in sigs
             .iter()
             .zip(receivers_txs.iter())
@@ -177,6 +185,15 @@ impl Taker {
         refund_locktime: u16,
         expected_amount: Option<Amount>,
     ) -> Result<(), TakerError> {
+        let expected_count = self.swap_state()?.params.tx_count as usize;
+        if senders_info.len() != expected_count {
+            return Err(TakerError::General(format!(
+                "Wrong number of maker sender contracts: expected {}, got {}",
+                expected_count,
+                senders_info.len()
+            )));
+        }
+
         let expected_hashvalue = Hash160::hash(&self.swap_state()?.preimage);
 
         for (i, info) in senders_info.iter().enumerate() {

@@ -381,6 +381,9 @@ pub(crate) fn read_pubkeys_from_multisig_redeemscript(
     Ok((pubkey1, pubkey2))
 }
 
+/// Virtual size charged for a legacy contract transaction.
+pub(crate) const CONTRACT_TX_VSIZE: u64 = 150;
+
 /// Create a Contract Transaction for the "Sender" side of Coinswap.
 /// The Sender gets the coins back via timelock.
 /// Receiver gets the coins via hashlock.
@@ -389,7 +392,7 @@ pub(crate) fn create_senders_contract_tx(
     input_value: Amount,
     contract_redeemscript: &ScriptBuf,
 ) -> Result<Transaction, ProtocolError> {
-    let fee_amount = calculate_fee_sats(150);
+    let fee_amount = calculate_fee_sats(CONTRACT_TX_VSIZE);
 
     Ok(Transaction {
         input: vec![TxIn {

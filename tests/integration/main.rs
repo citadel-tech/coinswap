@@ -24,6 +24,7 @@ mod malice2;
 mod mixed_protocol_concurrent_swaps;
 mod multi_confirm_swap;
 mod multi_taker;
+mod payswap;
 mod reboot_recovery;
 mod skip_funding_recovery;
 mod standard_swap;
