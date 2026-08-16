@@ -21,7 +21,7 @@ use crate::{
     maker::nostr::NOSTR_RELAYS,
     protocol::common_messages::{FidelityProof, ProtocolVersion, SwapDetails},
     taker::api::REFUND_LOCKTIME_STEP,
-    utill::{get_maker_dir, parse_field, parse_toml, MIN_FEE_RATE},
+    utill::{get_maker_dir, parse_field, parse_toml, MIN_FEE_RATE, MIN_RELAY_FEE_RATE},
     wallet::{
         swapcoin::{IncomingSwapCoin, OutgoingSwapCoin},
         AddressType, AnyBlockchain, BackendConfig, Blockchain, CoreRpcConfig, FidelityError,
@@ -136,7 +136,8 @@ pub struct MakerServerConfig {
     /// Fidelity bond timelock in blocks.
     pub fidelity_timelock: u32,
     /// Fee rate in sats/vB for the fidelity bond transaction.
-    /// Never below `MIN_FEE_RATE`.
+    /// Defaults to `MIN_FEE_RATE`; may go lower, but never below
+    /// `MIN_RELAY_FEE_RATE`.
     pub fidelity_feerate: f64,
     /// Bitcoin network.
     pub network: Network,
@@ -241,15 +242,21 @@ impl MakerServerConfig {
             config_map.get("fidelity_feerate"),
             default_config.fidelity_feerate,
         );
-        let fidelity_feerate = if fidelity_feerate < MIN_FEE_RATE {
-            log::warn!(
-                "Configured fidelity_feerate {} is below the minimum {} sats/vB; using the minimum",
-                fidelity_feerate,
-                MIN_FEE_RATE
-            );
-            MIN_FEE_RATE
-        } else {
+        // The default is MIN_FEE_RATE, but an operator may go lower on
+        // purpose; the only hard floor is the relay minimum. Non-finite
+        // values (TOML allows `nan`/`inf`) bypass a `<` comparison, so they
+        // must be filtered out explicitly.
+        let fidelity_feerate = if fidelity_feerate.is_finite()
+            && fidelity_feerate >= MIN_RELAY_FEE_RATE
+        {
             fidelity_feerate
+        } else {
+            log::warn!(
+                "Invalid fidelity_feerate {}; must be finite and at least {} sats/vB; using the relay minimum",
+                fidelity_feerate,
+                MIN_RELAY_FEE_RATE
+            );
+            MIN_RELAY_FEE_RATE
         };
 
         Ok(MakerServerConfig {
@@ -321,7 +328,7 @@ min_swap_amount = {}
 fidelity_amount = {}
 # Fidelity Bond timelock in blocks (must be between {} and {})
 fidelity_timelock = {}
-# Fee rate in sats/vB for the fidelity bond transaction (minimum {})
+# Fee rate in sats/vB for the fidelity bond transaction (must be at least {})
 fidelity_feerate = {}
 # A fixed base fee charged by the Maker for providing its services (in satoshis)
 base_fee = {}
@@ -342,7 +349,7 @@ required_confirms = {}
             MIN_FIDELITY_TIMELOCK,
             MAX_FIDELITY_TIMELOCK,
             self.fidelity_timelock,
-            MIN_FEE_RATE,
+            MIN_RELAY_FEE_RATE,
             self.fidelity_feerate,
             self.base_fee,
             self.amount_relative_fee_pct,
