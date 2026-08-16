@@ -920,6 +920,14 @@ impl Blockchain for Electrum {
         Ok(serde_json::from_value(stub)?)
     }
 
+    fn is_tx_unknown(&self, txid: &Txid) -> Result<bool, WalletError> {
+        match self.call(|c| c.transaction_get(txid)) {
+            Ok(_) => Ok(false),
+            Err(WalletError::Electrum(ref e)) if is_unknown_txid(e) => Ok(true),
+            Err(e) => Err(e),
+        }
+    }
+
     fn get_tx_out(
         &self,
         txid: &Txid,

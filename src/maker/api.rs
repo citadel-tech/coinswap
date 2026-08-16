@@ -640,7 +640,7 @@ impl MakerServer {
     /// would be silently discarded by `get_highest_fidelity_index`, making
     /// the maker create a second bond and doubly lock funds. Finalizing it
     /// here prevents that.
-    fn finalize_pending_fidelity_bonds(&self, maker_address: &str) -> Result<(), MakerError> {
+    fn finalize_pending_fidelity_bonds(&self) -> Result<(), MakerError> {
         loop {
             let pending = lock_debug!(self.wallet.read())
                 .map_err(|_| MakerError::General("Failed to lock wallet"))?
@@ -660,23 +660,12 @@ impl MakerServer {
                 txid
             );
 
-            // Refresh the UTXO view first: if the bond tx was evicted while
-            // the maker was down, its inputs are spendable again.
-            lock_debug!(self.wallet.write())
+            // An evicted bond tx would never confirm; rebroadcast the stored
+            // raw transaction before waiting. Returns the original txid
+            // unchanged if the broadcast is still live.
+            let txid = lock_debug!(self.wallet.read())
                 .map_err(|_| MakerError::General("Failed to lock wallet"))?
-                .sync_and_save(&self.shutdown)
-                .map_err(MakerError::Wallet)?;
-
-            // An evicted bond tx would never confirm; rebuild and rebroadcast
-            // it before waiting. Returns the original txid if it is still live.
-            let txid = lock_debug!(self.wallet.write())
-                .map_err(|_| MakerError::General("Failed to lock wallet"))?
-                .ensure_fidelity_bond_broadcast(
-                    index,
-                    Some(maker_address),
-                    MIN_FEE_RATE,
-                    AddressType::P2TR,
-                )
+                .ensure_fidelity_bond_broadcast(index)
                 .map_err(MakerError::Wallet)?;
 
             // Wait on a fresh backend connection so the wallet lock is not
@@ -717,7 +706,7 @@ impl MakerServer {
         // Adopt any bond that was broadcast but not yet confirmed (e.g. the
         // maker shut down while waiting for confirmation) before deciding
         // whether a new bond is needed.
-        self.finalize_pending_fidelity_bonds(maker_address)?;
+        self.finalize_pending_fidelity_bonds()?;
 
         let highest_index = lock_debug!(self.wallet.read())
             .map_err(|_| MakerError::General("Failed to lock wallet"))?

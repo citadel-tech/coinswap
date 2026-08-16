@@ -180,6 +180,12 @@ pub trait Blockchain: Send + Sync + 'static {
         txid: &Txid,
         block_hash: Option<&BlockHash>,
     ) -> Result<GetRawTransactionResult, WalletError>;
+    /// Whether the backend positively reports the transaction as unknown.
+    ///
+    /// `Ok(true)` only on an explicit "no such transaction" answer (Core's
+    /// `-5`, Electrum's unknown-txid protocol error). Any transport or server
+    /// failure is propagated, so a failed query is never read as absence.
+    fn is_tx_unknown(&self, txid: &Txid) -> Result<bool, WalletError>;
     /// Unspent output at `txid:vout`, following Core's `gettxout`.
     ///
     /// `include_mempool`:
@@ -484,6 +490,12 @@ impl Blockchain for AnyBlockchain {
         match self {
             AnyBlockchain::CoreRPC(b) => b.get_raw_transaction_info(txid, block_hash),
             AnyBlockchain::Electrum(b) => b.get_raw_transaction_info(txid, block_hash),
+        }
+    }
+    fn is_tx_unknown(&self, txid: &Txid) -> Result<bool, WalletError> {
+        match self {
+            AnyBlockchain::CoreRPC(b) => b.is_tx_unknown(txid),
+            AnyBlockchain::Electrum(b) => b.is_tx_unknown(txid),
         }
     }
     fn get_tx_out(
