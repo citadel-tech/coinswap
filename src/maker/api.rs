@@ -135,6 +135,9 @@ pub struct MakerServerConfig {
     pub fidelity_amount: u64,
     /// Fidelity bond timelock in blocks.
     pub fidelity_timelock: u32,
+    /// Fee rate in sats/vB for the fidelity bond transaction.
+    /// Never below `MIN_FEE_RATE`.
+    pub fidelity_feerate: f64,
     /// Bitcoin network.
     pub network: Network,
     /// Selected blockchain backend (Bitcoin Core or Electrum) and its settings.
@@ -167,6 +170,7 @@ impl Default for MakerServerConfig {
             supported_protocols: vec![ProtocolVersion::Legacy, ProtocolVersion::Taproot],
             fidelity_amount: 10_000,   // 0.0001 BTC
             fidelity_timelock: 15_000, // ~6 months (MAX_FIDELITY_TIMELOCK)
+            fidelity_feerate: MIN_FEE_RATE,
             network: Network::Regtest,
             backend: BackendConfig::CoreRpc(CoreRpcConfig::default()),
             // "maker" predates this branch; changing it would strand an upgrading
@@ -233,6 +237,21 @@ impl MakerServerConfig {
             });
         }
 
+        let fidelity_feerate = parse_field(
+            config_map.get("fidelity_feerate"),
+            default_config.fidelity_feerate,
+        );
+        let fidelity_feerate = if fidelity_feerate < MIN_FEE_RATE {
+            log::warn!(
+                "Configured fidelity_feerate {} is below the minimum {} sats/vB; using the minimum",
+                fidelity_feerate,
+                MIN_FEE_RATE
+            );
+            MIN_FEE_RATE
+        } else {
+            fidelity_feerate
+        };
+
         Ok(MakerServerConfig {
             network_port: parse_field(config_map.get("network_port"), default_config.network_port),
             rpc_port: parse_field(config_map.get("rpc_port"), default_config.rpc_port),
@@ -255,6 +274,7 @@ impl MakerServerConfig {
                 default_config.fidelity_amount,
             ),
             fidelity_timelock,
+            fidelity_feerate,
             control_port: parse_field(config_map.get("control_port"), default_config.control_port),
             socks_port: parse_field(config_map.get("socks_port"), default_config.socks_port),
             tor_auth_password: parse_field(
@@ -301,6 +321,8 @@ min_swap_amount = {}
 fidelity_amount = {}
 # Fidelity Bond timelock in blocks (must be between {} and {})
 fidelity_timelock = {}
+# Fee rate in sats/vB for the fidelity bond transaction (minimum {})
+fidelity_feerate = {}
 # A fixed base fee charged by the Maker for providing its services (in satoshis)
 base_fee = {}
 # A percentage fee based on the swap amount
@@ -320,6 +342,8 @@ required_confirms = {}
             MIN_FIDELITY_TIMELOCK,
             MAX_FIDELITY_TIMELOCK,
             self.fidelity_timelock,
+            MIN_FEE_RATE,
+            self.fidelity_feerate,
             self.base_fee,
             self.amount_relative_fee_pct,
             self.time_relative_fee_pct,
@@ -814,7 +838,7 @@ impl MakerServer {
                         amount,
                         locktime,
                         Some(maker_address),
-                        MIN_FEE_RATE,
+                        self.config.fidelity_feerate,
                         AddressType::P2TR,
                     );
 
