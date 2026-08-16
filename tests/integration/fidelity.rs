@@ -12,10 +12,10 @@
 //!   regular transactions: regular sends never select expired fidelity UTXOs, but redemption
 //!   and new bond creation can properly consume them.
 
-use bitcoin::{absolute::LockTime, Amount};
+use bitcoin::{absolute::LockTime, Amount, Txid};
 use bitcoind::bitcoincore_rpc::{Auth, RpcApi};
 use openswap::{
-    maker::start_server,
+    maker::{start_server, MakerServer},
     taker::TakerBehavior,
     utill::MIN_FEE_RATE,
     wallet::{AddressType, Blockchain, CoreRPC, CoreRpcConfig, Destination},
@@ -24,7 +24,11 @@ use openswap::{
 use super::test_framework::*;
 
 use log::info;
-use std::{sync::atomic::Ordering::Relaxed, thread, time::Duration};
+use std::{
+    sync::{atomic::Ordering::Relaxed, Arc},
+    thread,
+    time::Duration,
+};
 /// Pins the two backend answers the maker's funding check rests on: `None` sees a
 /// mempool-only spend, while `Some(false)` — the argument it used to pass — reports
 /// that output live on Core. Pins the backend, not the maker's call site.
@@ -650,4 +654,133 @@ fn test_fidelity_spending() {
     log::info!("SUCCESS: All fidelity spending behavior requirements verified!");
     test_framework.stop();
     block_generation_handle.join().unwrap();
+}
+
+/// Regression test for <https://github.com/citadel-foss/openswap/issues/990>
+///
+/// A maker stopped after broadcasting its fidelity bond but before it confirms
+/// restarts with a pending bond (`conf_height: None`) in the wallet. The
+/// restart must adopt that bond - wait for its confirmation and use it -
+/// instead of silently discarding it and creating a second bond, which would
+/// doubly lock funds.
+///
+/// The behaviour is pinned on exact log lines:
+/// - run 1 takes the create branch once and broadcasts the bond,
+/// - run 2 must log the adopt-a-pending-bond lines and take the
+///   existing-bond branch ("Highest bond at outpoint"),
+/// - across both runs "No active Fidelity Bonds found. Creating one." appears
+///   exactly once, and "Successfully created fidelity bond" never appears
+///   (it only logs when a new bond is created, which the restart must not do).
+#[test]
+fn test_unconfirmed_fidelity_bond_not_duplicated() {
+    // ---- Setup ----
+    let makers_config_map = vec![(8102, None)];
+    let taker_behavior = vec![TakerBehavior::Normal];
+
+    let (test_framework, _takers, makers, block_generation_handle) =
+        TestFramework::init::<BitcoindBackend>(makers_config_map, taker_behavior, vec![]);
+
+    log::info!("Running Test: Unconfirmed Fidelity Bond Survives Maker Restart");
+
+    let bitcoind = &test_framework.bitcoind;
+    let maker = makers.first().unwrap();
+    let log_path = format!("{}/taker/debug.log", test_framework.temp_dir.display());
+
+    fund_makers(&makers, bitcoind, 1, Amount::ONE_BTC, AddressType::P2TR);
+
+    // ----- Run 1: maker broadcasts a bond, then stops before it confirms -----
+
+    // Pause the background miner so the bond tx cannot confirm while run 1 is up.
+    test_framework.set_block_gen_paused(true);
+
+    let maker_clone = maker.clone();
+    let maker_thread = thread::spawn(move || {
+        // The shutdown below interrupts setup mid-wait and surfaces as an
+        // error; that partial run is the point of the test, so don't unwrap.
+        let _ = start_server(maker_clone);
+    });
+
+    wait_for_log(
+        &log_path,
+        "Fidelity bond broadcast, waiting for confirmation",
+        Duration::from_secs(120),
+    );
+
+    // Pin the preconditions: the bond tx is still unconfirmed on-chain ...
+    let bond_txid: Txid = std::fs::read_to_string(&log_path)
+        .unwrap()
+        .lines()
+        .find(|l| l.contains("Fidelity bond broadcast, waiting for confirmation"))
+        .unwrap()
+        .rsplit(": ")
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!(
+        bitcoind.client.get_mempool_entry(&bond_txid).is_ok(),
+        "bond tx {} must still be unconfirmed for this test to mean anything",
+        bond_txid
+    );
+
+    // ... and the create branch ran exactly once.
+    assert_eq!(
+        std::fs::read_to_string(&log_path)
+            .unwrap()
+            .matches("No active Fidelity Bonds found. Creating one.")
+            .count(),
+        1,
+        "run 1 should have created exactly one bond candidate"
+    );
+
+    // Stop the maker while the bond is still unconfirmed.
+    maker.shutdown.store(true, Relaxed);
+    let _ = maker_thread.join();
+
+    // ----- Run 2: the restart must adopt the pending bond, not create a new one -----
+
+    // Resume mining so the restarted maker can wait out the confirmation.
+    test_framework.set_block_gen_paused(false);
+
+    let restarted = Arc::new(MakerServer::init(maker.config.clone()).unwrap());
+    let restarted_clone = restarted.clone();
+    let restarted_thread = thread::spawn(move || {
+        let _ = start_server(restarted_clone);
+    });
+
+    wait_for_makers_setup(std::slice::from_ref(&restarted), 120);
+
+    restarted.shutdown.store(true, Relaxed);
+    let _ = restarted_thread.join();
+
+    // ----- Assertions on the log of both runs -----
+    let log = std::fs::read_to_string(&log_path).unwrap();
+
+    assert!(
+        log.contains("waiting for confirmation instead of creating a new one"),
+        "restart must detect the pending bond and wait for it"
+    );
+    assert!(
+        log.contains("confirmed at height"),
+        "restart must record the pending bond's confirmation"
+    );
+    assert!(
+        log.contains("Highest bond at outpoint"),
+        "restart must take the existing-bond branch with the adopted bond"
+    );
+    assert_eq!(
+        log.matches("No active Fidelity Bonds found. Creating one.")
+            .count(),
+        1,
+        "restart must not take the create-new-bond branch (would doubly lock funds)"
+    );
+    assert!(
+        !log.contains("Successfully created fidelity bond"),
+        "restart must not create a second fidelity bond"
+    );
+
+    test_framework.stop();
+    block_generation_handle.join().unwrap();
+
+    log::info!("Unconfirmed fidelity bond restart test completed successfully");
 }

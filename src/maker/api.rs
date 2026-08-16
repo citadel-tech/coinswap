@@ -630,9 +630,63 @@ impl MakerServer {
         !self.is_shutdown()
     }
 
+    /// Waits for live but unconfirmed fidelity bonds to confirm and records
+    /// their confirmation height. No-op if no such bond exists.
+    ///
+    /// A bond is registered with `conf_height: None` as soon as it is
+    /// broadcast, so a maker that shut down while waiting for confirmation
+    /// restarts with a pending bond in the wallet. Such a bond fails
+    /// valuation (`calculate_bond_value` needs the confirmation height) and
+    /// would be silently discarded by `get_highest_fidelity_index`, making
+    /// the maker create a second bond and doubly lock funds. Finalizing it
+    /// here prevents that.
+    fn finalize_pending_fidelity_bonds(&self) -> Result<(), MakerError> {
+        loop {
+            let pending = lock_debug!(self.wallet.read())
+                .map_err(|_| MakerError::General("Failed to lock wallet"))?
+                .store
+                .fidelity_bond
+                .iter()
+                .find(|b| !b.is_spent && b.conf_height.is_none())
+                .map(|b| (b.bond_index, b.outpoint.txid));
+
+            let Some((index, txid)) = pending else {
+                return Ok(());
+            };
+
+            log::info!(
+                "[{}] Found unconfirmed fidelity bond {}, waiting for confirmation instead of creating a new one",
+                self.config.network_port,
+                txid
+            );
+
+            let conf_height = lock_debug!(self.wallet.read())
+                .map_err(|_| MakerError::General("Failed to lock wallet"))?
+                .wait_for_tx_confirmation(&[txid], 1, Some(&self.shutdown), None)
+                .map_err(MakerError::Wallet)?;
+
+            lock_debug!(self.wallet.write())
+                .map_err(|_| MakerError::General("Failed to lock wallet"))?
+                .update_fidelity_bond_conf_details(index, conf_height)
+                .map_err(MakerError::Wallet)?;
+
+            log::info!(
+                "[{}] Pending fidelity bond {} confirmed at height {}",
+                self.config.network_port,
+                txid,
+                conf_height
+            );
+        }
+    }
+
     /// Setup fidelity bond for this maker.
     pub fn setup_fidelity_bond(&self, maker_address: &str) -> Result<FidelityProof, MakerError> {
         use bitcoin::absolute::LockTime;
+
+        // Adopt any bond that was broadcast but not yet confirmed (e.g. the
+        // maker shut down while waiting for confirmation) before deciding
+        // whether a new bond is needed.
+        self.finalize_pending_fidelity_bonds()?;
 
         let highest_index = lock_debug!(self.wallet.read())
             .map_err(|_| MakerError::General("Failed to lock wallet"))?
