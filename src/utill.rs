@@ -88,6 +88,11 @@ pub const MIN_REQUIRED_CONFIRM: u32 = 1;
 /// This replaces the hardcoded MINER_FEE constant
 pub const MIN_FEE_RATE: f64 = 2.0;
 
+/// Absolute fee rate floor in sats/vb — Bitcoin Core's default
+/// `minrelaytxfee`. Configurable fee rates (e.g. the fidelity bond) may go
+/// below [`MIN_FEE_RATE`] but never below this, or transactions stop relaying.
+pub const MIN_RELAY_FEE_RATE: f64 = 1.0;
+
 /// Maximum size of a length-prefixed protocol or RPC message.
 /// 10 MiB limit
 pub const MAX_RPC_MESSAGE_SIZE: usize = 10 * 1024 * 1024;

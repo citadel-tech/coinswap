@@ -1309,6 +1309,7 @@ mod tests {
             conf_height: Some(1000),
             is_spent: false,
             bond_index: 0,
+            tx: None,
         };
 
         let cert_hash = bond.generate_cert_hash(maker_addr, &pubkey);

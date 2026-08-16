@@ -271,6 +271,12 @@ pub struct FidelityBond {
     /// The child index used in the HD derivation path `m/175'/2/<bond_index>`.
     /// Note: Fidelity bonds must only be appended to the store; they should never be removed or reordered.
     pub bond_index: u32,
+    /// The raw bond transaction, kept only until confirmation so an evicted
+    /// broadcast can be re-sent as-is. Rebroadcasting the identical bytes
+    /// reproduces the same txid, so no replacement spending different coins
+    /// can ever confirm alongside the original and double-lock funds.
+    #[serde(default)]
+    pub(crate) tx: Option<Transaction>,
 }
 
 impl FidelityBond {
@@ -538,6 +544,7 @@ impl Wallet {
                 conf_height: None,
                 is_spent: false,
                 bond_index: index,
+                tx: Some(tx),
             };
             self.store.fidelity_bond.push(bond);
             self.save_to_disk()?;
@@ -546,7 +553,46 @@ impl Wallet {
         Ok((index, txid))
     }
 
+    /// Ensure the funding transaction of the bond at `index` is visible to the
+    /// network, returning its txid.
+    ///
+    /// If the original broadcast is still in the mempool or already confirmed,
+    /// its txid is returned unchanged. Otherwise the transaction was evicted
+    /// (e.g. while the maker was offline) and waiting for it would never
+    /// succeed: the raw transaction stored at creation is rebroadcast, which
+    /// reproduces the same txid, so the bond keeps its original outpoint and
+    /// no replacement spending different coins can double-lock funds.
+    pub fn ensure_fidelity_bond_broadcast(&self, index: u32) -> Result<Txid, WalletError> {
+        let bond = self
+            .store
+            .fidelity_bond
+            .get(index as usize)
+            .ok_or(FidelityError::BondDoesNotExist)?;
+
+        // Only a proven "unknown transaction" answer means eviction; any
+        // other backend failure surfaces as an error instead of triggering
+        // a spurious rebroadcast.
+        if !self.blockchain.is_tx_unknown(&bond.outpoint.txid)? {
+            return Ok(bond.outpoint.txid);
+        }
+
+        log::warn!(
+            "Fidelity bond tx {} is not visible to the backend (evicted from mempool?); rebroadcasting",
+            bond.outpoint.txid
+        );
+
+        let tx = bond.tx.as_ref().ok_or(WalletError::General(format!(
+            "fidelity bond at index {index} has no stored transaction to rebroadcast"
+        )))?;
+        let txid = self.send_tx(tx)?;
+        debug_assert_eq!(txid, bond.outpoint.txid);
+
+        Ok(txid)
+    }
+
     /// Update the confirmation height of a fidelity bond after it confirms.
+    /// Also drops the stored raw transaction, which is only kept as a
+    /// rebroadcast fallback until confirmation.
     pub fn update_fidelity_bond_conf_details(
         &mut self,
         index: u32,
@@ -559,6 +605,7 @@ impl Wallet {
             .ok_or(FidelityError::BondDoesNotExist)?;
 
         bond.conf_height = Some(conf_height);
+        bond.tx = None;
 
         Ok(())
     }
@@ -618,8 +665,13 @@ impl Wallet {
             &fidelity_privkey,
         );
 
+        let mut bond = bond.clone();
+        // The stored raw transaction is a local rebroadcast fallback, not part
+        // of the proof; keep it off the wire.
+        bond.tx = None;
+
         Ok(FidelityProof {
-            bond: bond.clone(),
+            bond,
             cert_hash,
             cert_sig,
         })

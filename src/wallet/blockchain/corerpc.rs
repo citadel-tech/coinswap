@@ -378,6 +378,16 @@ impl Blockchain for CoreRPC {
         Ok(self.rpc.get_raw_transaction_info(txid, block_hash)?)
     }
 
+    fn is_tx_unknown(&self, txid: &Txid) -> Result<bool, WalletError> {
+        match self.rpc.get_raw_transaction(txid, None) {
+            Ok(_) => Ok(false),
+            // -5 (RPC_INVALID_ADDRESS_OR_KEY): Core's "no such mempool or
+            // blockchain transaction" answer.
+            Err(CoreRpcError::JsonRpc(jsonrpc::Error::Rpc(ref e))) if e.code == -5 => Ok(true),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     fn get_tx_out(
         &self,
         txid: &Txid,

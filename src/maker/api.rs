@@ -21,7 +21,7 @@ use crate::{
     maker::nostr::NOSTR_RELAYS,
     protocol::common_messages::{FidelityProof, ProtocolVersion, SwapDetails},
     taker::api::REFUND_LOCKTIME_STEP,
-    utill::{get_maker_dir, parse_field, parse_toml, MIN_FEE_RATE},
+    utill::{get_maker_dir, parse_field, parse_toml, MIN_FEE_RATE, MIN_RELAY_FEE_RATE},
     wallet::{
         swapcoin::{IncomingSwapCoin, OutgoingSwapCoin},
         AddressType, AnyBlockchain, BackendConfig, Blockchain, CoreRpcConfig, FidelityError,
@@ -135,6 +135,10 @@ pub struct MakerServerConfig {
     pub fidelity_amount: u64,
     /// Fidelity bond timelock in blocks.
     pub fidelity_timelock: u32,
+    /// Fee rate in sats/vB for the fidelity bond transaction.
+    /// Defaults to `MIN_FEE_RATE`; may go lower, but never below
+    /// `MIN_RELAY_FEE_RATE`.
+    pub fidelity_feerate: f64,
     /// Bitcoin network.
     pub network: Network,
     /// Selected blockchain backend (Bitcoin Core or Electrum) and its settings.
@@ -167,6 +171,7 @@ impl Default for MakerServerConfig {
             supported_protocols: vec![ProtocolVersion::Legacy, ProtocolVersion::Taproot],
             fidelity_amount: 10_000,   // 0.0001 BTC
             fidelity_timelock: 15_000, // ~6 months (MAX_FIDELITY_TIMELOCK)
+            fidelity_feerate: MIN_FEE_RATE,
             network: Network::Regtest,
             backend: BackendConfig::CoreRpc(CoreRpcConfig::default()),
             // "maker" predates this branch; changing it would strand an upgrading
@@ -233,6 +238,27 @@ impl MakerServerConfig {
             });
         }
 
+        let fidelity_feerate = parse_field(
+            config_map.get("fidelity_feerate"),
+            default_config.fidelity_feerate,
+        );
+        // The default is MIN_FEE_RATE, but an operator may go lower on
+        // purpose; the only hard floor is the relay minimum. Non-finite
+        // values (TOML allows `nan`/`inf`) bypass a `<` comparison, so they
+        // must be filtered out explicitly.
+        let fidelity_feerate = if fidelity_feerate.is_finite()
+            && fidelity_feerate >= MIN_RELAY_FEE_RATE
+        {
+            fidelity_feerate
+        } else {
+            log::warn!(
+                "Invalid fidelity_feerate {}; must be finite and at least {} sats/vB; using the relay minimum",
+                fidelity_feerate,
+                MIN_RELAY_FEE_RATE
+            );
+            MIN_RELAY_FEE_RATE
+        };
+
         Ok(MakerServerConfig {
             network_port: parse_field(config_map.get("network_port"), default_config.network_port),
             rpc_port: parse_field(config_map.get("rpc_port"), default_config.rpc_port),
@@ -255,6 +281,7 @@ impl MakerServerConfig {
                 default_config.fidelity_amount,
             ),
             fidelity_timelock,
+            fidelity_feerate,
             control_port: parse_field(config_map.get("control_port"), default_config.control_port),
             socks_port: parse_field(config_map.get("socks_port"), default_config.socks_port),
             tor_auth_password: parse_field(
@@ -301,6 +328,8 @@ min_swap_amount = {}
 fidelity_amount = {}
 # Fidelity Bond timelock in blocks (must be between {} and {})
 fidelity_timelock = {}
+# Fee rate in sats/vB for the fidelity bond transaction (must be at least {})
+fidelity_feerate = {}
 # A fixed base fee charged by the Maker for providing its services (in satoshis)
 base_fee = {}
 # A percentage fee based on the swap amount
@@ -320,6 +349,8 @@ required_confirms = {}
             MIN_FIDELITY_TIMELOCK,
             MAX_FIDELITY_TIMELOCK,
             self.fidelity_timelock,
+            MIN_RELAY_FEE_RATE,
+            self.fidelity_feerate,
             self.base_fee,
             self.amount_relative_fee_pct,
             self.time_relative_fee_pct,
@@ -630,9 +661,83 @@ impl MakerServer {
         !self.is_shutdown()
     }
 
+    /// Waits for live but unconfirmed fidelity bonds to confirm and records
+    /// their confirmation height. No-op if no such bond exists.
+    ///
+    /// A bond is registered with `conf_height: None` as soon as it is
+    /// broadcast, so a maker that shut down while waiting for confirmation
+    /// restarts with a pending bond in the wallet. Such a bond fails
+    /// valuation (`calculate_bond_value` needs the confirmation height) and
+    /// would be silently discarded by `get_highest_fidelity_index`, making
+    /// the maker create a second bond and doubly lock funds. Finalizing it
+    /// here prevents that.
+    fn finalize_pending_fidelity_bonds(&self) -> Result<(), MakerError> {
+        loop {
+            let pending = lock_debug!(self.wallet.read())
+                .map_err(|_| MakerError::General("Failed to lock wallet"))?
+                .store
+                .fidelity_bond
+                .iter()
+                .find(|b| !b.is_spent && b.conf_height.is_none())
+                .map(|b| (b.bond_index, b.outpoint.txid));
+
+            let Some((index, txid)) = pending else {
+                return Ok(());
+            };
+
+            log::info!(
+                "[{}] Found unconfirmed fidelity bond {}, waiting for confirmation instead of creating a new one",
+                self.config.network_port,
+                txid
+            );
+
+            // An evicted bond tx would never confirm; rebroadcast the stored
+            // raw transaction before waiting. Returns the original txid
+            // unchanged if the broadcast is still live.
+            let txid = lock_debug!(self.wallet.read())
+                .map_err(|_| MakerError::General("Failed to lock wallet"))?
+                .ensure_fidelity_bond_broadcast(index)
+                .map_err(MakerError::Wallet)?;
+
+            // Wait on a fresh backend connection so the wallet lock is not
+            // held for the duration of the wait.
+            let chain = lock_debug!(self.wallet.read())
+                .map_err(|_| MakerError::General("Failed to lock wallet"))?
+                .blockchain
+                .new_connection()
+                .map_err(MakerError::Wallet)?;
+            let conf_height = crate::wallet::wait_for_tx_confirmation(
+                &chain,
+                &[txid],
+                1,
+                crate::utill::TX_BROADCAST_TIMEOUT,
+                Some(&self.shutdown),
+                None,
+            )
+            .map_err(MakerError::Wallet)?;
+
+            lock_debug!(self.wallet.write())
+                .map_err(|_| MakerError::General("Failed to lock wallet"))?
+                .update_fidelity_bond_conf_details(index, conf_height)
+                .map_err(MakerError::Wallet)?;
+
+            log::info!(
+                "[{}] Pending fidelity bond {} confirmed at height {}",
+                self.config.network_port,
+                txid,
+                conf_height
+            );
+        }
+    }
+
     /// Setup fidelity bond for this maker.
     pub fn setup_fidelity_bond(&self, maker_address: &str) -> Result<FidelityProof, MakerError> {
         use bitcoin::absolute::LockTime;
+
+        // Adopt any bond that was broadcast but not yet confirmed (e.g. the
+        // maker shut down while waiting for confirmation) before deciding
+        // whether a new bond is needed.
+        self.finalize_pending_fidelity_bonds()?;
 
         let highest_index = lock_debug!(self.wallet.read())
             .map_err(|_| MakerError::General("Failed to lock wallet"))?
@@ -740,7 +845,7 @@ impl MakerServer {
                         amount,
                         locktime,
                         Some(maker_address),
-                        MIN_FEE_RATE,
+                        self.config.fidelity_feerate,
                         AddressType::P2TR,
                     );
 

@@ -26,6 +26,7 @@ tor_auth_password = ""
 min_swap_amount = 10000
 fidelity_amount = 50000
 fidelity_timelock = 13104
+fidelity_feerate = 2.0
 connection_type = TOR
 base_fee = 500
 amount_relative_fee_pct = 0.0025
@@ -39,6 +40,7 @@ time_relative_fee_pct = 0.0001
 - `min_swap_amount`: Minimum swap amount (in satoshis).
 - `fidelity_amount`: Amount (in satoshis) locked as a fidelity bond to deter Sybil attacks.
 - `fidelity_timelock`: Lock duration in block heights for the fidelity bond.
+- `fidelity_feerate`: Fee rate (in sats/vB) for the fidelity bond transaction. Defaults to 2.0; lower values are allowed, but anything below the relay minimum of 1.0 sats/vB is clamped to 1.0.
 - `connection_type`: Specifies the network mode; set to "TOR" in production for privacy, or "CLEARNET" during testing.
 - `base_fee`: A fixed fee charged by the Maker for providing its services (in satoshis).
 - `amount_relative_fee_pct`: A percentage fee based on the swap amount.
