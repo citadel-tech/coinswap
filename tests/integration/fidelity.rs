@@ -707,16 +707,22 @@ fn test_unconfirmed_fidelity_bond_not_duplicated() {
     );
 
     // Pin the preconditions: the bond tx is still unconfirmed on-chain ...
-    let bond_txid: Txid = std::fs::read_to_string(&log_path)
+    let broadcast_line = std::fs::read_to_string(&log_path)
         .unwrap()
         .lines()
         .find(|l| l.contains("Fidelity bond broadcast, waiting for confirmation"))
-        .unwrap()
+        .expect("run 1 must log the bond broadcast line")
+        .to_string();
+    let bond_txid: Txid = broadcast_line
         .rsplit(": ")
         .next()
-        .unwrap()
-        .parse()
-        .unwrap();
+        .and_then(|t| t.trim().parse().ok())
+        .unwrap_or_else(|| {
+            panic!(
+                "could not parse bond txid from log line: {}",
+                broadcast_line
+            )
+        });
     assert!(
         bitcoind.client.get_mempool_entry(&bond_txid).is_ok(),
         "bond tx {} must still be unconfirmed for this test to mean anything",
@@ -749,6 +755,25 @@ fn test_unconfirmed_fidelity_bond_not_duplicated() {
     });
 
     wait_for_makers_setup(std::slice::from_ref(&restarted), 120);
+
+    // State assertions: the restart must hold exactly one bond, and it must be
+    // the one broadcast in run 1. `get_highest_fidelity_index` succeeding means
+    // the bond's confirmation was recorded (valuation requires it).
+    {
+        let wallet_read = restarted.wallet.read().unwrap();
+        let bonds = wallet_read.get_fidelity_bonds();
+        assert_eq!(bonds.len(), 1, "restart must not create a second bond");
+        assert_eq!(
+            bonds[0].outpoint().txid,
+            bond_txid,
+            "restart must adopt the bond broadcast in run 1"
+        );
+        assert_eq!(
+            wallet_read.get_highest_fidelity_index().unwrap(),
+            Some(0),
+            "adopted bond must be valuated, i.e. its confirmation was recorded"
+        );
+    }
 
     restarted.shutdown.store(true, Relaxed);
     let _ = restarted_thread.join();
