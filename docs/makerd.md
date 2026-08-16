@@ -197,7 +197,11 @@ This will launch `makerd` and connect it to the Bitcoin RPC core running on its 
   INFO openswap::wallet::api - Wallet file at "/path/to/maker-wallet" successfully loaded.
   ```
 
-- **New Wallet Creation**: If no wallet file is found, `makerd` will create a new wallet named `maker-wallet`:
+- **New Wallet Creation**: If no wallet file is found, `makerd` will create a new wallet named `maker-wallet`. Wallet files are always encrypted, so a wallet passphrase must be supplied when creating (and later opening) the wallet. Prefer the `OPENSWAP_WALLET_PASSWORD` environment variable over `-p`/`--PASSWORD` — a command-line value is visible in the process list and shell history:
+
+  ```bash
+  $ OPENSWAP_WALLET_PASSWORD=my-wallet-passphrase ./makerd -a user:password -r 127.0.0.1:38332
+  ```
 
   ```bash
   INFO openswap::wallet::api - Backup the Wallet Mnemonics.

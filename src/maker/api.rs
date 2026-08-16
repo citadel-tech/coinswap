@@ -580,7 +580,10 @@ impl MakerServer {
         if let AnyBlockchain::CoreRPC(core) = &blockchain {
             core.check_node_requirements().map_err(MakerError::Wallet)?;
         }
-        let mut wallet = Wallet::load_or_init(&wallet_path, blockchain, config.password.clone())?;
+        // Take the passphrase out of the config: the wallet keeps the derived
+        // key material, so the cleartext passphrase must not linger in the
+        // long-lived server config.
+        let mut wallet = Wallet::load_or_init(&wallet_path, blockchain, config.password.take())?;
         let data_dir = config.data_dir.clone();
         log::info!("Sync at:----MakerServer init----");
         wallet.sync_and_save(&shutdown)?;

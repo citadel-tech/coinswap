@@ -14,6 +14,7 @@ use bip39::rand::random;
 use pbkdf2::pbkdf2_hmac_array;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sha2::Sha256;
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use crate::utill;
 use std::{fs, path::Path};
@@ -134,7 +135,7 @@ pub struct SerdeCbor;
 impl SerdeFormat for SerdeCbor {
     type Error = serde_cbor::Error;
     fn from_slice<T: DeserializeOwned>(input: &[u8]) -> Result<T, Self::Error> {
-        utill::deserialize_from_cbor::<T>(input.to_vec())
+        utill::deserialize_from_cbor::<T>(input)
     }
 }
 /// A 16-byte (128-bit) salt used with PBKDF2 to derive encryption keys.
@@ -168,7 +169,9 @@ const PBKDF2_ITERATIONS: u32 = 1;
 const PBKDF2_ITERATIONS: u32 = 600_000;
 
 /// Holds derived cryptographic key material used for encrypting and decrypting wallet data.
-#[derive(Debug, Clone)]
+///
+/// Zeroized on drop; `Debug` is redacted so the key never reaches logs.
+#[derive(Clone, Zeroize, ZeroizeOnDrop)]
 pub struct KeyMaterial {
     /// A 256-bit key derived from the user’s passphrase via PBKDF2.
     /// This key is used with AES-GCM for encryption/decryption.
@@ -179,17 +182,26 @@ pub struct KeyMaterial {
     /// Key derivation salt, randomly generated to ensure unique keys per password.
     pub pbkdf2_salt: PBKDF2Salt,
 }
+
+/// Redacted: key material must never reach logs.
+impl std::fmt::Debug for KeyMaterial {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("KeyMaterial(<redacted>)")
+    }
+}
+
 impl KeyMaterial {
     /// Creates new key material from a password, with a freshly random generated nonce and salt.
+    ///
+    /// The passphrase string is zeroized after key derivation.
     pub fn new_from_password(enc_password: Option<String>) -> Option<Self> {
-        enc_password.map(|pwd| {
+        enc_password.map(|mut pwd| {
             let pbkdf2_salt = random::<PBKDF2Salt>();
+            let key =
+                pbkdf2_hmac_array::<Sha256, 32>(pwd.as_bytes(), &pbkdf2_salt, PBKDF2_ITERATIONS);
+            pwd.zeroize();
             KeyMaterial {
-                key: pbkdf2_hmac_array::<Sha256, 32>(
-                    pwd.as_bytes(),
-                    &pbkdf2_salt,
-                    PBKDF2_ITERATIONS,
-                ),
+                key,
                 nonce: Aes256Gcm::generate_nonce(&mut OsRng).into(),
                 pbkdf2_salt,
             }
@@ -197,27 +209,43 @@ impl KeyMaterial {
     }
     /// Prompts the user interactively for a new encryption passphrase.
     ///
-    /// If the user enters an empty string, returns `None`, indicating no encryption.
-    /// Otherwise, returns `Some(KeyMaterial)` with a newly generated nonce and salt.
+    /// If the user enters an empty string, returns `None`; callers decide
+    /// whether that is acceptable (wallet and backup encryption require a
+    /// non-empty passphrase).
     pub fn new_interactive(prompt: Option<String>) -> Result<Option<Self>, SecurityError> {
-        let enc_password =
-            utill::prompt_password(prompt.unwrap_or(
-                "Enter new encryption passphrase (empty for no encryption): ".to_string(),
-            ))?;
+        let enc_password = utill::prompt_password(
+            prompt.unwrap_or("Enter new encryption passphrase: ".to_string()),
+        )?;
 
         if enc_password.is_empty() {
             Ok(None)
         } else {
             let pbkdf2_salt = random::<PBKDF2Salt>();
+            let mut enc_password = enc_password;
+            let key = pbkdf2_hmac_array::<Sha256, 32>(
+                enc_password.as_bytes(),
+                &pbkdf2_salt,
+                PBKDF2_ITERATIONS,
+            );
+            enc_password.zeroize();
             Ok(Some(KeyMaterial {
-                key: pbkdf2_hmac_array::<Sha256, 32>(
-                    enc_password.as_bytes(),
-                    &pbkdf2_salt,
-                    PBKDF2_ITERATIONS,
-                ),
+                key,
                 nonce: Aes256Gcm::generate_nonce(&mut OsRng).into(),
                 pbkdf2_salt,
             }))
+        }
+    }
+
+    /// Creates ephemeral key material with a random key, nonce, and salt.
+    ///
+    /// The key is never persisted, so anything sealed with it is
+    /// unrecoverable once the process exits. Only used by tests — wallets
+    /// always seal with passphrase-derived material.
+    pub fn new_ephemeral() -> Self {
+        KeyMaterial {
+            key: random::<EncryptionKey>(),
+            nonce: Aes256Gcm::generate_nonce(&mut OsRng).into(),
+            pbkdf2_salt: random::<PBKDF2Salt>(),
         }
     }
 
@@ -225,13 +253,13 @@ impl KeyMaterial {
     ///
     /// This is used when decrypting existing wallet data, where the nonce
     /// and the salt have already been read from disk and are available.
-    pub fn existing(password: String, nonce: EncryptionNonce, pbkdf2_salt: PBKDF2Salt) -> Self {
+    /// The passphrase string is zeroized after key derivation.
+    pub fn existing(mut password: String, nonce: EncryptionNonce, pbkdf2_salt: PBKDF2Salt) -> Self {
+        let key =
+            pbkdf2_hmac_array::<Sha256, 32>(password.as_bytes(), &pbkdf2_salt, PBKDF2_ITERATIONS);
+        password.zeroize();
         KeyMaterial {
-            key: pbkdf2_hmac_array::<Sha256, 32>(
-                password.as_bytes(),
-                &pbkdf2_salt,
-                PBKDF2_ITERATIONS,
-            ),
+            key,
             nonce,
             pbkdf2_salt,
         }
@@ -250,7 +278,7 @@ impl KeyMaterial {
 /// refers to the same value as the nonce. They are conceptually the same in this context.
 ///
 /// This wrapper itself is then serialized to CBOR and written to disk.
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct EncryptedData {
     /// Nonce used for AES-GCM encryption (must match during decryption).
     nonce: EncryptionNonce,
@@ -277,8 +305,9 @@ pub fn encrypt_struct<T: Serialize>(
     plain_struct: T,
     enc_material: &KeyMaterial,
 ) -> Result<EncryptedData, EncryptError> {
-    // Serialize wallet data to bytes.
-    let packed_store = serde_cbor::ser::to_vec(&plain_struct)?;
+    // Serialize wallet data to bytes. `Zeroizing` wipes the plaintext buffer
+    // on drop so no serialized copy of the secret survives in freed heap.
+    let packed_store = Zeroizing::new(serde_cbor::ser::to_vec(&plain_struct)?);
 
     // QA: AES-GCM nonce reuse across wallet saves or backup restoration leaks
     // relationships between plaintexts encrypted under the same key.
@@ -321,13 +350,17 @@ pub fn decrypt_struct<T: DeserializeOwned>(
     let cipher = Aes256Gcm::new(&key);
     let nonce = aes_gcm::Nonce::from(nonce_vec);
 
-    // Decrypt the inner CBOR bytes.
-    let plaintext_cbor = cipher
-        .decrypt(&nonce, encrypted_struct.encrypted_payload.as_ref())
-        .map_err(|_| SecurityError::Decryption)?;
+    // Decrypt the inner CBOR bytes. `Zeroizing` wipes the plaintext buffer on
+    // drop so no serialized copy of the secret survives in freed heap.
+    let plaintext_cbor = Zeroizing::new(
+        cipher
+            .decrypt(&nonce, encrypted_struct.encrypted_payload.as_ref())
+            .map_err(|_| SecurityError::Decryption)?,
+    );
 
-    // Deserialize the inner CBOR into the original type
-    Ok(utill::deserialize_from_cbor::<T>(plaintext_cbor)?)
+    // Deserialize the inner CBOR into the original type (borrows the
+    // `Zeroizing` buffer, so no un-wiped copy is made).
+    Ok(utill::deserialize_from_cbor::<T>(&plaintext_cbor)?)
 }
 /// Loads a sensitive struct from a file, supporting both encrypted and plaintext formats.
 ///

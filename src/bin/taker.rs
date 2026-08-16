@@ -76,7 +76,11 @@ struct Cli {
     #[clap(name = "WALLET", long, short = 'w')]
     pub wallet_name: Option<String>,
 
-    /// Optional Password for the encryption of the wallet.
+    /// Password for the encryption of the wallet. Required when creating a
+    /// new wallet (wallet files are always encrypted) and to open an
+    /// encrypted one. Prefer the OPENSWAP_WALLET_PASSWORD environment
+    /// variable: a `-p` value is visible in the process list and shell
+    /// history.
     #[clap(name = "PASSWORD", long, short = 'p')]
     pub password: Option<String>,
 
@@ -179,15 +183,12 @@ enum Commands {
     /// The backup will be created in the current working directory with the filename:
     /// `<wallet_name>-backup.json`.
     ///
-    /// Use the `-e, --encrypt` flag to encrypt the backup. If enabled, you will be prompted
-    /// interactively to enter a passphrase.
+    /// Backups contain the master key and are always encrypted; you will be
+    /// prompted interactively to enter a passphrase.
     ///
     ///
     #[clap(verbatim_doc_comment)]
-    Backup {
-        #[clap(long, short = 'e')]
-        encrypt: bool,
-    },
+    Backup,
 
     /// Restore a wallet from a backup file.
     ///
@@ -320,7 +321,7 @@ fn main() -> Result<(), TakerError> {
             args.command,
             Commands::Recover
                 | Commands::FetchOffers
-                | Commands::Backup { .. }
+                | Commands::Backup
                 | Commands::Restore { .. }
                 | Commands::OpenSwap { .. }
         ),
@@ -380,7 +381,12 @@ fn main() -> Result<(), TakerError> {
         tor_auth_password: args.tor_auth.clone().or_else(|| {
             (!file_config.tor_auth_password.is_empty()).then_some(file_config.tor_auth_password)
         }),
-        password: args.password.clone(),
+        // CLI flag wins; otherwise fall back to the environment variable,
+        // which unlike `-p` does not expose the passphrase in the process list.
+        password: args
+            .password
+            .clone()
+            .or_else(|| std::env::var("OPENSWAP_WALLET_PASSWORD").ok()),
         wallet_name: wallet_name.clone(),
         ..TakerInitConfig::default()
     }
@@ -654,9 +660,9 @@ fn main() -> Result<(), TakerError> {
         Commands::Recover => {
             taker.recover_active_swap()?;
         }
-        Commands::Backup { encrypt } => {
+        Commands::Backup => {
             let wallet = lock_debug!(taker.get_wallet().read()).unwrap();
-            Wallet::backup_interactive(&wallet, *encrypt);
+            Wallet::backup_interactive(&wallet);
         }
         Commands::Restore { .. } => {
             // Handled above before taker init

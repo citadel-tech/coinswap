@@ -14,7 +14,7 @@ use std::{
 
 use std::collections::{HashMap, HashSet};
 
-use crate::security::KeyMaterial;
+use crate::security::{KeyMaterial, SecurityError};
 
 use bip39::Mnemonic;
 #[cfg(not(feature = "integration-test"))]
@@ -25,7 +25,7 @@ use bitcoin::{
     block::Header,
     key::TapTweak,
     secp256k1,
-    secp256k1::{Keypair, Secp256k1, SecretKey},
+    secp256k1::{Keypair, Secp256k1, SecretKey, XOnlyPublicKey},
     sighash::{EcdsaSighashType, Prevouts, SighashCache, TapSighashType},
     Address, Amount, Network, OutPoint, PublicKey, Script, ScriptBuf, Transaction, TxOut, Txid,
     Weight,
@@ -34,6 +34,7 @@ use bitcoind::bitcoincore_rpc::bitcoincore_rpc_json::{ListUnspentResultEntry, Sc
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::Path;
+use zeroize::Zeroize;
 
 use crate::{
     lock_debug,
@@ -103,10 +104,11 @@ pub struct Wallet {
     pub(crate) blockchain: AnyBlockchain,
     pub(crate) wallet_file_path: PathBuf,
     pub(crate) store: WalletStore,
-    /// Optional encryption material derived from the user’s passphrase.
-    /// If present, wallet data will be encrypted/decrypted using AES-GCM.
-    /// The original passphrase is never stored—only the derived key is kept in memory.
-    pub(crate) store_enc_material: Option<KeyMaterial>,
+    /// Encryption material derived from the user’s passphrase. Wallet files
+    /// are always encrypted; this key encrypts the store on disk and seals
+    /// the master key in memory. The original passphrase is never stored —
+    /// only the derived key is kept in memory.
+    pub(crate) store_enc_material: KeyMaterial,
     /// Transient: seed phrase of a wallet created by
     /// [`Wallet::init`]. Read once via [`Wallet::take_new_mnemonic`].
     pub(super) new_mnemonic: Option<SecretMnemonic>,
@@ -153,7 +155,11 @@ impl PartialEq for Wallet {
         //self.store == other.store
         //avoided filename
         self.store.network == other.store.network &&
-        self.store.master_key == other.store.master_key &&
+        // Compare master keys by plaintext (each unsealed with its own
+        // passphrase), not by sealed bytes, so wallets sealed under
+        // different passphrases/nonces still compare equal.
+        self.store.master_key.plaintext_with(&self.store_enc_material) ==
+        other.store.master_key.plaintext_with(&other.store_enc_material) &&
         self.store.external_index == other.store.external_index &&
         self.store.internal_index == other.store.internal_index &&
         self.store.offer_maxsize == other.store.offer_maxsize &&
@@ -405,7 +411,7 @@ impl Wallet {
     pub fn init(
         path: &Path,
         blockchain: AnyBlockchain,
-        store_enc_material: Option<KeyMaterial>,
+        store_enc_material: KeyMaterial,
     ) -> Result<Self, WalletError> {
         let network = blockchain.get_blockchain_info()?.chain;
 
@@ -423,6 +429,8 @@ impl Wallet {
             .to_string();
 
         let wallet_birthday = blockchain.get_block_count()?;
+        // WalletStore::init seals the master key before the first write, so
+        // the plaintext key never reaches disk.
         let store = WalletStore::init(
             file_name,
             path,
@@ -481,14 +489,57 @@ impl Wallet {
 
     /// Load wallet data from file and connect to a blockchain backend.
     /// In case of core rpc, core wallet name, and wallet_id field in the file should match.
-    /// If encryption material is provided, decrypt the wallet store using it.
+    ///
+    /// Wallet files are always encrypted. A legacy unencrypted file is
+    /// migrated on load: it is resealed under the supplied passphrase and
+    /// rewritten encrypted. Loading a legacy file without a passphrase, or
+    /// creating/loading without one where encryption is impossible, fails.
     pub(crate) fn load(
         path: &Path,
         blockchain: AnyBlockchain,
         password: Option<String>,
     ) -> Result<Self, WalletError> {
-        let (store, store_enc_material) =
-            WalletStore::read_from_disk(path, password.unwrap_or_default())?;
+        let password = password.filter(|p| !p.is_empty());
+
+        let migration_material = |store: WalletStore,
+                                  password: Option<String>|
+         -> Result<(WalletStore, KeyMaterial), WalletError> {
+            let password = password.ok_or_else(|| {
+                WalletError::General(format!(
+                    "wallet file {path:?} is unencrypted (legacy format); \
+                     provide the wallet passphrase to migrate it to encrypted storage"
+                ))
+            })?;
+            let material = KeyMaterial::new_from_password(Some(password))
+                .expect("a non-empty passphrase always yields key material");
+            Ok((store, material))
+        };
+
+        let (store, store_enc_material, migrated) =
+            match WalletStore::read_from_disk(path, password.clone().unwrap_or_default()) {
+                Ok((store, Some(material))) => (store, material, false),
+                // Legacy plaintext file, no passphrase supplied.
+                Ok((store, None)) => {
+                    let (store, material) = migration_material(store, password.clone())?;
+                    (store, material, true)
+                }
+                // Passphrase supplied for a legacy plaintext file: read it as
+                // plaintext, then migrate.
+                Err(WalletError::Security(SecurityError::Format(msg)))
+                    if password.is_some() && msg.contains("expected encrypted file") =>
+                {
+                    let (store, None) = WalletStore::read_from_disk(path, String::new())? else {
+                        unreachable!("a plaintext wallet file yields no encryption material")
+                    };
+                    let (store, material) = migration_material(store, password.clone())?;
+                    (store, material, true)
+                }
+                Err(e) => return Err(e),
+            };
+        // Wipe the cleartext passphrase; only the derived key material is kept.
+        if let Some(mut p) = password {
+            p.zeroize();
+        }
 
         if let AnyBlockchain::CoreRPC(core) = &blockchain {
             if core.wallet_name() != store.file_name {
@@ -517,7 +568,7 @@ impl Wallet {
             store.incoming_swapcoins.len(),
             store.outgoing_swapcoins.len()
         );
-        Ok(Self {
+        let mut wallet = Self {
             blockchain,
             wallet_file_path: path.to_path_buf(),
             store,
@@ -525,14 +576,21 @@ impl Wallet {
             new_mnemonic: None,
             locked_utxos: HashSet::new(),
             restore_scan: false,
-        })
+        };
+        wallet.seal_master_key()?;
+        if migrated {
+            // Persist the migration immediately: resealed master key and an
+            // encrypted file. Never leave the legacy plaintext file around.
+            wallet.save_to_disk()?;
+            log::info!("Migrated legacy plaintext wallet {path:?} to encrypted storage");
+        }
+        Ok(wallet)
     }
 
     /// Loads an existing wallet from the given path or initializes a new one if none exists.
     ///
-    /// Prompts the user for an encryption passphrase (unless running tests),
-    /// derives encryption key material if a passphrase is provided,
-    /// and either loads or creates the wallet accordingly.
+    /// Wallet files are always encrypted, so a passphrase is required both to
+    /// open an existing wallet and to create a new one.
     pub(crate) fn load_or_init(
         path: &Path,
         blockchain: AnyBlockchain,
@@ -545,8 +603,15 @@ impl Wallet {
             wallet
         } else {
             // wallet doesn't exists at the given path, create a new one
-
-            let store_enc_material = KeyMaterial::new_from_password(password);
+            let Some(password) = password.filter(|p| !p.is_empty()) else {
+                return Err(WalletError::General(
+                    "a passphrase is required to create a wallet; \
+                     cleartext wallet files are not supported"
+                        .to_string(),
+                ));
+            };
+            let store_enc_material = KeyMaterial::new_from_password(Some(password))
+                .expect("a non-empty passphrase always yields key material");
 
             let wallet = Wallet::init(path, blockchain, store_enc_material)?;
 
@@ -561,6 +626,49 @@ impl Wallet {
     pub(crate) fn save_to_disk(&self) -> Result<(), WalletError> {
         self.store
             .write_to_disk(&self.wallet_file_path, &self.store_enc_material)
+    }
+
+    /// Seals the master key in memory under the wallet's encryption material
+    /// and erases the plaintext copy. Called once at wallet construction
+    /// (load/restore; `WalletStore::init` seals before its first write);
+    /// afterwards the plaintext key only exists transiently inside
+    /// [`Wallet::with_master_key`].
+    pub(crate) fn seal_master_key(&mut self) -> Result<(), WalletError> {
+        self.store.master_key.seal(&self.store_enc_material)
+    }
+
+    /// Runs `f` with the plaintext master key, unsealing the in-memory key
+    /// first and erasing the plaintext copy afterwards. The plaintext key
+    /// must not escape the closure; derive whatever is needed inside it.
+    pub(crate) fn with_master_key<T>(
+        &self,
+        f: impl FnOnce(&Xpriv) -> Result<T, WalletError>,
+    ) -> Result<T, WalletError> {
+        self.store
+            .master_key
+            .with_unlocked(&self.store_enc_material, f)
+    }
+
+    /// Runs `f` with the account-level Xpriv for `address_type`
+    /// (`m/purpose'/coin_type'/0'`), erasing the account key afterwards.
+    /// Prefer this over [`Wallet::with_master_key`] whenever an account key
+    /// suffices — it shortens the master key's exposure and wipes the
+    /// derived key too.
+    pub(crate) fn with_account_key<T>(
+        &self,
+        address_type: AddressType,
+        f: impl FnOnce(&Xpriv) -> Result<T, WalletError>,
+    ) -> Result<T, WalletError> {
+        let secp = crate::utill::global_secp();
+        self.with_master_key(|master_key| {
+            let mut account = master_key.derive_priv(
+                secp,
+                &Self::get_derivation_path(address_type, self.store.network),
+            )?;
+            let result = f(&account);
+            account.private_key.non_secure_erase();
+            result
+        })
     }
 
     /// Adds a incoming swap coin to the wallet.
@@ -1294,11 +1402,8 @@ impl Wallet {
         address_type: AddressType,
     ) -> Result<HashMap<KeychainKind, String>, WalletError> {
         let secp = Secp256k1::new();
-        let derivation_path = Self::get_derivation_path(address_type, self.store.network);
-        let wallet_xpub = Xpub::from_priv(
-            &secp,
-            &self.store.master_key.derive_priv(&secp, &derivation_path)?,
-        );
+        let wallet_xpub =
+            self.with_account_key(address_type, |account| Ok(Xpub::from_priv(&secp, account)))?;
 
         // Get descriptors for external and internal keychain. Other chains are not supported yet.
         [KeychainKind::External, KeychainKind::Internal]
@@ -1369,7 +1474,9 @@ impl Wallet {
     /// Core wallet label is the master Xpub(crate) fingerint.
     pub(crate) fn get_core_wallet_label(&self) -> String {
         let secp = Secp256k1::new();
-        let m_xpub = Xpub::from_priv(&secp, &self.store.master_key);
+        let m_xpub = self
+            .with_master_key(|master_key| Ok(Xpub::from_priv(&secp, master_key)))
+            .expect("in-memory master key unsealing failed");
         m_xpub.fingerprint().to_string()
     }
 
@@ -1533,9 +1640,10 @@ impl Wallet {
                 AddressType::P2WPKH
             };
             let secp = crate::utill::global_secp();
-            let derivation_path = Self::get_derivation_path(address_type, self.store.network);
-            let master_private_key = self.store.master_key.derive_priv(secp, &derivation_path)?;
-            if hd.fingerprint == master_private_key.fingerprint(secp).to_string() {
+            let account_fingerprint = self.with_account_key(address_type, |account| {
+                Ok(account.fingerprint(secp).to_string())
+            })?;
+            if hd.fingerprint == account_fingerprint {
                 return Ok(Some(UTXOSpendInfo::SeedCoin {
                     path: format!("m/{}/{}", hd.keychain_idx, hd.index),
                     input_value: utxo.amount,
@@ -1588,10 +1696,10 @@ impl Wallet {
                 };
 
                 let secp = Secp256k1::new();
-                let derivation_path = Self::get_derivation_path(address_type, self.store.network);
-                let master_private_key =
-                    self.store.master_key.derive_priv(&secp, &derivation_path)?;
-                if fingerprint == master_private_key.fingerprint(&secp).to_string() {
+                let account_fingerprint = self.with_account_key(address_type, |account| {
+                    Ok(account.fingerprint(&secp).to_string())
+                })?;
+                if fingerprint == account_fingerprint {
                     return Ok(Some(UTXOSpendInfo::SeedCoin {
                         path: format!("m/{addr_type}/{index}"),
                         input_value: utxo.amount,
@@ -1825,12 +1933,14 @@ impl Wallet {
             let secp = crate::utill::global_secp();
             let mut accounts = Vec::with_capacity(2);
             for address_type in [AddressType::P2WPKH, AddressType::P2TR] {
+                // Public derivation suffices for history probing, so only the
+                // account xpub leaves the key closure — no secret material is
+                // held for the duration of the scan.
                 accounts.push((
                     address_type,
-                    self.store.master_key.derive_priv(
-                        secp,
-                        &Self::get_derivation_path(address_type, self.store.network),
-                    )?,
+                    self.with_account_key(address_type, |account| {
+                        Ok(Xpub::from_priv(secp, account))
+                    })?,
                 ));
             }
 
@@ -1943,8 +2053,11 @@ impl Wallet {
     pub(crate) fn derive_tor_key(&self) -> [u8; 64] {
         // Hash the 32-byte secp256k1 private key bytes RFC 8032 per 5.1.5,
         // then clamp into a valid Ed25519 expanded key.
-        let mut tor_key =
-            *sha512::Hash::hash(&self.store.master_key.private_key.secret_bytes()).as_byte_array();
+        let mut tor_key = self
+            .with_master_key(|mk| {
+                Ok(*sha512::Hash::hash(&mk.private_key.secret_bytes()).as_byte_array())
+            })
+            .expect("in-memory master key unsealing failed");
         tor_key[0] &= 248;
         tor_key[31] &= 127;
         tor_key[31] |= 64;
@@ -1956,20 +2069,18 @@ impl Wallet {
         &self,
     ) -> Result<(SecretKey, PublicKey, ChainCode), WalletError> {
         let secp = Secp256k1::new();
-        let Xpriv {
-            private_key,
-            chain_code,
-            ..
-        } = self
-            .store
-            .master_key
-            .derive_priv(&secp, &[ChildNumber::from_hardened_idx(175)?])?;
-
-        let public_key = PublicKey {
-            compressed: true,
-            inner: private_key.public_key(&secp),
-        };
-        Ok((private_key, public_key, chain_code))
+        self.with_master_key(|mk| {
+            let mut child = mk.derive_priv(&secp, &[ChildNumber::from_hardened_idx(175)?])?;
+            let public_key = PublicKey {
+                compressed: true,
+                inner: child.private_key.public_key(&secp),
+            };
+            // The returned SecretKey is caller-owned by design; erase the
+            // intermediate extended key it was copied out of.
+            let result = (child.private_key, public_key, child.chain_code);
+            child.private_key.non_secure_erase();
+            Ok(result)
+        })
     }
 
     /// Refreshes the UTXO cache by adding only new UTXOs while preserving existing ones.
@@ -2073,29 +2184,29 @@ impl Wallet {
                         address_type,
                         ..
                     } => {
-                        let base_derivation =
-                            Self::get_derivation_path(*address_type, self.store.network);
-                        let master_private_key = self
-                            .store
-                            .master_key
-                            .derive_priv(&secp, &base_derivation)
+                        // Prevouts only need the script_pubkey: derive it
+                        // from the account xpub so no secret material is
+                        // involved in this pass at all.
+                        let account_xpub = self
+                            .with_account_key(*address_type, |account| {
+                                Ok(Xpub::from_priv(&secp, account))
+                            })
                             .unwrap();
-                        let privkey = master_private_key
-                            .derive_priv(&secp, &DerivationPath::from_str(path).unwrap())
+                        let child_pubkey = account_xpub
+                            .derive_pub(&secp, &DerivationPath::from_str(path).unwrap())
                             .unwrap()
-                            .private_key;
+                            .public_key;
 
                         let script_pubkey = match address_type {
                             AddressType::P2WPKH => {
                                 let pubkey = PublicKey {
                                     compressed: true,
-                                    inner: privkey.public_key(&secp),
+                                    inner: child_pubkey,
                                 };
                                 ScriptBuf::new_p2wpkh(&pubkey.wpubkey_hash().unwrap())
                             }
                             AddressType::P2TR => {
-                                let keypair = Keypair::from_secret_key(&secp, &privkey);
-                                let (x_only_pubkey, _) = keypair.x_only_public_key();
+                                let x_only_pubkey = XOnlyPublicKey::from(child_pubkey);
                                 ScriptBuf::new_p2tr(&secp, x_only_pubkey, None)
                             }
                         };
@@ -2162,13 +2273,11 @@ impl Wallet {
                     address_type,
                     ..
                 } => {
-                    let base_derivation =
-                        Self::get_derivation_path(address_type, self.store.network);
-                    let master_private_key =
-                        self.store.master_key.derive_priv(&secp, &base_derivation)?;
-                    let privkey = master_private_key
-                        .derive_priv(&secp, &DerivationPath::from_str(&path)?)?
-                        .private_key;
+                    let mut privkey = self.with_account_key(address_type, |account| {
+                        Ok(account
+                            .derive_priv(&secp, &DerivationPath::from_str(&path)?)?
+                            .private_key)
+                    })?;
 
                     match address_type {
                         AddressType::P2WPKH => {
@@ -2196,7 +2305,7 @@ impl Wallet {
                             input.witness.push(pubkey.to_bytes());
                         }
                         AddressType::P2TR => {
-                            let keypair = Keypair::from_secret_key(&secp, &privkey);
+                            let mut keypair = Keypair::from_secret_key(&secp, &privkey);
 
                             // Calculate taproot key-spend sighash using all prevouts
                             let sighash = SighashCache::new(&tx_clone)
@@ -2211,8 +2320,10 @@ impl Wallet {
                             let signature = secp.sign_schnorr(&msg, &tweaked_keypair.to_keypair());
 
                             input.witness.push(signature.as_ref());
+                            keypair.non_secure_erase();
                         }
                     }
+                    privkey.non_secure_erase();
                 }
                 UTXOSpendInfo::TimelockContract {
                     swapcoin_multisig_redeemscript,
@@ -3274,15 +3385,17 @@ fn utxo_matches_tx(tx: &Transaction, utxo: &ListUnspentResultEntry) -> bool {
 }
 
 /// scriptPubKey at `(keychain, index)` under an already-derived account key.
-/// Taking the account keeps the expensive hardened derivation out of index loops.
+/// Taking the account keeps the expensive hardened derivation out of index
+/// loops, and using the account *xpub* means watch/probe paths never hold
+/// any secret material.
 fn derive_child_script(
-    account: &Xpriv,
+    account: &Xpub,
     address_type: AddressType,
     keychain: KeychainKind,
     index: u32,
 ) -> Result<ScriptBuf, WalletError> {
     let secp = crate::utill::global_secp();
-    let child = account.derive_priv(
+    let child = account.derive_pub(
         secp,
         &DerivationPath::from(vec![
             ChildNumber::from_normal_idx(keychain.index_num())?,
@@ -3293,7 +3406,7 @@ fn derive_child_script(
         AddressType::P2WPKH => {
             let pk = PublicKey {
                 compressed: true,
-                inner: child.private_key.public_key(secp),
+                inner: child.public_key,
             };
             ScriptBuf::new_p2wpkh(
                 &pk.wpubkey_hash()
@@ -3301,8 +3414,7 @@ fn derive_child_script(
             )
         }
         AddressType::P2TR => {
-            let keypair = Keypair::from_secret_key(secp, &child.private_key);
-            let (xonly, _parity) = keypair.x_only_public_key();
+            let xonly = XOnlyPublicKey::from(child.public_key);
             ScriptBuf::new_p2tr(secp, xonly, None)
         }
     })
@@ -3320,13 +3432,13 @@ impl Wallet {
 
         // Add the descriptor utxos to the watch list.
         for address_type in [AddressType::P2WPKH, AddressType::P2TR] {
-            // Derive the account-level Xpriv once per address_type; every
-            // (keychain, index) below it is then a cheap child derive.
-            let account = self.store.master_key.derive_priv(
-                secp,
-                &Self::get_derivation_path(address_type, self.store.network),
-            )?;
-            let fingerprint = account.fingerprint(secp).to_string();
+            // Watching only needs public derivation: take the account xpub
+            // out of the key closure and hold no secret material for the
+            // duration of the watch loop. Every (keychain, index) below it is
+            // then a cheap public child derive.
+            let account =
+                self.with_account_key(address_type, |account| Ok(Xpub::from_priv(secp, account)))?;
+            let fingerprint = account.fingerprint().to_string();
             let is_taproot = matches!(address_type, AddressType::P2TR);
             for keychain in [KeychainKind::External, KeychainKind::Internal] {
                 for index in 0..=self.max_watch_index(keychain)? {
@@ -3757,13 +3869,15 @@ mod prevout_contract_tests {
 
     fn test_wallet(path: &Path) -> Wallet {
         let master_key = Xpriv::new_master(bitcoin::Network::Regtest, &[42; 32]).unwrap();
+        let enc_material =
+            KeyMaterial::new_from_password(Some("test-password".to_string())).unwrap();
         let store = WalletStore::init(
             "prevout-contract-test".to_string(),
             path,
             bitcoin::Network::Regtest,
             master_key,
             None,
-            &None,
+            &enc_material,
         )
         .unwrap();
 
@@ -3774,7 +3888,7 @@ mod prevout_contract_tests {
             blockchain,
             wallet_file_path: path.to_path_buf(),
             store,
-            store_enc_material: None,
+            store_enc_material: enc_material,
             new_mnemonic: None,
             locked_utxos: HashSet::new(),
             restore_scan: false,
@@ -3867,7 +3981,8 @@ mod prevout_contract_tests {
             .prevout_to_contract_map
             .contains_key(&new_prevout));
 
-        let (reloaded_store, _) = WalletStore::read_from_disk(&wallet_path, String::new()).unwrap();
+        let (reloaded_store, _) =
+            WalletStore::read_from_disk(&wallet_path, "test-password".to_string()).unwrap();
         assert_eq!(
             reloaded_store.prevout_to_contract_map.get(&prevout),
             Some(&approved_contract)
@@ -3958,25 +4073,28 @@ mod restore_history_probe_tests {
         url
     }
 
-    fn account_for(address_type: AddressType) -> Xpriv {
+    fn account_for(address_type: AddressType) -> Xpub {
+        let secp = crate::utill::global_secp();
         let master = Xpriv::new_master(bitcoin::Network::Regtest, &MASTER_SEED).unwrap();
-        master
+        let account = master
             .derive_priv(
-                crate::utill::global_secp(),
+                secp,
                 &Wallet::get_derivation_path(address_type, bitcoin::Network::Regtest),
             )
-            .unwrap()
+            .unwrap();
+        Xpub::from_priv(secp, &account)
     }
 
     fn stub_wallet(path: &Path, url: String) -> Wallet {
         let master_key = Xpriv::new_master(bitcoin::Network::Regtest, &MASTER_SEED).unwrap();
+        let enc_material = KeyMaterial::new_ephemeral();
         let store = WalletStore::init(
             "restore-probe-test".to_string(),
             path,
             bitcoin::Network::Regtest,
             master_key,
             None,
-            &None,
+            &enc_material,
         )
         .unwrap();
         let electrum = Electrum::new(&crate::wallet::ElectrumConfig {
@@ -3989,7 +4107,7 @@ mod restore_history_probe_tests {
             blockchain: AnyBlockchain::Electrum(electrum),
             wallet_file_path: path.to_path_buf(),
             store,
-            store_enc_material: None,
+            store_enc_material: enc_material,
             new_mnemonic: None,
             locked_utxos: HashSet::new(),
             restore_scan: true,

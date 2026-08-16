@@ -66,6 +66,10 @@ impl TakerCli {
         args.push("--WALLET");
         args.push("test_wallet");
 
+        // Wallet files are always encrypted; a passphrase is required.
+        args.push("--PASSWORD");
+        args.push("integration-test");
+
         args.push("--ZMQ");
         args.push(&self.zmq_addr);
 

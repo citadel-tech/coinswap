@@ -82,8 +82,8 @@ fn send_and_mine(
 }
 
 #[test]
-fn plainwallet_plainbackup_plainrestore() {
-    info!("Running Test: Creating Wallet file, backing it up, then receive a payment, and restore backup");
+fn legacy_plain_backup_restores_into_encrypted_wallet() {
+    info!("Running Test: legacy plaintext backup restores into an encrypted wallet");
 
     let (
         original_wallet,
@@ -92,33 +92,42 @@ fn plainwallet_plainbackup_plainrestore() {
         mut bitcoind,
         restored_wallet_file,
         root_dir,
-    ) = setup("plain_wallet_plainbackup_plain_restore".to_string());
+    ) = setup("legacy_plain_backup_restore".to_string());
+
+    let km = KeyMaterial::new_from_password(Some("integration-test".to_string())).unwrap();
 
     let mut wallet = Wallet::init(
         &original_wallet,
         AnyBlockchain::CoreRPC(CoreRPC::new(&rpc_config).unwrap()),
-        None,
+        km,
     )
     .unwrap();
 
     let addr = wallet.get_next_external_address(AddressType::P2TR).unwrap();
     send_and_mine(&mut bitcoind, &addr, 0.05, 1).unwrap();
 
-    let _ = wallet.backup(&wallet_backup_file, None);
+    // Simulate a legacy plaintext backup file; backups are always encrypted now.
+    let backup_json = serde_json::to_string_pretty(&WalletBackup::from(&wallet)).unwrap();
+    fs::write(&wallet_backup_file, backup_json).unwrap();
 
     let addr = wallet.get_next_external_address(AddressType::P2TR).unwrap();
     send_and_mine(&mut bitcoind, &addr, 0.05, 1).unwrap();
 
     wallet.sync_and_save(&openswap::utill::NO_SHUTDOWN).unwrap();
 
-    let (backup, _) =
+    let (backup, material) =
         load_sensitive_struct::<WalletBackup, SerdeJson>(&wallet_backup_file, None).unwrap();
+    assert!(material.is_none(), "legacy backup must be plaintext");
 
+    // Restore under a *different* passphrase: the restored wallet is encrypted
+    // with it, and wallet equality compares the underlying master keys.
+    let restore_km =
+        KeyMaterial::new_from_password(Some("restored-wallet-password".to_string())).unwrap();
     let restored_wallet = Wallet::restore(
         &backup,
         &restored_wallet_file,
         &BackendConfig::CoreRpc(rpc_config.clone()),
-        None,
+        restore_km,
     )
     .unwrap();
 
@@ -129,7 +138,7 @@ fn plainwallet_plainbackup_plainrestore() {
 
     cleanup(&mut bitcoind, &root_dir);
 
-    info!("🎉 Wallet Backup and Restore after tx test ran successfully!");
+    info!("🎉 Legacy plaintext backup migration test ran successfully!");
 }
 
 #[test]
@@ -143,7 +152,7 @@ fn encwallet_encbackup_encrestore() {
         root_dir,
     ) = setup("encwallet_encbackup_encrestore".to_string());
 
-    let km = KeyMaterial::new_from_password(Some("integration-test".to_string()));
+    let km = KeyMaterial::new_from_password(Some("integration-test".to_string())).unwrap();
 
     let mut wallet = Wallet::init(
         &original_wallet,
@@ -231,15 +240,19 @@ fn setup_electrum(test_name: &str) -> ElectrumSetup {
 }
 
 #[test]
-fn plainwallet_plainbackup_plainrestore_electrum() {
-    info!("Running Test: Electrum-backed Wallet backup-restore");
+fn legacy_plain_backup_restores_into_encrypted_wallet_electrum() {
+    info!(
+        "Running Test: Electrum-backed legacy plaintext backup restores into an encrypted wallet"
+    );
 
-    let mut s = setup_electrum("plain_wallet_plainbackup_plain_restore_electrum");
+    let mut s = setup_electrum("legacy_plain_backup_restore_electrum");
+
+    let km = KeyMaterial::new_from_password(Some("integration-test".to_string())).unwrap();
 
     let mut wallet = Wallet::init(
         &s.original_wallet,
         AnyBlockchain::Electrum(Electrum::new(&s.electrum_cfg).unwrap()),
-        None,
+        km,
     )
     .unwrap();
 
@@ -247,7 +260,9 @@ fn plainwallet_plainbackup_plainrestore_electrum() {
     send_and_mine(&mut s.bitcoind, &addr, 0.05, 1).unwrap();
     wait_for_electrs_tip(&s.bitcoind, &s.electrsd, &s.electrum_cfg);
 
-    wallet.backup(&s.backup_file, None).unwrap();
+    // Simulate a legacy plaintext backup file; backups are always encrypted now.
+    let backup_json = serde_json::to_string_pretty(&WalletBackup::from(&wallet)).unwrap();
+    fs::write(&s.backup_file, backup_json).unwrap();
 
     let addr = wallet.get_next_external_address(AddressType::P2TR).unwrap();
     send_and_mine(&mut s.bitcoind, &addr, 0.05, 1).unwrap();
@@ -255,14 +270,19 @@ fn plainwallet_plainbackup_plainrestore_electrum() {
 
     wallet.sync_and_save(&openswap::utill::NO_SHUTDOWN).unwrap();
 
-    let (backup, _) =
+    let (backup, material) =
         load_sensitive_struct::<WalletBackup, SerdeJson>(&s.backup_file, None).unwrap();
+    assert!(material.is_none(), "legacy backup must be plaintext");
 
+    // Restore under a *different* passphrase: the restored wallet is encrypted
+    // with it, and wallet equality compares the underlying master keys.
+    let restore_km =
+        KeyMaterial::new_from_password(Some("restored-wallet-password".to_string())).unwrap();
     let restored_wallet = Wallet::restore(
         &backup,
         &s.restored_wallet,
         &BackendConfig::Electrum(s.electrum_cfg.clone()),
-        None,
+        restore_km,
     )
     .unwrap();
 
@@ -272,14 +292,14 @@ fn plainwallet_plainbackup_plainrestore_electrum() {
     drop(s.electrsd);
     cleanup(&mut s.bitcoind, &s.root_dir);
 
-    info!("🎉 Electrum wallet backup-restore test ran successfully!");
+    info!("🎉 Electrum legacy plaintext backup migration test ran successfully!");
 }
 
 #[test]
 fn encwallet_encbackup_encrestore_electrum() {
     let mut s = setup_electrum("encwallet_encbackup_encrestore_electrum");
 
-    let km = KeyMaterial::new_from_password(Some("integration-test".to_string()));
+    let km = KeyMaterial::new_from_password(Some("integration-test".to_string())).unwrap();
 
     let mut wallet = Wallet::init(
         &s.original_wallet,
