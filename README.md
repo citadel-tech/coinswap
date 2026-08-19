@@ -62,6 +62,8 @@ The apps provide the full suite of OpenSwap operations at "near production" qual
 
 Check the [demo doc](./docs/demo.md) for quick setup guides.
 
+For how wallet keys and passphrases are protected — at-rest encryption, in-memory key sealing, and the exact threat model — see [wallet security](./docs/wallet-security.md).
+
 > [!NOTE]
 > These apps should be considered as "examples", rather than products. We encourage all Bitcoin wallet developers to take a look at our [examples](https://github.com/citadel-foss/openswap/tree/master/examples), [ffis](), and [apis](https://github.com/citadel-foss/openswap/blob/master/src/taker/api.rs), to build their own apps, or integrate OpenSwap within their existing apps. App ecosystem diversity is crucial for decentralization.
 

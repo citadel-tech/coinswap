@@ -36,7 +36,9 @@ impl From<&Wallet> for WalletBackup {
     fn from(wallet: &Wallet) -> Self {
         WalletBackup {
             network: (wallet.store.network),
-            master_key: (wallet.store.master_key),
+            master_key: wallet
+                .with_master_key(|master_key| Ok(*master_key))
+                .expect("in-memory master key unsealing failed"),
             wallet_birthday: (wallet.store.wallet_birthday),
             file_name: (wallet.store.file_name.clone()),
         }
@@ -45,19 +47,10 @@ impl From<&Wallet> for WalletBackup {
 impl Wallet {
     /// Creates a backup of the wallet and writes it to the given path.
     ///
-    /// The backup is saved as a `.json` file. If encryption material is provided,
-    /// the backup content is encrypted before being written.
-    ///
-    /// # Behavior
-    ///
-    /// - If encryption is used, the backup content is encrypted and serialized.
-    /// - If not, a warning is printed, and the backup is stored unencrypted.
-    /// - The final backup file will have a `.json` extension.
-    pub fn backup(
-        &self,
-        path: &Path,
-        backup_enc_material: Option<KeyMaterial>,
-    ) -> Result<(), WalletError> {
+    /// The backup is saved as a `.json` file, encrypted with the provided
+    /// key material. Backups are always encrypted: they contain the master
+    /// key, so a cleartext-on-disk form is not supported by design.
+    pub fn backup(&self, path: &Path, backup_enc_material: KeyMaterial) -> Result<(), WalletError> {
         let mut backup_path = path.join("");
         backup_path.set_extension("json");
 
@@ -65,18 +58,9 @@ impl Wallet {
 
         let backup = WalletBackup::from(self);
 
-        let backup_file_content = match backup_enc_material {
-            Some(key_material) => {
-                let encrypted = encrypt_struct(backup, &key_material).map_err(|e| {
-                    WalletError::General(format!("wallet backup encryption failed: {e:?}"))
-                })?;
-                serde_json::to_string_pretty(&encrypted)?
-            }
-            None => {
-                log::info!("Warning! The wallet backup file will be saved unencrypted!");
-                serde_json::to_string_pretty(&backup)?
-            }
-        };
+        let encrypted = encrypt_struct(backup, &backup_enc_material)
+            .map_err(|e| WalletError::General(format!("wallet backup encryption failed: {e:?}")))?;
+        let backup_file_content = serde_json::to_string_pretty(&encrypted)?;
         let mut file = fs::File::create(backup_path)?;
         file.write_all(backup_file_content.as_bytes())?;
 
@@ -101,7 +85,7 @@ impl Wallet {
         wallet_backup: &WalletBackup,
         wallet_path: &Path,
         backend_config: &BackendConfig,
-        restored_enc_material: Option<KeyMaterial>,
+        restored_enc_material: KeyMaterial,
     ) -> Result<Wallet, WalletError> {
         if wallet_path.exists() {
             return Err(WalletError::General(format!(
@@ -158,6 +142,7 @@ impl Wallet {
             // Flag to use the RESTORE_ADDRESS_GAP instead of normal gap while restoring.
             restore_scan: true,
         };
+        tmp_wallet.seal_master_key()?;
         tmp_wallet.sync_and_save(&crate::utill::NO_SHUTDOWN)?;
         tmp_wallet.restore_scan = false;
 
@@ -179,7 +164,7 @@ impl Wallet {
         wallet_path: &Path,
         backend_config: &BackendConfig,
         wallet_birthday: Option<u64>,
-        restored_enc_material: Option<KeyMaterial>,
+        restored_enc_material: KeyMaterial,
     ) -> Result<Wallet, WalletError> {
         let network = AnyBlockchain::from_config(backend_config)?
             .get_blockchain_info()?
@@ -255,9 +240,16 @@ impl Wallet {
                 }
             };
         let restore_enc_material = match KeyMaterial::new_interactive(Some(
-            "Enter restored walled encryption passphrase(empty for no encryption): ".to_string(),
+            "Enter restored wallet encryption passphrase: ".to_string(),
         )) {
-            Ok(material) => material,
+            Ok(Some(material)) => material,
+            Ok(None) => {
+                log::error!(
+                    "Wallet restore failed: a passphrase is required; \
+                     cleartext wallet files are not supported"
+                );
+                return;
+            }
             Err(err) => {
                 log::error!("Encryption passphrase prompt failed: {err}");
                 return;
@@ -273,18 +265,18 @@ impl Wallet {
             println!("Wallet restore succeeded!");
         }
     }
-    /// Interactively creates a wallet backup, optionally encrypted.
+    /// Interactively creates a wallet backup.
     ///
     /// This is a user-friendly version of the [`Wallet::backup`] method, which:
     /// - Uses the current working directory as the backup location.
-    /// - Prompts the user to input encryption material (if `encrypt` is `true`).
+    /// - Prompts the user for the encryption passphrase (backups contain the
+    ///   master key, so they are always encrypted).
     ///
     /// # Behavior
     ///
-    /// - Prompts for encryption key if `encrypt == true`.
     /// - Names the backup file as `{wallet_name}-backup.json`.
     /// - Writes the backup to the current working directory.
-    pub fn backup_interactive(wallet: &Self, encrypt: bool) {
+    pub fn backup_interactive(wallet: &Self) {
         log::info!("Initiating wallet backup!");
         let backup_name = format!("{}-backup", wallet.get_name());
         log::info!(
@@ -301,16 +293,19 @@ impl Wallet {
             }
         };
 
-        let backup_enc_material = if encrypt {
-            match KeyMaterial::new_interactive(None) {
-                Ok(material) => material,
-                Err(err) => {
-                    log::error!("Encryption passphrase prompt failed: {err}");
-                    return;
-                }
+        let backup_enc_material = match KeyMaterial::new_interactive(None) {
+            Ok(Some(material)) => material,
+            Ok(None) => {
+                log::error!(
+                    "Wallet backup failed: a passphrase is required; \
+                     cleartext backups are not supported"
+                );
+                return;
             }
-        } else {
-            None
+            Err(err) => {
+                log::error!("Encryption passphrase prompt failed: {err}");
+                return;
+            }
         };
 
         let backup_path = working_directory.join(backup_name);
