@@ -30,6 +30,8 @@ secp256k1 = { version = "0.32.0-beta.2", features = ["rand", "global-context"] }
 minreq = { version = "2.12.0", features = ["https"] }
 pbkdf2 = { version = "0.12", features = ["simple"] }
 aes-gcm = "0.10.3"
+zeroize = { version = "1", features = ["derive"] }
+tempfile = "3"
 sha2 = "0.10.9"
 rust-coinselect = "0.1.7"
 crossterm = "0.29.0"

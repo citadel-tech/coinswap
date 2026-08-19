@@ -404,11 +404,11 @@ impl Wallet {
 
         let child_derivation_path = derivation_path.child(ChildNumber::Normal { index });
 
-        Ok(self
-            .store
-            .master_key
-            .derive_priv(&secp, &child_derivation_path)?
-            .to_keypair(&secp))
+        self.with_master_key(|mk| {
+            Ok(mk
+                .derive_priv(&secp, &child_derivation_path)?
+                .to_keypair(&secp))
+        })
     }
 
     /// Derives the fidelity redeemscript from bond values at a given index.

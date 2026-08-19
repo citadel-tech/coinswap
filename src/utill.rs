@@ -960,20 +960,24 @@ pub(crate) fn get_tor_hostname(
 }
 
 /// Deserialize any generic type from a CBOR file. The type should impl [serde::de::Deserialize].
-pub fn deserialize_from_cbor<T>(mut reader: Vec<u8>) -> Result<T, serde_cbor::Error>
+pub fn deserialize_from_cbor<T>(reader: &[u8]) -> Result<T, serde_cbor::Error>
 where
     T: serde::de::DeserializeOwned,
 {
-    match serde_cbor::from_slice::<T>(&reader) {
+    match serde_cbor::from_slice::<T>(reader) {
         Ok(store) => Ok(store),
         Err(e) => {
             let err_string = format!("{e:?}");
             if err_string.contains("code: TrailingData") {
                 // Defensive error handling - monitor logs to confirm wallet files stay clean.
                 log::info!("Wallet file has trailing data, trying to restore");
+                let mut end = reader.len();
                 loop {
-                    reader.pop();
-                    match serde_cbor::from_slice::<T>(&reader) {
+                    if end == 0 {
+                        break Err(e);
+                    }
+                    end -= 1;
+                    match serde_cbor::from_slice::<T>(&reader[..end]) {
                         Ok(store) => break Ok(store),
                         Err(_) => continue,
                     }

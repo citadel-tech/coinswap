@@ -563,7 +563,7 @@ impl Taker {
     }
 
     /// Initialize a new taker. The backend is resolved from `config` via [`TakerInitConfig::backend`].
-    pub fn init(config: TakerInitConfig) -> Result<Self, TakerError> {
+    pub fn init(mut config: TakerInitConfig) -> Result<Self, TakerError> {
         // Init the Wallet
         let wallet_name = config.wallet_name.clone();
 
@@ -586,7 +586,10 @@ impl Taker {
         if let AnyBlockchain::CoreRPC(core) = &blockchain {
             core.check_node_requirements()?;
         }
-        let wallet = Wallet::load_or_init(&wallet_path, blockchain, config.password.clone())?;
+        // Take the passphrase out of the config: the wallet keeps the derived
+        // key material, so the cleartext passphrase must not linger in the
+        // long-lived server config.
+        let wallet = Wallet::load_or_init(&wallet_path, blockchain, config.password.take())?;
 
         // Init Watch Service
         let (watch_service, registry, initial_sync_complete) =

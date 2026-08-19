@@ -730,6 +730,9 @@ impl TestFramework {
                         .with_backend(backend)
                         .with_nostr_relays(vec![nostr_relay_url.clone()]);
                     config.wallet_name = taker_id;
+                    // Wallet files are always encrypted; tests use a fixed
+                    // passphrase (PBKDF2 rounds are 1 under `integration-test`).
+                    config.password = Some("integration-test".to_string());
                     let mut taker = Taker::init(config).unwrap();
                     taker.behavior = behavior;
                     taker
@@ -768,6 +771,9 @@ impl TestFramework {
                         fidelity_timelock: 950,     // ~950 blocks for test
                         network: bitcoin::Network::Regtest,
                         nostr_relays: vec![nostr_relay_url.clone()],
+                        // Wallet files are always encrypted; tests use a fixed
+                        // passphrase (PBKDF2 rounds are 1 under `integration-test`).
+                        password: Some("integration-test".to_string()),
                         ..MakerServerConfig::default()
                     }
                     .with_backend(backend);
@@ -848,6 +854,9 @@ impl TestFramework {
             .with_backend(backend)
             .with_nostr_relays(vec![self.nostr_relay_url.clone()]);
         config.wallet_name = taker_id;
+        // Must match the passphrase set in `TestFramework::init`, or the
+        // re-init cannot decrypt the wallet.
+        config.password = Some("integration-test".to_string());
         config
     }
 

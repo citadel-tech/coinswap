@@ -126,6 +126,8 @@ SUBCOMMANDS:
 
 ### Key Points About Command Arguments
 
+- The `-p` or `--PASSWORD` option sets the wallet encryption passphrase. It is **required** when creating a new wallet and to open an encrypted one — wallet files are always encrypted (see [wallet security](./wallet-security.md)). Prefer the `OPENSWAP_WALLET_PASSWORD` environment variable: a command-line value is visible in the process list and shell history.
+
 - The `-r` or `--ADDRESS:PORT` option specifies the Bitcoin Core RPC address and port. By default, this is set to `127.0.0.1:38332`.
 
 - The `-a` or `--USER:PASSWORD` option specifies the Bitcoin Core RPC authentication. By default, this is set to **`user:password`**.
