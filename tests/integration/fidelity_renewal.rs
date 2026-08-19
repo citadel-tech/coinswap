@@ -170,6 +170,47 @@ fn test_fidelity_auto_renewal() {
     );
     test_framework.assert_log("Successfully created fidelity bond", log_path);
 
+    // ---- Regression check for issue #702 (fixed in #769, regressed in #758) ----
+    // The nostr broadcast thread must pick up the renewed bond instead of
+    // re-announcing the stale one it captured at startup.
+    let new_bond_outpoint = {
+        let wallet_read = maker.wallet.read().unwrap();
+        let idx = wallet_read
+            .get_highest_fidelity_index()
+            .unwrap()
+            .expect("renewed bond must exist");
+        wallet_read
+            .get_fidelity_bonds()
+            .get(idx as usize)
+            .unwrap()
+            .outpoint()
+    };
+
+    let expected_broadcast_log = format!(
+        "Publishing fidelity bond to Nostr | outpoint={}",
+        new_bond_outpoint
+    );
+    log::info!(
+        "Waiting for nostr re-broadcast of renewed bond {} (up to 90 seconds)...",
+        new_bond_outpoint
+    );
+
+    let mut rebroadcast_detected = false;
+    for i in 0..18 {
+        thread::sleep(Duration::from_secs(5));
+        let log_contents = std::fs::read_to_string(log_path).unwrap();
+        if log_contents.contains(&expected_broadcast_log) {
+            log::info!("Nostr re-broadcast of renewed bond detected at check {}", i);
+            rebroadcast_detected = true;
+            break;
+        }
+    }
+    assert!(
+        rebroadcast_detected,
+        "Nostr thread kept broadcasting a stale fidelity bond — renewed bond {} was never announced (issue #702 regression)",
+        new_bond_outpoint
+    );
+
     // Shutdown
     maker.shutdown.store(true, Relaxed);
     let _ = maker_thread.join();

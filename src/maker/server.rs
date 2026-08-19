@@ -16,7 +16,7 @@ use crate::maker::rpc::server::MakerRpc;
 use crate::{
     lock_debug,
     maker::nostr::broadcast_bond_on_nostr,
-    protocol::common_messages::{FidelityProof, MakerToTakerMessage, TakerToMakerMessage},
+    protocol::common_messages::{MakerToTakerMessage, TakerToMakerMessage},
     utill::{HEART_BEAT_INTERVAL, MAX_RPC_MESSAGE_SIZE},
     wallet::{Blockchain, RecoveryReport, Wallet},
 };
@@ -52,6 +52,14 @@ const FIDELITY_BOND_UPDATE_INTERVAL: Duration = Duration::from_secs(30);
 /// Fidelity bond update interval (production): 600 seconds (~1 block).
 #[cfg(not(feature = "integration-test"))]
 const FIDELITY_BOND_UPDATE_INTERVAL: Duration = Duration::from_secs(600);
+
+/// Nostr bond re-broadcast interval (testing): 30 seconds.
+#[cfg(feature = "integration-test")]
+const NOSTR_BROADCAST_INTERVAL: Duration = Duration::from_secs(30);
+
+/// Nostr bond re-broadcast interval (production): 30 minutes.
+#[cfg(not(feature = "integration-test"))]
+const NOSTR_BROADCAST_INTERVAL: Duration = Duration::from_secs(30 * 60);
 
 /// Start the maker server.
 pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
@@ -95,8 +103,8 @@ pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
             "[{}] Setting up fidelity bond...",
             maker.config.network_port
         );
-        let fidelity_proof = maker.setup_fidelity_bond(maker_address)?;
-        spawn_nostr_broadcast_thread(&maker, fidelity_proof)?;
+        maker.setup_fidelity_bond(maker_address)?;
+        spawn_nostr_broadcast_thread(&maker)?;
         log::info!("[{}] Checking swap liquidity...", maker.config.network_port);
         maker.check_swap_liquidity()?;
     }
@@ -286,10 +294,10 @@ pub fn start_server(maker: Arc<MakerServer>) -> Result<(), MakerError> {
 }
 
 /// Spawn a background thread for nostr bond announcements.
-fn spawn_nostr_broadcast_thread(
-    maker: &Arc<MakerServer>,
-    fidelity: FidelityProof,
-) -> Result<(), MakerError> {
+///
+/// The thread re-reads `highest_fidelity_proof` on every broadcast cycle so
+/// that bond renewals are picked up.
+fn spawn_nostr_broadcast_thread(maker: &Arc<MakerServer>) -> Result<(), MakerError> {
     log::info!(
         "[{}] Spawning nostr background task",
         maker.config.network_port
@@ -300,42 +308,44 @@ fn spawn_nostr_broadcast_thread(
     let handle = thread::Builder::new()
         .name("nostr-thread".to_string())
         .spawn(move || {
-            // Initial broadcast
-            if let Err(e) = broadcast_bond_on_nostr(
-                fidelity.clone(),
-                &relays,
-                &maker_clone.config,
-                &maker_clone.shutdown,
-            ) {
-                log::warn!("Initial nostr broadcast failed: {:?}", e);
-            }
-
-            let interval = Duration::from_secs(30 * 60); // 30 minutes
             let tick = Duration::from_secs(2);
-            let mut elapsed = Duration::ZERO;
+            // Start saturated so the first iteration broadcasts immediately.
+            let mut elapsed = NOSTR_BROADCAST_INTERVAL;
 
-            while !maker_clone.shutdown.load(Ordering::Acquire) {
+            while !maker_clone.shutdown.load(Ordering::Relaxed) {
+                if elapsed >= NOSTR_BROADCAST_INTERVAL {
+                    elapsed = Duration::ZERO;
+
+                    let fidelity = match lock_debug!(maker_clone.highest_fidelity_proof.read()) {
+                        Ok(guard) => guard.clone(),
+                        Err(e) => {
+                            log::error!("Failed to read highest_fidelity_proof: {:?}", e);
+                            return;
+                        }
+                    };
+
+                    match fidelity {
+                        Some(proof) => {
+                            log::debug!("Pinging nostr relays with bond announcement");
+                            if let Err(e) = broadcast_bond_on_nostr(
+                                proof,
+                                &relays,
+                                &maker_clone.config,
+                                &maker_clone.shutdown,
+                            ) {
+                                log::warn!("Nostr broadcast failed: {:?}", e);
+                            }
+                        }
+                        None => {
+                            log::warn!("No fidelity proof available for nostr broadcast");
+                        }
+                    }
+                }
+
                 if !maker_clone.wait_for_shutdown(tick) {
                     break;
                 }
                 elapsed += tick;
-
-                if elapsed < interval {
-                    continue;
-                }
-
-                elapsed = Duration::ZERO;
-
-                log::debug!("Re-pinging nostr relays with bond announcement");
-
-                if let Err(e) = broadcast_bond_on_nostr(
-                    fidelity.clone(),
-                    &relays,
-                    &maker_clone.config,
-                    &maker_clone.shutdown,
-                ) {
-                    log::warn!("Nostr re-ping failed: {:?}", e);
-                }
             }
 
             log::info!("Nostr background task stopped");
