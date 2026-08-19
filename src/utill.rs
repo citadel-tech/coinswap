@@ -1583,4 +1583,34 @@ mod tests {
             assert!(msg.contains("Details"));
         }
     }
+
+    #[test]
+    fn test_parse_proxy_auth() {
+        // Happy path: exactly one colon splits into (user, password).
+        let (user, passwd) = parse_proxy_auth("alice:secret").unwrap();
+        assert_eq!(user, "alice");
+        assert_eq!(passwd, "secret");
+
+        // Empty halves are preserved as-is.
+        assert_eq!(
+            parse_proxy_auth(":secret").unwrap(),
+            (String::new(), "secret".to_string())
+        );
+        assert_eq!(
+            parse_proxy_auth("alice:").unwrap(),
+            ("alice".to_string(), String::new())
+        );
+
+        // No colon -> not exactly two parts -> rejected.
+        assert!(matches!(
+            parse_proxy_auth("noseparator"),
+            Err(NetError::InvalidNetworkAddress)
+        ));
+
+        // More than one colon (e.g. a password containing ':') -> rejected.
+        assert!(matches!(
+            parse_proxy_auth("alice:sec:ret"),
+            Err(NetError::InvalidNetworkAddress)
+        ));
+    }
 }
