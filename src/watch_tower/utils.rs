@@ -10,12 +10,17 @@ use bitcoin::{
     Block, Transaction, Txid,
 };
 
-use crate::watch_tower::{
-    registry_storage::FileRegistry, watcher::Role, watcher_error::WatcherError,
+use crate::{
+    wallet::{MAX_FIDELITY_TIMELOCK, MIN_FIDELITY_TIMELOCK},
+    watch_tower::{registry_storage::FileRegistry, watcher::Role, watcher_error::WatcherError},
 };
 
 /// Maximum number of txids to track for cache.
 const MAX_SEEN_TXIDS: usize = 5_000;
+/// Maximum payload size for a 56-byte onion label, `#`, and a 10-digit expiry height.
+const MAX_FIDELITY_ANNOUNCEMENT_BYTES: usize = 67;
+/// Minimum bond value accepted for maker discovery to prevent cheap dust-bond spam.
+const MIN_FIDELITY_BOND_AMOUNT_SATS: u64 = 10_000;
 
 /// Bounded deduplication.
 /// Combines HashSet for O(1) lookup with VecDeque for ordering.
@@ -42,65 +47,65 @@ fn extract_op_return_data(script: &[u8]) -> Option<&[u8]> {
         return None; // OP_RETURN
     }
 
-    let (data_start, data_len) = match script.get(1)? {
-        n @ 0x01..=0x4b => (2, *n as usize),
-        0x4c => (3, *script.get(2)? as usize),
-        0x4d => {
-            let len = u16::from_le_bytes([*script.get(2)?, *script.get(3)?]) as usize;
-            (4, len)
-        }
-        _ => return None,
-    };
-
-    script.get(data_start..data_start + data_len)
-}
-
-#[cfg(not(feature = "integration-test"))]
-fn normalize_onion_address(s: &str) -> Option<String> {
-    let onion = s.strip_suffix(".onion").unwrap_or(s);
-    if onion.is_empty() || onion.contains('.') {
+    let data_len = *script.get(1)? as usize;
+    if !(1..=MAX_FIDELITY_ANNOUNCEMENT_BYTES).contains(&data_len) || script.len() != data_len + 2 {
         return None;
     }
-    Some(format!("{onion}.onion"))
+    script.get(2..)
 }
 
-#[cfg(feature = "integration-test")]
-fn is_valid_address(s: &str) -> bool {
-    use std::str::FromStr;
-
-    let parts: Vec<&str> = s.split(':').collect();
-    if parts.len() != 2 {
-        return false;
-    }
-
-    let ip = parts[0];
-    let port = parts[1];
-
-    if std::net::Ipv4Addr::from_str(ip).is_err() {
-        return false;
-    }
-
-    matches!(port.parse::<u16>(), Ok(p) if p > 0)
-}
-
-fn parse_fidelity_op_return(data: &[u8]) -> Option<FidelityAnnouncement> {
-    let decoded = std::str::from_utf8(data).ok()?;
-    let (endpoint, locktime_str) = decoded.split_once('#')?;
-
-    let expires_at_height = locktime_str.parse::<u32>().ok()?;
-
+/// Validates the canonical maker-address representation used outside the
+/// fidelity announcement payload.
+pub(crate) fn is_valid_maker_address(address: &str) -> bool {
     #[cfg(not(feature = "integration-test"))]
-    let onion = normalize_onion_address(endpoint)?;
+    {
+        let Some(label) = address.strip_suffix(".onion") else {
+            return false;
+        };
+        label.len() == 56
+            && label
+                .bytes()
+                .all(|byte| matches!(byte, b'a'..=b'z' | b'2'..=b'7'))
+    }
 
     #[cfg(feature = "integration-test")]
     {
-        if !is_valid_address(endpoint) {
-            return None;
-        }
+        let Some((ip, port)) = address.split_once(':') else {
+            return false;
+        };
+        ip.parse::<std::net::Ipv4Addr>().is_ok()
+            && matches!(port.parse::<u16>(), Ok(port) if port > 0)
+    }
+}
+
+fn normalize_onion_address(s: &str) -> Option<String> {
+    #[cfg(not(feature = "integration-test"))]
+    {
+        let onion = s.strip_suffix(".onion").unwrap_or(s);
+        let address = format!("{onion}.onion");
+        is_valid_maker_address(&address).then_some(address)
     }
 
     #[cfg(feature = "integration-test")]
-    let onion = endpoint.to_string();
+    {
+        is_valid_maker_address(s).then(|| s.to_string())
+    }
+}
+
+fn parse_fidelity_op_return(data: &[u8]) -> Option<FidelityAnnouncement> {
+    if data.len() > MAX_FIDELITY_ANNOUNCEMENT_BYTES {
+        return None;
+    }
+    let decoded = std::str::from_utf8(data).ok()?;
+    let (endpoint, locktime_str) = decoded.split_once('#')?;
+    if locktime_str.is_empty()
+        || !locktime_str.bytes().all(|byte| byte.is_ascii_digit())
+        || (locktime_str.len() > 1 && locktime_str.starts_with('0'))
+    {
+        return None;
+    }
+    let expires_at_height = locktime_str.parse::<u32>().ok()?;
+    let onion = normalize_onion_address(endpoint)?;
 
     Some(FidelityAnnouncement {
         onion,
@@ -110,25 +115,34 @@ fn parse_fidelity_op_return(data: &[u8]) -> Option<FidelityAnnouncement> {
 
 /// Process a transaction for fidelity OP_RETURN announcement.
 pub fn process_fidelity(tx: &Transaction) -> Option<FidelityAnnouncement> {
-    // Fidelity txs must be timelocked
-    if tx.lock_time == LockTime::Blocks(Height::ZERO) {
+    let tx_height = match tx.lock_time {
+        LockTime::Blocks(height) if height != Height::ZERO => height.to_consensus_u32(),
+        _ => return None,
+    };
+    if tx.input.is_empty()
+        || tx
+            .input
+            .iter()
+            .all(|input| input.sequence == bitcoin::Sequence::MAX)
+        || !(2..=3).contains(&tx.output.len())
+    {
         return None;
     }
-
-    // Expect bond + OP_RETURN (+ change)
-    if !(2..=5).contains(&tx.output.len()) {
+    let bond = tx.output.first()?;
+    if !bond.script_pubkey.is_p2wsh() || bond.value.to_sat() < MIN_FIDELITY_BOND_AMOUNT_SATS {
         return None;
     }
-
-    for txout in &tx.output {
-        if let Some(data) = extract_op_return_data(txout.script_pubkey.as_bytes()) {
-            if let Some(ann) = parse_fidelity_op_return(data) {
-                return Some(ann);
-            }
-        }
+    let announcement_output = tx.output.get(1)?;
+    if announcement_output.value.to_sat() != 0 {
+        return None;
     }
-
-    None
+    let data = extract_op_return_data(announcement_output.script_pubkey.as_bytes())?;
+    let announcement = parse_fidelity_op_return(data)?;
+    let relative_timelock = announcement.expires_at_height.checked_sub(tx_height)?;
+    if !(MIN_FIDELITY_TIMELOCK..=MAX_FIDELITY_TIMELOCK).contains(&relative_timelock) {
+        return None;
+    }
+    Some(announcement)
 }
 
 /// Processes each transaction in a block, updating watch entries and recording fidelity data.
@@ -260,15 +274,24 @@ mod tests {
         transaction, Amount, OutPoint, ScriptBuf, Sequence, TxIn, TxOut, Txid, Witness,
     };
 
-    #[cfg(not(feature = "integration-test"))]
-    const TEST_ADDR: &[u8] = b"aslkdfjbiakdsfn#500";
-    #[cfg(feature = "integration-test")]
-    const TEST_ADDR: &[u8] = b"127.0.0.1:9050#500";
-
     fn op_return(data: &[u8]) -> Vec<u8> {
         let mut script = vec![0x6a, data.len() as u8];
         script.extend_from_slice(data);
         script
+    }
+
+    fn p2wsh_script() -> ScriptBuf {
+        let mut script = vec![0x00, 0x20];
+        script.extend_from_slice(&[1u8; 32]);
+        script.into()
+    }
+
+    fn announcement(lock: u32) -> Vec<u8> {
+        let expiry = lock + MIN_FIDELITY_TIMELOCK;
+        #[cfg(not(feature = "integration-test"))]
+        return format!("{}#{expiry}", "a".repeat(56)).into_bytes();
+        #[cfg(feature = "integration-test")]
+        return format!("127.0.0.1:9050#{expiry}").into_bytes();
     }
 
     fn tx(lock: u32, inputs: Vec<OutPoint>, outputs: Vec<ScriptBuf>) -> Transaction {
@@ -296,89 +319,153 @@ mod tests {
         }
     }
 
+    fn fidelity_tx(lock: u32, payload: &[u8]) -> Transaction {
+        let mut transaction = tx(
+            lock,
+            vec![OutPoint::null()],
+            vec![p2wsh_script(), op_return(payload).into()],
+        );
+        transaction.input[0].sequence = Sequence::ZERO;
+        transaction.output[0].value = Amount::from_sat(MIN_FIDELITY_BOND_AMOUNT_SATS);
+        transaction
+    }
+
+    #[test]
+    fn test_maker_address_validation() {
+        #[cfg(not(feature = "integration-test"))]
+        {
+            let valid = format!("{}.onion", "a".repeat(56));
+            assert!(is_valid_maker_address(&valid));
+            for invalid in [
+                "",
+                "abc.onion",
+                "<script>aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onion",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1.onion",
+                "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA.onion",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onion:6102",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onion/path",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa .onion",
+                "éééééééééééééééééééééééééééééééééééééééééééééééééééééééé.onion",
+            ] {
+                assert!(!is_valid_maker_address(invalid), "accepted {:?}", invalid);
+            }
+        }
+
+        #[cfg(feature = "integration-test")]
+        {
+            assert!(is_valid_maker_address("127.0.0.1:6102"));
+            for invalid in [
+                "127.0.0.1",
+                "127.0.0.1:0",
+                "127.0.0.1:65536",
+                "localhost:6102",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onion",
+            ] {
+                assert!(!is_valid_maker_address(invalid), "accepted {:?}", invalid);
+            }
+        }
+    }
+
     #[test]
     fn test_process_fidelity_valid() {
-        let tx = tx(
-            500,
-            vec![OutPoint::null()],
-            vec![ScriptBuf::new(), op_return(TEST_ADDR).into()],
-        );
+        let lock = 500;
+        let tx = fidelity_tx(lock, &announcement(lock));
 
         let ann = process_fidelity(&tx).expect("expected valid fidelity announcement");
 
         #[cfg(not(feature = "integration-test"))]
-        assert_eq!(ann.onion, "aslkdfjbiakdsfn.onion");
+        assert_eq!(ann.onion, format!("{}.onion", "a".repeat(56)));
         #[cfg(feature = "integration-test")]
         assert_eq!(ann.onion, "127.0.0.1:9050");
-        assert_eq!(ann.expires_at_height, 500);
+        assert_eq!(ann.expires_at_height, lock + MIN_FIDELITY_TIMELOCK);
     }
 
     #[cfg(not(feature = "integration-test"))]
     #[test]
-    fn test_process_fidelity_accepts_legacy_onion_suffix() {
-        let tx = tx(
-            500,
-            vec![OutPoint::null()],
-            vec![
-                ScriptBuf::new(),
-                op_return(b"aslkdfjbiakdsfn.onion#500").into(),
-            ],
-        );
-
-        let ann = process_fidelity(&tx).expect("expected valid fidelity announcement");
-
-        assert_eq!(ann.onion, "aslkdfjbiakdsfn.onion");
-        assert_eq!(ann.expires_at_height, 500);
+    fn test_process_fidelity_rejects_noncanonical_onion_suffix_in_payload() {
+        let lock = 500;
+        let payload = format!("{}.onion#{}", "a".repeat(56), lock + MIN_FIDELITY_TIMELOCK);
+        assert!(process_fidelity(&fidelity_tx(lock, payload.as_bytes())).is_none());
     }
 
     #[test]
     fn test_process_fidelity_invalid() {
-        let tx0 = tx(
-            0,
-            vec![OutPoint::null()],
-            vec![ScriptBuf::new(), op_return(TEST_ADDR).into()],
-        );
+        let lock = 500;
+        let valid_payload = announcement(lock);
+
+        let tx0 = fidelity_tx(0, &valid_payload);
         assert!(process_fidelity(&tx0).is_none());
 
-        let tx1 = tx(1, vec![OutPoint::null()], vec![op_return(TEST_ADDR).into()]);
+        let tx1 = tx(
+            lock,
+            vec![OutPoint::null()],
+            vec![op_return(&valid_payload).into()],
+        );
         assert!(process_fidelity(&tx1).is_none());
 
-        let tx5 = tx(
-            1,
+        let tx4 = tx(
+            lock,
             vec![OutPoint::null()],
             vec![
+                p2wsh_script(),
+                op_return(&valid_payload).into(),
                 ScriptBuf::new(),
                 ScriptBuf::new(),
-                ScriptBuf::new(),
-                ScriptBuf::new(),
-                ScriptBuf::new(),
-                op_return(TEST_ADDR).into(),
             ],
         );
-        assert!(process_fidelity(&tx5).is_none());
+        assert!(process_fidelity(&tx4).is_none());
 
-        let tx_no = tx(
-            1,
-            vec![OutPoint::null()],
-            vec![ScriptBuf::new(), ScriptBuf::new()],
-        );
+        let mut tx_no = fidelity_tx(lock, &valid_payload);
+        tx_no.output[1].script_pubkey = ScriptBuf::new();
         assert!(process_fidelity(&tx_no).is_none());
 
-        let bad = op_return(b"aslkdfjbiakdsfn.onion");
-        let tx_bad = tx(
-            1,
-            vec![OutPoint::null()],
-            vec![ScriptBuf::new(), bad.into()],
-        );
-        assert!(process_fidelity(&tx_bad).is_none());
+        for hostile in [
+            b"<script>#13460".as_slice(),
+            b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa#abc".as_slice(),
+            b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1#13460".as_slice(),
+            b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa#013460".as_slice(),
+        ] {
+            assert!(process_fidelity(&fidelity_tx(lock, hostile)).is_none());
+        }
 
-        let bad2 = op_return(b"aslkdfjbiakdsfn.onion#abc");
-        let tx_bad2 = tx(
-            1,
-            vec![OutPoint::null()],
-            vec![ScriptBuf::new(), bad2.into()],
+        let mut too_small = fidelity_tx(lock, &valid_payload);
+        too_small.output[0].value = Amount::from_sat(MIN_FIDELITY_BOND_AMOUNT_SATS - 1);
+        assert!(process_fidelity(&too_small).is_none());
+
+        let mut wrong_script = fidelity_tx(lock, &valid_payload);
+        wrong_script.output[0].script_pubkey = ScriptBuf::new();
+        assert!(process_fidelity(&wrong_script).is_none());
+
+        let mut noncanonical = fidelity_tx(lock, &valid_payload);
+        let mut pushdata = vec![0x6a, 0x4c, valid_payload.len() as u8];
+        pushdata.extend_from_slice(&valid_payload);
+        noncanonical.output[1].script_pubkey = pushdata.into();
+        assert!(process_fidelity(&noncanonical).is_none());
+
+        let too_soon = format!(
+            "{}#{}",
+            endpoint_for_test(),
+            lock + MIN_FIDELITY_TIMELOCK - 1
         );
-        assert!(process_fidelity(&tx_bad2).is_none());
+        assert!(process_fidelity(&fidelity_tx(lock, too_soon.as_bytes())).is_none());
+
+        let too_late = format!(
+            "{}#{}",
+            endpoint_for_test(),
+            lock + MAX_FIDELITY_TIMELOCK + 1
+        );
+        assert!(process_fidelity(&fidelity_tx(lock, too_late.as_bytes())).is_none());
+
+        let mut final_sequence = fidelity_tx(lock, &valid_payload);
+        final_sequence.input[0].sequence = Sequence::MAX;
+        assert!(process_fidelity(&final_sequence).is_none());
+    }
+
+    fn endpoint_for_test() -> String {
+        #[cfg(not(feature = "integration-test"))]
+        return "a".repeat(56);
+        #[cfg(feature = "integration-test")]
+        return "127.0.0.1:9050".to_string();
     }
 
     #[test]

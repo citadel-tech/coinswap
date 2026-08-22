@@ -9,7 +9,6 @@ use std::{
     convert::TryFrom,
     fmt,
     io::BufWriter,
-    net::TcpStream,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -18,6 +17,9 @@ use std::{
     thread::{sleep, Builder, JoinHandle},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+
+#[cfg(feature = "integration-test")]
+use std::net::TcpStream;
 
 use bitcoin::{OutPoint, Txid};
 use serde::{Deserialize, Serialize};
@@ -34,7 +36,7 @@ use crate::{
     },
     utill::{read_message, send_message},
     wallet::{verify_fidelity_checks, AnyBlockchain, Blockchain, WalletError},
-    watch_tower::registry_storage::FileRegistry,
+    watch_tower::{registry_storage::FileRegistry, utils::is_valid_maker_address},
 };
 
 #[cfg(not(feature = "integration-test"))]
@@ -239,6 +241,7 @@ impl fmt::Display for MakerAddress {
     }
 }
 
+#[cfg(feature = "integration-test")]
 impl TryFrom<&mut TcpStream> for MakerAddress {
     type Error = std::io::Error;
     fn try_from(value: &mut TcpStream) -> Result<Self, Self::Error> {
@@ -274,9 +277,11 @@ impl OfferBookHandle {
 
     /// Gets the current snapshot of whole offerbook
     pub fn snapshot(&self) -> Result<OfferBook, TakerError> {
-        Ok(lock_debug!(self.inner.read())
+        let mut snapshot = lock_debug!(self.inner.read())
             .map_err(|_| TakerError::General("offerbook lock poisoned".into()))?
-            .clone())
+            .clone();
+        snapshot.retain_valid_makers();
+        Ok(snapshot)
     }
 
     /// Tag a maker as bad
@@ -934,6 +939,13 @@ pub struct OfferBook {
 }
 
 impl OfferBook {
+    fn retain_valid_makers(&mut self) -> usize {
+        let before = self.makers.len();
+        self.makers
+            .retain(|maker| is_valid_maker_address(&maker.address.0));
+        before.saturating_sub(self.makers.len())
+    }
+
     fn upsert_address(&mut self, address: MakerAddress, txid: Option<Txid>) {
         if self.makers.iter().any(|m| m.address == address) {
             return;
@@ -1089,7 +1101,13 @@ impl OfferBook {
     /// Reads from a path (errors if path doesn't exist).
     fn read_from_disk(path: &Path) -> Result<Self, TakerError> {
         let content = std::fs::read_to_string(path)?;
-        Ok(serde_json::from_str(&content)?)
+        let mut book: Self = serde_json::from_str(&content)?;
+        let removed = book.retain_valid_makers();
+        if removed > 0 {
+            log::warn!("Removed {removed} invalid maker record(s) from {path:?}");
+            book.write_to_disk(path)?;
+        }
+        Ok(book)
     }
 }
 
@@ -1097,29 +1115,9 @@ impl TryFrom<String> for MakerAddress {
     type Error = &'static str;
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
-        if value.is_empty() {
-            return Err("Empty address");
+        if !is_valid_maker_address(&value) {
+            return Err("Invalid maker address");
         }
-
-        #[cfg(feature = "integration-test")]
-        {
-            // Integration tests use "ip:port" format
-            let mut parts = value.splitn(2, ':');
-            let ip = parts.next().ok_or("Missing IP")?;
-            let port = parts.next().ok_or("Missing port")?;
-            if ip.is_empty() || port.is_empty() {
-                return Err("Empty IP or port");
-            }
-        }
-
-        #[cfg(not(feature = "integration-test"))]
-        {
-            // Production: value is just a hostname like "xyz.onion"
-            if !value.ends_with(".onion") {
-                return Err("Not a valid .onion hostname");
-            }
-        }
-
         Ok(MakerAddress(value))
     }
 }
@@ -1175,6 +1173,9 @@ impl MakerAddress {
 
     /// Download a single offer from a maker.
     fn fetch_offer(&self, socks_port: u16) -> Result<(Offer, MakerProtocol), TakerError> {
+        if !is_valid_maker_address(&self.0) {
+            return Err(TakerError::General("invalid maker address".into()));
+        }
         log::debug!("Downloading offer from maker: {}", self);
 
         #[cfg(feature = "integration-test")]
@@ -1287,9 +1288,32 @@ mod tests {
         secp256k1::{Message, Secp256k1, SecretKey},
         Amount, OutPoint, Txid,
     };
+    use bitcoind::tempfile::tempdir;
 
     fn addr(id: &str) -> MakerAddress {
-        MakerAddress(format!("testmaker{id}.onion"))
+        #[cfg(not(feature = "integration-test"))]
+        {
+            const BASE32: &[u8] = b"abcdefghijklmnopqrstuvwxyz234567";
+            let suffix = id
+                .bytes()
+                .map(|byte| BASE32[byte as usize % BASE32.len()] as char)
+                .collect::<String>();
+            return MakerAddress(format!("{}{}.onion", "a".repeat(56 - suffix.len()), suffix));
+        }
+        #[cfg(feature = "integration-test")]
+        return MakerAddress(format!("127.0.0.1:{id}"));
+    }
+
+    fn candidate(address: MakerAddress) -> MakerOfferCandidate {
+        MakerOfferCandidate {
+            address,
+            fidelity_outpoint: None,
+            offer: None,
+            state: MakerState::Unresponsive { retries: 0 },
+            protocol: None,
+            last_offer_update_ts: None,
+            next_offer_check_ts: None,
+        }
     }
 
     fn dummy_offer(maker_addr: &str) -> Offer {
@@ -1332,6 +1356,44 @@ mod tests {
             },
             tweak_chain_code: bitcoin::bip32::ChainCode::from([0u8; 32]),
         }
+    }
+
+    #[test]
+    fn maker_address_try_from_uses_strict_validation() {
+        assert!(MakerAddress::try_from(addr("6102").to_string()).is_ok());
+
+        #[cfg(not(feature = "integration-test"))]
+        for invalid in [
+            "abc.onion",
+            "<script>aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onion",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1.onion",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onion:6102",
+        ] {
+            assert!(MakerAddress::try_from(invalid.to_string()).is_err());
+        }
+
+        #[cfg(feature = "integration-test")]
+        for invalid in ["localhost:6102", "127.0.0.1:0", "127.0.0.1:65536"] {
+            assert!(MakerAddress::try_from(invalid.to_string()).is_err());
+        }
+    }
+
+    #[test]
+    fn offerbook_load_removes_invalid_persisted_makers() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("offerbook.json");
+        let book = OfferBook {
+            makers: vec![
+                candidate(addr("6102")),
+                candidate(MakerAddress("<script>alert(1)</script>.onion".into())),
+            ],
+        };
+        book.write_to_disk(&path).unwrap();
+
+        let cleaned = OfferBook::read_from_disk(&path).unwrap();
+        assert_eq!(cleaned.makers.len(), 1);
+        assert_eq!(cleaned.makers[0].address, addr("6102"));
+        assert!(!std::fs::read_to_string(path).unwrap().contains("<script>"));
     }
 
     #[test]
