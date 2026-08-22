@@ -891,6 +891,7 @@ impl Taker {
         log::info!("Preparing openswap with id: {}", swap_id);
 
         let maker_count = params.maker_count;
+        let should_sync_offerbook = params.preferred_makers.is_none();
 
         self.ongoing_swap = Some(OngoingSwapState {
             id: swap_id.clone(),
@@ -908,9 +909,12 @@ impl Taker {
             payment: None,
         });
 
-        // Block on an offerbook sync first so discovery selects makers from
-        // fresh offers instead of racing the sync for stale ones.
-        self.sync_offerbook_and_wait()?;
+        // Only auto-discovery needs a fresh offerbook. Preferred makers are
+        // selected directly and queried individually before their offers are
+        // relied upon, so waiting for a full sync would not affect the route.
+        if should_sync_offerbook {
+            self.sync_offerbook_and_wait()?;
+        }
         self.discover_makers()?;
         self.persist_swap(SwapPhase::MakersDiscovered)?;
 
